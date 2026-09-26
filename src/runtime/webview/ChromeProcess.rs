@@ -25,7 +25,7 @@ use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use std::io::Write as _;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(unix)]
 use bun_core::ZStr;
 use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
 use bun_jsc::JSGlobalObject;
@@ -188,6 +188,8 @@ impl ChromeProcess {
         let mut chrome = unsafe { bun_core::heap::take(this) };
         debug_assert_eq!(process, chrome.process.as_ptr());
         chrome.close_transport();
+        // SAFETY: `process` is the live argument of this exit callback.
+        delete_temp_profile_of(unsafe { (*process).pid });
         if chrome.retired {
             return;
         }
@@ -476,6 +478,131 @@ fn find_playwright_shell() -> Option<ZBox> {
     None
 }
 
+/// A temp-dir `--user-data-dir` made for a Chrome without `dataStore`.
+struct TempProfile {
+    /// The browser to kill before `dir` can go at exit; `None` once it is gone.
+    pid: Option<bun_spawn::PidT>,
+    dir: Box<[u8]>,
+}
+
+/// Profiles not deleted yet; see [`delete_temp_profiles_at_exit`].
+static TEMP_PROFILES: bun_core::Mutex<Vec<TempProfile>> = bun_core::Mutex::new(Vec::new());
+
+fn register_temp_profile(pid: Option<bun_spawn::PidT>, dir: Box<[u8]>) {
+    TEMP_PROFILES.lock().push(TempProfile { pid, dir });
+    bun_core::add_exit_callback(delete_temp_profiles_at_exit);
+}
+
+fn take_temp_profile(pid: bun_spawn::PidT) -> Option<Box<[u8]>> {
+    let mut profiles = TEMP_PROFILES.lock();
+    let i = profiles.iter().position(|p| p.pid == Some(pid))?;
+    Some(profiles.swap_remove(i).dir)
+}
+
+/// The browser with this pid has exited: its profile directory is ours to delete.
+fn delete_temp_profile_of(pid: bun_spawn::PidT) {
+    if let Some(dir) = take_temp_profile(pid) {
+        delete_profile_dir(dir);
+    }
+}
+
+/// Tries again at exit if this attempt fails (on Windows a straggling child can still hold a file).
+fn delete_profile_dir(dir: Box<[u8]>) {
+    if !try_delete_profile_dir(&dir) {
+        register_temp_profile(None, dir);
+    }
+}
+
+fn try_delete_profile_dir(dir: &[u8]) -> bool {
+    #[cfg(unix)]
+    delete_singleton_socket(dir);
+    match bun_sys::delete_tree_absolute(dir) {
+        Ok(()) => true,
+        Err(err) => {
+            scoped_log!(Chrome, "could not delete {}: {}", bstr::BStr::new(dir), err);
+            false
+        }
+    }
+}
+
+/// `<profile>/SingletonSocket` links into a second temp dir a killed Chrome never removes.
+#[cfg(unix)]
+fn delete_singleton_socket(profile_dir: &[u8]) {
+    let mut link_buf = path_buffer_pool::get();
+    let link = resolve_path::join_string_buf_z::<platform::Auto>(
+        &mut link_buf[..],
+        &[profile_dir, b"SingletonSocket".as_slice()],
+    );
+    let mut target_buf = path_buffer_pool::get();
+    let Ok(len) = bun_sys::readlink(link, &mut target_buf[..]) else {
+        return;
+    };
+    let socket = ZStr::from_buf(&target_buf[..], len);
+    let Some(socket_dir) = bun_paths::dirname(socket.as_bytes()) else {
+        return;
+    };
+    if !socket.as_bytes().starts_with(b"/") || socket_dir == profile_dir {
+        return;
+    }
+    let _ = bun_sys::unlink(socket);
+    let mut buf = path_buffer_pool::get();
+    let cookie = resolve_path::join_string_buf_z::<platform::Auto>(
+        &mut buf[..],
+        &[socket_dir, b"SingletonCookie".as_slice()],
+    );
+    let _ = bun_sys::unlink(cookie);
+    let dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &[socket_dir]);
+    let _ = bun_sys::rmdir(dir);
+}
+
+/// A running Chrome holds (on Windows, locks) profile files: kill it before deleting.
+extern "C" fn delete_temp_profiles_at_exit() {
+    let profiles = core::mem::take(&mut *TEMP_PROFILES.lock());
+    for profile in profiles {
+        if profile.pid.is_none_or(kill_and_wait) {
+            try_delete_profile_dir(&profile.dir);
+        }
+    }
+}
+
+/// `pid` is running or our unreaped child (never reused); returns whether it is gone.
+#[cfg(unix)]
+fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
+    // SAFETY: plain syscalls on a pid; no memory is passed.
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        let mut status = 0;
+        // Returns once the child is reaped here, or fails with ECHILD if it already was.
+        while libc::waitpid(pid, &raw mut status, 0) == -1 && bun_sys::last_errno() == libc::EINTR {
+        }
+    }
+    true
+}
+
+#[cfg(windows)]
+fn kill_and_wait(pid: bun_spawn::PidT) -> bool {
+    use bun_sys::windows as w;
+    unsafe extern "system" {
+        // Opaque kernel HANDLE, validated by the kernel; no memory-safety preconditions.
+        safe fn TerminateProcess(h: w::HANDLE, code: u32) -> w::BOOL;
+    }
+    const PROCESS_TERMINATE: w::DWORD = 0x0001;
+    const SYNCHRONIZE: w::DWORD = 0x0010_0000;
+    const WAIT_OBJECT_0: w::DWORD = 0;
+    const ERROR_INVALID_PARAMETER: w::DWORD = 87;
+    // SAFETY: FFI; ERROR_INVALID_PARAMETER means no process has this pid any more.
+    let handle = unsafe { w::OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid as w::DWORD) };
+    if handle.is_null() {
+        return w::GetLastError() == ERROR_INVALID_PARAMETER;
+    }
+    // Fails if the process already exited, which the wait then reports.
+    TerminateProcess(handle, 1);
+    let gone = w::kernel32::WaitForSingleObject(handle, 5000) == WAIT_OBJECT_0;
+    // SAFETY: `handle` came from OpenProcess above.
+    unsafe { w::CloseHandle(handle) };
+    gone
+}
+
 /// Returns `Bun__Chrome__ensure`'s success value.
 fn spawn(
     vm: *mut VirtualMachine,
@@ -511,6 +638,8 @@ fn spawn(
         // layout every headless harness uses. Without it, ProcessSingleton locks
         // the default profile (~/Library/Application Support/Google/Chrome) and
         // aborts if a real Chrome is already running.
+        // No `dataStore`: a fresh temp profile, deleted with this browser (or below if it never starts).
+        let mut temp_dir: Option<Box<[u8]>> = None;
         let data_dir: ZBox = if let Some(d) = user_data_dir {
             let d = d.to_bytes();
             let mut v = Vec::with_capacity(16 + d.len());
@@ -529,11 +658,17 @@ fn spawn(
             let dir =
                 resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
             bun_sys::mkdir(dir, 0o700)?;
+            temp_dir = Some(Box::from(dir.as_bytes()));
             let mut v = Vec::with_capacity(16 + dir.len());
             v.extend_from_slice(b"--user-data-dir=");
             v.extend_from_slice(&dir[..]);
             ZBox::from_vec(v)
         };
+        let temp_dir = scopeguard::guard(temp_dir, |dir| {
+            if let Some(dir) = dir {
+                delete_profile_dir(dir);
+            }
+        });
 
         let mut argv: Vec<*const c_char> = vec![
             chrome.as_ptr(),
@@ -608,7 +743,24 @@ fn spawn(
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();
 
-        endpoints.attach(spawned.to_process_handle(event_loop))
+        let process = spawned.to_process_handle(event_loop);
+        let pid = process.process_mut().pid;
+        if let Some(dir) = scopeguard::ScopeGuard::into_inner(temp_dir) {
+            register_temp_profile(Some(pid), dir);
+        }
+        let attached = endpoints.attach(process);
+        if attached.is_err() {
+            // No exit handler will run for this browser: reap it here, while the pid is still ours.
+            let gone = kill_and_wait(pid);
+            if let Some(dir) = take_temp_profile(pid) {
+                if gone {
+                    delete_profile_dir(dir);
+                } else {
+                    register_temp_profile(None, dir);
+                }
+            }
+        }
+        attached
     }
 }
 

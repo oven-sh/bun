@@ -189,6 +189,7 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     using _ = dir;
     expect(blob.size).toBe(0);
     expect(await blob.text()).toBe("");
+    expect(await blob.stream().getReader().read()).toEqual({ done: true, value: undefined });
     writeFileSync(file, "abc");
     await expect(blob.text()).rejects.toEqual(notReadable);
     await expect(blob.stream().getReader().read()).rejects.toEqual(notReadable);

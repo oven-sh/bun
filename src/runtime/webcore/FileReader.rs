@@ -994,7 +994,7 @@ impl FileReader {
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
-            if amount_read > 0
+            if (amount_read > 0 || state == ReadState::Eof)
                 && let Err(err) = self.check_pinned()
             {
                 self.on_reader_error(err);

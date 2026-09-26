@@ -1225,7 +1225,9 @@ it("process exits after close()", async () => {
   expect(exitCode).toBe(0);
 });
 
-// _WKWebsiteDataStoreConfiguration initWithDirectory: is macOS 15.2+.
+// _WKWebsiteDataStoreConfiguration initWithDirectory: is in the WebKit of
+// macOS 15.2+. An older macOS has it only after a Safari update, so this gate
+// also skips some machines that could run the test.
 const itPersistentDataStore = isMacOS && isMacOSVersionAtLeast(15.2) ? test : test.skip;
 itPersistentDataStore("persistent dataStore: localStorage survives across instances", async () => {
   using dir = tempDir("webview-persist", {});
@@ -1248,6 +1250,83 @@ itPersistentDataStore("persistent dataStore: localStorage survives across instan
   await b.navigate(url);
   const got = await b.evaluate("String(localStorage.getItem('k'))");
   expect(got).toBe("survives");
+});
+
+const unsupportedDataStore =
+  'dataStore.directory needs a newer WebKit (macOS 15.2 or later); use dataStore: "ephemeral" or backend: "chrome"';
+
+// Opens an ephemeral view, then a view with dataStore.directory, and navigates
+// both. It runs in a subprocess for the same reason as the closeAll() test: an
+// unfixed build on an older WebKit kills the shared host.
+async function persistentBesideEphemeral(env: Record<string, string>) {
+  using dir = tempDir("webview-persist-old-webkit", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const html = h => "data:text/html," + encodeURIComponent(h);
+        // An op on a dead view throws synchronously. An async function
+        // turns that into a rejection too.
+        const settle = fn => fn().catch(e => e.message);
+        const ephemeral = new Bun.WebView({ width: 100, height: 100 });
+        const persistent = new Bun.WebView({
+          width: 100,
+          height: 100,
+          dataStore: { directory: ${JSON.stringify(String(dir))} },
+        });
+        const failed = [];
+        persistent.onNavigationFailed = e => failed.push(e.message);
+        const result = {
+          persistent: await settle(async () => {
+            await persistent.navigate(html("<body>persistent</body>"));
+            return "navigated";
+          }),
+          ephemeral: await settle(async () => {
+            await ephemeral.navigate(html("<body>ephemeral</body>"));
+            return ephemeral.evaluate("document.body.textContent");
+          }),
+          failed,
+        };
+        persistent.close();
+        ephemeral.close();
+        console.log(JSON.stringify(result));
+      `,
+    ],
+    env: { ...bunEnv, ...env },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toEndWith("}\n");
+  return { result: JSON.parse(stdout), stderr, exitCode };
+}
+
+it("dataStore.directory on a WebKit without initWithDirectory: fails only that view", async () => {
+  // The env var makes the host act like a WebKit from before macOS 15.2. The
+  // host used to send initWithDirectory: there anyway. The exception aborted
+  // the host, so every view died with "killed by signal 6" and no reason.
+  const { result, stderr, exitCode } = await persistentBesideEphemeral({
+    BUN_INTERNAL_WEBVIEW_NO_INIT_WITH_DIRECTORY: "1",
+  });
+  expect(result).toEqual({
+    persistent: unsupportedDataStore,
+    ephemeral: "ephemeral",
+    failed: [unsupportedDataStore],
+  });
+  expect(exitCode, stderr).toBe(0);
+});
+
+it("dataStore.directory works or fails only that view, on this machine's WebKit", async () => {
+  const { result, stderr, exitCode } = await persistentBesideEphemeral({});
+  // macOS 15.2+ has initWithDirectory:. An older macOS has it only after a
+  // Safari update, so there the result shows which WebKit this machine has.
+  const supported = isMacOSVersionAtLeast(15.2) || result.persistent === "navigated";
+  expect(result).toEqual(
+    supported
+      ? { persistent: "navigated", ephemeral: "ephemeral", failed: [] }
+      : { persistent: unsupportedDataStore, ephemeral: "ephemeral", failed: [unsupportedDataStore] },
+  );
+  expect(exitCode, stderr).toBe(0);
 });
 
 it("ephemeral dataStore: localStorage does NOT survive across instances", async () => {

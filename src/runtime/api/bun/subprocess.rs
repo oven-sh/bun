@@ -158,6 +158,10 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    pub(crate) memory_watch: JsCell<Option<std::sync::Arc<bun_spawn::memory_watcher::Watch>>>,
+    pub(crate) exited_due_to_max_memory: Cell<bool>,
+    pub(crate) memory_peak: Cell<u64>,
+    pub(crate) memory_route: Cell<Option<&'static str>>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -360,6 +364,48 @@ impl Subprocess<'_> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.create_resource_usage_object(global_object)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn memory_usage(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if !bun_spawn::memory_watcher::SUPPORTED {
+            return Err(global_object.throw(format_args!(
+                "memoryUsage() is not supported on this platform"
+            )));
+        }
+        let current = if this.has_exited() {
+            0
+        } else if let Some(w) = this.memory_watch.get() {
+            let current = w.sample_now();
+            this.memory_peak.set(this.memory_peak.get().max(w.peak()));
+            current
+        } else {
+            #[cfg(windows)]
+            let current = match this.process.os_handle() {
+                Some(handle) => bun_spawn::memory_watcher::usage(this.pid(), handle),
+                None => 0,
+            };
+            #[cfg(not(windows))]
+            let current = bun_spawn::memory_watcher::usage(this.pid());
+            this.memory_peak.set(this.memory_peak.get().max(current));
+            current
+        };
+        let object = JSValue::create_empty_object(global_object, 2);
+        object.put(
+            global_object,
+            b"current",
+            JSValue::js_number_from_uint64(current),
+        );
+        object.put(
+            global_object,
+            b"peak",
+            JSValue::js_number_from_uint64(this.memory_peak.get()),
+        );
+        Ok(object)
     }
 
     pub(crate) fn create_resource_usage_object(
@@ -657,6 +703,60 @@ impl Subprocess<'_> {
         crate::jsc_hooks::timer_all_mut()
     }
 
+    /// Call `memory_watcher::ensure_ready` before the spawn.
+    pub(crate) fn watch_memory(
+        &self,
+        limit: u64,
+        #[cfg(any(target_os = "linux", target_os = "android"))] cgroup: Option<
+            bun_spawn::memory_watcher::cgroup::Cgroup,
+        >,
+    ) {
+        if self.has_exited() {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if cgroup.is_some_and(|c| c.settle()) {
+                self.exited_due_to_max_memory.set(true);
+            }
+            return;
+        }
+        let mut opts = bun_spawn::memory_watcher::WatchOptions {
+            pid: self.pid(),
+            limit,
+            signal: self.kill_signal.0,
+            #[cfg(windows)]
+            process: self.process.os_handle().unwrap_or(core::ptr::null_mut()),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            cgroup,
+        };
+        let w = bun_spawn::memory_watcher::watch(&mut opts);
+        self.memory_route.set(Some(w.route()));
+        self.memory_watch.set(Some(w));
+    }
+
+    fn unwatch_memory(&self) {
+        let Some(w) = self.memory_watch.replace(None) else {
+            return;
+        };
+        // A child that outlives this object, such as after a Worker ends, keeps its limit: the watcher holds its own reference.
+        if !self.has_exited() {
+            return;
+        }
+        w.unwatch();
+        self.memory_peak.set(self.memory_peak.get().max(w.peak()));
+        if w.exceeded() {
+            self.exited_due_to_max_memory.set(true);
+        }
+    }
+
+    /// True as soon as the limit was crossed, which is before the exit is reported.
+    pub(crate) fn killed_for_max_memory(&self) -> bool {
+        self.exited_due_to_max_memory.get()
+            || self
+                .memory_watch
+                .get()
+                .as_ref()
+                .is_some_and(|w| w.exceeded())
+    }
+
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
         if self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED {
@@ -862,6 +962,11 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_exited_due_to_max_memory(this: &Self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.killed_for_max_memory())
+    }
+
+    #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_stdio(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let array = JSValue::create_empty_array(global, 0)?;
         array.push(global, JSValue::NULL)?;
@@ -973,6 +1078,7 @@ impl Subprocess<'_> {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
         self.set_event_loop_timer_refd(false);
+        self.unwatch_memory();
 
         // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread
         // only. `process` is the raw `*mut Process` threaded from the vtable
@@ -1075,6 +1181,7 @@ impl Subprocess<'_> {
         // hold the write end and the caller already opted into a bounded wait.
         if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
             || self.exited_due_to_maxbuf.get().is_some()
+            || self.exited_due_to_max_memory.get()
             || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
         {
             self.close_readable_pipes();
@@ -1353,6 +1460,7 @@ impl Subprocess<'_> {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
         self.set_event_loop_timer_refd(false);
+        self.unwatch_memory();
 
         let mut mb = self.stdout_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
@@ -1568,6 +1676,26 @@ pub(crate) extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe)
 
 pub(crate) mod testing_apis {
     use super::*;
+
+    /// `"job"`, `"cgroup"` or `"sampler"` for a child spawned with `maxMemory`, so tests can require the kernel route.
+    #[bun_jsc::host_fn]
+    pub(crate) fn memory_limit_route(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [subprocess_value] = callframe.arguments_as_array::<1>();
+        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
+            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
+        };
+        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
+        let subprocess = unsafe { &*subprocess_ptr };
+        match subprocess.memory_route.get() {
+            Some(route) => {
+                bun_jsc::StringJsc::to_js(&bun_core::String::static_(route), global_this)
+            }
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
 
     /// Inject a synthetic read error into a subprocess's stdout/stderr
     /// PipeReader, as if the underlying read() syscall (Posix) or libuv read

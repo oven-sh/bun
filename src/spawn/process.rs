@@ -677,6 +677,14 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
+    #[cfg(windows)]
+    pub fn os_handle(&self) -> Option<bun_sys::windows::HANDLE> {
+        match &self.poller {
+            Poller::Uv(handle) => Some(handle.process_handle),
+            _ => None,
+        }
+    }
+
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {

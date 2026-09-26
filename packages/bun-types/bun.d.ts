@@ -7950,6 +7950,20 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
+
+      /**
+       * The maximum number of bytes of memory the process and its descendants
+       * may use, combined. If the tree goes over this limit, every process in
+       * it is killed with `killSignal` (defaults to SIGTERM).
+       *
+       * Windows: the child runs in a Job Object, the kernel tells Bun when the tree
+       * goes over the limit, and Bun terminates the job. Linux: when Bun may create
+       * a memory cgroup inside its own, the kernel kills the tree. In all other
+       * cases Bun samples the tree. `killSignal` applies only when Bun sends the signal.
+       *
+       * @default undefined (no limit)
+       */
+      maxMemory?: number;
     }
 
     interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
@@ -8249,6 +8263,23 @@ declare module "bun" {
      * Returns `undefined` until the process has exited
      */
     resourceUsage(): ResourceUsage | undefined;
+
+    /**
+     * Memory used right now by this process and all of its descendants, in bytes.
+     *
+     * `current` is `0` after the process exits. `peak` is the highest value Bun has
+     * sampled; with {@link SpawnOptions.maxMemory} set, Bun samples continuously.
+     *
+     * On Windows without `maxMemory`, only the process itself is counted.
+     */
+    memoryUsage(): { current: number; peak: number };
+
+    /**
+     * `true` when Bun or the kernel killed this process tree because it went over
+     * {@link SpawnOptions.maxMemory}. Use this to tell a memory kill from an
+     * ordinary failure. On Windows and in a Linux cgroup, `signalCode` does not show it.
+     */
+    readonly exitedDueToMaxMemory: boolean;
   }
 
   /**
@@ -8274,6 +8305,11 @@ declare module "bun" {
     signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
+
+    /**
+     * `true` if the process tree exceeded {@link SpawnOptions.maxMemory} and was killed for it.
+     */
+    exitedDueToMaxMemory?: boolean;
     pid: number;
   }
 

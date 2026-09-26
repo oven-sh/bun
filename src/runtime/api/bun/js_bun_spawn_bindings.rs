@@ -361,6 +361,7 @@ fn spawn_maybe_sync(
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
+    let mut max_memory: Option<u64> = None;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut cgroup: Option<CgroupTarget> = None;
 
@@ -766,6 +767,40 @@ fn spawn_maybe_sync(
                 }
             }
 
+            if let Some(val) = args.get(cx.global(), "maxMemory")? {
+                if val.is_number() && val.as_number().is_nan() {
+                    return Err(cx.global().throw_range_error(
+                        val.as_number(),
+                        bun_fmt::OutOfRangeOptions {
+                            field_name: b"maxMemory",
+                            msg: b"a non-negative integer",
+                            ..Default::default()
+                        },
+                    ));
+                }
+                if !val.is_undefined_or_null()
+                    && !(val.is_number() && val.as_number().is_infinite() && val.as_number() > 0.0)
+                {
+                    let bytes = cx.global().validate_integer_range::<u64>(
+                        val,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: 0,
+                            field_name: b"maxMemory",
+                            ..Default::default()
+                        },
+                    )?;
+                    if bytes > 0 {
+                        if !bun_spawn::memory_watcher::SUPPORTED {
+                            return Err(cx.global().throw(format_args!(
+                                "maxMemory is not supported on this platform"
+                            )));
+                        }
+                        max_memory = Some(bytes);
+                    }
+                }
+            }
+
             if let Some(val) = args.get(cx.global(), "maxBuffer")? {
                 if val.is_number() && val.is_finite() {
                     // 'Infinity' does not set maxBuffer
@@ -1096,6 +1131,24 @@ fn spawn_maybe_sync(
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
+    if max_memory.is_some() {
+        if let Err(err) = bun_spawn::memory_watcher::ensure_ready() {
+            return Err(cx
+                .global()
+                .throw(format_args!("Failed to start the maxMemory watcher: {err}")));
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let mut memory_cgroup = match (max_memory, &cgroup) {
+        (Some(limit), None) => bun_spawn::memory_watcher::cgroup::Cgroup::create(limit),
+        _ => None,
+    };
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if let Some(created) = &memory_cgroup {
+        cgroup = Some(CgroupTarget::Path(ZBox::from_bytes(created.path())));
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
         Some(target) => Some(target.open(cx.global())?),
@@ -1169,9 +1222,21 @@ fn spawn_maybe_sync(
 
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
+    let spawn_result =
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
+    // The cgroup was our choice, not the caller's, so a child that cannot join it runs with the sampler.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let spawn_result = if memory_cgroup.is_some()
+        && matches!(&spawn_result, Ok(sys::Result::Err(err)) if err.syscall == sys::Tag::clone3)
+    {
+        memory_cgroup = None;
+        spawn_options.cgroup_fd = None;
+        // SAFETY: same arrays as the first call.
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) }
+    } else {
+        spawn_result
+    };
+    let mut spawned = match spawn_result {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
@@ -1330,6 +1395,10 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        memory_watch: JsCell::new(None),
+        exited_due_to_max_memory: Cell::new(false),
+        memory_peak: Cell::new(0),
+        memory_route: Cell::new(None),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
@@ -1624,6 +1693,14 @@ fn spawn_maybe_sync(
         subprocess.this_value.with_mut(|v| v.set_weak(out));
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
+    }
+
+    if let Some(limit) = max_memory {
+        subprocess.watch_memory(
+            limit,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            memory_cgroup.take(),
+        );
     }
 
     let mut send_exit_notification = false;
@@ -1974,7 +2051,11 @@ fn spawn_maybe_sync(
             // Once the wait is being terminated (timeout, maxBuffer, bun:test
             // per-test timeout), stop waiting on pipe EOF; a grandchild may
             // still hold the write end (Node.js SyncProcessRunner::Kill()).
-            if did_timeout || bun_test_fired || subprocess.exited_due_to_maxbuf.get().is_some() {
+            if did_timeout
+                || bun_test_fired
+                || subprocess.exited_due_to_maxbuf.get().is_some()
+                || subprocess.killed_for_max_memory()
+            {
                 subprocess.close_readable_pipes();
             }
         }
@@ -2009,6 +2090,7 @@ fn spawn_maybe_sync(
         });
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
+    let exited_due_to_max_memory = subprocess.exited_due_to_max_memory.get();
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); do what the
@@ -2064,6 +2146,13 @@ fn spawn_maybe_sync(
             } else {
                 JSValue::FALSE
             },
+        );
+    }
+    if max_memory.is_some() {
+        sync_value.put(
+            cx.global(),
+            b"exitedDueToMaxMemory",
+            JSValue::from(exited_due_to_max_memory),
         );
     }
     sync_value.put(cx.global(), b"pid", result_pid);

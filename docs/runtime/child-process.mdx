@@ -251,6 +251,43 @@ therefore exceed `maxBuffer` only by the single read that passed it, never by
 whatever the process manages to write before the kill lands. This matches
 Node.js.
 
+## Using maxMemory
+
+`maxMemory` limits how many bytes of memory the process **and all of its descendants** may use. When the tree crosses the limit, Bun sends `killSignal` (default `SIGTERM`) to every process in it.
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn({
+  cmd: ["sh", "-c", "tsc -p ."],
+  maxMemory: 2 * 1024 * 1024 * 1024, // 2 GiB for sh + tsc + anything tsc spawns
+  killSignal: "SIGKILL",
+});
+await proc.exited;
+
+const result = Bun.spawnSync({ cmd: ["make", "-j8"], maxMemory: 4 * 1024 ** 3 });
+result.exitedDueToMaxMemory; // true if the build was killed for exceeding 4 GiB
+```
+
+Bun uses the kernel to enforce the limit where the kernel can do it, and samples only as a fallback:
+
+| Platform | How the limit is enforced                                                                                                                                                                                                                                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows  | The child runs in a Job Object. The kernel tells Bun when the tree commits more than `maxMemory`, and Bun then terminates the job.                                                                                                                                                                                                          |
+| Linux    | When Bun may create a memory cgroup inside its own cgroup, the child starts in one and the kernel kills the tree. The limit file is `memory.limit_in_bytes` on cgroup v1 and `memory.max` on cgroup v2. Bun never moves the child outside its own cgroup, so a systemd unit or a container still covers it. In all other cases Bun samples. |
+| macOS    | The kernel has no memory limit for a group of processes, so one background thread samples the tree's physical footprint.                                                                                                                                                                                                                    |
+
+The sampler sleeps for as long as a child that allocates at full speed needs to use the bytes that are left, from 1 ms to 100 ms. It also counts a descendant whose parent has exited, if Bun saw it at least one time before that. `killSignal` applies when Bun sends the signal. When the kernel does the kill (Linux cgroup), or Bun terminates a Windows job, the tree stops at once, as with `SIGKILL`.
+
+After the process exits, `proc.exitedDueToMaxMemory` is `true` when the limit was the cause. Use it to tell a memory kill from an ordinary failure, because on Windows and in a Linux cgroup the exit code and `signalCode` do not show it.
+
+To read the number yourself, call `proc.memoryUsage()`. It works with or without `maxMemory`:
+
+```ts index.ts icon="/icons/typescript.svg"
+const proc = Bun.spawn(["bun", "run", "build"]);
+const { current, peak } = proc.memoryUsage(); // bytes, for the whole process tree
+```
+
+`memoryUsage()` is cheap, so you can call it often. On Linux it adds up `RssAnon + RssShmem` for each process, so a page that several processes share is counted one time for each of them. Before Bun kills a tree, it confirms the total with the exact proportional numbers. `current` is `0` after the process exits. `peak` is the highest value Bun has sampled. On Windows without `maxMemory`, only the process itself is counted.
+
 ## Inter-process communication (IPC)
 
 Bun supports a direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.

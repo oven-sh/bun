@@ -559,6 +559,9 @@ pub use bun_windows_sys::{PEB, RTL_USER_PROCESS_PARAMETERS, TEB, teb};
 pub use bun_windows_sys::externs::CreateJobObjectA;
 
 pub use bun_windows_sys::externs::AssignProcessToJobObject;
+pub use bun_windows_sys::externs::QueryInformationJobObject;
+pub use bun_windows_sys::externs::TerminateJobObject;
+pub use bun_windows_sys::externs::TerminateProcess;
 
 pub use bun_windows_sys::externs::GetCurrentProcess;
 
@@ -571,9 +574,11 @@ pub use bun_windows_sys::externs::{
 // live in bun_windows_sys::externs; Zeroable impls for these nominal types
 // live in bun_core/lib.rs (orphan-rule home). Do NOT re-declare here.
 pub use bun_windows_sys::externs::{
-    IO_COUNTERS, JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_LIMIT_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
-    JobObjectExtendedLimitInformation,
+    IO_COUNTERS, JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO,
+    JOB_OBJECT_MSG_NOTIFICATION_LIMIT, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
+    JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
+    JobObjectExtendedLimitInformation, JobObjectNotificationLimitInformation,
 };
 
 pub use bun_windows_sys::externs::SetInformationJobObject;
@@ -1428,7 +1433,7 @@ pub struct PROCESS_MEMORY_COUNTERS {
     pub(crate) QuotaPagedPoolUsage: usize,
     pub(crate) QuotaPeakNonPagedPoolUsage: usize,
     pub(crate) QuotaNonPagedPoolUsage: usize,
-    pub(crate) PagefileUsage: usize,
+    pub PagefileUsage: usize,
     pub(crate) PeakPagefileUsage: usize,
 }
 
@@ -1453,6 +1458,69 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
         return Err(Win32Error::get());
     }
     Ok(out)
+}
+/// Committed memory of every process in `job`, as `(current, peak)`. `current` is `None` before Windows 10 1607.
+pub fn job_memory_usage(job: HANDLE) -> (Option<u64>, u64) {
+    use bun_windows_sys::externs::{
+        JOBOBJECT_MEMORY_USAGE_INFORMATION, JobObjectMemoryUsageInformation,
+    };
+    let mut usage = JOBOBJECT_MEMORY_USAGE_INFORMATION::default();
+    // SAFETY: out-buffer sized for the info class.
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectMemoryUsageInformation,
+            (&raw mut usage).cast(),
+            size_of::<JOBOBJECT_MEMORY_USAGE_INFORMATION>() as DWORD,
+            core::ptr::null_mut(),
+        )
+    } != 0
+    {
+        return (Some(usage.JobMemory), usage.PeakJobMemoryUsed);
+    }
+    let mut ext: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: out-buffer sized for the info class.
+    if unsafe {
+        QueryInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&raw mut ext).cast(),
+            size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as DWORD,
+            core::ptr::null_mut(),
+        )
+    } != 0
+    {
+        return (None, ext.PeakJobMemoryUsed as u64);
+    }
+    (None, 0)
+}
+
+/// Ask the kernel to post `JOB_OBJECT_MSG_NOTIFICATION_LIMIT` with `key` to `port` when `job` commits more than `limit` bytes.
+pub fn job_notify_memory_limit(job: HANDLE, port: HANDLE, key: usize, limit: u64) -> bool {
+    let mut assoc = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+        CompletionKey: key as LPVOID,
+        CompletionPort: port,
+    };
+    let mut notify = JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION {
+        JobMemoryLimit: limit,
+        LimitFlags: JOB_OBJECT_LIMIT_JOB_MEMORY,
+        ..Default::default()
+    };
+    // SAFETY: both in-buffers are sized for their info class; bad handles fail with 0.
+    unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectAssociateCompletionPortInformation,
+            (&raw mut assoc).cast(),
+            size_of::<JOBOBJECT_ASSOCIATE_COMPLETION_PORT>() as DWORD,
+        ) != 0
+            && SetInformationJobObject(
+                job,
+                JobObjectNotificationLimitInformation,
+                (&raw mut notify).cast(),
+                size_of::<JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION>() as DWORD,
+            ) != 0
+    }
 }
 pub use bun_windows_sys::externs::GetConsoleMode;
 pub use bun_windows_sys::externs::SetConsoleMode;

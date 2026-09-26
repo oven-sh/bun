@@ -712,7 +712,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
-    oldGlobal->onLoadPlugins.clear();
+    oldGlobal->onLoadPlugins.clear(oldGlobal);
     oldGlobal->onResolvePlugins.clear();
     // Drop the finished file's module registry and require.cache now rather than whenever the
     // old global happens to die. JSC's CodeCache and Bun's RuntimeTranspilerCache are VM/process
@@ -3399,6 +3399,7 @@ void GlobalObject::visitAdditionalChildrenInGCThread(Visitor& visitor)
     thisObject->globalEventScope->visitJSEventListeners(visitor);
 
     thisObject->m_aboutToBeNotifiedRejectedPromises.visit(thisObject, visitor);
+    thisObject->onLoadPlugins.visitModuleMockUndoLog(thisObject, visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);

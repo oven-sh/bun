@@ -1635,6 +1635,23 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
+  // A mock.module() made from a hook or test on a loaded module is logged so mock.restore() can undo it.
+  // The log holds the module's record, namespace and original values; left unrestored it must go with the file.
+  test("mock.module() of a loaded module from a hook, never restored", async () => {
+    using dir = tempDir("isolate-leak-module-mock-undo", {
+      ...makeLeakFixture(`
+        import { beforeAll, mock } from "bun:test";
+        import * as dep from "./dep.mjs";
+        beforeAll(() => {
+          mock.module("./dep.mjs", () => ({ getValue: () => "mocked" }));
+          if (dep.getValue() !== "mocked") throw new Error("the loaded module was not patched");
+        });
+      `),
+      "dep.mjs": `export const getValue = () => "original";`,
+    });
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
   test("Bun.plugin left registered", async () => {
     using dir = tempDir(
       "isolate-leak-plugin",

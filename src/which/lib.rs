@@ -3,15 +3,17 @@ use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
 use bun_core::{ZStr, strings};
-#[cfg(all(not(windows), not(bun_portable)))]
+#[cfg(not(bun_portable))]
 use bun_paths::SEP;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 #[cfg(windows)]
 use bun_paths::resolve_path::posix_to_platform_in_place;
+#[cfg(bun_portable)]
+use bun_paths::sep;
 #[cfg(windows)]
 use bun_paths::w_path_buffer_pool;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, is_absolute, sep};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, is_absolute};
 #[cfg(windows)]
 use bun_paths::{WPathBuffer, path_buffer_pool};
 
@@ -24,6 +26,9 @@ use scope::which as which_log;
 /// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
 #[cfg(not(windows))]
 fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
+    #[cfg(bun_portable)]
+    #[allow(non_snake_case)]
+    let SEP = sep();
     fn len_with_sep(part: &[u8]) -> usize {
         match part.last() {
             None => 0,
@@ -44,11 +49,11 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
 
     buf[..cwd.len()].copy_from_slice(cwd);
     if cwd_prefix_len > cwd.len() {
-        buf[cwd.len()] = sep();
+        buf[cwd.len()] = SEP;
     }
     buf[cwd_prefix_len..cwd_prefix_len + segment.len()].copy_from_slice(segment);
     if prefix_len > cwd_prefix_len + segment.len() {
-        buf[cwd_prefix_len + segment.len()] = sep();
+        buf[cwd_prefix_len + segment.len()] = SEP;
     }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
@@ -184,11 +189,10 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
         // Strip trailing SEP bytes from cwd, keeping a bare "/".
         let mut cwd_trimmed = cwd;
-        #[cfg(not(bun_portable))]
-        let separator = Some(&SEP);
         #[cfg(bun_portable)]
-        let separator = Some(&sep());
-        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == separator {
+        #[allow(non_snake_case)]
+        let SEP = sep();
+        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == Some(&SEP) {
             cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
         }
 
@@ -209,7 +213,11 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
-        for segment in strings::tokenize(path, bun_paths::delimiter_str().as_bytes()) {
+        #[cfg(not(bun_portable))]
+        let delimiters: &[u8] = &[bun_paths::DELIMITER];
+        #[cfg(bun_portable)]
+        let delimiters: &[u8] = bun_paths::delimiter_str().as_bytes();
+        for segment in strings::tokenize(path, delimiters) {
             // execvp resolves relative $PATH entries after the child's chdir.
             let cwd_prefix: &[u8] = if is_absolute(segment) {
                 b""
@@ -505,7 +513,7 @@ fn search_bin_in_path<'a>(
     // Capture len before re-borrowing buf (borrowck).
     let segment_utf16_len = segment_utf16.len();
 
-    buf[segment_utf16_len] = sep() as u16;
+    buf[segment_utf16_len] = SEP as u16;
 
     let bin_utf16 =
         bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut buf[segment_utf16_len + 1..], bin);

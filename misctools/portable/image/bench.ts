@@ -1,16 +1,34 @@
-// A coarse comparison of two bun binaries on the same work, for the report. The machine is shared and loaded:
-// every case is run N times per binary, interleaved, and the MINIMUM and the median of wall and CPU time are
-// reported (the minimum is the run least disturbed by other jobs).
-//
-//   bun /tmp/portable/m4/bench.ts <out.json> <label>=<binary> <label>=<binary>
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+/**
+ * A coarse comparison of two bun binaries on the same work. The machine may be shared and loaded: every case
+ * is run N times per binary, interleaved, and the MINIMUM and the median of wall and CPU time are reported
+ * (the minimum is the run least disturbed by other jobs).
+ *
+ *   bun image/bench.ts <out.json> <label>=<binary> <label>=<binary>
+ *
+ * The scripts that the binaries run are written to <out.json>.work/. The transpiler case reads
+ * $BENCH_TRANSPILE_INPUT, by default node_modules/typescript/lib/typescript.js of the repository.
+ */
+
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { REPOSITORY } from "../flags.ts";
 
 const [outPath, ...binaries] = process.argv.slice(2);
-const labels = binaries.map(b => ({ label: b.slice(0, b.indexOf("=")), binary: b.slice(b.indexOf("=") + 1) }));
-const dir = "/tmp/portable/m4/smoke/bench";
+if (outPath === undefined || binaries.length === 0) {
+  console.error("usage: bun image/bench.ts <out.json> <label>=<binary> [<label>=<binary>]");
+  process.exit(2);
+}
+const labels = binaries.map(b => ({ label: b.slice(0, b.indexOf("=")), binary: resolve(b.slice(b.indexOf("=") + 1)) }));
+const dir = `${resolve(outPath)}.work`;
 mkdirSync(dir, { recursive: true });
-const typescriptJs = "/tmp/portable/bun-tree/node_modules/typescript/lib/typescript.js";
+const typescriptJs =
+  process.env.BENCH_TRANSPILE_INPUT ?? join(REPOSITORY, "node_modules", "typescript", "lib", "typescript.js");
+if (!existsSync(typescriptJs)) {
+  console.error(
+    `${typescriptJs} is not there: run bun install in the repository, or set BENCH_TRANSPILE_INPUT to a large JavaScript file`,
+  );
+  process.exit(2);
+}
 
 writeFileSync(
   join(dir, "transpile.ts"),
@@ -75,7 +93,11 @@ for (const c of cases) {
   for (let run = 0; run < c.runs; run++) {
     for (const { label, binary } of labels) {
       const started = performance.now();
-      const r = Bun.spawnSync([binary, ...c.args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1" } });
+      const r = Bun.spawnSync([binary, ...c.args], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, NO_COLOR: "1" },
+      });
       const elapsed = performance.now() - started;
       if (r.exitCode !== 0) throw new Error(`${label} ${c.name}: exit ${r.exitCode}: ${r.stderr.toString()}`);
       (wall[label] ??= []).push(elapsed);
@@ -105,4 +127,4 @@ for (const c of cases) {
   results.push(row);
   console.log(JSON.stringify(row));
 }
-writeFileSync(outPath!, JSON.stringify({ loadavg: require("node:os").loadavg(), results }, null, 1) + "\n");
+writeFileSync(outPath, JSON.stringify({ loadavg: require("node:os").loadavg(), results }, null, 1) + "\n");

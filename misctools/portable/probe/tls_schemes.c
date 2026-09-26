@@ -3,7 +3,7 @@
 // that is chosen at run time (fs on Linux, gs on Windows and macOS) and an
 // offset that is a run-time value. No code is patched.
 //
-// Build variants (see run.sh):
+// Build variants:
 //   native     compiler TLS, what the per-OS builds use today
 //   emutls-rt  -femulated-tls with the compiler runtime's __emutls_get_address
 //   emutls-own -femulated-tls with the __emutls_get_address below

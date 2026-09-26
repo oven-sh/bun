@@ -1,37 +1,43 @@
-// Static checks of a portable image (S7): every instruction of the executable sections is read from
-// llvm-objdump's disassembly and attributed, through the lld link map, to the link input it came from.
-//
-//   bun /tmp/portable/m4/analyze.ts <binary> <lld map> <out.json>
-//
-// Counted, each by origin:
-//   fs_gs     instructions with a %fs: or %gs: segment override (native thread-local access)
-//   syscall   syscall / sysenter / int $0x80 instructions
-//   red_zone  instructions whose memory operand is a negative displacement off %rsp with no index register,
-//             i.e. a read or write below the stack pointer. `lea` is counted apart (it computes an address
-//             and accesses nothing); an indexed operand -N(%rsp,%reg,s) is an array on the stack, counted apart.
-//   red_zone_rbp  the same access spelled through the frame pointer: in a function that sets %rbp from %rsp, an
-//             operand -N(%rbp) with N larger than everything the function allocates below %rbp (the registers
-//             it pushes after setting %rbp plus every constant it subtracts from %rsp). A function that also
-//             moves %rsp by a register or realigns it only ever has MORE stack than that, so it is judged the
-//             same way when its deepest access is within the constant part, and listed as "not judged"
-//             otherwise (its frame has to be read).
-// An origin is "musl" (a member of the sysroot's libc.a), an archive, an object, or a Rust crate.
-//
-// A linear sweep decodes data inside .text as instructions (JavaScriptCore's LLInt puts opcode ids after
-// indirect jumps). Every site outside musl is therefore written out with its bytes, symbol and neighbours,
-// so that it can be judged by reading it.
+/**
+ * Static checks of a linked x86_64 image: every instruction of the executable sections is read from
+ * llvm-objdump's disassembly and attributed, through the lld link map, to the link input it came from.
+ *
+ *   bun image/analyze.ts <binary> <lld map> <out.json>
+ *
+ * Environment: OBJDUMP, READELF (default: llvm-objdump and llvm-readelf of $LLVM_BIN, or of the clang in PATH).
+ *
+ * Counted, each by origin:
+ *   fs_gs     instructions with a %fs: or %gs: segment override (native thread-local access)
+ *   syscall   syscall / sysenter / int $0x80 instructions
+ *   red_zone  instructions whose memory operand is a negative displacement off %rsp with no index register,
+ *             i.e. a read or write below the stack pointer. `lea` is counted apart (it computes an address
+ *             and accesses nothing); an indexed operand -N(%rsp,%reg,s) is an array on the stack, counted apart.
+ *   red_zone_rbp  the same access spelled through the frame pointer: in a function that sets %rbp from %rsp, an
+ *             operand -N(%rbp) with N larger than everything the function allocates below %rbp (the registers
+ *             it pushes after setting %rbp plus every constant it subtracts from %rsp). A function that also
+ *             moves %rsp by a register or realigns it only ever has MORE stack than that, so it is judged the
+ *             same way when its deepest access is within the constant part, and listed as "not judged"
+ *             otherwise (its frame has to be read).
+ * An origin is "musl" (a member of the sysroot's libc.a), an archive, an object, or a Rust crate.
+ *
+ * A linear sweep decodes data inside .text as instructions (JavaScriptCore's LLInt puts opcode ids after
+ * indirect jumps). Every site outside musl is therefore written out with its bytes, symbol and neighbours,
+ * so that it can be judged by reading it.
+ */
+
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
+import { llvmBin } from "../flags.ts";
 
 const [binary, mapPath, outPath] = process.argv.slice(2);
 if (binary === undefined || mapPath === undefined || outPath === undefined) {
-  console.error("usage: bun analyze.ts <binary> <lld map> <out.json>");
+  console.error("usage: bun image/analyze.ts <binary> <lld map> <out.json>");
   process.exit(2);
 }
-const objdump = process.env.OBJDUMP ?? "/usr/lib/llvm-current/bin/llvm-objdump";
-const readelf = process.env.READELF ?? "/usr/lib/llvm-current/bin/llvm-readelf";
+const objdump = process.env.OBJDUMP ?? join(llvmBin(), "llvm-objdump");
+const readelf = process.env.READELF ?? join(llvmBin(), "llvm-readelf");
 
 // ─── link map: input sections by address ───
 interface Range {
@@ -105,7 +111,8 @@ export function originOf(input: string): string {
   // ThinLTO output: lld names the object after the module it was generated from.
   const lto = /\.lto\.(.*)$/.exec(basename(input));
   const fromModule = lto !== null ? lto[1]! : input;
-  const crate = /lib(.+?)-[0-9a-f]{16}\.rlib/.exec(fromModule) ?? /(?:^|[/.])([a-z0-9_]+)-[0-9a-f]{16}\..*rcgu/.exec(fromModule);
+  const crate =
+    /lib(.+?)-[0-9a-f]{16}\.rlib/.exec(fromModule) ?? /(?:^|[/.])([a-z0-9_]+)-[0-9a-f]{16}\..*rcgu/.exec(fromModule);
   if (crate !== null) return `rust crate ${crate[1]} (LTO)`;
   if (input === "<internal>") return "<linker>";
   const vendor = /(?:^|\/)obj\/vendor\/([^/]+)\//.exec(input);
@@ -142,7 +149,8 @@ for (let i = 1; i < ranges.length; i++) {
   }
 }
 
-const newMaps = () => Object.fromEntries(kinds.map(k => [k, new Map<string, number>()])) as Record<Kind, Map<string, number>>;
+const newMaps = () =>
+  Object.fromEntries(kinds.map(k => [k, new Map<string, number>()])) as Record<Kind, Map<string, number>>;
 const counts = newMaps();
 const forms = newMaps();
 const sites = Object.fromEntries(kinds.map(k => [k, [] as Site[]])) as Record<Kind, Site[]>;
@@ -171,14 +179,26 @@ interface Frame {
   deepestSite: { address: string; text: string; bytes: string } | undefined;
   functions: number;
 }
-let frame: Frame = { probing: false, probeLoop: false, setsRbp: false, inPrologue: false, allocated: 0, notJudged: false, deepest: 0, deepestSite: undefined, functions: 0 };
+let frame: Frame = {
+  probing: false,
+  probeLoop: false,
+  setsRbp: false,
+  inPrologue: false,
+  allocated: 0,
+  notJudged: false,
+  deepest: 0,
+  deepestSite: undefined,
+  functions: 0,
+};
 let functionsWithFramePointer = 0;
 let functionsNotJudged = 0;
 let functionsWithVariableFrameWithinConstantPart = 0;
 // Not judged, by the link input they are in, and by name where that input is assembly (no compiler flag applies).
 const notJudgedByInput = new Map<string, number>();
-const notJudgedInAssembly: { symbol: string; input: string; deepest_below_rbp: string; constant_allocation: string }[] = [];
-const notJudgedCompiled: { symbol: string; input: string; deepest_below_rbp: string; constant_allocation: string }[] = [];
+const notJudgedInAssembly: { symbol: string; input: string; deepest_below_rbp: string; constant_allocation: string }[] =
+  [];
+const notJudgedCompiled: { symbol: string; input: string; deepest_below_rbp: string; constant_allocation: string }[] =
+  [];
 let functionStart = "";
 function endFunction() {
   if (frame.setsRbp) {
@@ -227,7 +247,17 @@ function endFunction() {
       }
     }
   }
-  frame = { probing: false, probeLoop: false, setsRbp: false, inPrologue: false, allocated: 0, notJudged: false, deepest: 0, deepestSite: undefined, functions: 0 };
+  frame = {
+    probing: false,
+    probeLoop: false,
+    setsRbp: false,
+    inPrologue: false,
+    allocated: 0,
+    notJudged: false,
+    deepest: 0,
+    deepestSite: undefined,
+    functions: 0,
+  };
 }
 function trackFrame(address: string, mnemonic: string, operands: string, text: string, bytes: string) {
   if (!frame.setsRbp) {
@@ -386,7 +416,8 @@ const result = {
   sites_not_in_the_map: unattributed,
   frame_pointer_check: {
     functions_that_set_rbp_from_rsp: functionsWithFramePointer,
-    of_those_with_a_variable_frame_whose_accesses_stay_in_its_constant_part: functionsWithVariableFrameWithinConstantPart,
+    of_those_with_a_variable_frame_whose_accesses_stay_in_its_constant_part:
+      functionsWithVariableFrameWithinConstantPart,
     not_judged_because_the_frame_is_not_constant: functionsNotJudged,
     not_judged_by_origin: table(notJudgedByInput),
     not_judged_in_assembly: notJudgedInAssembly,
@@ -414,4 +445,6 @@ const result = {
   sites_outside_musl: sites,
 };
 writeFileSync(outPath, JSON.stringify(result, null, 1) + "\n");
-console.log(JSON.stringify({ instructions, elf: result.elf, totals: result.totals, by_origin: result.by_origin }, null, 1));
+console.log(
+  JSON.stringify({ instructions, elf: result.elf, totals: result.totals, by_origin: result.by_origin }, null, 1),
+);

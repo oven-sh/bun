@@ -1491,7 +1491,7 @@ static char *utf8(const wchar_t *w) {
 
    A bare image file named by argv[1]: its ELF header is at offset 0 and the
    arguments of the image are argv[2] and on. This is how the host is used
-   with an image that was built by misctools/portable/build.sh.
+   with an image that was built by misctools/portable/build.ts.
 
    Or the packed form of tools/pack.ts: this .exe IS the container. One file
    that is this Windows host, a shell script for sh, the loader stubs of the

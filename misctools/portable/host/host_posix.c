@@ -1617,7 +1617,7 @@ static int install_syscall_filter(void) { return 1; }
    that tells them apart.
 
    A bare image: its ELF header is at offset 0, and an Apple code signature,
-   if there is one, is named by the trailer that tools/apple_sign.py appends
+   if there is one, is named by the trailer that tools/apple_sign.ts appends
    (5 x u64: code_off, code_len, sig_off, sig_len, "BUNSIG01").
 
    Or the packed form of tools/pack.ts: ONE file that is a Windows executable,

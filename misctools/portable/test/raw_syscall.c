@@ -2,7 +2,7 @@
 // instruction itself instead of asking the host table. On Linux by itself that simply
 // works (exit code 42). Under the Linux test host the filter of the host has to end the
 // process: exit code 99 and a message that names the offset of the instruction.
-// test/run.sh runs it as a "must fail" test, which shows that a hosted run that passes
+// build.ts test runs it as a "must fail" test, which shows that a hosted run that passes
 // issued no syscall from image code.
 #include <stdio.h>
 

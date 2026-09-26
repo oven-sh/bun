@@ -1,22 +1,28 @@
-// Runs a list of bun's own test files with two binaries and records what each reports (S6).
-//
-//   bun /tmp/portable/m4/run-tests.ts <list.txt> <out.json> <label>=<binary> [<label>=<binary> ...]
-//
-// <list.txt>: one test file per line, relative to /tmp/portable/bun-tree (# starts a comment).
-// Every file is run as `<binary> test <file>` with the repository's test/ configuration, one run at a time,
-// with the environment bun's own runner gives a test (test/harness.ts bunEnv), and a time limit.
-// The counts are read from the summary `bun test` prints (" N pass", " N fail", " N skip").
+/**
+ * Runs a list of bun's own test files with one binary or more and records what each reports.
+ *
+ *   bun image/run-tests.ts <list.txt> <out.json> <label>=<binary> [<label>=<binary> ...]
+ *
+ * <list.txt>: one test file per line, relative to the root of the repository (# starts a comment).
+ * Every file is run as `<binary> test <file>` with the repository's test/ configuration, one run at a time,
+ * with the environment bun's own runner gives a test (test/harness.ts bunEnv), and a time limit
+ * ($TEST_TIMEOUT_MS, 180000). The counts are read from the summary `bun test` prints (" N pass", " N fail",
+ * " N skip"). Next to <out.json>: test-logs/ (what every run printed) and test-install-cache/.
+ */
+
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { REPOSITORY } from "../flags.ts";
 
-const tree = "/tmp/portable/bun-tree";
+const tree = REPOSITORY;
 const [listPath, outPath, ...binaries] = process.argv.slice(2);
 if (listPath === undefined || outPath === undefined || binaries.length === 0) {
-  console.error("usage: bun run-tests.ts <list.txt> <out.json> <label>=<binary> ...");
+  console.error("usage: bun image/run-tests.ts <list.txt> <out.json> <label>=<binary> ...");
   process.exit(2);
 }
 const timeoutMs = Number(process.env.TEST_TIMEOUT_MS ?? 180_000);
+const installCache = join(dirname(resolve(outPath)), "test-install-cache");
 const files = readFileSync(listPath, "utf8")
   .split("\n")
   .map(l => l.replace(/#.*$/, "").trim())
@@ -47,7 +53,7 @@ function run(binary: string, file: string, logPath: string): Promise<Run> {
       BUN_GARBAGE_COLLECTOR_LEVEL: "0",
       BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-      BUN_INSTALL_CACHE_DIR: "/tmp/portable/m4/test-install-cache",
+      BUN_INSTALL_CACHE_DIR: installCache,
       GITHUB_ACTIONS: "false",
       CI: "false",
     };
@@ -89,9 +95,9 @@ function run(binary: string, file: string, logPath: string): Promise<Run> {
 
 const labels = binaries.map(b => {
   const eq = b.indexOf("=");
-  return { label: b.slice(0, eq), binary: b.slice(eq + 1) };
+  return { label: b.slice(0, eq), binary: resolve(b.slice(eq + 1)) };
 });
-const logDir = join(dirname(outPath), "test-logs");
+const logDir = join(dirname(resolve(outPath)), "test-logs");
 const results: Record<string, Record<string, Run>> = {};
 for (const file of files) {
   results[file] = {};

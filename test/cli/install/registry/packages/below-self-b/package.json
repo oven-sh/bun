@@ -1,0 +1,32 @@
+{
+  "_id": "below-self-b",
+  "name": "below-self-b",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "below-self-b",
+      "version": "1.0.0",
+      "dependencies": {
+        "below-self-a": "2.0.0"
+      },
+      "_id": "below-self-b@1.0.0",
+      "dist": {
+        "integrity": "sha512-YQup4ximlze/Ifed/DEfJYHvvm+Of07u+pLsFYj56fH3MHJCSYl0i3CdUK8GFg1pVqlNyea2SYYXglrlxrtGVQ==",
+        "shasum": "85e17ea0f8231963ed6a46f3e7bcfee75706351f",
+        "tarball": "http://localhost:4873/below-self-b/-/below-self-b-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "below-self-b",
+      "version": "2.0.0",
+      "_id": "below-self-b@2.0.0",
+      "dist": {
+        "integrity": "sha512-wimIumaX3MLcE/br+0VIBopP0sXBCNjan5Cn3ByZgy7S/qAkfbrEWEU7tnNWeAyGRa+MA2wEqz+64Sj/8+8uGQ==",
+        "shasum": "f6024f01d56b2315ad763482c46d623cd0fd670f",
+        "tarball": "http://localhost:4873/below-self-b/-/below-self-b-2.0.0.tgz"
+      }
+    }
+  }
+}

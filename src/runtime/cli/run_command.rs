@@ -1815,9 +1815,14 @@ impl RunCommand {
     pub(crate) fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
+        original_path: &[u8],
     ) -> crate::Result<()> {
-        bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
-            .map_err(Into::into)
+        bun_install::RunCommand::create_fake_temporary_node_executable(
+            path,
+            optional_bun_path,
+            original_path,
+        )
+        .map_err(Into::into)
     }
 
     /// Prepends workspace
@@ -1928,6 +1933,7 @@ impl RunCommand {
             match Self::create_fake_temporary_node_executable(
                 &mut new_path,
                 &mut optional_bun_self_path,
+                &path,
             ) {
                 Ok(()) => {}
                 Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),

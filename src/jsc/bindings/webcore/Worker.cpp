@@ -37,6 +37,10 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
+#include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSMap.h>
@@ -286,6 +290,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
+// Ids of resources in transit to a worker (worker_threads.ts). Process-wide: the parent VM makes one, the worker VM takes it.
+static Lock s_transferClaimsLock;
+static HashSet<uint64_t>& transferClaims() WTF_REQUIRES_LOCK(s_transferClaimsLock)
+{
+    static NeverDestroyed<HashSet<uint64_t>> claims;
+    return claims.get();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateJSTransferableClaim, (JSGlobalObject*, CallFrame*))
+{
+    Locker locker { s_transferClaimsLock };
+    uint64_t id;
+    do {
+        // 53 bits, so the id is exact as a JS number. 0 is the empty value of the set.
+        id = cryptographicallyRandomNumber<uint64_t>() >> 11;
+    } while (!id || !transferClaims().add(id).isNewEntry);
+    return JSValue::encode(jsNumber(static_cast<double>(id)));
+}
+
+// true: the id was live and the caller now owns the resource. Anything else that user data can hold is false.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionClaimJSTransferable, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(0);
+    if (!value.isNumber())
+        return JSValue::encode(jsBoolean(false));
+    double number = value.asNumber();
+    if (!(number >= 1 && number < 9007199254740992.0) || number != std::trunc(number))
+        return JSValue::encode(jsBoolean(false));
+    Locker locker { s_transferClaimsLock };
+    return JSValue::encode(jsBoolean(transferClaims().remove(static_cast<uint64_t>(number))));
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -342,7 +378,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 17);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 19);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     RETURN_IF_EXCEPTION(scope, {});
@@ -379,6 +415,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 17, JSFunction::create(vm, globalObject, 0, "createJSTransferableClaim"_s, jsFunctionCreateJSTransferableClaim, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 18, JSFunction::create(vm, globalObject, 1, "claimJSTransferable"_s, jsFunctionClaimJSTransferable, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
     return array;
 }

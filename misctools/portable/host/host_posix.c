@@ -807,8 +807,6 @@ static int is_file_request(long n) {
       return 0;
   }
 }
-#else
-static int is_file_request(long n) { (void)n; return 0; }
 #endif
 
 /* ---- functions of the host OS for the image ----

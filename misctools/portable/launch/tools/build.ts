@@ -113,7 +113,9 @@ export function buildLinuxStub(arch: Arch, out: string): string {
 function sysrootOf(arch: Arch, images: string) {
   const sysroot = sysrootAt(`${images}/${arch}/sysroot`, arch);
   if (!existsSync(`${sysroot.lib}/libc.a`) || !existsSync(sysroot.builtins)) {
-    throw new Error(`no sysroot at ${sysroot.root}: run bun misctools/portable/build.ts test-image --arch ${arch} --out ${images}/${arch} first`);
+    throw new Error(
+      `no sysroot at ${sysroot.root}: run bun misctools/portable/build.ts test-image --arch ${arch} --out ${images}/${arch} first`,
+    );
   }
   return sysroot;
 }
@@ -213,7 +215,10 @@ export function buildMacObject(arch: Arch, out: string, images: string): string 
 export function buildLinuxHost(arch: Arch, out: string, images: string): string {
   const exe = `${out}/host-linux-${arch}`;
   if (arch === "x86_64") {
-    run([`${LLVM}/clang`, "-O2", "-Wall", "-Wno-unused-function", "-o", exe, `${HOSTS}/host_posix.c`, "-lpthread"], "linux host x86_64");
+    run(
+      [`${LLVM}/clang`, "-O2", "-Wall", "-Wno-unused-function", "-o", exe, `${HOSTS}/host_posix.c`, "-lpthread"],
+      "linux host x86_64",
+    );
     return exe;
   }
   // aarch64: a static program whose libc is the sysroot of the image, built
@@ -276,13 +281,20 @@ if (import.meta.main) {
     const stub = buildLinuxStub(arch, `${out}/stub`);
     console.log(`  linux stub   ${stub} ${Bun.file(stub).size} bytes (${key(stub)})`);
     const winHost = `${winDir}/${WIN_HOST_NAME[arch]}`;
-    if (!existsSync(winHost)) throw new Error(`no Windows host at ${winHost} (bun tools/windows-host.ts prints how a person builds it)`);
-    console.log(`  windows host ${winHost} ${Bun.file(winHost).size} bytes (${key(winHost)}), an input file built on Windows`);
+    if (!existsSync(winHost))
+      throw new Error(`no Windows host at ${winHost} (bun tools/windows-host.ts prints how a person builds it)`);
+    console.log(
+      `  windows host ${winHost} ${Bun.file(winHost).size} bytes (${key(winHost)}), an input file built on Windows`,
+    );
     const macosStub = opt["macos-stub-dir"] ? `${opt["macos-stub-dir"]}/macos-stub-${arch}` : "";
     const haveMacos = !!macosStub && existsSync(macosStub);
-    console.log(`  macos stub   ${haveMacos ? `${macosStub} ${Bun.file(macosStub).size} bytes (${key(macosStub)})` : "absent, packing without it"}`);
+    console.log(
+      `  macos stub   ${haveMacos ? `${macosStub} ${Bun.file(macosStub).size} bytes (${key(macosStub)})` : "absent, packing without it"}`,
+    );
     const macObject = buildMacObject(arch, out, images);
-    console.log(`  macos check  ${macObject} ${Bun.file(macObject).size} bytes (compiled, not linked: no Apple SDK here)`);
+    console.log(
+      `  macos check  ${macObject} ${Bun.file(macObject).size} bytes (compiled, not linked: no Apple SDK here)`,
+    );
     const host = buildLinuxHost(arch, out, images);
     console.log(`  linux host   ${host} ${Bun.file(host).size} bytes (the POSIX host, to test the host path)`);
     const toPack = opt.image ? [opt.image] : [`${images}/${arch}/threads.img`, buildBigBssImage(arch, out, images)];

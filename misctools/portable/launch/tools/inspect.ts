@@ -17,13 +17,26 @@
 //   - the loader stubs: ELF or Mach-O for the architecture of the image
 //   - the Apple code signature, through tools/check_signature.ts
 import { createHash } from "node:crypto";
-import { APE_MAGIC, ELF_MACHINE, IMAGE_ALIGN, QUOTE_END, STUB_ALIGN, TOC_MAGIC, TOC_SIZE, archOfMachine, decodeToc } from "./format.ts";
+import {
+  APE_MAGIC,
+  ELF_MACHINE,
+  IMAGE_ALIGN,
+  QUOTE_END,
+  STUB_ALIGN,
+  TOC_MAGIC,
+  TOC_SIZE,
+  archOfMachine,
+  decodeToc,
+} from "./format.ts";
 import { machineName, readPe } from "./pe.ts";
 import { checkSignature } from "./check_signature.ts";
 
 export type Check = { ok: boolean; what: string; detail?: string };
 
-export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {}): { checks: Check[]; facts: Record<string, unknown> } {
+export function inspect(
+  file: Buffer,
+  opt: { shell?: string; path?: string } = {},
+): { checks: Check[]; facts: Record<string, unknown> } {
   const checks: Check[] = [];
   const facts: Record<string, unknown> = {};
   const ok = (cond: boolean, what: string, detail?: string) => checks.push({ ok: !!cond, what, detail });
@@ -33,7 +46,11 @@ export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {
   ok(file[8] === 0x0a, "a newline follows the magic");
   const lfanew = file.readUInt32LE(0x3c);
   const quote = file.indexOf(0x27, 9);
-  ok(quote === QUOTE_END, `the quoted string of the first line ends at 0x${QUOTE_END.toString(16)}`, `ends at 0x${quote.toString(16)}`);
+  ok(
+    quote === QUOTE_END,
+    `the quoted string of the first line ends at 0x${QUOTE_END.toString(16)}`,
+    `ends at 0x${quote.toString(16)}`,
+  );
   const script = file.subarray(QUOTE_END + 2, lfanew);
   ok(!script.includes(0), "the script after the quote has no NUL byte");
   ok(
@@ -49,14 +66,21 @@ export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {
   }
   facts.toc = toc;
   ok(toc.version === 1, "table of contents version 1");
-  ok(toc.fileSize === file.length, "the table of contents gives the size of the file", `${toc.fileSize} vs ${file.length}`);
+  ok(
+    toc.fileSize === file.length,
+    "the table of contents gives the size of the file",
+    `${toc.fileSize} vs ${file.length}`,
+  );
   ok(toc.headerSize === lfanew, "header_size is e_lfanew", `${toc.headerSize} vs ${lfanew}`);
   const arch = archOfMachine(toc.arch);
   ok(!!arch, "the architecture in the table of contents is known", String(toc.arch));
   facts.arch = arch;
   ok(toc.imageOff % IMAGE_ALIGN === 0, "the image starts on a 64 KiB boundary", `0x${toc.imageOff.toString(16)}`);
   ok(toc.imageOff + toc.imageLen <= file.length, "the image is inside the file");
-  ok(toc.stubLinuxLen > 0 && toc.stubLinuxOff % STUB_ALIGN === 0, "the Linux stub is there and starts on a 512 byte boundary");
+  ok(
+    toc.stubLinuxLen > 0 && toc.stubLinuxOff % STUB_ALIGN === 0,
+    "the Linux stub is there and starts on a 512 byte boundary",
+  );
   ok(toc.stubLinuxOff + toc.stubLinuxLen <= toc.imageOff, "the Linux stub is in front of the image");
   if (toc.stubMacosLen) {
     ok(toc.stubMacosOff % STUB_ALIGN === 0, "the macOS stub starts on a 512 byte boundary");
@@ -78,21 +102,41 @@ export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {
       `arch ${arch} image ${toc.imageOff} ${toc.imageLen} ` +
       `stub_linux ${toc.stubLinuxOff} ${toc.stubLinuxLen} ${key(file, toc.stubLinuxOff, toc.stubLinuxLen)} ` +
       `stub_macos ${toc.stubMacosOff} ${toc.stubMacosLen} ${key(file, toc.stubMacosOff, toc.stubMacosLen)}`;
-    ok(line === want, "the numbers in the shell header are the numbers in the table of contents", line === want ? line : `${line} != ${want}`);
+    ok(
+      line === want,
+      "the numbers in the shell header are the numbers in the table of contents",
+      line === want ? line : `${line} != ${want}`,
+    );
   }
 
   /* ---- the PE file ---- */
   const pe = readPe(file);
-  facts.pe = { machine: machineName(pe.machine), sections: pe.sections.length, sizeOfHeaders: pe.sizeOfHeaders, checkSum: pe.checkSum, end: pe.end };
+  facts.pe = {
+    machine: machineName(pe.machine),
+    sections: pe.sections.length,
+    sizeOfHeaders: pe.sizeOfHeaders,
+    checkSum: pe.checkSum,
+    end: pe.end,
+  };
   ok(machineName(pe.machine) === arch, "the PE machine is the architecture of the image", machineName(pe.machine));
-  ok(pe.sizeOfHeaders <= pe.headerRoom, "SizeOfHeaders is at or below the first section RVA", `0x${pe.sizeOfHeaders.toString(16)} vs 0x${pe.headerRoom.toString(16)}`);
+  ok(
+    pe.sizeOfHeaders <= pe.headerRoom,
+    "SizeOfHeaders is at or below the first section RVA",
+    `0x${pe.sizeOfHeaders.toString(16)} vs 0x${pe.headerRoom.toString(16)}`,
+  );
   ok(
     pe.sizeOfHeaders >= lfanew + 4 + 20 + pe.optionalHeaderSize + 40 * pe.sectionCount,
     "SizeOfHeaders covers the script, the PE header and the section table",
   );
-  const badSection = pe.sections.find(s => s.rawSize && (s.rawPointer % pe.fileAlignment || s.rawPointer + s.rawSize > file.length));
+  const badSection = pe.sections.find(
+    s => s.rawSize && (s.rawPointer % pe.fileAlignment || s.rawPointer + s.rawSize > file.length),
+  );
   ok(!badSection, "every section is aligned to FileAlignment and inside the file", badSection?.name);
-  ok(pe.end <= toc.stubLinuxOff, "the Windows host ends in front of the Linux stub", `0x${pe.end.toString(16)} vs 0x${toc.stubLinuxOff.toString(16)}`);
+  ok(
+    pe.end <= toc.stubLinuxOff,
+    "the Windows host ends in front of the Linux stub",
+    `0x${pe.end.toString(16)} vs 0x${toc.stubLinuxOff.toString(16)}`,
+  );
   ok(pe.checkSum === 0, "the PE checksum field is 0: what lld writes, and what signtool replaces");
 
   /* ---- the image ---- */
@@ -117,7 +161,11 @@ export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {
   }
   facts.imageLoadSegments = loads;
   ok(loads > 0, "the image has loadable segments");
-  ok(misaligned < 0, "every loadable segment is 64 KiB aligned in the packed file and inside it", misaligned < 0 ? undefined : `segment ${misaligned}`);
+  ok(
+    misaligned < 0,
+    "every loadable segment is 64 KiB aligned in the packed file and inside it",
+    misaligned < 0 ? undefined : `segment ${misaligned}`,
+  );
 
   /* ---- the stubs ---- */
   const linux = file.subarray(toc.stubLinuxOff, toc.stubLinuxOff + toc.stubLinuxLen);
@@ -127,10 +175,18 @@ export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {
   if (toc.stubMacosLen) {
     const mac = file.subarray(toc.stubMacosOff, toc.stubMacosOff + toc.stubMacosLen);
     const magic = mac.readUInt32LE(0);
-    ok(magic === 0xfeedfacf || magic === 0xcafebabe, "the macOS stub is a 64 bit Mach-O or a fat Mach-O", `0x${magic.toString(16)}`);
+    ok(
+      magic === 0xfeedfacf || magic === 0xcafebabe,
+      "the macOS stub is a 64 bit Mach-O or a fat Mach-O",
+      `0x${magic.toString(16)}`,
+    );
     if (magic === 0xfeedfacf) {
       const cpu = mac.readUInt32LE(4);
-      ok(cpu === (toc.arch === ELF_MACHINE.aarch64 ? 0x100000c : 0x1000007), "the macOS stub is for the architecture of the image", `cpu 0x${cpu.toString(16)}`);
+      ok(
+        cpu === (toc.arch === ELF_MACHINE.aarch64 ? 0x100000c : 0x1000007),
+        "the macOS stub is for the architecture of the image",
+        `cpu 0x${cpu.toString(16)}`,
+      );
     }
     facts.stubMacosSha256 = createHash("sha256").update(mac).digest("hex");
   }
@@ -148,7 +204,12 @@ export function inspect(file: Buffer, opt: { shell?: string; path?: string } = {
 }
 
 function key(file: Buffer, off: number, len: number): string {
-  return len ? createHash("sha256").update(file.subarray(off, off + len)).digest("hex").slice(0, 16) : "-";
+  return len
+    ? createHash("sha256")
+        .update(file.subarray(off, off + len))
+        .digest("hex")
+        .slice(0, 16)
+    : "-";
 }
 
 if (import.meta.main) {

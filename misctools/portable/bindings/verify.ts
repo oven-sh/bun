@@ -43,7 +43,16 @@ const skipped = new Set<string>();
 let compiled = false;
 let lastErrors = "";
 for (let round = 0; round < 40 && !compiled; round++) {
-  const command = [cc, "-ferror-limit=0", "-w", `-I${join(libuv, "include")}`, ...[...skipped].map(m => `-D${m}`), "-o", exe, source];
+  const command = [
+    cc,
+    "-ferror-limit=0",
+    "-w",
+    `-I${join(libuv, "include")}`,
+    ...[...skipped].map(m => `-D${m}`),
+    "-o",
+    exe,
+    source,
+  ];
   const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe" });
   if (result.exitCode === 0) {
     compiled = true;
@@ -71,8 +80,12 @@ facts.architecture = process.arch;
 facts.compiler = Bun.spawnSync([cc, "--version"], { stdout: "pipe" }).stdout.toString().split("\n")[0];
 facts.left_out = {
   types,
-  fields: [...skipped].filter(m => m.startsWith("SKIP_FIELD_") && !types.some(t => m.startsWith(`SKIP_FIELD_${t}_`))).map(m => m.slice("SKIP_FIELD_".length)),
+  fields: [...skipped]
+    .filter(m => m.startsWith("SKIP_FIELD_") && !types.some(t => m.startsWith(`SKIP_FIELD_${t}_`)))
+    .map(m => m.slice("SKIP_FIELD_".length)),
   constants: [...skipped].filter(m => m.startsWith("SKIP_CONSTANT_")).map(m => m.slice("SKIP_CONSTANT_".length)),
 };
 writeFileSync(out, JSON.stringify(facts, null, 1) + "\n");
-console.log(`${out}: ${Object.keys(facts.types).length} types, ${Object.keys(facts.constants).length} constants; left out: ${facts.left_out.types.length} types, ${facts.left_out.fields.length} fields, ${facts.left_out.constants.length} constants`);
+console.log(
+  `${out}: ${Object.keys(facts.types).length} types, ${Object.keys(facts.constants).length} constants; left out: ${facts.left_out.types.length} types, ${facts.left_out.fields.length} fields, ${facts.left_out.constants.length} constants`,
+);

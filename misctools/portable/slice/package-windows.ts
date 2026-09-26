@@ -24,7 +24,9 @@ const args = process.argv.slice(2);
 const { slice, image } = places(args);
 const out = resolve(args[0] ?? join(slice, "windows-package"));
 
-const libuvCommit = /const LIBUV_COMMIT = "([0-9a-f]+)"/.exec(readFileSync(join(repo, "scripts/build/deps/libuv.ts"), "utf8"))![1];
+const libuvCommit = /const LIBUV_COMMIT = "([0-9a-f]+)"/.exec(
+  readFileSync(join(repo, "scripts/build/deps/libuv.ts"), "utf8"),
+)![1];
 const libuvSources = (name: string) => {
   const text = readFileSync(join(repo, "scripts/build/deps/libuv.ts"), "utf8");
   const list = new RegExp(`const ${name} = \\[([^\\]]*)\\]`).exec(text)![1];
@@ -34,9 +36,11 @@ const libuvSources = (name: string) => {
 rmSync(out, { recursive: true, force: true });
 for (const dir of ["host", "patches", "bindings", "expected"]) mkdirSync(join(out, dir), { recursive: true });
 copyFileSync(image, join(out, "bun_fs_slice.img"));
-for (const name of ["host_win.c", "host_win_uv.c", "linux_abi.h", "memory.h"]) copyFileSync(join(tree, "host", name), join(out, "host", name));
+for (const name of ["host_win.c", "host_win_uv.c", "linux_abi.h", "memory.h"])
+  copyFileSync(join(tree, "host", name), join(out, "host", name));
 cpSync(join(repo, "patches/libuv"), join(out, "patches"), { recursive: true });
-for (const name of ["windows_layout.c", "verify.ts", "compare.ts"]) copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
+for (const name of ["windows_layout.c", "verify.ts", "compare.ts"])
+  copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
 cpSync(join(here, "expected"), join(out, "expected"), { recursive: true });
 copyFileSync(join(here, "compare-run.ts"), join(out, "compare-run.ts"));
 

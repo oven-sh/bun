@@ -20,7 +20,17 @@
 //            The Windows host is an input file, the packed PE is only checked
 //            statically (tools/pe-compare.ts).
 import { createHash } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { REPOSITORY, llvmBin } from "../../flags.ts";
 import { inspect } from "../tools/inspect.ts";
@@ -39,13 +49,19 @@ const opt = (name: string, fallback?: string) => {
 const here = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const out = resolve(opt("out", DEFAULT_OUT)!);
 const images = resolve(opt("images", DEFAULT_IMAGES)!);
-const shells = resolve(opt("shells", process.env.PORTABLE_TEST_SHELLS ?? join(REPOSITORY, "build", "portable", "inputs", "shells"))!);
+const shells = resolve(
+  opt("shells", process.env.PORTABLE_TEST_SHELLS ?? join(REPOSITORY, "build", "portable", "inputs", "shells"))!,
+);
 const BUSYBOX = `${shells}/bbin`;
 const ZSH = `${shells}/zsh-x86_64/bin/zsh`;
 const QEMU = "/usr/bin/qemu-aarch64";
 const LLVM = llvmBin();
-const WIN_HOST: Record<string, string> = { x86_64: `${WIN_HOSTS}/host-x64.exe`, aarch64: `${WIN_HOSTS}/host-arm64.exe` };
-const M2 = /^m2: threads=8 total=204263652 thread_locals_ok=8\/8 main_tls=unset file_roundtrip=1 wall_year_ok=1 pid_ok=1 /m;
+const WIN_HOST: Record<string, string> = {
+  x86_64: `${WIN_HOSTS}/host-x64.exe`,
+  aarch64: `${WIN_HOSTS}/host-arm64.exe`,
+};
+const M2 =
+  /^m2: threads=8 total=204263652 thread_locals_ok=8\/8 main_tls=unset file_roundtrip=1 wall_year_ok=1 pid_ok=1 /m;
 const BIGBSS = /^bigbss: bss=4 MiB zero_at_start=4194304 written=4194304 data_ok=1 data_writable=1$/m;
 
 const RUNS = Number(opt("runs", "3"));
@@ -63,7 +79,13 @@ function record(name: string, how: string, runs: number, passes: number, note?: 
 
 type Want = { code?: number; stdout?: RegExp; stderr?: RegExp };
 function once(cmd: string[], env: Record<string, string>, want: Want, cwd?: string): { pass: boolean; why: string } {
-  const p = Bun.spawnSync({ cmd, env: { ...process.env, ...env } as Record<string, string>, stdout: "pipe", stderr: "pipe", cwd });
+  const p = Bun.spawnSync({
+    cmd,
+    env: { ...process.env, ...env } as Record<string, string>,
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd,
+  });
   const stdout = p.stdout.toString();
   const stderr = p.stderr.toString();
   const why: string[] = [];
@@ -74,7 +96,15 @@ function once(cmd: string[], env: Record<string, string>, want: Want, cwd?: stri
   return { pass: why.length === 0, why: why.join("; ") };
 }
 
-function many(name: string, how: string, runs: number, cmd: string[], env: Record<string, string>, want: Want, cwd?: string) {
+function many(
+  name: string,
+  how: string,
+  runs: number,
+  cmd: string[],
+  env: Record<string, string>,
+  want: Want,
+  cwd?: string,
+) {
   if (ONLY && !name.includes(ONLY)) return;
   let passes = 0;
   let why = "";
@@ -147,7 +177,16 @@ for (const [arch, path] of [
     `${arch}: llvm-readobj reads the packed file without an error`,
     "static",
     1,
-    [`${LLVM}/llvm-readobj`, "--file-headers", "--sections", "--coff-imports", "--coff-basereloc", "--coff-load-config", "--unwind", path],
+    [
+      `${LLVM}/llvm-readobj`,
+      "--file-headers",
+      "--sections",
+      "--coff-imports",
+      "--coff-basereloc",
+      "--coff-load-config",
+      "--unwind",
+      path,
+    ],
     {},
     { code: 0, stdout: /Magic: MZ/ },
   );
@@ -178,7 +217,8 @@ check("the signature of the aarch64 container covers the image at its final offs
   const file = readFileSync(a64);
   const toc = decodeToc(file)!;
   const image = stripImageSignature(readFileSync(`${images}/aarch64/threads.img`));
-  if (!file.subarray(toc.imageOff, toc.imageOff + toc.imageLen).equals(image)) throw new Error("the image in the container is not the input image");
+  if (!file.subarray(toc.imageOff, toc.imageOff + toc.imageLen).equals(image))
+    throw new Error("the image in the container is not the input image");
   const bad = failures(checkSignature(file).checks);
   if (bad.length) throw new Error(bad.join(", "));
   if (toc.codeOff !== toc.imageOff) throw new Error("the signed range does not start at the image");
@@ -189,7 +229,8 @@ check("the signature check notices one changed byte in the image", "static", () 
   const toc = decodeToc(file)!;
   file[toc.imageOff + 0x5000] ^= 1;
   const bad = failures(checkSignature(file).checks);
-  if (!bad.some(s => s.includes("hash of every one"))) throw new Error(`the changed byte went unnoticed: ${bad.join(", ") || "no failure"}`);
+  if (!bad.some(s => s.includes("hash of every one")))
+    throw new Error(`the changed byte went unnoticed: ${bad.join(", ") || "no failure"}`);
   return bad.find(s => s.includes("hash of every one"))!;
 });
 check("the same image signed by tools/apple_sign.ts and by the packer give the same hashes", "static", () => {
@@ -215,7 +256,10 @@ check("the image can grow: re-packing puts it at the same offset", "static", () 
   const blob = `${out}/graph.bin`;
   rmSync(grown, { force: true });
   writeFileSync(blob, Buffer.alloc(700 * 1024, 0x42));
-  const p = Bun.spawnSync({ cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${images}/x86_64/threads.img`, grown], stderr: "pipe" });
+  const p = Bun.spawnSync({
+    cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${images}/x86_64/threads.img`, grown],
+    stderr: "pipe",
+  });
   if (!p.success) throw new Error(p.stderr.toString());
   const result = pack({
     arch: "x86_64",
@@ -227,18 +271,27 @@ check("the image can grow: re-packing puts it at the same offset", "static", () 
   writeFileSync(packed, result.file);
   chmodSync(packed, 0o755);
   if (result.report.imageOff !== toc64.imageOff) {
-    throw new Error(`the image moved from 0x${toc64.imageOff.toString(16)} to 0x${result.report.imageOff.toString(16)}`);
+    throw new Error(
+      `the image moved from 0x${toc64.imageOff.toString(16)} to 0x${result.report.imageOff.toString(16)}`,
+    );
   }
   const bad = failures(inspect(result.file, { path: packed }).checks);
   if (bad.length) throw new Error(bad.join(", "));
-  const run = once(["/bin/sh", packed, `${out}/probe-grown.tmp`], { BUN_PORTABLE_CACHE: `${out}/cache-run` }, { code: 42, stdout: M2 });
+  const run = once(
+    ["/bin/sh", packed, `${out}/probe-grown.tmp`],
+    { BUN_PORTABLE_CACHE: `${out}/cache-run` },
+    { code: 42, stdout: M2 },
+  );
   if (!run.pass) throw new Error(run.why);
   return `image ${statSync(`${images}/x86_64/threads.img`).size} -> ${statSync(grown).size} bytes, still at 0x${toc64.imageOff.toString(16)}, and it runs`;
 });
 check("the signed aarch64 container can grow too, and the signature follows", "static", () => {
   const grown = `${out}/grown-a64.img`;
   const blob = `${out}/graph.bin`;
-  const p = Bun.spawnSync({ cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${images}/aarch64/threads.img`, grown], stderr: "pipe" });
+  const p = Bun.spawnSync({
+    cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${images}/aarch64/threads.img`, grown],
+    stderr: "pipe",
+  });
   if (!p.success) throw new Error(p.stderr.toString());
   const result = pack({
     arch: "aarch64",
@@ -353,7 +406,14 @@ for (const [name, shell, env] of [
     continue;
   }
   const dir = fresh(`${out}/cache-${name.replace(/[^a-z0-9]/gi, "").slice(0, 12)}`);
-  many(`x86_64 linux start from ${name}`, "native", RUNS, [shell, x64, `${out}/probe-sh.tmp`], { ...env, BUN_PORTABLE_CACHE: dir }, { code: 42, stdout: M2 });
+  many(
+    `x86_64 linux start from ${name}`,
+    "native",
+    RUNS,
+    [shell, x64, `${out}/probe-sh.tmp`],
+    { ...env, BUN_PORTABLE_CACHE: dir },
+    { code: 42, stdout: M2 },
+  );
 }
 
 many(
@@ -396,7 +456,8 @@ check("the stub is written once, with the bytes that were packed", "native", () 
   }
   const second = statSync(name);
   if (sha(name) !== want) throw new Error("the stub in the cache is not the stub that was packed");
-  if (first!.ino !== second.ino || first!.mtimeMs !== second.mtimeMs) throw new Error("the second start wrote the stub again");
+  if (first!.ino !== second.ino || first!.mtimeMs !== second.mtimeMs)
+    throw new Error("the second start wrote the stub again");
   if (!(second.mode & 0o111)) throw new Error("the stub in the cache is not executable");
   return `${name.split("/").pop()}, ${second.size} bytes, same inode after the second start`;
 });
@@ -416,7 +477,8 @@ await checkAsync("eight first starts at once end with one stub in the cache", "n
   const names = readdirSync(dir);
   if (status.some(c => c !== 42)) throw new Error(`exit codes ${status.join(",")}`);
   if (names.length !== 1) throw new Error(`the cache holds ${names.length} files: ${names.join(", ")}`);
-  if (sha(`${dir}/${names[0]}`) !== sha(`${out}/stub/linux-stub-x86_64`)) throw new Error("the stub in the cache is not the packed stub");
+  if (sha(`${dir}/${names[0]}`) !== sha(`${out}/stub/linux-stub-x86_64`))
+    throw new Error("the stub in the cache is not the packed stub");
   return `8 of 8 runs exited 42, one cache entry: ${names[0]}`;
 });
 
@@ -424,7 +486,12 @@ check("with no BUN_PORTABLE_CACHE, no XDG_CACHE_HOME, no HOME and no TMPDIR the 
   // The four nested defaults of the header script, in a shell whose
   // environment holds nothing but PATH.
   rmSync("/tmp/.cache/bun-portable", { recursive: true, force: true });
-  const p = Bun.spawnSync({ cmd: ["/bin/dash", x64, `${out}/probe-nohome.tmp`], env: { PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
+  const p = Bun.spawnSync({
+    cmd: ["/bin/dash", x64, `${out}/probe-nohome.tmp`],
+    env: { PATH: "/usr/bin:/bin" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (p.exitCode !== 42) throw new Error(`exit ${p.exitCode}: ${p.stderr.toString().slice(0, 200)}`);
   if (!M2.test(p.stdout.toString())) throw new Error("the image did not print its line");
   const names = readdirSync("/tmp/.cache/bun-portable");
@@ -461,9 +528,11 @@ check("the image is mapped from the packed file, not copied", "native", () => {
   }
   const lines = maps.split("\n").filter(l => l.includes("threads-x86_64.com"));
   const exec = lines.find(l => / r-xp /.test(l));
-  if (!exec) throw new Error(`no executable file mapping of the container in the maps of the image:\n${lines.join("\n")}`);
+  if (!exec)
+    throw new Error(`no executable file mapping of the container in the maps of the image:\n${lines.join("\n")}`);
   const offset = parseInt(exec.split(/\s+/)[2], 16);
-  if (offset % 0x10000) throw new Error(`the code is mapped from offset 0x${offset.toString(16)}, not a multiple of 64 KiB`);
+  if (offset % 0x10000)
+    throw new Error(`the code is mapped from offset 0x${offset.toString(16)}, not a multiple of 64 KiB`);
   return `${lines.length} mappings of the container, code from file offset 0x${offset.toString(16)} (r-xp)`;
 });
 
@@ -481,7 +550,11 @@ check("a container in a directory with spaces in its name starts", "native", () 
   const copy = `${dir}/packed file.com`;
   copyFileSync(x64, copy);
   chmodSync(copy, 0o755);
-  const r = once(["/bin/sh", copy, `${out}/probe-space.tmp`], { BUN_PORTABLE_CACHE: `${out}/cache-run` }, { code: 42, stdout: M2 });
+  const r = once(
+    ["/bin/sh", copy, `${out}/probe-space.tmp`],
+    { BUN_PORTABLE_CACHE: `${out}/cache-run` },
+    { code: 42, stdout: M2 },
+  );
   if (!r.pass) throw new Error(r.why);
   return copy;
 });
@@ -508,22 +581,50 @@ many("an unknown system is refused with a message", "native", 1, ["/bin/sh", x64
   code: 1,
   stderr: /SunOS is not one of Linux, Darwin and Windows/,
 });
-many("a container of the other architecture is refused with a message", "native", 1, ["/bin/sh", a64], fakeEnv("Linux", "x86_64"), {
-  code: 1,
-  stderr: /this file holds an image for aarch64, this machine is x86_64/,
-});
-many("a cache directory that cannot be written gives a clear message", "native", 1, ["/bin/sh", x64], { BUN_PORTABLE_CACHE: "/proc/cannot/write/here" }, {
-  code: 1,
-  stderr: /cannot write the linux loader stub|mkdir/,
-});
-many("the Linux stub refuses a file without a table of contents", "native", 1, [`${out}/stub/linux-stub-x86_64`, `${images}/x86_64/threads.img`], {}, {
-  code: 127,
-  stderr: /has no table of contents/,
-});
-many("the Linux stub refuses a container of the other architecture", "native", 1, [`${out}/stub/linux-stub-x86_64`, a64], {}, {
-  code: 127,
-  stderr: /holds an image for another processor/,
-});
+many(
+  "a container of the other architecture is refused with a message",
+  "native",
+  1,
+  ["/bin/sh", a64],
+  fakeEnv("Linux", "x86_64"),
+  {
+    code: 1,
+    stderr: /this file holds an image for aarch64, this machine is x86_64/,
+  },
+);
+many(
+  "a cache directory that cannot be written gives a clear message",
+  "native",
+  1,
+  ["/bin/sh", x64],
+  { BUN_PORTABLE_CACHE: "/proc/cannot/write/here" },
+  {
+    code: 1,
+    stderr: /cannot write the linux loader stub|mkdir/,
+  },
+);
+many(
+  "the Linux stub refuses a file without a table of contents",
+  "native",
+  1,
+  [`${out}/stub/linux-stub-x86_64`, `${images}/x86_64/threads.img`],
+  {},
+  {
+    code: 127,
+    stderr: /has no table of contents/,
+  },
+);
+many(
+  "the Linux stub refuses a container of the other architecture",
+  "native",
+  1,
+  [`${out}/stub/linux-stub-x86_64`, a64],
+  {},
+  {
+    code: 127,
+    stderr: /holds an image for another processor/,
+  },
+);
 
 check("the macOS branch of the header script extracts the macOS stub", "native", () => {
   // A real macOS stub can only be linked on a Mac. What is packed here is the
@@ -546,7 +647,11 @@ check("the macOS branch of the header script extracts the macOS stub", "native",
   if (bad.length) throw new Error(bad.join(", "));
   const dir = fresh(`${out}/cache-mac`);
   const want = sha(standin);
-  const r = once(["/bin/dash", container], { ...fakeEnv("Darwin", "arm64"), BUN_PORTABLE_CACHE: dir }, { code: 126, stderr: /Exec format error/ });
+  const r = once(
+    ["/bin/dash", container],
+    { ...fakeEnv("Darwin", "arm64"), BUN_PORTABLE_CACHE: dir },
+    { code: 126, stderr: /Exec format error/ },
+  );
   if (!r.pass) throw new Error(r.why);
   const name = `${dir}/stub-macos-aarch64-${want.slice(0, 16)}`;
   if (sha(name) !== want) throw new Error("the extracted macOS stub differs from the packed one");
@@ -563,13 +668,21 @@ check("aarch64: the header script extracts its stub here (the exec then needs qe
     { code: 126, stderr: /Exec format error/ },
   );
   if (!r.pass) throw new Error(r.why);
-  if (sha(a64Stub) !== sha(`${out}/stub/linux-stub-aarch64`)) throw new Error("the extracted stub differs from the packed stub");
+  if (sha(a64Stub) !== sha(`${out}/stub/linux-stub-aarch64`))
+    throw new Error("the extracted stub differs from the packed stub");
   return "uname, the cache path and dd are the real ones; this kernel cannot exec an aarch64 program";
 });
-many("aarch64: the extracted stub maps the image out of the container and runs it", "qemu", RUNS, [QEMU, a64Stub, a64, `${out}/probe-a64.tmp`], {}, {
-  code: 42,
-  stdout: M2,
-});
+many(
+  "aarch64: the extracted stub maps the image out of the container and runs it",
+  "qemu",
+  RUNS,
+  [QEMU, a64Stub, a64, `${out}/probe-a64.tmp`],
+  {},
+  {
+    code: 42,
+    stdout: M2,
+  },
+);
 check("aarch64: the whole chain, shell header to image", "qemu", () => {
   // The exec has to go through qemu, so the cache holds a wrapper under the
   // name the header script looks for; it runs qemu on the real stub.
@@ -597,10 +710,17 @@ process.exit(p.exitCode ?? 1);
   if (!r.pass) throw new Error(r.why);
   return "native: dash, uname, dd, chmod, mv, exec; under qemu-aarch64: the stub and the image";
 });
-many("aarch64: the grown container (a section appended to the image) runs", "qemu", 1, [QEMU, a64Stub, `${out}/pack/grown-aarch64.com`, `${out}/probe-a64g.tmp`], {}, {
-  code: 42,
-  stdout: M2,
-});
+many(
+  "aarch64: the grown container (a section appended to the image) runs",
+  "qemu",
+  1,
+  [QEMU, a64Stub, `${out}/pack/grown-aarch64.com`, `${out}/probe-a64g.tmp`],
+  {},
+  {
+    code: 42,
+    stdout: M2,
+  },
+);
 
 /* ================= the second image: a .bss larger than a page ================= */
 for (const [arch, how, cmd] of [
@@ -613,10 +733,17 @@ for (const [arch, how, cmd] of [
     if (bad.length) throw new Error(bad.join(", "));
     return "its writable segment has 4 MiB of zero pages after its file pages";
   });
-  many(`${arch}: the bigbss image starts (zero pages after the file pages)`, how, RUNS, [...cmd], { BUN_PORTABLE_CACHE: `${out}/cache-run` }, {
-    code: 42,
-    stdout: BIGBSS,
-  });
+  many(
+    `${arch}: the bigbss image starts (zero pages after the file pages)`,
+    how,
+    RUNS,
+    [...cmd],
+    { BUN_PORTABLE_CACHE: `${out}/cache-run` },
+    {
+      code: 42,
+      stdout: BIGBSS,
+    },
+  );
 }
 
 /* ================= the hosts, on Linux ================= */
@@ -628,17 +755,38 @@ many(
   {},
   { code: 42, stdout: M2 },
 );
-many("the POSIX host still starts a bare image file (x86_64)", "native", RUNS, [`${out}/host-linux-x86_64`, `${images}/x86_64/threads.img`, `${out}/probe-host2.tmp`], {}, {
-  code: 42,
-  stdout: M2,
-});
-many("the POSIX host maps the image at the right offset (x86_64, BUN_HOST_TRACE)", "native", 1, [`${out}/host-linux-x86_64`, x64, `${out}/probe-host5.tmp`], {
-  BUN_HOST_TRACE: "1",
-}, { code: 42, stderr: new RegExp(`image at 0x${toc64.imageOff.toString(16)}`) });
-many("the POSIX host starts the bigbss image out of its container (x86_64)", "native", 1, [`${out}/host-linux-x86_64`, `${out}/pack/bigbss-x86_64.com`], {}, {
-  code: 42,
-  stdout: BIGBSS,
-});
+many(
+  "the POSIX host still starts a bare image file (x86_64)",
+  "native",
+  RUNS,
+  [`${out}/host-linux-x86_64`, `${images}/x86_64/threads.img`, `${out}/probe-host2.tmp`],
+  {},
+  {
+    code: 42,
+    stdout: M2,
+  },
+);
+many(
+  "the POSIX host maps the image at the right offset (x86_64, BUN_HOST_TRACE)",
+  "native",
+  1,
+  [`${out}/host-linux-x86_64`, x64, `${out}/probe-host5.tmp`],
+  {
+    BUN_HOST_TRACE: "1",
+  },
+  { code: 42, stderr: new RegExp(`image at 0x${toc64.imageOff.toString(16)}`) },
+);
+many(
+  "the POSIX host starts the bigbss image out of its container (x86_64)",
+  "native",
+  1,
+  [`${out}/host-linux-x86_64`, `${out}/pack/bigbss-x86_64.com`],
+  {},
+  {
+    code: 42,
+    stdout: BIGBSS,
+  },
+);
 many(
   "the POSIX host reads the table of contents and maps the image from the container (aarch64)",
   "qemu",
@@ -647,14 +795,33 @@ many(
   {},
   { code: 42, stdout: M2 },
 );
-many("the POSIX host still starts a bare image file (aarch64)", "qemu", RUNS, [QEMU, `${out}/host-linux-aarch64`, `${images}/aarch64/threads.img`, `${out}/probe-host4.tmp`], {}, {
-  code: 42,
-  stdout: M2,
-});
+many(
+  "the POSIX host still starts a bare image file (aarch64)",
+  "qemu",
+  RUNS,
+  [QEMU, `${out}/host-linux-aarch64`, `${images}/aarch64/threads.img`, `${out}/probe-host4.tmp`],
+  {},
+  {
+    code: 42,
+    stdout: M2,
+  },
+);
 
 /* ================= what was not run ================= */
-record("x86_64 and aarch64 windows start", "not run", 0, 0, "no Windows machine here: the packed PE is only checked statically, see tools/pe-compare.ts");
-record("x86_64 and aarch64 macOS start", "not run", 0, 0, "no Mac here: bun tools/mac-stub.ts prints the script a person runs");
+record(
+  "x86_64 and aarch64 windows start",
+  "not run",
+  0,
+  0,
+  "no Windows machine here: the packed PE is only checked statically, see tools/pe-compare.ts",
+);
+record(
+  "x86_64 and aarch64 macOS start",
+  "not run",
+  0,
+  0,
+  "no Mac here: bun tools/mac-stub.ts prints the script a person runs",
+);
 
 /* ================= summary ================= */
 const notRun = results.filter(r => r.how === "not run");

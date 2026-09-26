@@ -190,7 +190,8 @@ export function pack(input: PackInput): { file: Buffer; report: PackReport } {
     // The last step of packing: the hashes are of the pages of the finished
     // file. Nothing inside the signed range may change after this.
     const blob = signature(file.subarray(layout.imageOff, layout.imageOff + layout.codeLen));
-    if (blob.length !== layout.sigLen) throw new Error("the signature came out with a length the layout did not reserve");
+    if (blob.length !== layout.sigLen)
+      throw new Error("the signature came out with a length the layout did not reserve");
     blob.copy(file, layout.sigOff);
   }
   encodeToc({

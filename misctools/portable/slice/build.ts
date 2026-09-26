@@ -65,14 +65,30 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
     done: () => existsSync(join(slice, "cdeps/libcdeps.a")) && existsSync(join(slice, "cdeps/libslice_shim.a")),
     make() {
       const archive = process.env.CDEPS;
-      if (!archive || !existsSync(archive)) throw new Error("CDEPS is not the path of libcdeps.a: the C and C++ that bun's crates call, compiled for the image");
+      if (!archive || !existsSync(archive))
+        throw new Error(
+          "CDEPS is not the path of libcdeps.a: the C and C++ that bun's crates call, compiled for the image",
+        );
       const dir = join(slice, "cdeps");
       rmSync(dir, { recursive: true, force: true });
       mkdirSync(dir, { recursive: true });
       copyFileSync(archive, join(dir, "libcdeps.a"));
       run([
-        `${llvm}/clang`, `--config=${config}`, "-O2", ...cpuFlags(ARCH), "-fno-omit-frame-pointer", "-fno-stack-protector",
-        "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-c", join(here, "src/shim.c"), "-o", join(dir, "shim.o"),
+        `${llvm}/clang`,
+        `--config=${config}`,
+        "-O2",
+        ...cpuFlags(ARCH),
+        "-fno-omit-frame-pointer",
+        "-fno-stack-protector",
+        "-fvisibility=hidden",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-Wall",
+        "-Wextra",
+        "-c",
+        join(here, "src/shim.c"),
+        "-o",
+        join(dir, "shim.o"),
       ]);
       // The archive has its own bun_restore_stdio and friends: the slice's are the ones to link.
       run([`${llvm}/llvm-ar`, "rcs", join(dir, "libslice_shim.a"), join(dir, "shim.o")]);
@@ -84,7 +100,14 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
     make() {
       mkdirSync(join(slice, "logs"), { recursive: true });
       run(
-        [process.execPath, join(REPOSITORY, "scripts/build.ts"), "--mode=codegen", "--profile=portable", `--build-dir=${join(slice, "codegen-build")}`, `-j${jobs}`],
+        [
+          process.execPath,
+          join(REPOSITORY, "scripts/build.ts"),
+          "--mode=codegen",
+          "--profile=portable",
+          `--build-dir=${join(slice, "codegen-build")}`,
+          `-j${jobs}`,
+        ],
         { cwd: REPOSITORY, log: join(slice, "logs/codegen.log") },
       );
       const dir = join(slice, "codegen");
@@ -101,16 +124,33 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       copyFileSync(join(REPOSITORY, "Cargo.lock"), join(here, "Cargo.lock"));
       const map = join(slice, "bun_fs_slice.map");
       const imageLinkFlags: string[] = [];
-      for (let i = 0; i < IMAGE_LINK_FLAGS.length; i += 2) imageLinkFlags.push(`-Clink-arg=-Wl,${IMAGE_LINK_FLAGS[i]},${IMAGE_LINK_FLAGS[i + 1]}`);
+      for (let i = 0; i < IMAGE_LINK_FLAGS.length; i += 2)
+        imageLinkFlags.push(`-Clink-arg=-Wl,${IMAGE_LINK_FLAGS[i]},${IMAGE_LINK_FLAGS[i + 1]}`);
       // scripts/build/rust.ts (release, linux), with what --portable adds. No linker-plugin-lto: the
       // rlibs hold machine code, and the link is the linker's alone.
       const rustflags = [
-        "-Cforce-frame-pointers=yes", "-Cllvm-args=-addrsig", "-Zshare-generics=y", "-Ctarget-cpu=nehalem",
-        "--check-cfg=cfg(bun_asan)", "--check-cfg=cfg(bun_debug)", "--check-cfg=cfg(bun_codegen_embed)", "--cfg=bun_codegen_embed",
-        "--check-cfg=cfg(socket_fault_injection)", "--check-cfg=cfg(bun_portable)", "--check-cfg=cfg(rustix_use_libc)",
-        "--cfg=rustix_use_libc", "--cfg=bun_portable",
-        "-Zlocation-detail=none", "-Alinker_messages", "-Cforce-unwind-tables=no", "--cap-lints=warn",
-        "-Ctarget-feature=+crt-static", "-Crelocation-model=pie", "-Cno-redzone=yes", "-Ztls-model=emulated", "-Clink-self-contained=no",
+        "-Cforce-frame-pointers=yes",
+        "-Cllvm-args=-addrsig",
+        "-Zshare-generics=y",
+        "-Ctarget-cpu=nehalem",
+        "--check-cfg=cfg(bun_asan)",
+        "--check-cfg=cfg(bun_debug)",
+        "--check-cfg=cfg(bun_codegen_embed)",
+        "--cfg=bun_codegen_embed",
+        "--check-cfg=cfg(socket_fault_injection)",
+        "--check-cfg=cfg(bun_portable)",
+        "--check-cfg=cfg(rustix_use_libc)",
+        "--cfg=rustix_use_libc",
+        "--cfg=bun_portable",
+        "-Zlocation-detail=none",
+        "-Alinker_messages",
+        "-Cforce-unwind-tables=no",
+        "--cap-lints=warn",
+        "-Ctarget-feature=+crt-static",
+        "-Crelocation-model=pie",
+        "-Cno-redzone=yes",
+        "-Ztls-model=emulated",
+        "-Clink-self-contained=no",
         `-Clinker=${llvm}/clang++`,
         `-Clink-arg=--config=${config}`,
         "-Clink-arg=-Qunused-arguments",
@@ -120,10 +160,19 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
         "-Clink-arg=-Wl,-z,noexecstack",
         `-Clink-arg=${join(slice, "cdeps/libslice_shim.a")}`,
         `-Clink-arg=${join(slice, "cdeps/libcdeps.a")}`,
-        "-Clink-arg=-lc++", "-Clink-arg=-lclang_rt.builtins",
+        "-Clink-arg=-lc++",
+        "-Clink-arg=-lclang_rt.builtins",
       ];
       run(
-        ["cargo", "build", "--release", "--target", triple, "-Zbuild-std=std,core,alloc,panic_abort", "-Zbuild-std-features=panic-unwind,default"],
+        [
+          "cargo",
+          "build",
+          "--release",
+          "--target",
+          triple,
+          "-Zbuild-std=std,core,alloc,panic_abort",
+          "-Zbuild-std-features=panic-unwind,default",
+        ],
         {
           cwd: here,
           env: {

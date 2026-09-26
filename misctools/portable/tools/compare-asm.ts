@@ -27,11 +27,27 @@
 // the same the report says whether it is the same instructions in another order. A label in a section that
 // is not code is a constant or a variable with a name: they are compared the same way and counted apart.
 import { spawnSync } from "node:child_process";
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 type Digest = { lines: number; text: string; sorted: string; code: boolean };
-type Difference = { name: string; lines_before: number; lines_after: number; same_instructions_in_another_order: boolean };
+type Difference = {
+  name: string;
+  lines_before: number;
+  lines_after: number;
+  same_instructions_in_another_order: boolean;
+};
 
 // In a mangled name: the hash of a crate, and the number of an `impl` block among the ones of its module,
 // which moves when a block is added in front of it.
@@ -41,7 +57,8 @@ const mangled = (text: string) =>
     .replace(/17h[0-9a-f]{16}E/g, "17hE")
     .replace(/(_RNv[MX])s[0-9A-Za-z]*_/g, "$1s_");
 
-const ignored = /^\s*\.(type|size|globl|hidden|weak|section|text|p2align|file|loc|cfi_|ident|addrsig|cv_|local|comm|data|bss|def|scl|endef|seh_)/;
+const ignored =
+  /^\s*\.(type|size|globl|hidden|weak|section|text|p2align|file|loc|cfi_|ident|addrsig|cv_|local|comm|data|bss|def|scl|endef|seh_)/;
 const startsSection = /^\s*\.(section|text|data|bss)\b\s*([^,\s]*)/;
 const localLabel = /\.L[A-Za-z_0-9$.]+|anon\.[0-9a-f]{32}\.\d+|__unnamed_\d+/g;
 
@@ -147,7 +164,12 @@ function compareDigests(before: Record<string, Digest>, after: Record<string, Di
       if (a.code) result.only_before.push(name);
       continue;
     }
-    const difference = { name, lines_before: a.lines, lines_after: b.lines, same_instructions_in_another_order: a.sorted === b.sorted };
+    const difference = {
+      name,
+      lines_before: a.lines,
+      lines_after: b.lines,
+      same_instructions_in_another_order: a.sorted === b.sorted,
+    };
     if (a.code) {
       result.functions_in_both++;
       if (a.text === b.text) result.same++;
@@ -168,11 +190,19 @@ function option(args: string[], name: string): string | undefined {
 }
 
 function run(argv: string[], options: { cwd?: string; env?: Record<string, string | undefined>; log?: string } = {}) {
-  const result = spawnSync(argv[0], argv.slice(1), { cwd: options.cwd, env: options.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 30 });
-  if (options.log !== undefined) writeFileSync(options.log, Buffer.concat([result.stdout ?? Buffer.alloc(0), result.stderr ?? Buffer.alloc(0)]));
+  const result = spawnSync(argv[0], argv.slice(1), {
+    cwd: options.cwd,
+    env: options.env ?? process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 1 << 30,
+  });
+  if (options.log !== undefined)
+    writeFileSync(options.log, Buffer.concat([result.stdout ?? Buffer.alloc(0), result.stderr ?? Buffer.alloc(0)]));
   if (result.status !== 0) {
     const tail = (result.stderr?.toString() ?? "").slice(-4000);
-    throw new Error(`${argv.slice(0, 6).join(" ")} ...: exit ${result.status ?? result.signal}${options.log ? `, log ${options.log}` : ""}\n${tail}`);
+    throw new Error(
+      `${argv.slice(0, 6).join(" ")} ...: exit ${result.status ?? result.signal}${options.log ? `, log ${options.log}` : ""}\n${tail}`,
+    );
   }
   return result.stdout;
 }
@@ -221,17 +251,27 @@ type Package = { name: string; directory: string; library: string };
 
 /** The packages of the workspace of a commit that are libraries of the target (no procedural macros). */
 function packagesAt(repository: string, commit: string): Package[] {
-  const show = (path: string) => spawnSync("git", ["show", `${commit}:${path}`], { cwd: repository, maxBuffer: 1 << 26 });
-  const root = Bun.TOML.parse(run(["git", "show", `${commit}:Cargo.toml`], { cwd: repository }).toString()) as { workspace: { members: string[] } };
+  const show = (path: string) =>
+    spawnSync("git", ["show", `${commit}:${path}`], { cwd: repository, maxBuffer: 1 << 26 });
+  const root = Bun.TOML.parse(run(["git", "show", `${commit}:Cargo.toml`], { cwd: repository }).toString()) as {
+    workspace: { members: string[] };
+  };
   const packages: Package[] = [];
   for (const directory of root.workspace.members) {
     const manifest = show(`${directory}/Cargo.toml`);
     if (manifest.status !== 0) continue;
-    const toml = Bun.TOML.parse(manifest.stdout.toString()) as { package?: { name?: string }; lib?: { name?: string; "proc-macro"?: boolean; path?: string } };
+    const toml = Bun.TOML.parse(manifest.stdout.toString()) as {
+      package?: { name?: string };
+      lib?: { name?: string; "proc-macro"?: boolean; path?: string };
+    };
     if (toml.package?.name === undefined || toml.lib?.["proc-macro"] === true) continue;
     const hasLibrary = toml.lib !== undefined || show(`${directory}/src/lib.rs`).status === 0;
     if (!hasLibrary) continue;
-    packages.push({ name: toml.package.name, directory, library: toml.lib?.name ?? toml.package.name.replaceAll("-", "_") });
+    packages.push({
+      name: toml.package.name,
+      directory,
+      library: toml.lib?.name ?? toml.package.name.replaceAll("-", "_"),
+    });
   }
   return packages;
 }
@@ -245,13 +285,21 @@ if (process.argv[2] === "target") {
   const jobs = Number(option(args, "--jobs") ?? 8);
   const named = option(args, "--crates")?.split(",");
   if (!triple || !work || !commits.before || !commits.after || !["before", "after", "both", "none"].includes(build))
-    throw new Error("usage: bun compare-asm.ts target --target <triple> --before <commit> --after <commit> --work <directory> [--build before|after|both|none] [--crates a,b] [--jobs 8]");
+    throw new Error(
+      "usage: bun compare-asm.ts target --target <triple> --before <commit> --after <commit> --work <directory> [--build before|after|both|none] [--crates a,b] [--jobs 8]",
+    );
   const repository = resolve(import.meta.dir, "../../..");
   const workDirectory = resolve(work);
   const tree = join(workDirectory, "tree");
-  const revision = (commit: string) => run(["git", "rev-parse", `${commit}^{commit}`], { cwd: repository }).toString().trim();
+  const revision = (commit: string) =>
+    run(["git", "rev-parse", `${commit}^{commit}`], { cwd: repository })
+      .toString()
+      .trim();
   const revisions = { before: revision(commits.before), after: revision(commits.after) };
-  const changedFiles = run(["git", "diff", "--name-only", revisions.before, revisions.after], { cwd: repository }).toString().split("\n").filter(Boolean);
+  const changedFiles = run(["git", "diff", "--name-only", revisions.before, revisions.after], { cwd: repository })
+    .toString()
+    .split("\n")
+    .filter(Boolean);
 
   for (const label of ["before", "after"] as const) {
     if (build !== "both" && build !== label) continue;
@@ -260,7 +308,9 @@ if (process.argv[2] === "target") {
     const flags = rustflags(triple, tree);
     const inputs = { commit: revisions[label], rustflags: flags };
     const packages = packagesAt(repository, revisions[label]);
-    const wanted = packages.filter(p => (named ? named.includes(p.name) : changedFiles.some(file => file.startsWith(p.directory + "/"))));
+    const wanted = packages.filter(p =>
+      named ? named.includes(p.name) : changedFiles.some(file => file.startsWith(p.directory + "/")),
+    );
     let built: Record<string, { file: string; symbols: number }> = {};
     if (existsSync(stampPath)) {
       const stamp = JSON.parse(readFileSync(stampPath, "utf8"));
@@ -282,18 +332,35 @@ if (process.argv[2] === "target") {
     rmSync(archive);
     // The two path dependencies outside the workspace: cargo reads their manifests to load the workspace.
     for (const dependency of ["lolhtml", "rust-argon2"]) {
-      const from = [join(repository, "vendor", dependency), join(workDirectory, "vendor", dependency)].find(path => existsSync(path));
-      if (from === undefined) throw new Error(`vendor/${dependency} is neither in ${repository} nor in ${workDirectory}: a build of the repository fetches it`);
+      const from = [join(repository, "vendor", dependency), join(workDirectory, "vendor", dependency)].find(path =>
+        existsSync(path),
+      );
+      if (from === undefined)
+        throw new Error(
+          `vendor/${dependency} is neither in ${repository} nor in ${workDirectory}: a build of the repository fetches it`,
+        );
       cpSync(from, join(tree, "vendor", dependency), { recursive: true });
     }
 
     console.log(`${label}: generated sources`);
     const codegen = join(tree, "build", "asm-codegen");
-    run(["bun", "scripts/build.ts", "--mode=codegen", "--profile=release", `--os=${osOf(triple)}`, `--arch=${triple.startsWith("x86_64") ? "x64" : "arm64"}`, `--build-dir=${codegen}`, `-j${jobs}`], {
-      cwd: tree,
-      env: { ...process.env, GIT_SHA: revisions.before },
-      log: join(out, "logs", "codegen.log"),
-    });
+    run(
+      [
+        "bun",
+        "scripts/build.ts",
+        "--mode=codegen",
+        "--profile=release",
+        `--os=${osOf(triple)}`,
+        `--arch=${triple.startsWith("x86_64") ? "x64" : "arm64"}`,
+        `--build-dir=${codegen}`,
+        `-j${jobs}`,
+      ],
+      {
+        cwd: tree,
+        env: { ...process.env, GIT_SHA: revisions.before },
+        log: join(out, "logs", "codegen.log"),
+      },
+    );
 
     console.log(`${label}: cargo build of ${crates.length} crates`);
     const target = join(out, "target");
@@ -337,7 +404,8 @@ if (process.argv[2] === "target") {
     for (const p of crates) {
       const files = assembly.filter(file => basename(file).slice(0, basename(file).lastIndexOf("-")) === p.library);
       const [only] = files;
-      if (files.length !== 1 || only === undefined) throw new Error(`${p.name}: ${files.length} files of assembly below ${written}`);
+      if (files.length !== 1 || only === undefined)
+        throw new Error(`${p.name}: ${files.length} files of assembly below ${written}`);
       const digest = digests(join(written, only));
       writeFileSync(join(out, `${p.name}.json`), JSON.stringify(digest));
       built[p.name] = { file: join(written, only), symbols: Object.keys(digest).length };
@@ -348,10 +416,15 @@ if (process.argv[2] === "target") {
   if (build === "before" || build === "after") process.exit(0);
 
   const sides = { before: join(workDirectory, triple, "before"), after: join(workDirectory, triple, "after") };
-  for (const side of Object.values(sides)) if (!existsSync(join(side, "stamp.json"))) throw new Error(`${side} is not built: nothing to compare`);
-  const stamps = { before: JSON.parse(readFileSync(join(sides.before, "stamp.json"), "utf8")), after: JSON.parse(readFileSync(join(sides.after, "stamp.json"), "utf8")) };
+  for (const side of Object.values(sides))
+    if (!existsSync(join(side, "stamp.json"))) throw new Error(`${side} is not built: nothing to compare`);
+  const stamps = {
+    before: JSON.parse(readFileSync(join(sides.before, "stamp.json"), "utf8")),
+    after: JSON.parse(readFileSync(join(sides.after, "stamp.json"), "utf8")),
+  };
   for (const label of ["before", "after"] as const)
-    if (stamps[label].inputs.commit !== revisions[label]) throw new Error(`${sides[label]} is a build of ${stamps[label].inputs.commit}, not of ${revisions[label]}`);
+    if (stamps[label].inputs.commit !== revisions[label])
+      throw new Error(`${sides[label]} is a build of ${stamps[label].inputs.commit}, not of ${revisions[label]}`);
   const touched = new Set(
     [...packagesAt(repository, revisions.before), ...packagesAt(repository, revisions.after)]
       .filter(p => (named ? named.includes(p.name) : changedFiles.some(file => file.startsWith(p.directory + "/"))))
@@ -374,10 +447,20 @@ if (process.argv[2] === "target") {
     const inBefore = name in stamps.before.crates;
     const inAfter = name in stamps.after.crates;
     if (!inBefore || !inAfter) {
-      report.crates_not_compared.push({ crate: name, why: inBefore ? "not built for the commit after" : inAfter ? "not built for the commit before" : "built for neither commit" });
+      report.crates_not_compared.push({
+        crate: name,
+        why: inBefore
+          ? "not built for the commit after"
+          : inAfter
+            ? "not built for the commit before"
+            : "built for neither commit",
+      });
       continue;
     }
-    const result = compareDigests(JSON.parse(readFileSync(join(sides.before, `${name}.json`), "utf8")), JSON.parse(readFileSync(join(sides.after, `${name}.json`), "utf8")));
+    const result = compareDigests(
+      JSON.parse(readFileSync(join(sides.before, `${name}.json`), "utf8")),
+      JSON.parse(readFileSync(join(sides.after, `${name}.json`), "utf8")),
+    );
     report.crates.push({ crate: name, ...result });
     report.functions_compared += result.functions_in_both;
     report.functions_same += result.same;
@@ -387,17 +470,23 @@ if (process.argv[2] === "target") {
     console.log(
       `${name.padEnd(28)} functions ${result.functions_in_both}, same ${result.same}, different ${result.different.length}, only before ${result.only_before.length}, only after ${result.only_after.length}; constants ${result.constants_in_both}, different ${result.constants_different.length}`,
     );
-    for (const d of result.different) console.log(`   differs${d.same_instructions_in_another_order ? " (same instructions, another order)" : ""}: ${d.name} ${d.lines_before} -> ${d.lines_after}`);
+    for (const d of result.different)
+      console.log(
+        `   differs${d.same_instructions_in_another_order ? " (same instructions, another order)" : ""}: ${d.name} ${d.lines_before} -> ${d.lines_after}`,
+      );
   }
   for (const c of report.crates_not_compared) console.log(`${c.crate.padEnd(28)} NOT COMPARED: ${c.why}`);
   const reportPath = join(workDirectory, triple, "report.json");
   writeFileSync(reportPath, JSON.stringify(report, null, 1) + "\n");
-  console.log(`${triple}: ${report.functions_compared} functions compared, ${report.functions_different} different, ${report.crates.length} crates. ${reportPath}`);
+  console.log(
+    `${triple}: ${report.functions_compared} functions compared, ${report.functions_different} different, ${report.crates.length} crates. ${reportPath}`,
+  );
   process.exit(0);
 }
 
 const [beforePath, afterPath, ...rest] = process.argv.slice(2);
-if (!beforePath || !afterPath) throw new Error("usage: bun compare-asm.ts <before.s> <after.s> [--show name]   or   bun compare-asm.ts target ...");
+if (!beforePath || !afterPath)
+  throw new Error("usage: bun compare-asm.ts <before.s> <after.s> [--show name]   or   bun compare-asm.ts target ...");
 const show = rest[0] === "--show" ? rest[1] : undefined;
 
 if (show) {
@@ -405,8 +494,12 @@ if (show) {
   const after = functions(afterPath, name => name.includes(show));
   for (const [name, { lines: a }] of before) {
     const b = after.get(name)?.lines ?? [];
-    console.log(`== ${name}: ${a.length} lines before, ${b.length} after, ${a.join("\n") === b.join("\n") ? "the same" : "DIFFERENT"}`);
-    if (a.join("\n") !== b.join("\n")) for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) console.log(`   ${i}: ${a[i] ?? ""}   |   ${b[i] ?? ""}`);
+    console.log(
+      `== ${name}: ${a.length} lines before, ${b.length} after, ${a.join("\n") === b.join("\n") ? "the same" : "DIFFERENT"}`,
+    );
+    if (a.join("\n") !== b.join("\n"))
+      for (let i = 0; i < Math.max(a.length, b.length); i++)
+        if (a[i] !== b[i]) console.log(`   ${i}: ${a[i] ?? ""}   |   ${b[i] ?? ""}`);
   }
 }
 const result = compareDigests(digests(beforePath), digests(afterPath));

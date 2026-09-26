@@ -25,13 +25,27 @@ const APPLE_PAGE = 16384;
 
 export type SignatureCheck = { ok: boolean; what: string; detail?: string };
 
-export type Where = { form: "container" | "bare image"; imageOff: number; codeOff: number; codeLen: number; sigOff: number; sigLen: number };
+export type Where = {
+  form: "container" | "bare image";
+  imageOff: number;
+  codeOff: number;
+  codeLen: number;
+  sigOff: number;
+  sigLen: number;
+};
 
 /** Where the image and its signature are, read from the end of the file. */
 export function placeOf(file: Buffer): Where | null {
   const toc = decodeToc(file);
   if (toc) {
-    return { form: "container", imageOff: toc.imageOff, codeOff: toc.codeOff, codeLen: toc.codeLen, sigOff: toc.sigOff, sigLen: toc.sigLen };
+    return {
+      form: "container",
+      imageOff: toc.imageOff,
+      codeOff: toc.codeOff,
+      codeLen: toc.codeLen,
+      sigOff: toc.sigOff,
+      sigLen: toc.sigLen,
+    };
   }
   if (file.length < 40) return null;
   const t = file.subarray(file.length - 40);
@@ -53,7 +67,11 @@ export function checkSignature(file: Buffer): { checks: SignatureCheck[]; where:
     return { checks, where };
   }
   const tail = where.form === "bare image" ? 40 : 128;
-  ok(where.codeOff === where.imageOff, "the signed range starts where the image starts", `code_off 0x${where.codeOff.toString(16)}`);
+  ok(
+    where.codeOff === where.imageOff,
+    "the signed range starts where the image starts",
+    `code_off 0x${where.codeOff.toString(16)}`,
+  );
   ok(where.codeOff % APPLE_PAGE === 0 && where.codeLen % APPLE_PAGE === 0, "the signed range is whole 16 KiB pages");
   ok(where.sigOff === where.codeOff + where.codeLen, "the signature follows the signed range");
   ok(where.sigOff + where.sigLen + tail <= file.length, "the signature and the trailer are the end of the file");
@@ -74,17 +92,36 @@ export function checkSignature(file: Buffer): { checks: SignatureCheck[]; where:
   ok(u32(0) === 0xfade0c02 && u32(4) === cd.length, "CodeDirectory magic and length");
   ok(u32(8) === 0x20400 && u32(12) === 0x20002, "version 0x20400, flags 0x20002 (adhoc, linker-signed)");
   ok(cd[36] === 32 && cd[37] === 2 && cd[39] === 12, "SHA-256 over 4 KiB pages");
-  ok(u32(24) === 0 && codeSlots === where.codeLen / HASH_PAGE && u32(32) === where.codeLen, "no special slots, one slot per page, codeLimit is the range");
-  ok(cd[38] === 0 && u32(40) === 0 && u32(44) === 0 && u32(48) === 0 && u32(52) === 0 && u64(56) === 0n, "the fields that have to be 0");
-  ok(u64(64) === 0n && u64(72) === BigInt(where.codeLen) && u64(80) === 0n, "execSegBase 0, execSegLimit the range, execSegFlags 0");
+  ok(
+    u32(24) === 0 && codeSlots === where.codeLen / HASH_PAGE && u32(32) === where.codeLen,
+    "no special slots, one slot per page, codeLimit is the range",
+  );
+  ok(
+    cd[38] === 0 && u32(40) === 0 && u32(44) === 0 && u32(48) === 0 && u32(52) === 0 && u64(56) === 0n,
+    "the fields that have to be 0",
+  );
+  ok(
+    u64(64) === 0n && u64(72) === BigInt(where.codeLen) && u64(80) === 0n,
+    "execSegBase 0, execSegLimit the range, execSegFlags 0",
+  );
   ok(cd.toString("latin1", identOffset, hashOffset) === IDENT, "the identifier is bun.portable.image");
   ok(hashOffset + 32 * codeSlots === cd.length, "the hash table is the rest of the CodeDirectory");
   let bad = -1;
   for (let i = 0; i < codeSlots && bad < 0; i++) {
     const page = file.subarray(where.codeOff + i * HASH_PAGE, where.codeOff + (i + 1) * HASH_PAGE);
-    if (!createHash("sha256").update(page).digest().equals(cd.subarray(hashOffset + 32 * i, hashOffset + 32 * (i + 1)))) bad = i;
+    if (
+      !createHash("sha256")
+        .update(page)
+        .digest()
+        .equals(cd.subarray(hashOffset + 32 * i, hashOffset + 32 * (i + 1)))
+    )
+      bad = i;
   }
-  ok(bad < 0, `the hash of every one of the ${codeSlots} pages matches the file`, bad < 0 ? undefined : `page ${bad} differs`);
+  ok(
+    bad < 0,
+    `the hash of every one of the ${codeSlots} pages matches the file`,
+    bad < 0 ? undefined : `page ${bad} differs`,
+  );
 
   // What a host maps from the file has to lie inside the signed range.
   const image = file.subarray(where.imageOff);
@@ -106,7 +143,11 @@ export function checkSignature(file: Buffer): { checks: SignatureCheck[]; where:
     mapped++;
   }
   ok(mapped > 0, "the image has segments that are mapped from the file");
-  ok(outside < 0, "every mapped segment is 16 KiB aligned and inside the signed range", outside < 0 ? undefined : `segment ${outside}`);
+  ok(
+    outside < 0,
+    "every mapped segment is 16 KiB aligned and inside the signed range",
+    outside < 0 ? undefined : `segment ${outside}`,
+  );
   return { checks, where };
 }
 

@@ -45,13 +45,37 @@ const cTypeNames: Record<string, string> = {
 const cFieldNames: Record<string, string> = { loop_: "loop", type_: "type" };
 
 const integerTypes = new Set([
-  "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize",
-  "c_int", "c_uint", "c_short", "c_ushort", "c_char", "c_uchar", "c_longlong", "c_ulonglong",
+  "u8",
+  "u16",
+  "u32",
+  "u64",
+  "usize",
+  "i8",
+  "i16",
+  "i32",
+  "i64",
+  "isize",
+  "c_int",
+  "c_uint",
+  "c_short",
+  "c_ushort",
+  "c_char",
+  "c_uchar",
+  "c_longlong",
+  "c_ulonglong",
 ]);
 const unsignedTypes = new Set(["u8", "u16", "u32", "u64", "usize", "c_uint", "c_ushort", "c_uchar", "c_ulonglong"]);
 
 export type Field = { name: string; cName: string; public: boolean };
-export type Type = { kind: "struct" | "union"; rust: string; c: string; packed: boolean; fields: Field[]; file: string; line: number };
+export type Type = {
+  kind: "struct" | "union";
+  rust: string;
+  c: string;
+  packed: boolean;
+  fields: Field[];
+  file: string;
+  line: number;
+};
 export type Constant = { rust: string; c: string; unsigned: boolean; file: string; line: number };
 
 /** Whether the image (x86-64 or arm64, Linux target, `bun_portable`) has an item under this `cfg`. */
@@ -82,7 +106,8 @@ function scan(source: { file: string; path: string }) {
 
   const attributesAbove = (at: number) => {
     const out: string[] = [];
-    for (let i = at - 1; i >= 0 && /^\s*(#\[|\/\/)/.test(lines[i]); i--) if (lines[i].trim().startsWith("#[")) out.push(lines[i].trim());
+    for (let i = at - 1; i >= 0 && /^\s*(#\[|\/\/)/.test(lines[i]); i--)
+      if (lines[i].trim().startsWith("#[")) out.push(lines[i].trim());
     return out;
   };
   const excluded = (attributes: string[]) => {
@@ -127,7 +152,15 @@ function scan(source: { file: string; path: string }) {
         if (!field || /^\s*(\/\/|#\[)/.test(lines[k])) continue;
         fields.push({ name: field[2], cName: cFieldNames[field[2]] ?? field[2], public: field[1] === "pub " });
       }
-      types.push({ kind: type[1] as "struct" | "union", rust, c: cTypeNames[rust] ?? type[2], packed: repr!.includes("packed"), fields, file: source.file, line: i + 1 });
+      types.push({
+        kind: type[1] as "struct" | "union",
+        rust,
+        c: cTypeNames[rust] ?? type[2],
+        packed: repr!.includes("packed"),
+        fields,
+        file: source.file,
+        line: i + 1,
+      });
       continue;
     }
 
@@ -139,7 +172,14 @@ function scan(source: { file: string; path: string }) {
         skipped.push({ name: rust, why, file: source.file, line: i + 1 });
         continue;
       }
-      constants.push({ rust, c: constant[1], unsigned: false, file: source.file, line: i + 1, ...{ type: constant[2].split("::").pop()! } } as Constant & { type: string });
+      constants.push({
+        rust,
+        c: constant[1],
+        unsigned: false,
+        file: source.file,
+        line: i + 1,
+        ...{ type: constant[2].split("::").pop()! },
+      } as Constant & { type: string });
     }
   }
   return { types, constants: constants as (Constant & { type: string })[], aliases, skipped };
@@ -171,12 +211,23 @@ export function collect() {
     for (const constant of s.constants) {
       const base = resolveType(constant.type);
       if (!integerTypes.has(base)) {
-        skipped.push({ name: constant.rust, why: `${constant.type} is not an integer type`, file: constant.file, line: constant.line });
+        skipped.push({
+          name: constant.rust,
+          why: `${constant.type} is not an integer type`,
+          file: constant.file,
+          line: constant.line,
+        });
         continue;
       }
       if (seen.has(`constant ${constant.c}`)) continue;
       seen.add(`constant ${constant.c}`);
-      constants.push({ rust: constant.rust, c: constant.c, unsigned: unsignedTypes.has(base), file: constant.file, line: constant.line });
+      constants.push({
+        rust: constant.rust,
+        c: constant.c,
+        unsigned: unsignedTypes.has(base),
+        file: constant.file,
+        line: constant.line,
+      });
     }
   }
   return { types, constants, skipped };
@@ -284,7 +335,9 @@ pub fn types(report: &mut Report) {
   out.push(`pub fn constants(report: &mut Report) {`);
   out.push(`    let mut out = Vec::new();`);
   constants.forEach((constant, index) => {
-    out.push(`    let _ = write!(out, "${index ? "," : ""}\\n\\"${constant.c}\\":\\"{}\\"", ${constant.rust} as ${constant.unsigned ? "u64" : "i64"});`);
+    out.push(
+      `    let _ = write!(out, "${index ? "," : ""}\\n\\"${constant.c}\\":\\"{}\\"", ${constant.rust} as ${constant.unsigned ? "u64" : "i64"});`,
+    );
   });
   out.push(`    report.raw(&out);`);
   out.push(`}`);
@@ -301,6 +354,8 @@ if (import.meta.main) {
     writeFileSync(join(here, "windows_layout.left-out.json"), JSON.stringify(found.skipped, null, 1) + "\n");
     const fields = found.types.reduce((n, t) => n + t.fields.length, 0);
     const hidden = found.types.reduce((n, t) => n + t.fields.filter(f => !f.public).length, 0);
-    console.log(`${found.types.length} structures and unions with ${fields} fields (${hidden} of them not pub), ${found.constants.length} constants; ${found.skipped.length} items left out (windows_layout.left-out.json)`);
+    console.log(
+      `${found.types.length} structures and unions with ${fields} fields (${hidden} of them not pub), ${found.constants.length} constants; ${found.skipped.length} items left out (windows_layout.left-out.json)`,
+    );
   }
 }

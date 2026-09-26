@@ -62,7 +62,10 @@ export function signature(code: Buffer): Buffer {
   cd.write(IDENT, CD_HEAD, "latin1");
   for (let i = 0; i < slots; i++) {
     const page = code.subarray(i * HASH_PAGE, Math.min((i + 1) * HASH_PAGE, code.length));
-    createHash("sha256").update(page).digest().copy(cd, hashOff + 32 * i);
+    createHash("sha256")
+      .update(page)
+      .digest()
+      .copy(cd, hashOff + 32 * i);
   }
   const sb = Buffer.alloc(20);
   sb.writeUInt32BE(0xfade0cc0, 0); // CSMAGIC_EMBEDDED_SIGNATURE

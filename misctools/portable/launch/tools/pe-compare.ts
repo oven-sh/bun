@@ -31,7 +31,14 @@ import { decodeToc } from "./format.ts";
 import { readPe } from "./pe.ts";
 
 const LLVM = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
-export const READOBJ_ARGS = ["--file-headers", "--sections", "--coff-imports", "--coff-basereloc", "--coff-load-config", "--unwind"];
+export const READOBJ_ARGS = [
+  "--file-headers",
+  "--sections",
+  "--coff-imports",
+  "--coff-basereloc",
+  "--coff-load-config",
+  "--unwind",
+];
 
 /** Lines whose value is a file offset: they move with the PE header. */
 const SHIFTED = new Set(["AddressOfNewExeHeader", "SizeOfHeaders", "PointerToRawData"]);
@@ -77,12 +84,20 @@ export function compareDumps(input: string, packed: string, delta: number): Diff
     if (key && DOS_NOISE.has(key) && y.trim().startsWith(`${key}:`)) continue;
     if (key && SHIFTED.has(key) && y.trim().startsWith(`${key}:`)) {
       const value = (s: string) => {
-        const v = s.trim().slice(key.length + 1).trim();
+        const v = s
+          .trim()
+          .slice(key.length + 1)
+          .trim();
         return v.startsWith("0x") ? parseInt(v, 16) : Number(v);
       };
       const want = value(x) + delta;
       if (value(y) === want) continue;
-      out.push({ line: i + 1, input: x.trim(), packed: y.trim(), why: `a file offset: expected ${want}, the input plus the move ${delta}` });
+      out.push({
+        line: i + 1,
+        input: x.trim(),
+        packed: y.trim(),
+        why: `a file offset: expected ${want}, the input plus the move ${delta}`,
+      });
       continue;
     }
     out.push({ line: i + 1, input: x.trim(), packed: y.trim(), why: "the line differs and is not a file offset" });
@@ -135,12 +150,20 @@ export function comparePe(inputPath: string, packedPath: string): Compare {
       buf.writeUInt32LE(0, sectionTable + 40 * i + 28);
     }
   }
-  check(ha.equals(hb), "the COFF header, the optional header and the section table are the same bytes apart from the file offsets");
+  check(
+    ha.equals(hb),
+    "the COFF header, the optional header and the section table are the same bytes apart from the file offsets",
+  );
   check(
     packedPe.sections.length === hostPe.sections.length &&
       packedPe.sections.every((s, i) => {
         const t = hostPe.sections[i];
-        return s.name === t.name && s.virtualAddress === t.virtualAddress && s.virtualSize === t.virtualSize && s.rawSize === t.rawSize;
+        return (
+          s.name === t.name &&
+          s.virtualAddress === t.virtualAddress &&
+          s.virtualSize === t.virtualSize &&
+          s.rawSize === t.rawSize
+        );
       }),
     "the sections have the same names, addresses and sizes",
   );
@@ -154,7 +177,11 @@ export function comparePe(inputPath: string, packedPath: string): Compare {
       which = `${s.name}: raw data at 0x${t.rawPointer.toString(16)}, expected 0x${(s.rawPointer + delta).toString(16)}`;
       break;
     }
-    if (!input.subarray(s.rawPointer, s.rawPointer + s.rawSize).equals(packed.subarray(t.rawPointer, t.rawPointer + t.rawSize))) {
+    if (
+      !input
+        .subarray(s.rawPointer, s.rawPointer + s.rawSize)
+        .equals(packed.subarray(t.rawPointer, t.rawPointer + t.rawSize))
+    ) {
       sameBytes = false;
       which = `${s.name}: the raw data differs`;
       break;
@@ -175,7 +202,8 @@ export function comparePe(inputPath: string, packedPath: string): Compare {
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const [inputPath, packedPath] = args;
-  if (!inputPath || !packedPath) throw new Error("usage: bun tools/pe-compare.ts <host.exe> <packed.com> [--dumps DIR]");
+  if (!inputPath || !packedPath)
+    throw new Error("usage: bun tools/pe-compare.ts <host.exe> <packed.com> [--dumps DIR]");
   const r = comparePe(inputPath, packedPath);
   const dumps = args.indexOf("--dumps");
   if (dumps >= 0) {
@@ -184,7 +212,8 @@ if (import.meta.main) {
     writeFileSync(`${args[dumps + 1]}/${packedPath.replace(/.*\//, "")}.readobj.txt`, r.packedDump);
   }
   for (const c of r.bytes) console.log(`${c.ok ? "ok  " : "FAIL"} ${c.what}${c.detail ? `  [${c.detail}]` : ""}`);
-  for (const d of r.differences) console.log(`FAIL line ${d.line}: ${d.why}\n     input:  ${d.input}\n     packed: ${d.packed}`);
+  for (const d of r.differences)
+    console.log(`FAIL line ${d.line}: ${d.why}\n     input:  ${d.input}\n     packed: ${d.packed}`);
   const failed = r.bytes.filter(c => !c.ok).length + r.differences.length;
   console.log(
     `${packedPath}: the PE header moved by ${r.delta} bytes; ${r.lines} lines of llvm-readobj (${READOBJ_ARGS.join(" ")}) compared, ` +

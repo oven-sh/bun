@@ -33,8 +33,14 @@ export function collectImports(): Import[] {
     for (let i = 0; i < lines.length; i++) {
       // The attribute is on one line, or its argument is on the line after `#[cfg_attr(`.
       const window = lines.slice(i, i + 4).join(" ");
-      const attribute = /^\s*#\[(?:cfg_attr\(\s*bun_portable,\s*)?bun_portable_macros::imports\(library = "([^"]+)"\)/.exec(window);
-      if (!attribute || !/bun_portable_macros::imports|#\[cfg_attr\($/.test(lines[i]) || (i > 0 && /#\[cfg_attr\($/.test(lines[i - 1].trim()) && !lines[i].includes("#["))) continue;
+      const attribute =
+        /^\s*#\[(?:cfg_attr\(\s*bun_portable,\s*)?bun_portable_macros::imports\(library = "([^"]+)"\)/.exec(window);
+      if (
+        !attribute ||
+        !/bun_portable_macros::imports|#\[cfg_attr\($/.test(lines[i]) ||
+        (i > 0 && /#\[cfg_attr\($/.test(lines[i - 1].trim()) && !lines[i].includes("#["))
+      )
+        continue;
       if (!lines[i].trim().startsWith("#[")) continue;
       let at = i;
       while (at < lines.length && !/extern "(C|system)" \{\s*$/.test(lines[at])) at++;
@@ -48,7 +54,12 @@ export function collectImports(): Import[] {
         if (own) library = own[1];
         const fn = /^\s*(?:pub(?:\([a-z]+\))? )?(?:safe |unsafe )?fn ([A-Za-z_0-9]+)\s*\(/.exec(lines[k]);
         if (fn) {
-          imports.push({ library: library ?? attribute[1], symbol: linkName ?? fn[1], file: relative(repo, file), line: k + 1 });
+          imports.push({
+            library: library ?? attribute[1],
+            symbol: linkName ?? fn[1],
+            file: relative(repo, file),
+            line: k + 1,
+          });
           linkName = library = undefined;
         }
       }
@@ -103,13 +114,21 @@ if (import.meta.main) {
     writeFileSync(path, hostTable(uv));
     console.log(`${path}: ${uv.length} functions`);
   } else if (mode === "--check-libuv") {
-    const sources = ["src", "src/win"].flatMap(dir => readdirSync(join(argument, dir)).filter(n => n.endsWith(".c")).map(n => readFileSync(join(argument, dir, n), "utf8")));
+    const sources = ["src", "src/win"].flatMap(dir =>
+      readdirSync(join(argument, dir))
+        .filter(n => n.endsWith(".c"))
+        .map(n => readFileSync(join(argument, dir, n), "utf8")),
+    );
     // loop-watcher.c defines uv_<kind>_init, _start and _stop with one macro for each kind.
     const byMacro = (name: string) => {
       const watcher = /^uv_([a-z]+)_(init|start|stop)$/.exec(name);
       return watcher !== null && sources.some(text => text.includes(`UV_LOOP_WATCHER_DEFINE(${watcher[1]},`));
     };
-    const missing = uv.filter(name => !byMacro(name) && !sources.some(text => new RegExp(`^[A-Za-z_][A-Za-z_0-9 \\*]*\\b${name}\\s*\\(`, "m").test(text)));
+    const missing = uv.filter(
+      name =>
+        !byMacro(name) &&
+        !sources.some(text => new RegExp(`^[A-Za-z_][A-Za-z_0-9 \\*]*\\b${name}\\s*\\(`, "m").test(text)),
+    );
     console.log(JSON.stringify({ functions: uv.length, not_defined_by_libuv: missing }, null, 1));
     if (missing.length) process.exit(1);
   } else {

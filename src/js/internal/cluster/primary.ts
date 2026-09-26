@@ -366,7 +366,8 @@ function send(worker, message, handle?, cb?) {
 Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect();
+  // A worker that is not online has not run the cluster setup and cannot act on the request: close from here.
+  if (this.state === "none" && this.isConnected()) this.process.disconnect();
   removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;

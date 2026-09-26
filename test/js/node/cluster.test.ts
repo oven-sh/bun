@@ -582,6 +582,170 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
 
+// The primary and the worker of a fixture each print one JSON line on the stdout they share.
+async function runDisconnectFixture(files: Record<string, string>) {
+  using dir = tempDir("cluster-primary-disconnect", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    // Inherited so that on regression the fixture's errors reach the runner log.
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const lines = stdout.split("\n").filter(Boolean);
+  return { ...Object.assign({}, ...lines.map(line => JSON.parse(line))), exitCode };
+}
+
+// A primary's worker.disconnect() only sends a request. The worker closes its servers, waits for
+// their 'close' events and then closes the channel itself, so everything the primary queued before
+// the request still arrives. https://nodejs.org/api/cluster.html#workerdisconnect
+test.concurrent(
+  "primary worker.disconnect() delivers the messages send() already accepted",
+  async () => {
+    const result = await runDisconnectFixture({
+      "main.js": `
+        const cluster = require("node:cluster");
+        const N = 50;
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.once("message", () => {
+            // 64 KiB each, so most of them are still queued behind the socket buffer at disconnect().
+            const payload = Buffer.alloc(64 * 1024, "z").toString();
+            let acked = 0;
+            for (let i = 0; i < N; i++) worker.send({ i, payload }, err => { if (!err) acked++; });
+            worker.disconnect();
+            worker.once("exit", (code, signal) => {
+              console.log(JSON.stringify({ primary: { acked, exit: { code, signal } } }));
+            });
+          });
+        } else {
+          let received = 0;
+          const events = [];
+          process.on("message", () => received++);
+          process.on("disconnect", () => events.push("disconnect after " + received + " messages"));
+          process.on("exit", () => require("node:fs").writeSync(1, JSON.stringify({ worker: events }) + "\\n"));
+          process.send("ready");
+        }
+      `,
+    });
+    expect(result).toEqual({
+      worker: ["disconnect after 50 messages"],
+      primary: { acked: 50, exit: { code: 0, signal: null } },
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+// A repeated request finds the worker's handle table already empty, and must still wait for the first one.
+test.concurrent.each([
+  ["one request", 1],
+  ["a repeated request", 2],
+])(
+  "primary worker.disconnect() keeps the channel up until the worker's servers have closed (%s)",
+  async (_, requests) => {
+    const result = await runDisconnectFixture({
+      "main.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const result = {};
+          const worker = cluster.fork();
+          worker.on("message", msg => {
+            if (msg.port) {
+              const client = net.connect(msg.port, "127.0.0.1");
+              client.on("end", () => client.end());
+              client.resume();
+            } else if (msg === "accepted") {
+              for (let i = 0; i < ${requests}; i++) worker.disconnect();
+              result.connectedAfterDisconnect = worker.isConnected();
+              worker.send("ping", err => {
+                result.ping = err ? err.code : "sent";
+              });
+            }
+          });
+          let pending = 2;
+          const done = () => {
+            if (--pending === 0) console.log(JSON.stringify({ primary: result }));
+          };
+          worker.once("disconnect", done);
+          worker.once("exit", (code, signal) => {
+            result.exit = { code, signal };
+            done();
+          });
+        } else {
+          const events = [];
+          let socket;
+          const server = net.createServer(accepted => {
+            socket = accepted;
+            socket.resume();
+            process.send("accepted");
+          });
+          server.on("close", () => events.push("server close, connected: " + process.connected));
+          // The connection stays open until the worker has either the ping, which follows the
+          // disconnect request on the same channel, or a 'disconnect' that did not wait for the server.
+          process.on("message", msg => {
+            if (msg === "ping") socket.end();
+          });
+          cluster.worker.on("disconnect", () => {
+            events.push("disconnect");
+            socket.end();
+          });
+          process.on("exit", () => require("node:fs").writeSync(1, JSON.stringify({ worker: events }) + "\\n"));
+          server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port }));
+        }
+      `,
+    });
+    expect(result).toEqual({
+      worker: ["server close, connected: true", "disconnect"],
+      primary: { connectedAfterDisconnect: true, ping: "sent", exit: { code: 0, signal: null } },
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+// The worker setup runs when the worker's script loads node:cluster. A script that never does has no
+// handler for the disconnect request, so the primary still has to close that worker's channel itself.
+test.concurrent(
+  "primary worker.disconnect() disconnects a worker whose script never loads node:cluster",
+  async () => {
+    const result = await runDisconnectFixture({
+      "main.js": `
+        const cluster = require("node:cluster");
+        cluster.setupPrimary({ exec: require("node:path").join(__dirname, "worker.js") });
+        const worker = cluster.fork();
+        worker.once("message", () => worker.disconnect());
+        let pending = 2;
+        let exit;
+        const done = () => {
+          if (--pending === 0) console.log(JSON.stringify({ primary: { exit } }));
+        };
+        worker.once("disconnect", done);
+        worker.once("exit", (code, signal) => {
+          exit = { code, signal };
+          done();
+        });
+      `,
+      "worker.js": `
+        const events = [];
+        process.on("disconnect", () => events.push("disconnect"));
+        process.on("exit", () => require("node:fs").writeSync(1, JSON.stringify({ worker: events }) + "\\n"));
+        process.send("ready");
+      `,
+    });
+    expect(result).toEqual({
+      worker: ["disconnect"],
+      primary: { exit: { code: 0, signal: null } },
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
 const listeningPayloadFixture = `
 const cluster = require("node:cluster");
 

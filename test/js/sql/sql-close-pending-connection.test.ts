@@ -6,7 +6,7 @@
 
 // https://github.com/oven-sh/bun/issues/32095
 //
-// A forced pool close (`close({ timeout: "0" })`) must resolve even when a
+// A forced pool close (`close({ timeout: 0 })`) must resolve even when a
 // pool connection has been accepted at the TCP level but the database
 // handshake has not completed yet (a database that is still starting up).
 // Previously the pending queries were rejected but the promise returned by
@@ -18,7 +18,23 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
-import { listeningServer, neverAnsweringServer, pgAuthenticationOk, pgReadyForQuery } from "./wire-frames";
+import type { Server, Socket } from "node:net";
+import {
+  listeningServer,
+  mysqlAckSessionSetup,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
+  mysqlReadPackets,
+  mysqlTextResultSet,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgHold,
+  pgMockServer,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 const drivers = [
   ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED"],
@@ -34,7 +50,7 @@ for (const [name, scheme, closedCode] of drivers) {
       // the server holds the connection open without ever completing the
       // handshake, so the pool connection stays mid-handshake from here on
       await accepted;
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: 0 });
       expect((await queryError).code).toBe(closedCode);
     } finally {
       server.close();
@@ -61,7 +77,7 @@ for (const [name, scheme, closedCode] of drivers) {
       });
       const queryError = sql`SELECT 1`.catch(e => e);
       await accepted;
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: 0 });
       expect((await queryError).code).toBe(closedCode);
       expect(onconnect).not.toHaveBeenCalled();
       expect(onclose).not.toHaveBeenCalled();
@@ -77,7 +93,7 @@ for (const [name, scheme, closedCode] of drivers) {
       const connectError = sql.connect().catch(e => e);
       // close in the same tick: the pool slot exists but its native handle
       // has not been assigned yet
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: 0 });
       expect((await connectError).code).toBe(closedCode);
     } finally {
       server.close();
@@ -125,7 +141,7 @@ test("postgres: close() mid-reconnect does not fire onclose for the unfinished c
     // a new query redials the closed slot, then close() lands mid-handshake
     const queryError = sql`SELECT 1`.catch(e => e);
     await secondAccepted.promise;
-    await sql.close({ timeout: "0" });
+    await sql.close({ timeout: 0 });
     expect((await queryError).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
     expect(onconnect).toHaveBeenCalledTimes(1);
     expect(onclose).toHaveBeenCalledTimes(1);
@@ -175,7 +191,108 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
     expect(errors).toEqual([]);
   } finally {
     // force an immediate close even with waiters queued
-    await sql.close({ timeout: "0" });
+    await sql.close({ timeout: 0 });
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/32038
+//
+// Each mock completes the handshake, holds the first query, and answers it with one text row when `respond()` is
+// called. A close() that waits lets that answer resolve the query. A forced close() has already rejected it. Both
+// outcomes settle, so a close() that wrongly waits fails an assertion instead of hanging.
+
+type HeldQueryMock = { port: number; server: Server; commandReceived: Promise<void>; respond: () => void };
+
+// After the command arrives `received` is settled, so the reset caused by a forced close() is ignored.
+function failUntilCommand(socket: Socket, received: PromiseWithResolvers<void>) {
+  socket.on("error", received.reject);
+  socket.on("close", () => received.reject(new Error("the client disconnected before it sent a command")));
+}
+
+const heldQueryMocks = {
+  async postgres(): Promise<HeldQueryMock> {
+    const received = Promise.withResolvers<void>();
+    const { port, server, release } = await pgMockServer(type => {
+      if (type !== "Q") return;
+      received.resolve();
+      return [
+        pgHold,
+        pgRowDescription([{ name: "x", typeOid: 25 }]),
+        pgDataRow([Buffer.from("1")]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ];
+    });
+    server.on("connection", socket => failUntilCommand(socket, received));
+    return { port, server, commandReceived: received.promise, respond: release };
+  },
+  async mysql(): Promise<HeldQueryMock> {
+    const received = Promise.withResolvers<void>();
+    let respond = () => {};
+    const { port, server } = await listeningServer(socket => {
+      let buffered = Buffer.alloc(0);
+      let authed = false;
+      socket.write(mysqlHandshakeV10());
+      socket.on("data", chunk => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          if (!authed) {
+            authed = true;
+            socket.write(mysqlOkPacket(seq + 1));
+            return;
+          }
+          if (mysqlAckSessionSetup(socket, payload)) return;
+          if (payload[0] !== 0x03 /* COM_QUERY */) return;
+          respond = () => socket.write(mysqlTextResultSet(seq + 1, [{ name: "x", type: 0xfd }], [["1"]]));
+          received.resolve();
+        });
+      });
+      failUntilCommand(socket, received);
+    });
+    return { port, server, commandReceived: received.promise, respond: () => respond() };
+  },
+} as const;
+
+// `false`, `""`, `"0"` and `null` are outside the declared `number` type. JS callers can still pass them.
+const timeoutSpellings = [
+  ["0", 0, "forced"],
+  ['"0"', "0", "forced"],
+  ["false", false, "forced"],
+  ['""', "", "forced"],
+  ["undefined", undefined, "drained"],
+  ["null", null, "drained"],
+  ["NaN", NaN, "invalid"],
+  ["-1", -1, "invalid"],
+] as const;
+
+for (const [name, scheme, closedCode] of drivers) {
+  const rows = { rows: [{ x: "1" }] };
+  const outcomes = {
+    forced: { query: { code: closedCode }, close: "resolved" },
+    drained: { query: rows, close: "resolved" },
+    // The option is rejected before the pool is marked closed, so the query still completes.
+    invalid: { query: rows, close: "ERR_INVALID_ARG_VALUE" },
+  };
+
+  for (const [label, timeout, outcome] of timeoutSpellings) {
+    test(`${name}: close({ timeout: ${label} }) with a query in flight is ${outcome}`, async () => {
+      const { port, server, commandReceived, respond } = await heldQueryMocks[name]();
+      try {
+        await using sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+        const query = sql`select 1 as x`.simple().then(
+          rows => ({ rows }),
+          e => ({ code: e.code }),
+        );
+        await commandReceived;
+        const close = sql.close({ timeout: timeout as any }).then(
+          () => "resolved",
+          e => e.code,
+        );
+        respond();
+        expect({ query: await query, close: await close }).toEqual(outcomes[outcome]);
+      } finally {
+        server.close();
+      }
+    });
+  }
+}

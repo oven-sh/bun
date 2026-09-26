@@ -2,12 +2,31 @@ import assert from "assert";
 import { describe, expect } from "bun:test";
 import { osSlashes } from "harness";
 import path from "path";
-import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
+import {
+  BundlerTestInput,
+  BundlerTestWrappedAPI,
+  dedent,
+  ESBUILD_PATH,
+  itBundled as itBundledBase,
+} from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/default
+
+// Default to the CLI backend. The API backend calls process.chdir, so
+// expectBundled registers its cases with it.serial, and each one is a barrier
+// for the concurrent cases around it. A case that needs Bun.build sets
+// backend: "api" itself.
+const itBundled = Object.assign(
+  (id: string, opts: BundlerTestInput | ((metadata: BundlerTestWrappedAPI) => BundlerTestInput)) =>
+    itBundledBase(
+      id,
+      typeof opts === "function" ? metadata => ({ backend: "cli", ...opts(metadata) }) : { backend: "cli", ...opts },
+    ),
+  { skip: itBundledBase.skip },
+);
 
 describe.concurrent("bundler", () => {
   itBundled("default/SimpleES6", {
@@ -74,7 +93,11 @@ describe.concurrent("bundler", () => {
         module.exports = {Foo};
       `,
     },
-    run: true,
+    onAfterBundle(api) {
+      // The call must stay the target of `new`, not become `new require_foo().Foo`.
+      api.expectFile("/out.js").toContain("new (require_foo()).Foo");
+    },
+    run: { stdout: "" },
   });
   itBundled("default/CommonJSFromES6", {
     files: {
@@ -173,6 +196,7 @@ describe.concurrent("bundler", () => {
     format: "esm",
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportFormsIIFE", {
@@ -255,6 +279,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   // this two were edited heavily. They used to be all importing from `foo`, but here i have it
@@ -312,6 +337,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
+      stdout: "",
     },
     bundling: false,
   } as const;
@@ -385,6 +411,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportChain", {
@@ -399,8 +426,14 @@ describe.concurrent("bundler", () => {
         strictEqual(module.a, 123);
       `,
     },
+    onAfterBundle(api) {
+      // The chain collapses to one binding exported under the final alias.
+      api.expectFile("/out.js").toContain("c as a");
+      api.expectFile("/out.js").not.toMatch(/\bb\b/);
+    },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportInfiniteCycle1", {
@@ -1102,7 +1135,11 @@ describe.concurrent("bundler", () => {
         main('fs')
       `,
     },
-    run: true,
+    onAfterBundle(api) {
+      // A dynamic import of a non-literal stays a dynamic import.
+      api.expectFile("/out.js").toContain("return await import(name);");
+    },
+    run: { stdout: "" },
   });
   itBundled("default/ImportInsideTry", {
     files: {
@@ -1233,7 +1270,12 @@ describe.concurrent("bundler", () => {
         })()
       `,
     },
-    run: true,
+    onAfterBundle(api) {
+      // The call and the hoisted `var` must keep the same name.
+      api.expectFile("/out.js").toContain("b();");
+      api.expectFile("/out.js").toContain("var b = () => {};");
+    },
+    run: { stdout: "" },
   });
   itBundled("default/HashbangBundle", {
     files: {
@@ -1260,8 +1302,12 @@ describe.concurrent("bundler", () => {
       `,
     },
     banner: "#! from banner",
+    // esm output drops the directive. iife keeps it, so all three lines are observable.
+    format: "iife",
+    // The cli backend passes --banner="..." with the quotes in the value.
+    backend: "api",
     onAfterBundle(api) {
-      assert(api.readFile("/out.js").startsWith("#! in file"), "hashbang from banner does not override file hashbang");
+      api.expectFile("/out.js").toStartWith('#! in file\n#! from banner\n"use strict";\n');
     },
   });
   itBundled("default/RequireFSBrowser", {
@@ -1350,6 +1396,7 @@ describe.concurrent("bundler", () => {
     target: "browser",
     run: {
       file: "out.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportFSNode", {
@@ -1370,6 +1417,7 @@ describe.concurrent("bundler", () => {
     target: "node",
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ReExportFSNode", {
@@ -1394,6 +1442,7 @@ describe.concurrent("bundler", () => {
     target: "node",
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportFSNodeInCommonJSModule", {
@@ -1418,6 +1467,7 @@ describe.concurrent("bundler", () => {
     target: "node",
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportWildcardFSNodeES6", {
@@ -1427,13 +1477,18 @@ describe.concurrent("bundler", () => {
         import assert from 'assert';
         import * as fs from 'fs';
         import * as fs2 from './out.js';
-        assert(fs, fs2);
+        assert.strictEqual(fs2.readFileSync, fs.readFileSync);
+        assert.deepStrictEqual(Object.keys(fs2).sort(), Object.keys(fs).filter(k => k !== 'default').sort());
       `,
     },
     format: "esm",
     target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('export * from "fs";');
+    },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ExportWildcardFSNodeCommonJS", {
@@ -1443,13 +1498,20 @@ describe.concurrent("bundler", () => {
         import assert from 'assert';
         import * as fs from 'fs';
         import * as fs2 from './out.js';
-        assert(fs, fs2);
+        assert.strictEqual(fs2.readFileSync, fs.readFileSync);
+        assert.strictEqual(fs2.default.readFileSync, fs.readFileSync);
+        const named = o => Object.keys(o).filter(k => k !== 'default').sort();
+        assert.deepStrictEqual(named(fs2), named(fs));
       `,
     },
     format: "cjs",
     target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('require("fs")');
+    },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/MinifiedBundleES6", {
@@ -1698,6 +1760,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ThisInsideFunction", {
@@ -1764,6 +1827,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
+      stdout: "",
     },
   });
   itBundled("default/ThisWithES6Syntax", {
@@ -1878,7 +1942,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/ArrowFnScope", {
-    // TODO: MANUAL CHECK: make sure the snapshot we use works.
     files: {
       "/entry.js": /* js */ `
         tests = {
@@ -1894,6 +1957,32 @@ describe.concurrent("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
+    onAfterBundle(api) {
+      // Only the parameters are renamed. The globals the comma expressions
+      // assign and read keep their names.
+      const code = api.readFile("/out.js");
+      expect(code).toContain("4: (x = (");
+      expect(code).toContain("7: (y, z, x = (");
+      expect(code.match(/x \+ y \+ z\)/g)).toHaveLength(2);
+      expect(code).not.toMatch(/\((x|y|z)\) =>/);
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert';
+        globalThis.tests = undefined;
+        globalThis.x = globalThis.y = globalThis.z = 0;
+        await import('./out.js');
+        assert.strictEqual(tests[0](1, 2), 3);
+        assert.strictEqual(tests[1](1, 2), 3);
+        assert.strictEqual(tests[2](1, 2, 3), 6);
+        assert.strictEqual(tests[3](1, 2, 3), 6);
+        assert.strictEqual(typeof x, 'function');
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "",
+    },
   });
   itBundled("default/SwitchScopeNoBundle", {
     files: {
@@ -2031,8 +2120,19 @@ describe.concurrent("bundler", () => {
       `,
     },
     format: "iife",
-    outfile: "/out.js",
+    // `var arguments` is only legal in sloppy mode, so the output runs as CommonJS.
+    outfile: "/out.cjs",
     minifyIdentifiers: true,
+    bundling: false,
+    onAfterBundle(api) {
+      // `arguments` inside a regular function is the implicit object and is
+      // never renamed: the 8 functions keep their `(x = arguments)` default
+      // and the 3 `var arguments` redeclarations survive.
+      const code = api.readFile("/out.cjs");
+      expect(code.match(/\(\w+ = arguments\)/g)).toHaveLength(8);
+      expect(code.match(/var arguments;/g)).toHaveLength(3);
+    },
+    run: { stdout: "marker" },
   });
   itBundled("default/WithStatementTaintingNoBundle", {
     files: {
@@ -2199,6 +2299,13 @@ describe.concurrent("bundler", () => {
       `,
     },
     external: ["aws-sdk"],
+    onAfterBundle(api) {
+      // An external package name also covers its subpaths.
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toStrictEqual([
+        { kind: "import-statement", path: "aws-sdk" },
+        { kind: "import-statement", path: "aws-sdk/clients/dynamodb" },
+      ]);
+    },
   });
   itBundled("default/ExternalModuleExclusionScopedPackage", {
     files: {
@@ -2241,6 +2348,12 @@ describe.concurrent("bundler", () => {
       `,
     },
     external: ["@scope/foo"],
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toStrictEqual([
+        { kind: "import-statement", path: "@scope/foo" },
+        { kind: "import-statement", path: "@scope/foo/bar" },
+      ]);
+    },
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
     todo: true,
@@ -2478,6 +2591,11 @@ describe.concurrent("bundler", () => {
       "/entry.js": `import "foo"`,
     },
     bundling: false,
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toStrictEqual([
+        { kind: "import-statement", path: "foo" },
+      ]);
+    },
   });
   itBundled("default/ManyEntryPoints", {
     files: Object.fromEntries([
@@ -2488,6 +2606,15 @@ describe.concurrent("bundler", () => {
       ]),
     ]),
     entryPoints: Array.from({ length: 40 }, (_, i) => `/e${String(i).padStart(2, "0")}.js`),
+    onAfterBundle(api) {
+      // Without splitting every entry gets its own copy of shared.js.
+      for (let i = 0; i < 40; i++) {
+        const code = api.readFile(`/out/e${String(i).padStart(2, "0")}.js`);
+        expect(code).toContain("var shared_default = 123;");
+        expect(code).toContain("console.log(shared_default);");
+        expect(code).not.toContain("import");
+      }
+    },
   });
   itBundled("default/MinifyPrivateIdentifiersNoBundle", {
     files: {
@@ -2520,6 +2647,7 @@ describe.concurrent("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
+    bundling: false,
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       assert(text.includes("doNotRenameMe"), "bundler should not have renamed `doNotRenameMe`");
@@ -2552,6 +2680,7 @@ describe.concurrent("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
+    bundling: false,
     onAfterBundle(api) {
       const text = api.readFile("/out.js");
       const labels = [...text.matchAll(/([a-z0-9]+):/gi)].map(x => x[1]);
@@ -3579,6 +3708,10 @@ describe.concurrent("bundler", () => {
       `,
     },
     bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("await foo;");
+      api.expectFile("/out.js").toContain("for await (foo of bar)");
+    },
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
     files: {
@@ -4859,6 +4992,14 @@ describe.concurrent("bundler", () => {
     },
     format: "cjs",
     target: "node",
+    onAfterBundle(api) {
+      // The entry keeps the real `require` for node, so `require.main` and
+      // `require.cache` survive instead of becoming `__require` members.
+      const code = api.readFile("/out.js");
+      expect(code).toContain("require.main");
+      expect(code).toContain("require.cache");
+      expect(code).not.toContain("__require.");
+    },
   });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
     todo: true,
@@ -5274,11 +5415,29 @@ describe.concurrent("bundler", () => {
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
+    onAfterBundle(api) {
+      // The legacy `for (var i = 1 in {})` initializer becomes a statement
+      // before the loop in every file that has it.
+      for (const entry of relocateEntries) {
+        const code = api.readFile("/out" + entry);
+        expect(code).not.toContain("= 1 in");
+        if (entry !== "/let.js") expect(code).toContain("i = 1;");
+      }
+      // A function declaration in a nested block is hoisted as a `var`.
+      for (const entry of ["/nested.js", "/function-nested.js"]) {
+        const code = api.readFile("/out" + entry);
+        expect(code).not.toContain("function l()");
+        expect(code).toContain("var l");
+      }
+      expect(api.readFile("/out/function.js")).toContain("function l() {}");
+    },
   });
+  // Registered as todo: the harness has no --no-bundle for more than one entry point.
   itBundled("default/VarRelocatingNoBundle", {
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
+    bundling: false,
   });
   itBundled("default/ImportNamespaceThisValue", {
     // GENERATED
@@ -5521,6 +5680,11 @@ describe.concurrent("bundler", () => {
     entryPoints: ["/src/app1/main.ts", "/src/app2/main.ts", "/src/app3/main.ts"],
     outputPaths: ["/out/app1-main.js", "/out/app2-main.js", "/out/app3-main.js"],
     entryNaming: "[dir]-[name].[ext]",
+    onAfterBundle(api) {
+      for (const n of [1, 2, 3]) {
+        api.expectFile(`/out/app${n}-main.js`).toContain(`console.log(${n});`);
+      }
+    },
   });
   // itBundled("default/EntryNamesNonPortableCharacter", {
   //   // GENERATED
@@ -5634,6 +5798,7 @@ describe.concurrent("bundler", () => {
       `,
     },
     minifySyntax: true,
+    run: { stdout: "123" },
   });
   itBundled("default/WarnCommonJSExportsInESMBundle", {
     // GENERATED
@@ -6241,6 +6406,21 @@ describe.concurrent("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
+    onAfterBundle(api) {
+      // The export keeps its public name while the local is minified.
+      const code = api.readFile("/out.js");
+      expect(code).toContain(" as aap");
+      expect(code).not.toContain("function aap(");
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import assert from 'assert';
+        import { aap } from './out.js';
+        assert.strictEqual(aap(false, 4), 'teun');
+        assert.strictEqual(aap(true, 4), 10);
+      `,
+    },
+    run: { file: "/test.js", stdout: "" },
   });
   // itBundled("default/MinifiedJSXPreserveWithObjectSpread", {
   //   // GENERATED

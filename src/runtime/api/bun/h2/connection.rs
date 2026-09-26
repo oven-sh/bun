@@ -355,6 +355,8 @@ pub(crate) struct Connection {
 
     preface_received: usize,
     pub last_stream_id: u32,
+    /// Highest peer-initiated stream id (§5.1.1); never raised by local streams.
+    pub last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -394,6 +396,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -1833,9 +1836,14 @@ impl Connection {
             payload[off + 3],
         ]) & 0x7fff_ffff;
         off += 4;
-        // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and
-        // cannot be reused.
-        if promised == 0 || promised & 1 == 1 || self.streams.contains_key(&promised) {
+        // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and each new one is
+        // numbered above every earlier promise, including promises whose streams have since been
+        // closed and evicted (nghttp2 fails the session for these too).
+        if promised == 0
+            || promised & 1 == 1
+            || promised <= self.last_peer_stream_id
+            || self.streams.contains_key(&promised)
+        {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
@@ -1854,6 +1862,9 @@ impl Connection {
         entry.state = State::ReservedRemote;
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
+        }
+        if promised > self.last_peer_stream_id {
+            self.last_peer_stream_id = promised;
         }
 
         self.header_block.clear();

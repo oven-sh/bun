@@ -65,7 +65,6 @@ public:
 
     bool hasEventListeners() const;
     bool hasEventListeners(const Identifier& eventType) const;
-    bool hasActiveEventListeners(const Identifier& eventType) const;
     bool hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const;
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
@@ -104,6 +103,7 @@ private:
     }
 
     bool removeListener(const Identifier& eventType, SimpleRegisteredEventListener&);
+    bool fireErrorEventListeners(EventEmitterData&, const MarkedArgumentBuffer& arguments);
     bool invokeEventListeners(EventEmitterData&, const Identifier&, SimpleEventListenerVector&, const MarkedArgumentBuffer& arguments);
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
 

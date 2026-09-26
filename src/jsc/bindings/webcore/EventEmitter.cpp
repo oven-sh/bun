@@ -128,12 +128,6 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
     return false;
 }
 
-bool EventEmitter::hasActiveEventListeners(const Identifier& eventType) const
-{
-    auto* data = eventTargetData();
-    return data && data->eventListenerMap.containsActive(eventType);
-}
-
 bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
@@ -194,45 +188,45 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
     return listeners;
 }
 
-// events.errorMonitor in src/js/node/events.ts is Symbol.for("events.errorMonitor").
-static Identifier errorMonitorIdentifier(VM& vm)
-{
-    return Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
-}
-
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    auto* context = scriptExecutionContext();
     auto* data = eventTargetData();
-    if (!context || !data)
+    if (!data)
         return false;
 
-    VM& vm = context->vm();
-    Ref<EventEmitter> protectedThis(*this);
-
-    bool isErrorEvent = eventType == vm.propertyNames->error;
-    if (isErrorEvent) [[unlikely]] {
-        // errorMonitor listeners observe 'error' before its handlers run, whether or not it is handled (see emitError in events.ts).
-        auto errorMonitor = errorMonitorIdentifier(vm);
-        if (auto* monitors = data->eventListenerMap.find(errorMonitor)) [[unlikely]]
-            invokeEventListeners(*data, errorMonitor, *monitors, arguments);
-    }
+    if (eventType == scriptExecutionContext()->vm().propertyNames->error) [[unlikely]]
+        return fireErrorEventListeners(*data, arguments);
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (!listenersVector) [[unlikely]] {
-        if (isErrorEvent && arguments.size() > 0) {
-            auto* thisObject = m_thisObject.get();
-            if (!thisObject)
-                return false;
+    if (!listenersVector) [[unlikely]]
+        return false;
 
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
-            return false;
+    return invokeEventListeners(*data, eventType, *listenersVector, arguments);
+}
+
+// Like emitError in src/js/node/events.ts: the events.errorMonitor listeners run first, whether or not 'error' has a handler.
+bool EventEmitter::fireErrorEventListeners(EventEmitterData& data, const MarkedArgumentBuffer& arguments)
+{
+    Ref<EventEmitter> protectedThis(*this);
+    VM& vm = scriptExecutionContext()->vm();
+
+    // events.ts creates the symbol with Symbol.for.
+    auto errorMonitor = Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
+    if (auto* monitors = data.eventListenerMap.find(errorMonitor)) [[unlikely]]
+        invokeEventListeners(data, errorMonitor, *monitors, arguments);
+
+    auto& errorIdentifier = vm.propertyNames->error;
+    auto* listenersVector = data.eventListenerMap.find(errorIdentifier);
+    if (!listenersVector) {
+        if (arguments.size() > 0) {
+            if (auto* thisObject = m_thisObject.get())
+                Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
         }
         return false;
     }
 
-    return invokeEventListeners(*data, eventType, *listenersVector, arguments);
+    return invokeEventListeners(data, errorIdentifier, *listenersVector, arguments);
 }
 
 bool EventEmitter::invokeEventListeners(EventEmitterData& data, const Identifier& eventType, SimpleEventListenerVector& listeners, const MarkedArgumentBuffer& arguments)
@@ -294,22 +288,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
-        if (exception) [[unlikely]] {
-            auto errorIdentifier = vm.propertyNames->error;
-            auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
-            // A throw while dispatching 'error' (its handlers or its errorMonitor pass) must not emit 'error' again.
-            if (!hasErrorListener || eventType == errorIdentifier || eventType == errorMonitorIdentifier(vm)) {
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
-            } else if (hasErrorListener) {
-                MarkedArgumentBuffer expcep;
-                JSValue errorValue = exception->value();
-                if (!errorValue) {
-                    errorValue = JSC::jsUndefined();
-                }
-                expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTF::move(expcep));
-            }
-        }
+        if (exception) [[unlikely]]
+            Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
     }
 
     return fired;

@@ -111,8 +111,6 @@ pub fn vm_handle_queue_task_concurrently(
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 /// `rejection_owner`: the `Bun.ModuleGraph` whose code rejected the promise
 /// (decided by promiseRejectionTracker when it happened), or null.
-///
-/// Returns [`VirtualMachine::unhandled_rejection_owned`]'s "checkpoint owed".
 pub fn handle_rejected_promise(
     global: &JSGlobalObject,
     promise: &mut JSPromise,

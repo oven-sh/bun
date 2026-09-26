@@ -160,6 +160,10 @@ function emitError(emitter, args) {
     }
   }
 
+  throwUnhandledError(args);
+}
+
+function throwUnhandledError(args): never {
   let er: Error | undefined;
   if (args.length > 0) er = args[0];
 
@@ -294,10 +298,11 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
   var { _events: events } = this;
   if (type === "error") {
-    // With 'error' listeners they are ordinary listeners below: their results are captured too.
-    if (events?.error === undefined) return emitError(this, args);
-    const errorMonitor = events[kErrorMonitor];
-    if (errorMonitor !== undefined) applyHandlers(errorMonitor, this, args);
+    // As node: the monitor first, then 'error' listeners as ordinary (captured) listeners, or the throw.
+    if (events !== undefined && events[kErrorMonitor] !== undefined) {
+      emitWithRejectionCapture.$call(this, kErrorMonitor, ...args);
+    }
+    if (events === undefined || events.error === undefined) throwUnhandledError(args);
   }
   if (events === undefined) return false;
   var handler = events[type];

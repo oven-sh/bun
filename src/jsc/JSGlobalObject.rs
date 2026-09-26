@@ -1120,9 +1120,8 @@ impl JSGlobalObject {
 
     /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
     /// can come back is the VM's termination (taken at this boundary when at loop level).
-    ///
-    /// As in Node, a batch's listeners all run before the ticks and microtasks they queued.
     pub fn handle_rejected_promises(&self) -> JsResult<()> {
+        // As in Node, a batch's listeners all run before the ticks and microtasks they queued.
         while crate::from_js_host_call_generic(self, || {
             JSC__JSGlobalObject__handleRejectedPromises(self)
         })? {

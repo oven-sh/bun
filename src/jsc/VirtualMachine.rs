@@ -4331,14 +4331,14 @@ impl VirtualMachine {
     ) {
         // Reported as it happens: it belongs to the context that is current.
         let owner = Bun__ModuleGraph__rejecting(global_object);
-        let _ = self.unhandled_rejection_owned(global_object, reason, promise, owner);
+        if self.unhandled_rejection_owned(global_object, reason, promise, owner) {
+            let _ = self.event_loop_mut().drain_microtasks();
+        }
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
     /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
-    ///
-    /// Returns whether a process 'unhandledRejection' listener took it: a microtask checkpoint is owed.
-    #[must_use]
+    #[must_use = "true: the caller owes a microtask checkpoint once its batch is reported"]
     pub fn unhandled_rejection_owned(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4356,8 +4356,7 @@ impl VirtualMachine {
         if owner.is_cell()
             && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
         {
-            let _ = self.event_loop_mut().drain_microtasks();
-            return false;
+            return true;
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
@@ -4366,10 +4365,6 @@ impl VirtualMachine {
             return false;
         }
 
-        // Each arm but the default mode's drains microtasks on exit — hoisted into a closure.
-        let drain = |this: &mut Self| {
-            let _ = this.event_loop_mut().drain_microtasks();
-        };
         // Wrapper over the `Bun__handleUnhandledRejection` FFI call (returns
         // whether a JS handler claimed it). Captures `global_object` / `reason`
         // / `promise` so the six branches below stay concise.
@@ -4395,14 +4390,12 @@ impl VirtualMachine {
             }
             Mode::None => {
                 let _ = handle_unhandled();
-                drain(self);
-                return false; // ignore the unhandled rejection
+                return true; // ignore the unhandled rejection
             }
             Mode::Warn => {
                 let _ = handle_unhandled();
                 emit_warning(self);
-                drain(self);
-                return false;
+                return true;
             }
             Mode::WarnWithErrorCode => {
                 let handled = handle_unhandled();
@@ -4410,8 +4403,7 @@ impl VirtualMachine {
                     emit_warning(self);
                     self.exit_handler.exit_code = 1;
                 }
-                drain(self);
-                return false;
+                return true;
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
@@ -4420,18 +4412,15 @@ impl VirtualMachine {
                 if !handled {
                     emit_warning(self);
                 }
-                drain(self);
-                return false;
+                return true;
             }
             Mode::Throw => {
                 if handle_unhandled() {
-                    drain(self);
-                    return false;
+                    return true;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
-                    drain(self);
-                    return false;
+                    return true;
                 }
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the

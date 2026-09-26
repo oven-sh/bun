@@ -904,6 +904,28 @@ describe("EventEmitter captureRejections", () => {
     expect(monitor.mock.calls).toEqual([[err]]);
   });
 
+  test("'error' throws when the error monitor removed the last 'error' listener", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const onError = mock();
+    ee.on("error", onError);
+    ee.on(EventEmitter.errorMonitor, () => ee.off("error", onError));
+    const err = new Error("y");
+    expect(() => ee.emit("error", err)).toThrow(err);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test("a rejecting error monitor listener reaches the emitter's rejection handler", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    ee[captureRejectionSymbol] = (err, type, ...args) => resolve([err.message, type, args.map(arg => arg.message)]);
+    ee.on(EventEmitter.errorMonitor, async () => {
+      throw new Error("monitor failed");
+    });
+    ee.on("error", () => {});
+    ee.emit("error", new Error("x"));
+    expect(await promise).toEqual(["monitor failed", EventEmitter.errorMonitor, ["x"]]);
+  });
+
   // Promises/A+: any thenable a listener returns is followed; `then` is read
   // once, and a `then` getter that throws is emitted as 'error'.
   test("captures thenables, reading `then` once", async () => {

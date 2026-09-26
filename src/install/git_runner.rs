@@ -91,8 +91,14 @@ impl Finalize {
             }),
             Finalize::PublishRepo(staging) => {
                 let name = task.request_git_clone().name.slice().to_vec();
+                // A bare clone has no completion marker: like `begin_clone`, take any folder for one.
                 staging
-                    .publish(&mut task.log, &name, &bare_repo_folder_name(task.id))
+                    .publish(
+                        &mut task.log,
+                        &name,
+                        &bare_repo_folder_name(task.id),
+                        |_| true,
+                    )
                     .map(|dir| Task::Data {
                         git_clone: ManuallyDrop::new(dir.into_raw()),
                     })
@@ -184,7 +190,7 @@ fn finish_checkout(task: &mut Task::Task<'_>, staging: CacheStaging) -> Result<E
     }
 
     let folder_name = checkout_folder_name(&resolved);
-    let package_dir = staging.publish(&mut task.log, &name, &folder_name)?;
+    let package_dir = staging.publish(&mut task.log, &name, &folder_name, is_tagged_checkout)?;
     read_package_json(task, package_dir)
 }
 
@@ -298,39 +304,78 @@ impl CacheStaging {
         let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
     }
 
+    /// Renames the staging folder to `folder_name` and opens it.
+    ///
+    /// Another install that shares the cache may publish `folder_name` first and
+    /// already be reading it. A folder there that passes `is_complete` is kept and
+    /// opened, and the staging folder is discarded. Only one that fails it is replaced.
     fn publish(
         self,
         log: &mut bun_ast::Log,
         name: &[u8],
         folder_name: &[u8],
+        is_complete: fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
-        let renamed = bun_sys::renameat_concurrently_a(
-            self.cache_dir,
-            &self.tmp_name,
-            self.cache_dir,
-            folder_name,
-            bun_sys::RenameatConcurrentlyOptions {
-                move_fallback: false,
-            },
-        );
-        // After an exchange the temporary name holds the folder that was replaced.
+        const MAX_ATTEMPTS: u32 = 4;
+        let cache_dir = bun_sys::Dir::borrow(&self.cache_dir);
+        let from = bun_core::ZBox::from_bytes(&self.tmp_name);
+        let to = bun_core::ZBox::from_bytes(folder_name);
+        let mut attempts = 0;
+        let err = loop {
+            // `rename` replaces a directory only when it is empty, so this never
+            // overwrites a published folder.
+            let Err(err) = bun_sys::renameat(self.cache_dir, &from, self.cache_dir, &to) else {
+                return cache_dir.open_at(folder_name).map_err(Error::from);
+            };
+            attempts += 1;
+            // What takes the name is removed in ways that cannot remove a published
+            // folder, one that appears under the name meanwhile included.
+            match cache_dir.open_at_with(
+                folder_name,
+                bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW,
+            ) {
+                Ok(published) if is_complete(&published) => {
+                    self.discard();
+                    return Ok(published);
+                }
+                _ if attempts == MAX_ATTEMPTS => break err,
+                // Emptied through its own handle; `rmdir` only removes an empty folder.
+                Ok(incomplete) => {
+                    delete_children(&incomplete);
+                    incomplete.close();
+                    let _ = bun_sys::rmdirat(self.cache_dir, &to);
+                }
+                // Not a folder, or gone by now; `unlink` never removes a folder.
+                Err(_) => {
+                    let _ = bun_sys::unlinkat(self.cache_dir, &to);
+                }
+            }
+        };
         self.discard();
-        if let Err(err) = renamed {
-            log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "moving \"{}\" to cache dir failed: {}",
-                    BStr::new(name),
-                    err
-                ),
-            );
-            return Err(Error::InstallFailed);
-        }
-        bun_sys::Dir::borrow(&self.cache_dir)
-            .open_at(folder_name)
-            .map_err(Error::from)
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "moving \"{}\" to cache dir failed: {}",
+                BStr::new(name),
+                err
+            ),
+        );
+        Err(Error::InstallFailed)
     }
+}
+
+/// Deletes what `dir` holds. Nothing is looked up through the name of `dir`.
+fn delete_children(dir: &bun_sys::Dir) {
+    let mut entries = bun_sys::iterate_dir(dir.fd());
+    while let Ok(Some(entry)) = entries.next() {
+        let _ = dir.delete_tree(entry.name.slice_u8());
+    }
+}
+
+/// `.bun-tag` is written last, so a checkout that has it is complete.
+fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
+    bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag"))
 }
 
 /// `<hex(clone task id)>.git`: the cache folder of a bare clone.
@@ -560,7 +605,7 @@ impl GitSubprocess {
 
         match bun_sys::Dir::borrow(&this.cache_dir).open_at(&checkout_folder_name(&resolved)) {
             Ok(dir) => {
-                if bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag")) {
+                if is_tagged_checkout(&dir) {
                     Self::finish_on_pool(this, Finalize::CachedCheckout(dir));
                     return Ok(());
                 }

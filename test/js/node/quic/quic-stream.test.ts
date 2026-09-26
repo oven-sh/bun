@@ -374,3 +374,333 @@ describe("headers queued before the handshake", () => {
     client.close();
   });
 });
+
+// lsquic refuses a header block with a value over 65535 bytes, so
+// sendHeaders() returns false. A body write or a FIN that follows fails
+// (EILSEQ, no header block): the stream must be reset with H3_INTERNAL_ERROR,
+// not retried on every engine tick and not sent as a headerless response.
+describe("a response after a refused header block", () => {
+  const H3_INTERNAL_ERROR = 0x102n;
+  const refused = { ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() };
+
+  async function roundTrip(respond: (stream: any) => boolean | undefined | Promise<boolean | undefined>) {
+    const serverSide = Promise.withResolvers<{ sent: boolean | undefined; error: any }>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          new Promise<boolean | undefined>(resolve => resolve(respond(this))).then(
+            sent =>
+              this.closed.then(
+                () => serverSide.resolve({ sent, error: undefined }),
+                (error: any) => serverSide.resolve({ sent, error }),
+              ),
+            error => serverSide.resolve({ sent: undefined, error }),
+          );
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    });
+
+    const clientError = await stream.closed.then(
+      () => undefined,
+      (error: any) => error,
+    );
+    const { sent, error: serverError } = await serverSide.promise;
+    client.close();
+    return { sent, clientError, serverError };
+  }
+
+  test("a body write resets the stream with H3_INTERNAL_ERROR instead of retrying forever", async () => {
+    const { sent, clientError, serverError } = await roundTrip(stream => {
+      const sent = stream.sendHeaders(refused);
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      stream.writer.endSync();
+      return sent;
+    });
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("an empty body resets the stream with H3_INTERNAL_ERROR instead of a bare FIN", async () => {
+    const { sent, clientError, serverError } = await roundTrip(stream => {
+      const sent = stream.sendHeaders(refused);
+      stream.writer.endSync();
+      return sent;
+    });
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("a terminal header block with no body resets the stream with H3_INTERNAL_ERROR", async () => {
+    const { sent, clientError, serverError } = await roundTrip(stream =>
+      stream.sendHeaders(refused, { terminal: true }),
+    );
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("a body parked before a refused header block resets the stream with H3_INTERNAL_ERROR", async () => {
+    const { sent, clientError, serverError } = await roundTrip(async stream => {
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      // Let the first write fail and park while the stream has no header block.
+      for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+      return stream.sendHeaders(refused);
+    });
+    expect(sent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  test("refused trailers reset the stream with H3_INTERNAL_ERROR", async () => {
+    let trailersSent: boolean | undefined;
+    const { clientError, serverError } = await roundTrip(stream => {
+      stream.onwanttrailers = function (this: any) {
+        trailersSent = this.sendTrailers({ "x-one": refused["x-one"] });
+      };
+      stream.sendHeaders({ ":status": "200" });
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      stream.writer.endSync();
+      return undefined;
+    });
+    expect(trailersSent).toBe(false);
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+    expect({ code: serverError?.code, errorCode: serverError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+
+  // The client queues its request block before lsquic opens the stream, so
+  // sendHeaders() reports true and the refusal is only known at open time.
+  test("a refused request block rejects the client stream's closed promise", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      },
+    );
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const stream = await client.createBidirectionalStream({
+      headers: {
+        ":method": "GET",
+        ":path": "/",
+        ":scheme": "https",
+        ":authority": "localhost",
+        "x-one": refused["x-one"],
+      },
+    });
+    const clientError = await stream.closed.then(
+      () => undefined,
+      (error: any) => error,
+    );
+    client.close();
+    expect({ code: clientError?.code, errorCode: clientError?.errorCode }).toEqual({
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_INTERNAL_ERROR,
+    });
+  });
+});
+
+// A body queued before sendHeaders() also fails the write with EILSEQ. That
+// is not a refusal: the bytes wait for the header block and follow it.
+describe("a body written before the header block", () => {
+  async function responseTo(respond: (stream: any) => Promise<void>) {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          respond(this).catch(() => {});
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const gotHeaders = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders(headers: Record<string, string>) {
+        gotHeaders.resolve(headers[":status"]);
+      },
+    });
+
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString();
+    }
+    client.close();
+    return { status: await gotHeaders.promise, body };
+  }
+
+  // Yield so engine passes run between the steps of a response.
+  const tick = async () => {
+    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  };
+
+  test("is delivered after sendHeaders()", async () => {
+    const { status, body } = await responseTo(async stream => {
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      await tick();
+      stream.sendHeaders({ ":status": "200" });
+      stream.writer.endSync();
+    });
+    expect(status).toBe("200");
+    expect(body).toBe("body");
+  });
+
+  test("a refused block after an accepted interim block leaves the stream open for a retry", async () => {
+    const { status, body } = await responseTo(async stream => {
+      expect(stream.sendInformationalHeaders({ ":status": "100" })).toBe(true);
+      expect(stream.sendHeaders({ ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() })).toBe(false);
+      // The accepted block armed a write event. It must not fail the stream.
+      await tick();
+      expect(stream.sendHeaders({ ":status": "200" })).toBe(true);
+      stream.writer.writeSync(new TextEncoder().encode("body"));
+      stream.writer.endSync();
+    });
+    expect(status).toBe("200");
+    expect(body).toBe("body");
+  });
+
+  // A peer RESET_STREAM closes the read side only. The response still goes out.
+  test("is delivered after sendHeaders() when the peer reset its send side first", async () => {
+    const serverSaw = Promise.withResolvers<void>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          stream.onreset = async () => {
+            stream.writer.writeSync(new TextEncoder().encode("body"));
+            await tick();
+            stream.sendHeaders({ ":status": "200" });
+            stream.writer.endSync();
+            serverSaw.resolve();
+          };
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders() {},
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    });
+    await client.opened;
+    const gotHeaders = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      onheaders(headers: Record<string, string>) {
+        gotHeaders.resolve(headers[":status"]);
+      },
+    });
+    stream.closed.catch(() => {});
+    stream.sendHeaders({ ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" });
+    stream.resetStream(0n);
+
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString();
+    }
+    await serverSaw.promise;
+    client.close();
+
+    expect(await gotHeaders.promise).toBe("200");
+    expect(body).toBe("body");
+  });
+
+  test("a retried header block after a refused terminal one keeps the body open", async () => {
+    const { status, body } = await responseTo(async stream => {
+      expect(
+        stream.sendHeaders({ ":status": "200", "x-one": Buffer.alloc(70000, "~").toString() }, { terminal: true }),
+      ).toBe(false);
+      expect(stream.sendHeaders({ ":status": "200" })).toBe(true);
+      stream.writer.writeSync(new TextEncoder().encode("bo"));
+      await tick();
+      stream.writer.writeSync(new TextEncoder().encode("dy"));
+      stream.writer.endSync();
+    });
+    expect(status).toBe("200");
+    expect(body).toBe("body");
+  });
+});

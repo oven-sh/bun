@@ -88,6 +88,28 @@ pub(super) enum PendingEnd {
     Trailers,
 }
 
+/// What lsquic did with the last outgoing header block.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum HeaderBlock {
+    #[default]
+    Accepted,
+    Refused,
+    RefusedTerminal,
+}
+
+impl HeaderBlock {
+    fn refused(self) -> bool {
+        self != HeaderBlock::Accepted
+    }
+    fn from_send(rv: c_int, eos: bool) -> Self {
+        match (rv, eos) {
+            (0, _) => HeaderBlock::Accepted,
+            (_, true) => HeaderBlock::RefusedTerminal,
+            (_, false) => HeaderBlock::Refused,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Outbound {
     pub data: VecDeque<u8>,
@@ -121,6 +143,7 @@ pub(crate) struct QuicStream {
     peer_stop_sending_code: Cell<Option<u64>>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
+    header_block: Cell<HeaderBlock>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
     pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
@@ -153,6 +176,7 @@ impl QuicStream {
             peer_stop_sending_code: Cell::new(None),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
+            header_block: Cell::new(HeaderBlock::Accepted),
             priority: Cell::new(DEFAULT_PRIORITY),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
@@ -238,16 +262,19 @@ impl QuicStream {
         let mut want_write = false;
         for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 {
-                if eos {
-                    self.with_state(|st| {
-                        st.fin_sent = 1;
-                        st.write_ended = 1;
-                    });
-                    s.shutdown(1);
-                } else {
-                    want_write = true;
-                }
+            let block = HeaderBlock::from_send(s.send_headers(&bytes, count, eos), eos);
+            self.header_block.set(block);
+            if block.refused() {
+                // A refused terminal block fails the stream at the next write event.
+                want_write |= eos;
+            } else if eos {
+                self.with_state(|st| {
+                    st.fin_sent = 1;
+                    st.write_ended = 1;
+                });
+                s.shutdown(1);
+            } else {
+                want_write = true;
             }
         }
         if uni {
@@ -477,6 +504,45 @@ impl QuicStream {
         }
     }
 
+    fn drop_outbound(&self, s: lsquic::Stream) {
+        self.outbound.with_mut(|o| {
+            o.data.clear();
+            o.end = PendingEnd::None;
+        });
+        self.with_state(|st| st.write_ended = 1);
+        s.want_write(false);
+    }
+
+    fn fail_outbound(&self, s: lsquic::Stream) {
+        let code = self
+            .session_ref()
+            .map_or(1, QuicSession::internal_error_code);
+        self.drop_outbound(s);
+        self.with_state(|st| {
+            st.reset = 1;
+            if st.reset_code == 0 {
+                st.reset_code = code;
+            }
+        });
+        self.wrote_to_lsquic.set(true);
+        s.reset(code);
+    }
+
+    /// -1 (EILSEQ, ECONNRESET, EBADF) is not flow control: no write event clears it.
+    fn on_write_failed(&self, s: lsquic::Stream) {
+        // `reset` alone is a peer RESET_STREAM, which leaves the send side open.
+        let send_open = self.peer_stop_sending_code.get().is_none()
+            && self.with_state(|st| st.write_ended == 0 && st.fin_sent == 0);
+        if !send_open {
+            self.drop_outbound(s);
+        } else if self.header_block.get().refused() {
+            self.fail_outbound(s);
+        } else {
+            // No header block yet: a later send_headers re-arms the write.
+            s.want_write(false);
+        }
+    }
+
     fn drain_outbound(&self) {
         let Some(s) = self.ls() else { return };
         loop {
@@ -489,7 +555,11 @@ impl QuicStream {
                 (a.to_vec(), a.len())
             };
             let n = s.write(&slice);
-            if n <= 0 {
+            if n < 0 {
+                self.on_write_failed(s);
+                return;
+            }
+            if n == 0 {
                 self.note_write_blocked();
                 break;
             }
@@ -510,6 +580,16 @@ impl QuicStream {
             (out.data.is_empty(), out.end)
         };
         if empty {
+            // Neither a FIN nor trailers can follow a refused header block.
+            let refused_end = match self.header_block.get() {
+                HeaderBlock::Accepted => false,
+                HeaderBlock::Refused => end != PendingEnd::None,
+                HeaderBlock::RefusedTerminal => true,
+            };
+            if refused_end {
+                self.on_write_failed(s);
+                return;
+            }
             if end == PendingEnd::Fin {
                 s.shutdown(1);
                 self.wrote_to_lsquic.set(true);
@@ -784,7 +864,7 @@ impl QuicStream {
                     .is_some_and(|session| session.has_deferred_abort(s.raw()));
                 if !deferred {
                     let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
-                    if code != 0 || !send_ended {
+                    if code != 0 || !send_ended || self.header_block.get().refused() {
                         s.reset(code);
                     } else {
                         self.outbound.with_mut(|o| {
@@ -958,6 +1038,7 @@ impl QuicStream {
             return Ok(JSValue::js_boolean(true));
         };
         let rv = s.send_headers(&bytes, header_count, eos);
+        self.header_block.set(HeaderBlock::from_send(rv, eos));
         if rv == 0 {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);
@@ -966,6 +1047,7 @@ impl QuicStream {
                     s.fin_sent = 1;
                     s.write_ended = 1;
                 });
+                self.outbound.with_mut(|o| o.end = PendingEnd::None);
                 s.shutdown(1);
                 if let Some(session) = self.session_ref() {
                     session.schedule_process();
@@ -975,6 +1057,14 @@ impl QuicStream {
             }
             Ok(JSValue::js_boolean(true))
         } else {
+            // Queued output or a terminal refusal fails the stream at the next write event.
+            let pending = {
+                let out = self.outbound.get();
+                !out.data.is_empty() || out.end != PendingEnd::None
+            };
+            if eos || pending {
+                self.kick_write();
+            }
             Ok(JSValue::js_boolean(false))
         }
     }

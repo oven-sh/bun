@@ -3294,8 +3294,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_SCHEME] === undefined) {
       headers[HTTP2_HEADER_SCHEME] = parentRequestHeaders?.[HTTP2_HEADER_SCHEME] || this.scheme;
     }
-    if (headers[HTTP2_HEADER_AUTHORITY] === undefined && parentRequestHeaders) {
-      headers[HTTP2_HEADER_AUTHORITY] = parentRequestHeaders[HTTP2_HEADER_AUTHORITY];
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2929-L2930
+    if (getAuthority(headers) === undefined && parentRequestHeaders) {
+      headers[HTTP2_HEADER_AUTHORITY] = getAuthority(parentRequestHeaders);
     }
     const pushId = parser.getNextStream();
     if (pushId === -1) {

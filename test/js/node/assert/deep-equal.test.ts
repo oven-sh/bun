@@ -3,6 +3,7 @@
 // cross-checked against Node.js. Cases Bun gets wrong today are marked `test.failing`.
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
+import { createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
 import util from "node:util";
 
 type Thunk = () => unknown;
@@ -24,6 +25,20 @@ interface Case {
 
 const sym = Symbol("shared");
 const sharedArrayBuffer = new ArrayBuffer(4);
+
+const secretKeyA = createSecretKey(Buffer.from("secret-A"));
+const secretKeyA2 = createSecretKey(Buffer.from("secret-A"));
+const secretKeyB = createSecretKey(Buffer.from("secret-B"));
+const ecPairA = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const ecPairB = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const ecPublicA2 = createPublicKey(ecPairA.publicKey.export({ type: "spki", format: "pem" }));
+const hmac256 = { name: "HMAC", hash: "SHA-256" };
+const cryptoKeyA = secretKeyA.toCryptoKey(hmac256, true, ["sign"]);
+const cryptoKeyA2 = secretKeyA2.toCryptoKey(hmac256, true, ["sign"]);
+const cryptoKeyB = secretKeyB.toCryptoKey(hmac256, true, ["sign"]);
+const cryptoKeyANotExtractable = secretKeyA.toCryptoKey(hmac256, false, ["sign"]);
+const cryptoKeyAVerify = secretKeyA.toCryptoKey(hmac256, true, ["verify"]);
+const cryptoKeyASha512 = secretKeyA.toCryptoKey({ name: "HMAC", hash: "SHA-512" }, true, ["sign"]);
 
 function float64WithNaNPayload(bits: bigint) {
   const arr = new Float64Array(1);
@@ -943,6 +958,102 @@ const cases: Case[] = [
     strict: true,
     loose: true,
   },
+
+  // KeyObject and CryptoKey: node compares the key material (comparisons.js isKeyObject /
+  // isCryptoKey arms), not the (empty) set of own properties.
+  {
+    name: "two secret keys with the same material",
+    a: () => secretKeyA,
+    b: () => secretKeyA2,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two secret keys with different material",
+    a: () => secretKeyA,
+    b: () => secretKeyB,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "objects holding secret keys with different material",
+    a: () => ({ k: secretKeyA }),
+    b: () => ({ k: secretKeyB }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a secret key with an extra own property and a plain one",
+    a: () => Object.assign(createSecretKey(Buffer.from("secret-A")), { x: 1 }),
+    b: () => secretKeyA,
+    strict: false,
+    loose: false,
+  },
+  { name: "a secret key and an empty object", a: () => secretKeyA, b: () => ({}), strict: false, loose: false },
+  {
+    name: "two public keys with the same material",
+    a: () => ecPairA.publicKey,
+    b: () => ecPublicA2,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two public keys from different key pairs",
+    a: () => ecPairA.publicKey,
+    b: () => ecPairB.publicKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two private keys from different key pairs",
+    a: () => ecPairA.privateKey,
+    b: () => ecPairB.privateKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a public key and the private key of the same pair",
+    a: () => ecPairA.publicKey,
+    b: () => ecPairA.privateKey,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two CryptoKeys with the same material",
+    a: () => cryptoKeyA,
+    b: () => cryptoKeyA2,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two CryptoKeys with different material",
+    a: () => cryptoKeyA,
+    b: () => cryptoKeyB,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two CryptoKeys that differ only in extractable",
+    a: () => cryptoKeyA,
+    b: () => cryptoKeyANotExtractable,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two CryptoKeys that differ only in usages",
+    a: () => cryptoKeyA,
+    b: () => cryptoKeyAVerify,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two CryptoKeys that differ only in algorithm",
+    a: () => cryptoKeyA,
+    b: () => cryptoKeyASha512,
+    strict: false,
+    loose: false,
+  },
+  { name: "a CryptoKey and a KeyObject", a: () => cryptoKeyA, b: () => secretKeyA, strict: false, loose: false },
 ];
 
 function caught(fn: () => void): (Error & { code?: string }) | null {
@@ -1117,6 +1228,15 @@ describe("detached ArrayBuffer", () => {
     expect(() =>
       assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
     ).not.toThrow();
+  });
+
+  test("assert.partialDeepStrictEqual compares CryptoKey material, algorithm, usages and extractable", () => {
+    expect(() => assert.partialDeepStrictEqual(cryptoKeyA, cryptoKeyA2)).not.toThrow();
+    expect(() => assert.partialDeepStrictEqual(cryptoKeyA, cryptoKeyB)).toThrow(assert.AssertionError);
+    expect(() => assert.partialDeepStrictEqual(cryptoKeyA, cryptoKeyASha512)).toThrow(assert.AssertionError);
+    expect(() => assert.partialDeepStrictEqual(cryptoKeyA, cryptoKeyAVerify)).toThrow(assert.AssertionError);
+    expect(() => assert.partialDeepStrictEqual(cryptoKeyA, cryptoKeyANotExtractable)).toThrow(assert.AssertionError);
+    expect(() => assert.partialDeepStrictEqual(cryptoKeyA, secretKeyA)).toThrow(assert.AssertionError);
   });
 
   test("error matches Node's message", () => {

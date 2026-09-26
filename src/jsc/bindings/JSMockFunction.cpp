@@ -1444,6 +1444,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMock__toThisStrict(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue)
+{
+    return JSValue::encode(JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()));
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
@@ -1474,7 +1479,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     // from this value instead of the activation-time clock.
     Bun__FakeTimers__setSystemTime(globalObject, ms);
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, ECMAMode::strict()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

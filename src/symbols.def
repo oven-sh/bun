@@ -95,7 +95,9 @@ EXPORTS
   uv_fs_event_getpath
   uv_fs_scandir_next
   uv_loop_configure
-  uv_default_loop
+  ; Addons get the main thread's driven loop, not libuv's (never-run) real
+  ; default loop. See Bun__uv_default_loop in src/runtime/napi/napi_body.rs.
+  uv_default_loop=Bun__uv_default_loop
   uv_loop_new
   uv_loop_close
   uv_loop_delete

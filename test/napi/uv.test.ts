@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
+import defaultLoopSource from "./uv-stub-stuff/default_loop.c";
 import source from "./uv-stub-stuff/uv_impl.c";
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
@@ -182,5 +183,58 @@ describe.if(!isWindows)("uv stubs", () => {
       afterClose: -constants.errno.EBADF,
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// On Windows bun links real libuv and addons resolve uv_* from bun.exe. The
+// exported uv_default_loop must return the loop bun drives: NAN-era addons
+// (ibm_db) call uv_queue_work(uv_default_loop(), ...) directly, and the
+// after-work callback only fires when that loop runs (#40225). libuv's real
+// default loop exists in the binary but nothing ever runs it.
+describe.if(isWindows && canBuildNodeAddons())("uv_default_loop", () => {
+  let addon: {
+    queueWork: (cb: (ranWork: number) => void) => void;
+    defaultLoopIsNapiLoop: () => boolean;
+  };
+
+  beforeAll(async () => {
+    const files = {
+      "default_loop.c": await Bun.file(defaultLoopSource).text(),
+      // `bun --bun node-gyp` (the napi-app recipe): under node, config.gypi
+      // inherits clang=1 and lld linker flags from node's own build and MSBuild
+      // then wants the ClangCL toolset, which plain VS installs lack.
+      "package.json": JSON.stringify({
+        "name": "default-loop-addon",
+        "version": "1.0.0",
+        "gypfile": true,
+        "scripts": {
+          "install": "bun --bun node-gyp rebuild",
+        },
+        "dependencies": {
+          "node-gyp": "^11.2.0",
+        },
+      }),
+      "binding.gyp": `{
+        "targets": [
+          {
+            "target_name": "default_loop",
+            "sources": [ "default_loop.c" ],
+          },
+        ]
+      }`,
+    };
+    const tempdir = tempDirWithFiles("uv-default-loop", files);
+    await Bun.$`${bunExe()} i`.env(bunEnv).cwd(tempdir);
+    addon = require(path.join(tempdir, "build/Release/default_loop.node"));
+    // The MSBuild compile of the addon overruns the default 5s hook timeout.
+  }, 300_000);
+
+  test("returns the loop bun drives", () => {
+    expect(addon.defaultLoopIsNapiLoop()).toBe(true);
+  });
+
+  test("uv_queue_work on it delivers the after-work callback", async () => {
+    const ranWork = await new Promise(resolve => addon.queueWork(resolve));
+    expect(ranWork).toBe(1);
   });
 });

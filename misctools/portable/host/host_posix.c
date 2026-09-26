@@ -436,7 +436,38 @@ static long forward_file_request(long n, long a, long b, long c, long d, long e,
       return -L_ENOSYS;
   }
 }
+
+/* ---- requests of an event loop, Linux test host ----
+   What bun's event loop for Linux asks for: epoll, eventfd, sockets, pipes,
+   child processes. Passed on as they are, for the same reason. A child
+   process is started by vfork and execve: vfork of the image's libc on
+   x86-64 is the instruction itself and does not come here, and the child
+   asks for the rest through this host until its execve. */
+static long forward_loop_request(long n, long a, long b, long c, long d, long e, long f) {
+  switch (n) {
+#if defined(__x86_64__)
+    case SYS_epoll_wait: case SYS_eventfd: case SYS_pipe: case SYS_poll: case SYS_dup2: case SYS_accept:
+    case SYS_getrlimit:
+#endif
+    case SYS_epoll_create1: case SYS_epoll_ctl: case SYS_epoll_pwait: case SYS_epoll_pwait2: case SYS_eventfd2:
+    case SYS_timerfd_create: case SYS_timerfd_settime: case SYS_pipe2: case SYS_ppoll:
+    case SYS_socket: case SYS_socketpair: case SYS_bind: case SYS_listen: case SYS_accept4: case SYS_connect:
+    case SYS_getsockname: case SYS_getpeername: case SYS_setsockopt: case SYS_getsockopt: case SYS_shutdown:
+    case SYS_sendto: case SYS_recvfrom: case SYS_sendmsg: case SYS_recvmsg: case SYS_sendmmsg: case SYS_recvmmsg:
+    case SYS_preadv2: case SYS_pwritev2: case SYS_memfd_create:
+    case SYS_execve: case SYS_wait4: case SYS_waitid: case SYS_kill: case SYS_pidfd_open: case SYS_pidfd_send_signal:
+    case SYS_setsid: case SYS_setpgid: case SYS_getppid: case SYS_prctl: case SYS_close_range: case SYS_getrusage:
+    case SYS_prlimit64: case SYS_sched_getaffinity:
+      return ret(syscall(n, a, b, c, d, e, f));
+    default:
+      return -L_ENOSYS;
+  }
+}
 #else
+static long forward_loop_request(long n, long a, long b, long c, long d, long e, long f) {
+  (void)n; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
+  return -L_ENOSYS;
+}
 static long forward_file_request(long n, long a, long b, long c, long d, long e, long f) {
   (void)n; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
   return -L_ENOSYS;
@@ -525,7 +556,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
     case N_write: r = ret(write((int)a, (void *)b, (size_t)c)); break;
     case N_open: r = ret(open((const char *)a, host_open_flags(b), (mode_t)c)); break;
     case N_openat: r = ret(openat((int)a == -100 ? AT_FDCWD : (int)a, (const char *)b, host_open_flags(c), (mode_t)d)); break;
-    case N_close: r = a > 2 ? ret(close((int)a)) : 0; break;
+    case N_close: r = (int)a > 2 ? ret(close((int)a)) : 0; break;
     case N_lseek: r = ret(lseek((int)a, (off_t)b, (int)c)); break;
     case N_mmap: {
       void *p = mmap((void *)a, (size_t)b, (int)(c & 7), host_map_flags(d), (int)e, (off_t)f);
@@ -584,7 +615,10 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
     case N_exit: leave_thread(0, 0); r = 0; break;
     case N_exit_group: _exit((int)a);
     case N_tkill: case N_tgkill: _exit(134);
-    default: r = forward_file_request(n, a, b, c, d, e, f); break;
+    default:
+      r = forward_file_request(n, a, b, c, d, e, f);
+      if (r == -L_ENOSYS) r = forward_loop_request(n, a, b, c, d, e, f);
+      break;
   }
   if (trace && (r == -L_ENOSYS || trace > 1)) fprintf(stderr, "[host] syscall %ld(%#lx, %#lx, %#lx) = %ld\n", n, a, b, c, r);
   return r;

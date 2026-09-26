@@ -800,6 +800,7 @@ fn main() {
         flavoured: [...flavoured].sort(),
         once: [...closure].filter(name => !flavoured.has(name)).sort(),
         symbols_of_the_flavour: [...ofFlavour].sort(),
+        symbols_of_the_image: [...ofImage].sort(),
         crates: report,
       },
       null,

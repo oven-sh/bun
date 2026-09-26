@@ -7,9 +7,12 @@
 // Under WORK (default /tmp/portable/n2):
 //   musl/ sysroot/ cdeps/ codegen/     what ../slice/build.ts makes (step "base")
 //   usockets/posix/*.o                 uSockets of bun on epoll, compiled for the image
-//   usockets/windows/*.o               uSockets of bun on libuv, its code for Windows, compiled for the
-//                                      image against windows/uv.h (uv_header.ts); what it defines has a
-//                                      name of its own (<name>__windows)
+//   out/layout.image.json              the layout of bun's bindings of Windows and of libuv in the
+//                                      image: what the file system slice prints for --layout
+//   usockets/windows-include/          what the C for Windows includes (uv_header.ts)
+//   usockets/windows-plain/*.o         uSockets of bun on libuv, its code for Windows, compiled for the
+//                                      image (windows.ts)
+//   usockets/windows/*.o               the same with the names of the flavour (<name>__windows)
 //   loop-c/libloop_c.a                 the C and C++ that bun's crates for POSIX call, compiled for the
 //                                      image from the files bun compiles them from:
 //                                        src/jsc/bindings/bun-spawn.cpp     posix_spawn_bun
@@ -123,7 +126,11 @@ const flavorArguments = (os: string) => [
 
 const steps: Record<string, { done: () => boolean; make: () => void }> = {
   base: {
-    done: () => existsSync(join(sysroot, ".patched")) && existsSync(join(work, "cdeps/libcdeps.a")) && existsSync(join(work, "codegen/build_options.rs")),
+    done: () =>
+      existsSync(join(sysroot, ".patched")) &&
+      existsSync(join(work, "cdeps/libcdeps.a")) &&
+      existsSync(join(work, "codegen/build_options.rs")) &&
+      existsSync(join(out, "layout.image.json")),
     make() {
       mkdirSync(join(work, "logs"), { recursive: true });
       const missing = ["musl", "sysroot", "cdeps", "codegen"].filter(
@@ -133,6 +140,10 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
           ),
       );
       if (missing.length) run(["bun", join(tree, "slice/build.ts"), ...missing], { env: { WORK: work } });
+      if (!existsSync(join(out, "bun_fs_slice.img"))) run(["bun", join(tree, "slice/build.ts"), "image"], { env: { WORK: work } });
+      const layout = Bun.spawnSync([join(out, "bun_fs_slice.img"), "--layout"], { stdout: "pipe" });
+      if (layout.exitCode !== 0) throw new Error("bun_fs_slice.img --layout does not run");
+      writeFileSync(join(out, "layout.image.json"), layout.stdout);
     },
   },
 
@@ -144,7 +155,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       mkdirSync(directory, { recursive: true });
       for (const name of [...usocketsShared, "eventing/epoll_kqueue"])
         run([`${llvm}/clang`, ...cFlags, "-c", join(repo, "packages/bun-usockets/src", `${name}.c`), "-o", join(directory, `${name.split("/").pop()}.o`)]);
-      if (existsSync(join(here, "windows.ts"))) run(["bun", join(here, "windows.ts"), work]);
+      run(["bun", join(here, "windows.ts"), "compile", work]);
     },
   },
 
@@ -172,6 +183,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
     done: () => false,
     make() {
       for (const os of ["posix", "windows"]) run(flavorArguments(os));
+      run(["bun", join(here, "windows.ts"), "rename", work]);
     },
   },
 

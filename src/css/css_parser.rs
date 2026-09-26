@@ -5173,17 +5173,16 @@ pub fn warn_invalid_utf8(log: &mut Log, source: &bun_ast::Source, first_invalid:
         },
         len: REPLACEMENT_CHAR_UTF8.len() as i32,
     };
-    match declared_charset(&source.contents) {
-        Some(charset) if !strings::eql_case_insensitive_ascii(charset, b"utf-8", true) => log
-            .add_range_warning_fmt(
-                Some(source),
-                range,
-                format_args!(
-                    "@charset \"{}\" is not supported, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD",
-                    bstr::BStr::new(charset)
-                ),
+    match ignored_charset(&source.contents) {
+        Some(charset) => log.add_range_warning_fmt(
+            Some(source),
+            range,
+            format_args!(
+                "@charset \"{}\" was ignored, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD",
+                bstr::BStr::new(charset)
             ),
-        _ => log.add_range_warning_fmt(
+        ),
+        None => log.add_range_warning_fmt(
             Some(source),
             range,
             format_args!(
@@ -5193,14 +5192,28 @@ pub fn warn_invalid_utf8(log: &mut Log, source: &bun_ast::Source, first_invalid:
     }
 }
 
-/// The label of a leading `@charset "…";`, matched as the byte pattern of css-syntax-3 §3.2.
-fn declared_charset(contents: &[u8]) -> Option<&[u8]> {
-    let rest = contents.strip_prefix(b"@charset \"")?;
-    let end = strings::index_of_char_usize(&rest[..rest.len().min(1024)], b'"')?;
-    let label = &rest[..end];
-    (rest.get(end + 1) == Some(&b';')
-        && label.iter().all(|b| matches!(b, 0x16..=0x21 | 0x23..=0x7F)))
-    .then_some(label)
+/// The label of a leading `@charset "…";` (the byte pattern of css-syntax-3 §3.2), unless it is empty or names UTF-8.
+fn ignored_charset(contents: &[u8]) -> Option<&[u8]> {
+    const UTF8_LABELS: [&[u8]; 6] = [
+        b"utf-8",
+        b"utf8",
+        b"unicode-1-1-utf-8",
+        b"unicode11utf8",
+        b"unicode20utf8",
+        b"x-unicode20utf8",
+    ];
+    let rest = contents[..contents.len().min(1024)].strip_prefix(b"@charset \"")?;
+    let end = strings::index_of_char_usize(rest, b'"')?;
+    if rest.get(end + 1) != Some(&b';')
+        || !rest[..end]
+            .iter()
+            .all(|b| matches!(b, 0x16..=0x21 | 0x23..=0x7F))
+    {
+        return None;
+    }
+    let label = strings::trim(&rest[..end], b" ");
+    (!label.is_empty() && !strings::eql_any_case_insensitive_ascii(label, &UTF8_LABELS))
+        .then_some(label)
 }
 
 // ───────────────────────────── Token ─────────────────────────────

@@ -104,15 +104,15 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
   });
 
   test("a declared @charset that is not UTF-8 is named in the warning", async () => {
-    // Only UTF-8 is decoded. A Latin-1 sheet used to pass its bytes through by
-    // accident, so the warning says why its text changed.
+    // `@charset` is never honoured. A Latin-1 sheet used to pass its bytes
+    // through by accident, so the warning says why its text changed.
     const { stderr, exitCode, out } = await build(
       { "in.css": raw`@charset "ISO-8859-1";\n.a::before { content: "caf${0xe9}"; }\n` },
       ["./in.css", "--outdir=out"],
     );
     expect(stderr).not.toContain("error");
     expect(stderr).toContain(
-      `warn: @charset "ISO-8859-1" is not supported, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD`,
+      `warn: @charset "ISO-8859-1" was ignored, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD`,
     );
     expect(stderr).toContain("in.css:2:27");
     expect(decoder.decode(out["in.css"]).replaceAll(/\s+/g, "")).toEndWith(`.a:before{content:"caf\uFFFD";}`);
@@ -178,6 +178,114 @@ describe.concurrent("ill-formed bytes are decoded to U+FFFD before tokenizing", 
         },
       ],
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test("each ill-formed shape gets one warning, at its first replaced sequence", async () => {
+    const plain = replacedWarning.slice("warn: ".length);
+    const ignored = (label: string) =>
+      `@charset "${label}" was ignored, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD`;
+    // ASCII, so its length is both the bytes and the UTF-16 units in front of what follows it.
+    const head = '.a::before{content:"ab';
+    const tail = 'cd"}\n';
+
+    type Sheet = { bytes: Buffer; message: string; line: number; column: number; offset: number; css: string };
+    const sheets: Record<string, Sheet> = {
+      // A sync tool cut the file in the middle of a 3-byte character.
+      "file that ends inside a character": {
+        bytes: raw`.a{color:red}/*${0xe2}${0x82}`,
+        message: plain,
+        line: 1,
+        column: 16,
+        offset: 15,
+        css: "color: red",
+      },
+    };
+    // Bytes put between `head` and `tail`, what they decode to (one U+FFFD for each maximal ill-formed
+    // sequence), and how many bytes and UTF-16 units of them come before the first ill-formed byte.
+    const inString: [name: string, bytes: number[], decoded: string, bytesBefore?: number, unitsBefore?: number][] = [
+      ["continuation byte with no lead byte", [0x80], "\uFFFD"],
+      ["two continuation bytes", [0x80, 0xbf], "\uFFFD\uFFFD"],
+      ["byte that no sequence contains", [0xff], "\uFFFD"],
+      ["lead byte followed by ASCII", [0xc3], "\uFFFD"],
+      ["overlong 2-byte form", [0xc0, 0xaf], "\uFFFD\uFFFD"],
+      ["3-byte sequence cut after 2 bytes", [0xe2, 0x82], "\uFFFD"],
+      ["overlong 3-byte form", [0xe0, 0x80, 0x80], "\uFFFD\uFFFD\uFFFD"],
+      ["surrogate", [0xed, 0xa0, 0x80], "\uFFFD\uFFFD\uFFFD"],
+      ["4-byte sequence cut after 3 bytes", [0xf0, 0x9f, 0x98], "\uFFFD"],
+      ["code point above U+10FFFF", [0xf4, 0x90, 0x80, 0x80], "\uFFFD\uFFFD\uFFFD\uFFFD"],
+      ["after a 2-byte character", [0xc3, 0xa9, 0xe9], "\u00e9\uFFFD", 2, 1],
+      ["after a 4-byte character", [0xf0, 0x9f, 0x98, 0x80, 0xff], "\u{1F600}\uFFFD", 4, 2],
+    ];
+    for (const [name, bytes, decoded, bytesBefore = 0, unitsBefore = 0] of inString) {
+      sheets[name] = {
+        bytes: Buffer.concat([Buffer.from(head), Buffer.from(bytes), Buffer.from(tail)]),
+        message: plain,
+        line: 1,
+        column: head.length + unitsBefore + 1,
+        offset: head.length + bytesBefore,
+        css: `content: "ab${decoded}cd"`,
+      };
+    }
+    // A label of UTF-8 and an empty label declare nothing that was ignored.
+    const charsets: [label: string, message: string][] = [
+      ["windows-1252", ignored("windows-1252")],
+      ["utf-16", ignored("utf-16")],
+      ["no-such-encoding", ignored("no-such-encoding")],
+      ["utf8", plain],
+      [" UTF-8 ", plain],
+      ["", plain],
+    ];
+    for (const [label, message] of charsets) {
+      const rule = `@charset "${label}";\n`;
+      sheets[`@charset "${label}"`] = {
+        bytes: Buffer.concat([Buffer.from(rule + head), Buffer.from([0xe9]), Buffer.from(tail)]),
+        message,
+        line: 2,
+        column: head.length + 1,
+        offset: rule.length + head.length,
+        css: `content: "ab\uFFFDcd"`,
+      };
+    }
+
+    const names = Object.keys(sheets);
+    using dir = tempDir(
+      "css-invalid-utf8",
+      Object.fromEntries(names.map((name, i) => [`s${i}.css`, sheets[name].bytes])),
+    );
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { basename } from "node:path";
+         const entrypoints = [...new Bun.Glob("s*.css").scanSync(".")].map(file => "./" + file);
+         const r = await Bun.build({ entrypoints, outdir: "out", throw: false });
+         const logs = r.logs.map(({ level, message, position: p }) =>
+           ({ file: basename(p.file), level, message, line: p.line, column: p.column, offset: p.offset }));
+         console.log(JSON.stringify({ success: r.success, logs }));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { success, logs } = JSON.parse(stdout);
+
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [i, name] of names.entries()) {
+      const { message, line, column, offset, css } = sheets[name];
+      // Throws on any ill-formed sequence: the output must be valid UTF-8.
+      const out = decoder.decode(await Bun.file(join(String(dir), "out", `s${i}.css`)).bytes());
+      actual[name] = {
+        warnings: logs.filter(log => log.file === `s${i}.css`).map(({ file, ...rest }) => rest),
+        css: out.includes(css) ? css : out,
+      };
+      expected[name] = { warnings: [{ level: "warn", message, line, column, offset }], css };
+    }
+    expect({ success, sheets: actual }).toEqual({ success: true, sheets: expected });
     expect(exitCode).toBe(0);
   });
 

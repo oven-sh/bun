@@ -1365,11 +1365,12 @@ pub fn replace_invalid_utf8<'a>(
         return (bytes, None);
     }
     const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
-    let first_invalid = bytes.utf8_chunks().next().map(|chunk| chunk.valid().len());
+    let mut first_invalid = None;
     let mut out_len = 0;
     for chunk in bytes.utf8_chunks() {
         out_len += chunk.valid().len();
         if !chunk.invalid().is_empty() {
+            first_invalid.get_or_insert(out_len);
             out_len += REPLACEMENT.len();
         }
     }

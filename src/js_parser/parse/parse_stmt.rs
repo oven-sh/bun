@@ -1292,9 +1292,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if Self::IS_TYPESCRIPT_ENABLED {
                         // export {type Foo} from 'bar';
                         // ->
-                        // nothing
+                        // nothing for TypeScript transforms. Bun's runtime instead follows
+                        // Node's type stripping and retains the source's evaluation edge.
                         // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                        if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                        if export_clause.clauses.is_empty()
+                            && export_clause.had_type_only_exports
+                            && !p.options.features.commonjs_at_runtime
+                        {
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
                     }
@@ -1463,7 +1467,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let import_clause = p.parse_import_clause()?;
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    if import_clause.had_type_only_imports && import_clause.items.is_empty() {
+                    // Bun's runtime follows Node's type stripping: an inline `type`
+                    // clause removes the binding but retains the source's evaluation edge.
+                    if import_clause.had_type_only_imports
+                        && import_clause.items.is_empty()
+                        && !p.options.features.commonjs_at_runtime
+                    {
                         p.lexer.expect_contextual_keyword(b"from")?;
                         let _ = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;

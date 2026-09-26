@@ -66,6 +66,8 @@ A thread-safe function keeps the process running only for as long as the graph t
 
 `graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and an error in what still runs in its context, such as a tick it had queued, still goes to the graph's error handlers. From then on:
 
+Keep a reference to a graph for as long as its work should run. When nothing references a graph any more, the garbage collector frees it, and Bun then closes what its code opened as `dispose()` does. A `fetch()` or a file read that was in flight never settles.
+
 - `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
 - `import()` from a function of the graph that the host calls fails the same way.
 - `import()` by the disposed graph's own leftover code stays pending.

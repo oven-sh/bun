@@ -1059,6 +1059,25 @@ describe.concurrent("bun build --server-components", () => {
     ]);
   });
 
+  test("a non-JS file that starts with a directive is plain data", async () => {
+    using dir = tempDir("sc-text-import", {
+      "server.ts": `import note from "./note.txt"; console.log(note);`,
+      "note.txt": `"use client";\nhello`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "server.ts");
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "// @bun
+      // note.txt
+      var note_default = \`"use client";
+      hello\`;
+
+      // server.ts
+      console.log(note_default);"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
   test("directives are still plain strings without the flag", async () => {
     using dir = tempDir("sc-flag-off", {
       "server.ts": `import { Button } from "./client"; console.log(Button());`,

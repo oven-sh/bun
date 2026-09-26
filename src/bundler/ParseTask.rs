@@ -2406,7 +2406,10 @@ pub mod parse_worker {
         let framework_server_components = topts
             .framework
             .and_then(|framework| framework.server_components.as_ref());
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
+        let use_directive: UseDirective = if !is_empty
+            && topts.server_components
+            && loader.is_javascript_like()
+        {
             UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
         } else {
             UseDirective::None

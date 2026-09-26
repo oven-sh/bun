@@ -87,9 +87,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Private associated fns on this impl so they can see the const-generic
     // feature params.
 
-    fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_new_target(p: &mut Self, _e: &mut Expr, _: ExprIn) {
         // The "Cannot use \"new.target\" here" range error is intentionally
         // not emitted: it is not necessary and it was causing breakages.
+        // `new.target` has the scope of `this`.
+        if !p.fn_only_data_visit.is_this_nested {
+            p.has_top_level_new_target = true;
+        }
     }
 
     fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {

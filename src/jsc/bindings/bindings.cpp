@@ -3503,6 +3503,17 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
+// True when the view's bytes belong to a `WebAssembly.Memory`. A memory hands
+// out its buffer, so only a view that already has one can be backed by it and
+// nothing is materialized here.
+static bool viewIsWasmMemory(JSC::JSArrayBufferView* view)
+{
+    if (!view->hasArrayBuffer())
+        return false;
+    JSC::ArrayBuffer* buffer = view->possiblySharedBuffer();
+    return buffer && buffer->isWasmMemory();
+}
+
 bool JSC__JSValue__asArrayBuffer(
     JSC::EncodedJSValue encodedValue,
     JSC::JSGlobalObject* globalObject,
@@ -3538,6 +3549,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->cell_type = type;
         out->shared = view->isShared();
         out->resizable = view->isResizableOrGrowableShared();
+        out->wasm_memory = viewIsWasmMemory(view);
         break;
     }
     case JSC::JSType::ArrayBufferType: {
@@ -3548,6 +3560,7 @@ bool JSC__JSValue__asArrayBuffer(
         out->cell_type = JSC::JSType::ArrayBufferType;
         out->shared = buffer->isShared();
         out->resizable = buffer->isResizableOrGrowableShared();
+        out->wasm_memory = buffer->isWasmMemory();
         break;
     }
     case JSC::JSType::ObjectType:
@@ -3559,6 +3572,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->cell_type = view->type();
             out->shared = view->isShared();
             out->resizable = view->isResizableOrGrowableShared();
+            out->wasm_memory = viewIsWasmMemory(view);
         } else if (JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
@@ -3569,6 +3583,7 @@ bool JSC__JSValue__asArrayBuffer(
             out->cell_type = JSC::JSType::ArrayBufferType;
             out->shared = buffer->isShared();
             out->resizable = buffer->isResizableOrGrowableShared();
+            out->wasm_memory = buffer->isWasmMemory();
         } else {
             return false;
         }
@@ -7181,5 +7196,6 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
     out->resizable = self->isResizableOrGrowableShared();
+    out->wasm_memory = self->isWasmMemory();
     out->pinned = false;
 }

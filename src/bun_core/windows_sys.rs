@@ -6,7 +6,7 @@
 //! deps, so no cycle); only the `bun_core`-specific console consts and the
 //! `Zeroable` impls live here. All declarations are zero-cost FFI
 //! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
-#![cfg(windows)]
+#![cfg(any(windows, bun_portable))]
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 pub use bun_windows_sys::{
@@ -48,7 +48,6 @@ pub use bun_windows_sys::{
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
 // `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
-#[cfg(windows)]
 unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export
@@ -58,6 +57,7 @@ pub use bun_windows_sys::kernel32;
 /// `bun.windows.libuv` — only `uv_disable_stdio_inheritance` is called from
 /// `bun_core`; declared directly to avoid a `bun_libuv_sys` dep at tier-0.
 pub mod libuv {
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "libuv"))]
     unsafe extern "C" {
         /// No preconditions; walks the CRT fd table and clears HANDLE_FLAG_INHERIT.
         pub(crate) safe fn uv_disable_stdio_inheritance();

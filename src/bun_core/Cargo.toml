@@ -28,5 +28,8 @@ bun_highway.workspace = true
 bun_wyhash.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, bun_portable))'.dependencies]
 bun_windows_sys.workspace = true
+
+[target.'cfg(bun_portable)'.dependencies]
+bun_portable_macros.workspace = true

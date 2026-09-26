@@ -3,8 +3,26 @@
 //! Raw libuv FFI (Windows only). Re-exports the `libuv` module's contents at
 //! crate root so callers can write `bun_libuv_sys::fs_t` /
 //! `bun_sys::windows::libuv::uv_fs_open`.
+//!
+//! The portable image (`cfg(bun_portable)`) has the module too: there libuv is
+//! part of the Windows host, and every function pointer that crosses into it
+//! has the calling convention of Windows.
+#[cfg_attr(bun_portable, bun_portable_macros::win_abi)]
 pub mod libuv;
-#[cfg(windows)]
+
+// The log macro of `libuv`. It is defined here because a macro that is exported from a module an
+// attribute macro expands cannot be named by its path.
+#[cfg(any(windows, bun_portable))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __uv_log {
+    ($($arg:tt)*) => {{
+        if ::core::cfg!(debug_assertions) && $crate::__uv_log_enabled() {
+            ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
+        }
+    }};
+}
+#[cfg(any(windows, bun_portable))]
 pub use libuv::*;
 
 // ──────────────────────────────────────────────────────────────────────────

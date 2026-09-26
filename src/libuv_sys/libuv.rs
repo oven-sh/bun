@@ -7,7 +7,7 @@
 //!
 //! Layouts are layout-asserted at the bottom of this file against the
 //! authoritative `sizeof`s from a Windows-x64 build of libuv.
-#![cfg(windows)]
+#![cfg(any(windows, bun_portable))]
 #![allow(
     non_camel_case_types,
     non_snake_case,
@@ -16,7 +16,7 @@
 )]
 
 use core::cell::{Cell, UnsafeCell};
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::mem::MaybeUninit;
 use core::{fmt, mem, ptr};
 
@@ -37,15 +37,6 @@ pub fn __uv_log_enabled() -> bool {
     // GetEnvironmentVariableW syscall + alloc per tick.
     static ENABLED: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| ::std::env::var_os("BUN_DEBUG_uv").is_some())
-}
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __uv_log {
-    ($($arg:tt)*) => {{
-        if ::core::cfg!(debug_assertions) && $crate::__uv_log_enabled() {
-            ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
-        }
-    }};
 }
 /// `bun.windows.libuv.log` — re-exported under the conventional name.
 pub use crate::__uv_log as log;
@@ -1757,7 +1748,7 @@ pub struct uv_signal_t {
     pub signum: c_int,
     tree_entry: signal_tree_entry,
     pub signal_req: uv_req_t,
-    pub pending_signum: c_ulong,
+    pub pending_signum: u32,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1799,14 +1790,14 @@ pub struct uv_work_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_timespec_t {
-    pub sec: c_long,
-    pub nsec: c_long,
+    pub sec: i32,
+    pub nsec: i32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_timeval_t {
-    pub sec: c_long,
-    pub usec: c_long,
+    pub sec: i32,
+    pub usec: i32,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2634,6 +2625,7 @@ pub(crate) fn uv_is_closed(handle: &uv_handle_t) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C" — full libuv surface Bun uses.
 // ──────────────────────────────────────────────────────────────────────────
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "libuv"))]
 unsafe extern "C" {
     // version / loop
     pub fn uv_replace_allocator(

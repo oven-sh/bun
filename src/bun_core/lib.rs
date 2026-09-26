@@ -42,7 +42,14 @@ pub mod debug;
 pub mod env;
 pub mod host;
 pub use bun_alloc::host_fn;
-#[cfg(windows)]
+pub mod host_dispatch;
+#[cfg(bun_portable)]
+extern crate self as bun_core;
+#[cfg(bun_portable)]
+mod fd_portable;
+#[cfg(bun_portable)]
+pub use fd_portable::FdNativeRepr;
+#[cfg(any(windows, bun_portable))]
 pub mod windows_sys;
 pub mod wtf;
 

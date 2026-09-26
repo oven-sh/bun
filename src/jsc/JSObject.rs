@@ -128,33 +128,9 @@ impl JSObject {
         self.to_js().get(global, prop.as_ref())
     }
 
-    /// # Safety
-    /// `owner` must be a cell-tagged `JSValue` (its payload is a live
-    /// `JSCell*`) that remains valid for the duration of the call.
-    /// `names` must point to `length` initialized `ExternColumnIdentifier`s
-    /// valid for the duration of the call; C++ does not retain the pointer.
-    pub unsafe fn create_structure(
-        global: &JSGlobalObject,
-        owner: JSValue,
-        length: u32,
-        names: *mut ExternColumnIdentifier,
-    ) -> JSValue {
-        crate::mark_binding!();
-        debug_assert!(owner.is_cell());
-        // A cell-tagged JSValue's
-        // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
-        // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
-        let owner_cell = owner.0 as *mut JSCell;
-        // SAFETY: thin FFI shim; `owner_cell` is non-null per caller contract.
-        // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
-        // opaque JSC cell with interior mutability on the C++ side; Rust holds
-        // no `&`-derived view of any field C++ mutates.
-        unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
-    }
-
-    /// [`create_structure`](Self::create_structure) over a slice. `owner` is
-    /// the cell the structure is write-barriered against, or the empty value
-    /// for none.
+    /// The `Structure` of an object with a property for each named column of
+    /// `names`. `owner` is the cell the structure is write-barriered against,
+    /// or the empty value for none.
     pub fn create_structure_for(
         global: &JSGlobalObject,
         owner: JSValue,

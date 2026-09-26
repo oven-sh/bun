@@ -4638,14 +4638,6 @@ impl VirtualMachine {
         debugger.next_debugger_id
     }
 
-    /// Note (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see
-    /// [`crate::event_loop::RunImmediateFn`].
-    #[inline]
-    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
-        self.event_loop_mut().enqueue_immediate_task(task);
-    }
-
     /// Ticks the event loop until no tasks keep it alive.
     pub fn wait_for_tasks(&mut self) {
         while self.is_event_loop_alive() {

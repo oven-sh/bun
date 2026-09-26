@@ -81,11 +81,6 @@ impl EventLoopTimer {
     }
 
     #[inline]
-    pub fn tag(&self) -> Tag {
-        self.tag
-    }
-
-    #[inline]
     pub fn in_heap(&self) -> InHeap {
         self.in_heap
     }

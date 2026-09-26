@@ -653,11 +653,6 @@ pub unsafe trait UvHandle: Sized {
         // SAFETY: caller contract — `p` came from `set_owned_data::<T>`.
         Some(unsafe { Box::from_raw(p) })
     }
-    #[inline]
-    fn get_loop(&self) -> *mut Loop {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_get_loop(self.as_handle()) }
-    }
     /// `HandleMixin::close` — `cb` receives the same pointer cast back to
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
     #[inline]

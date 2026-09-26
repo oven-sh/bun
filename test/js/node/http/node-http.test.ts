@@ -24,7 +24,7 @@ import http, {
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import net, { connect, createServer as createNetServer } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";

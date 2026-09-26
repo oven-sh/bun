@@ -568,6 +568,9 @@ declare module "bun" {
            * With this enabled, you can persistently edit files in the browser. Bun adds the following route to the server:
            * `/.well-known/appspecific/com.chrome.devtools.json`
            *
+           * The route is added when the server is in development mode and has at least one HTML route.
+           * It does not depend on `hmr`.
+           *
            * The response is a JSON object with the following shape:
            * ```json
            * {

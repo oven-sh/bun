@@ -328,6 +328,7 @@ pub struct FILE_NOTIFY_INFORMATION {
 
 pub use bun_windows_sys::OVERLAPPED;
 pub type LPOVERLAPPED = *mut OVERLAPPED;
+#[cfg_attr(bun_portable, bun_portable_macros::win_abi)]
 pub type LPOVERLAPPED_COMPLETION_ROUTINE =
     Option<unsafe extern "system" fn(DWORD, DWORD, *mut OVERLAPPED)>;
 

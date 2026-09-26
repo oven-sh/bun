@@ -108,7 +108,21 @@ impl Parse for Interface {
 }
 
 fn sym(iface: &Ident, variant: &Ident, method: &Ident) -> Ident {
-    format_ident!("__bun_dispatch__{}__{}__{}", iface, variant, method)
+    format_ident!(
+        "__bun_dispatch__{}__{}__{}{}",
+        iface,
+        variant,
+        method,
+        flavor()
+    )
+}
+
+/// The portable image holds a crate that has code for one OS once for each OS (a flavour,
+/// misctools/portable/loop/flavor.ts), and each flavour has its own implementations of an interface.
+/// The build script of a flavour names it; every other build has no such variable and the names that
+/// were always there.
+fn flavor() -> String {
+    std::env::var("BUN_PORTABLE_FLAVOR").unwrap_or_default()
 }
 
 // Rewrite elided lifetimes (`&T`, `&mut T`, `'_`) to a single named `'__a` so

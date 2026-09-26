@@ -5092,3 +5092,58 @@ describe.concurrent.each(["tcp", "tls"] as const)(
     it("delivers the whole chunk without a drain handler", () => run(false));
   },
 );
+
+// The flush that follows open() can send the whole tail and close the socket.
+// A drain event after that would run on a closed socket.
+it.skipIf(!socketFaultInjection.available())(
+  "end(data) in open() whose tail leaves in the flush after open() closes without a drain event",
+  async () => {
+    const src = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const N = 64 * 1024;
+      const events = [];
+      let got = 0;
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(_, chunk) { got += chunk.byteLength; },
+          close() { serverClosed.resolve(); },
+        },
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(s) {
+            // Only the first send is short: the retry takes the rest.
+            fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1 });
+            events.push("end " + s.end(Buffer.alloc(N, 120)));
+          },
+          data() {},
+          drain() { events.push("drain"); },
+          close() { events.push("close"); clientClosed.resolve(); },
+          error(_, e) { events.push("error " + e.message); },
+        },
+      });
+      await Promise.all([serverClosed.promise, clientClosed.promise]);
+      fault.clear();
+      server.stop(true);
+      console.log(JSON.stringify({ events, got }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout.trim(), stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({
+      result: JSON.stringify({ events: ["end 65536", "close"], got: 65536 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

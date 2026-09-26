@@ -925,10 +925,54 @@ booga"
 
   describe("glob expansion", () => {
     // Issue #8403: https://github.com/oven-sh/bun/issues/8403
+    // `ls` must get the unmatched pattern as its argument, not an empty argv.
     TestBuilder.command`ls *.sdfljsfsdf`
+      .ensureTempDir()
+      .file("visible.txt", "")
       .exitCode(1)
-      .stderr("bun: no matches found: *.sdfljsfsdf\n")
-      .runAsTest("No matches should fail");
+      .stderr("ls: *.sdfljsfsdf: No such file or directory\n")
+      .runAsTest("No matches passes the pattern to the command");
+
+    // Issue #10581: https://github.com/oven-sh/bun/issues/10581
+    // POSIX 2.13.3: a pattern that matches no pathname is left unchanged.
+    describe("a pattern with no match is left unchanged", () => {
+      TestBuilder.command`echo --include=*/ nomatch*.xyz **/*.nomatch`
+        .ensureTempDir()
+        .stdout("--include=*/ nomatch*.xyz **/*.nomatch\n")
+        .runAsTest("builtin");
+
+      TestBuilder.command`${BUN} run ./code.ts build:* missing/*`
+        .ensureTempDir()
+        .file("code.ts", "console.log(JSON.stringify(process.argv.slice(2)))")
+        .stdout('["build:*","missing/*"]\n')
+        .runAsTest("subprocess");
+
+      TestBuilder.command`echo *.js *.nomatch`
+        .ensureTempDir()
+        .file("foo.js", "foo")
+        .stdout("foo.js *.nomatch\n")
+        .runAsTest("next to a pattern that matches");
+
+      TestBuilder.command`echo {a,b}*.nomatch`
+        .ensureTempDir()
+        .stdout("a*.nomatch b*.nomatch\n")
+        .runAsTest("brace variants");
+
+      TestBuilder.command`rm -rf dist/* && echo *.nomatch | cat && echo $(echo *.nomatch)`
+        .ensureTempDir()
+        .stdout("*.nomatch\n*.nomatch\n")
+        .runAsTest("does not fail the command");
+
+      TestBuilder.command`export FOO=*.nomatch; echo $FOO`.ensureTempDir().stdout("*.nomatch\n").runAsTest("export");
+
+      // Windows does not allow `*` in a file name.
+      if (isPosix) {
+        TestBuilder.command`echo hi > *.nomatch`
+          .ensureTempDir()
+          .fileEquals("*.nomatch", "hi\n")
+          .runAsTest("redirect target");
+      }
+    });
 
     TestBuilder.command`FOO=*.lolwut; echo $FOO`
       .stdout("*.lolwut\n")
@@ -963,15 +1007,13 @@ booga"
         .file("f.txt", "f")
         .directory("sub")
         .file("sub/deep.txt", "deep")
-        .exitCode(1)
-        .stderr("bun: no matches found: **/*\n")
+        .stdout("**/*\n")
         .runAsTest("injected ** does not recurse");
 
       TestBuilder.command`echo a${"?"}*`
         .ensureTempDir()
         .file("ax.txt", "ax")
-        .exitCode(1)
-        .stderr("bun: no matches found: a?*\n")
+        .stdout("a?*\n")
         .runAsTest("injected ? is literal");
 
       TestBuilder.command`echo ${"!keep"}*`
@@ -1024,8 +1066,8 @@ booga"
 
       // A run of interpolated `!` longer than the matcher's brace-nesting
       // limit (10) must still match literally: neutralizing every `!` as its
-      // own `{!}` group used to overflow the brace stack and turn the whole
-      // word into "no matches found".
+      // own `{!}` group used to overflow the brace stack and make the whole
+      // word match nothing.
       const bangRun = Buffer.alloc(11, "!").toString();
 
       TestBuilder.command`echo prefix${bangRun}*`
@@ -1058,7 +1100,7 @@ booga"
 
         {
           const r = await $\`echo \${missing}/*\`.nothrow().quiet();
-          results.push({ exitCode: r.exitCode, stderr: r.stderr.toString() });
+          results.push({ exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() });
         }
 
         try {
@@ -1084,8 +1126,8 @@ booga"
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual([
-        { exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
-        { threw: true, exitCode: 1, stderr: `bun: no matches found: ${missing}/*\n` },
+        { exitCode: 0, stdout: `${missing}/*\n`, stderr: "" },
+        { threw: false },
         { exitCode: 0, stdout: `${missing}/*\n` },
       ]);
       expect(exitCode).toBe(0);
@@ -1097,9 +1139,10 @@ booga"
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
       try {
-        const { stderr, exitCode } = await $`echo ${noaccess}/*`.quiet().nothrow();
+        // Unlike a pattern with no match, this is an error and not the literal word.
+        const { stdout, stderr, exitCode } = await $`echo ${noaccess}/*`.quiet().nothrow();
         expect(stderr.toString()).toContain(`bun: Permission denied: ${noaccess}`);
-        expect(stderr.toString()).not.toContain("no matches found");
+        expect(stdout.toString()).toBe("");
         expect(exitCode).toBe(1);
 
         const assign = await $`FOO=${noaccess}/*; echo $FOO`.quiet().nothrow();

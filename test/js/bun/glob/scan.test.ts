@@ -1180,3 +1180,16 @@ describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
     },
   );
 });
+
+// On Windows a pattern component is also the NtQueryDirectoryFile name filter.
+// The kernel rejects `:`, `|` and control characters there, and the scan threw
+// EINVAL. No file name on Windows can contain them, so the scan matches nothing.
+test("a component with a character Windows rejects in a name filter does not throw", async () => {
+  using dir = tempDir("glob-nt-filter-chars", { "build.txt": "", "sub/build.txt": "" });
+  const cwd = String(dir);
+  for (const pattern of ["build:*", "*:*", "a|b*", "x\ty*", "http://example.com/*", "sub:/*.txt", "*.txt:stream"]) {
+    expect({ pattern, sync: Array.from(new Glob(pattern).scanSync({ cwd })) }).toEqual({ pattern, sync: [] });
+    expect({ pattern, async: await Array.fromAsync(new Glob(pattern).scan({ cwd })) }).toEqual({ pattern, async: [] });
+  }
+  expect(Array.from(new Glob("build*").scanSync({ cwd }))).toEqual(["build.txt"]);
+});

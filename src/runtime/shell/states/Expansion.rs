@@ -374,8 +374,7 @@ impl Expansion {
     /// in a single-character class (`[c]`) — or a one-branch brace group for
     /// a component-leading `!` — which the matcher provably treats as that
     /// literal character.
-    /// `current_out` itself is not mutated: the no-match error message and the
-    /// assignment-position literal fallback keep using the original word.
+    /// `current_out` itself is not mutated: a word with no match is emitted as written.
     fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
         let mut pattern: Vec<u8> = Vec::with_capacity(current_out.len());
         let mut next_meta = 0usize;
@@ -677,8 +676,6 @@ impl Expansion {
         };
 
         if result.is_empty() || walk_err.is_some() {
-            // In variable assignments a no-match glob
-            // expands to the literal pattern; otherwise it's an error.
             let parent = interp.as_expansion(this).base.parent;
             let in_assign = matches!(interp.node(parent).kind(), StateKind::Assign)
                 || matches!(
@@ -689,18 +686,25 @@ impl Expansion {
                     )
                 );
             let me = interp.as_expansion_mut(this);
-            if in_assign {
-                Self::push_current_out(me);
-                me.state = ExpansionState::Done;
-            } else if let Some(err) = walk_err {
-                let shell_err = match err {
-                    ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
-                    ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
-                };
-                me.state = ExpansionState::Err(Box::new(shell_err));
-            } else {
-                let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+            match walk_err {
+                // Assigns cannot print an expansion error, so it keeps the word as written.
+                Some(err) if !in_assign => {
+                    let shell_err = match err {
+                        ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
+                        ShellGlobErr::Unknown(e) => {
+                            ShellErr::Custom(e.to_string().into_bytes().into())
+                        }
+                    };
+                    me.state = ExpansionState::Err(Box::new(shell_err));
+                }
+                _ => {
+                    // POSIX 2.13.3: a pattern that matches nothing is left unchanged.
+                    let brace_variants_already_pushed = me.node.get().has_brace_expansion();
+                    if !brace_variants_already_pushed {
+                        Self::push_current_out(me);
+                    }
+                    me.state = ExpansionState::Done;
+                }
             }
             Yield::Next(this).run(interp);
             return;

@@ -129,19 +129,19 @@
   "name": "bun_sys::windows::DeleteFileOptions",
   "why": "not #[repr(C)]",
   "file": "src/sys/windows/mod.rs",
-  "line": 968
+  "line": 969
  },
  {
   "name": "bun_sys::windows::UpdateStdioModeFlagsOpts",
   "why": "not #[repr(C)]",
   "file": "src/sys/windows/mod.rs",
-  "line": 1471
+  "line": 1472
  },
  {
   "name": "bun_sys::windows::StdinModeGuard",
   "why": "not #[repr(C)]",
   "file": "src/sys/windows/mod.rs",
-  "line": 1496
+  "line": 1497
  },
  {
   "name": "bun_sys::windows::SRWLOCK_INIT",

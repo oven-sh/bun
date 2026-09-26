@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -410,6 +410,137 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+// The server entry point of a router type renders every route of that type, so a route has
+// the build errors and the client components of that file, as it has those of its page and layouts.
+const localServerEntryRouterType = {
+  ...minimalFramework.fileSystemRouterTypes![0],
+  serverEntryPoint: "./framework.server.ts",
+};
+// Each file gives one word of the response: "<entry> <shared> <layout> <page>".
+const buildErrorSources = {
+  entry: {
+    file: "framework.server.ts",
+    source: (word: string) => `
+      import shared from "./shared";
+      export function render(req, meta) {
+        return new Response(["${word}", shared, meta.layouts[0].default, meta.pageModule.default].join(" "));
+      }
+    `,
+  },
+  // "/" reaches this file through the server entry point and through its page, "/other" only through the first.
+  shared: { file: "shared.ts", source: (word: string) => `export default "${word}";` },
+  layout: { file: "routes/_layout.ts", source: (word: string) => `export default "${word}";` },
+  index: { file: "routes/index.ts", source: (word: string) => `import "../shared"; export default "${word}";` },
+  other: { file: "routes/other.ts", source: (word: string) => `export default "${word}";` },
+};
+type BuildErrorSource = keyof typeof buildErrorSources;
+// "0" is the default of a release build and of this harness: a route with a build error is bundled
+// again on each request. "1" is the default of a debug build: the dev server trusts its module graph.
+describe.each(["0", "1"])("perfect incremental: %s", perfectIncremental => {
+  devTest("a build error stays on its routes until a save fixes it", {
+    framework: { ...minimalFramework, fileSystemRouterTypes: [{ ...localServerEntryRouterType, layouts: true }] },
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: perfectIncremental },
+    files: Object.fromEntries(
+      Object.entries(buildErrorSources).map(([word, { file, source }]) => [file, source(word)]),
+    ),
+    async test(dev) {
+      // The text of a good response. For a bad one: the status, the page title, and the files that the page reports.
+      async function get(...urls: string[]) {
+        const results: string[] = [];
+        for (const url of urls) {
+          const res = await dev.fetch(url);
+          const text = await res.text();
+          if (res.ok) {
+            results.push(text);
+            continue;
+          }
+          // The build failure page carries the serialized failures as base64.
+          const failures = atob(text.match(/atob\("([^"]*)"\)/)?.[1] ?? "");
+          const title = text.match(/<title>(.*?)<\/title>/)?.[1];
+          // By base name: the path separator in the page depends on the platform.
+          const files = Object.values(buildErrorSources).filter(({ file }) =>
+            failures.includes(file.split("/").pop()!),
+          );
+          results.push(`${res.status} ${title}: ${files.map(({ file }) => file)}`);
+        }
+        return results;
+      }
+      const words = Object.fromEntries(Object.keys(buildErrorSources).map(key => [key, key]));
+      const page = (name: "index" | "other") => [words.entry, words.shared, words.layout, words[name]].join(" ");
+      function save(key: BuildErrorSource, word: string, options?: { errors: null }) {
+        words[key] = word;
+        return dev.write(buildErrorSources[key].file, buildErrorSources[key].source(word), options);
+      }
+      expect(await get("/", "/other")).toEqual(["entry shared layout index", "entry shared layout other"]);
+
+      const rows: [broken: BuildErrorSource, breaksOther: boolean][] = [
+        ["entry", true],
+        ["shared", true],
+        ["layout", true],
+        ["index", false],
+      ];
+      for (const [broken, breaksOther] of rows) {
+        const { file } = buildErrorSources[broken];
+        const buildFailed = `500 Bun - Build Failed: ${file}`;
+        await dev.write(file, "export default ;", { errors: null });
+        // Every request gets the error page, not only the first one after the save.
+        expect({ broken, responses: await get("/", "/") }).toEqual({ broken, responses: [buildFailed, buildFailed] });
+        // A good build of another file does not hide the error.
+        await save("other", `other after ${broken}`, { errors: null });
+        expect({ broken, responses: await get("/", "/other") }).toEqual({
+          broken,
+          responses: [buildFailed, breaksOther ? buildFailed : page("other")],
+        });
+
+        await save(broken, `${broken} fixed`);
+        expect({ broken, responses: await get("/", "/other") }).toEqual({
+          broken,
+          responses: [page("index"), page("other")],
+        });
+      }
+    },
+  });
+});
+// Two "use client" files at most: a third one in a bundle trips the use-after-free that #39488 fixes.
+devTest("a client component that the server entry point imports is in the client bundle of a route", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...localServerEntryRouterType, clientEntryPoint: "./framework.client.ts" }],
+  },
+  files: {
+    "framework.server.ts": `
+      import * as Frame from "./components/Frame";
+      import * as Shared from "./components/Shared";
+      export function render(req, meta) {
+        meta.pageModule.default();
+        return Response.json({ modules: meta.modules, frame: typeof Frame.frame, shared: typeof Shared.shared });
+      }
+    `,
+    "framework.client.ts": `console.log("client entry point");`,
+    "components/Frame.ts": `
+      "use client";
+      export const frame = "only the server entry point imports this";
+    `,
+    "components/Shared.ts": `
+      "use client";
+      export const shared = "the server entry point and the page import this";
+    `,
+    "routes/index.ts": `
+      import * as Shared from "../components/Shared";
+      export default () => typeof Shared.shared;
+    `,
+  },
+  async test(dev) {
+    const { modules } = await (await dev.fetch("/")).json();
+    expect(modules).toHaveLength(1);
+    const clientBundle = await (await dev.fetch(modules[0])).text();
+    expect({
+      clientEntryPoint: clientBundle.includes("client entry point"),
+      frame: clientBundle.includes("only the server entry point imports this"),
+      shared: clientBundle.includes("the server entry point and the page import this"),
+    }).toEqual({ clientEntryPoint: true, frame: true, shared: true });
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {

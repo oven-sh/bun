@@ -183,10 +183,10 @@ async function behindProxy(server, wire, proxyOptions = {}, overDuplex = false) 
   };
 }
 
-// The same shape on a plain TCP socket. The client calls end() when its last handshake flight left. The proxy holds
-// the server's final flight until the client's FIN arrived, so the handshake completes on a socket that is already
-// shut down. The proxy never forwards the FIN, so the server keeps writing. The server's certificate is not trusted,
-// unless `trusted`. Returns the ordered events of the client.
+// The same shape on a plain TCP socket. The client calls end() when its last handshake flight left. The proxy
+// delivers what the server sends from then on after the client's FIN arrived, in `pieces` parts, so the handshake
+// completes on a socket that is already shut down. The proxy never forwards the FIN, so the server keeps writing.
+// The server's certificate is not trusted, unless `trusted`. Returns the ordered events of the client.
 async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized, { pieces = 1, trusted = false } = {}) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
@@ -202,8 +202,8 @@ async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized, { pieces =
     (downstream, upstream) => {
       let sawChangeCipherSpec = false;
       let ending = false;
-      let clientEnded = false;
-      const held = [];
+      const clientEnded = Promise.withResolvers();
+      let delivered = clientEnded.promise;
       eachRecord(downstream, record => {
         upstream.write(record);
         if (ending) return;
@@ -215,14 +215,11 @@ async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized, { pieces =
         }
         sawChangeCipherSpec ||= record[0] === CHANGE_CIPHER_SPEC;
       });
-      downstream.on("end", async () => {
-        await inPieces(part => downstream.write(part), Buffer.concat(held.splice(0)), pieces);
-        clientEnded = true;
-        for (const chunk of held.splice(0)) downstream.write(chunk);
-      });
+      downstream.on("end", clientEnded.resolve);
       upstream.on("data", chunk => {
-        if (ending && !clientEnded) held.push(chunk);
-        else downstream.write(chunk);
+        if (!ending) return void downstream.write(chunk);
+        // The FIN can arrive before the server's answer does: each chunk waits for it, and for the chunk before.
+        delivered = delivered.then(() => inPieces(part => downstream.write(part), chunk, pieces));
       });
     },
     { allowHalfOpen: true },
@@ -582,3 +579,57 @@ test("a bad record behind the client's Finished does not make a server accept an
   // Node reports the bad record. Its code depends on the cipher, so only the class of the error is fixed.
   assert.match(events[0], isBun ? /^tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT$/ : /^tlsClientError ERR_SSL_/);
 });
+
+// The peer can go away while the handshake of a socket that called end() still runs. The socket closes with no error,
+// and the server reports the handshake that never finished. `half`: the peer sends the first half of its last flight
+// before its FIN.
+for (const half of [false, true]) {
+  test(`a server that end()s reports the handshake that its peer left ${half ? "in the middle of a flight" : "before its last flight"}`, async () => {
+    const events = [];
+    const refused = Promise.withResolvers();
+    const serverClosed = Promise.withResolvers();
+    let serverSocket;
+    const server = tls.createServer({ key, cert, maxVersion: "TLSv1.3" }, () => events.push("secureConnection"));
+    server.on("tlsClientError", err => {
+      events.push(`tlsClientError ${err.code}`);
+      refused.resolve();
+    });
+    server.on("connection", socket => {
+      serverSocket = socket;
+      socket.on("error", () => {});
+      socket.on("close", serverClosed.resolve);
+    });
+    const { port, close } = await behindProxy(
+      server,
+      (downstream, upstream) => {
+        let chunks = 0;
+        const held = [];
+        downstream.on("data", chunk => {
+          // The ClientHello goes through. The proxy holds the client's last flight, and the server calls end().
+          if (++chunks === 1) return void upstream.write(chunk);
+          held.push(chunk);
+          if (held.length === 1) serverSocket.end();
+        });
+        upstream.on("data", chunk => downstream.write(chunk));
+        upstream.on("end", async () => {
+          const flight = Buffer.concat(held.splice(0));
+          if (half) {
+            upstream.write(flight.subarray(0, Math.ceil(flight.length / 2)));
+            await pendingReadsDone();
+          }
+          upstream.end();
+        });
+      },
+      { allowHalfOpen: true },
+    );
+    const client = tls.connect({ port, host: "127.0.0.1", servername: "agent1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      await Promise.all([refused.promise, serverClosed.promise]);
+      assert.deepStrictEqual(events, ["tlsClientError ECONNRESET"]);
+    } finally {
+      client.destroy();
+      close();
+    }
+  });
+}

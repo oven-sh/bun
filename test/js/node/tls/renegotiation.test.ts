@@ -3,7 +3,8 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
-import { connect as netConnect } from "net";
+import { once } from "node:events";
+import { connect as netConnect, createServer as createNetServer, type AddressInfo, type Socket } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
@@ -440,6 +441,92 @@ it.concurrent.each([false, true])(
     }
   },
 );
+
+// The request for a renegotiation can arrive after the client called end(). The client cannot answer it, and the
+// certificate check of its first handshake is not the report of a second one.
+it("a client that called end() emits 'secureConnect' once when the server then asks for a renegotiation", async () => {
+  await using server = Bun.spawn({
+    cmd: [
+      "node",
+      "-e",
+      `
+      const tls = require("tls");
+      let accepted;
+      const server = tls.createServer(
+        {
+          cert: process.env.SERVER_CERT,
+          key: process.env.SERVER_KEY,
+          minVersion: "TLSv1.2",
+          maxVersion: "TLSv1.2",
+          allowHalfOpen: true,
+        },
+        socket => {
+          accepted = socket;
+          socket.on("error", () => {});
+          socket.resume();
+        },
+      );
+      // A line on stdin asks for the renegotiation.
+      process.stdin.on("data", () => accepted.renegotiate({ rejectUnauthorized: false }, () => {}));
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `,
+    ],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "pipe",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+  const { value } = await server.stdout.getReader().read();
+  const port = Number(new TextDecoder().decode(value).trim());
+
+  // Holds what the client sends after its handshake, so the server does not see the client's close_notify.
+  let holding = false;
+  const sawClientFin = Promise.withResolvers<void>();
+  const proxied: Socket[] = [];
+  const proxy = createNetServer({ allowHalfOpen: true }, downstream => {
+    const upstream = netConnect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    proxied.push(downstream, upstream);
+    downstream.on("data", chunk => {
+      if (!holding) upstream.write(chunk);
+    });
+    downstream.on("end", () => sawClientFin.resolve());
+    upstream.on("data", chunk => downstream.write(chunk));
+    upstream.on("end", () => downstream.end());
+    downstream.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  const client = tlsConnect({
+    port: (proxy.address() as AddressInfo).port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    rejectUnauthorized: false,
+  });
+  client.on("secureConnect", () => {
+    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
+    if (holding) return;
+    holding = true;
+    client.end();
+  });
+  client.on("finish", () => events.push("finish"));
+  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+  client.on("close", () => closed.resolve());
+  client.resume();
+  try {
+    await sawClientFin.promise;
+    server.stdin.write("renegotiate\n");
+    await server.stdin.flush();
+    await closed.promise;
+    expect(events).toEqual(["secureConnect authorized=false authError=DEPTH_ZERO_SELF_SIGNED_CERT", "finish"]);
+  } finally {
+    client.destroy();
+    for (const socket of proxied) socket.destroy();
+    proxy.close();
+  }
+});
 
 it("should fail if renegotiation fails using tls module", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();

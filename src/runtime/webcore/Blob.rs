@@ -3229,18 +3229,23 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
+                                        let view = blob.shared_view();
+                                        if view.is_empty() {
+                                            if blob.needs_to_read_file() || blob.is_s3() {
+                                                push_file_part(blob, &mut joiner, global)?;
+                                            }
+                                            continue;
+                                        }
                                         // A later part may run user JS that drops the
                                         // last ref to this Blob's Store before `done()`.
                                         if parts_can_run_js {
-                                            joiner.push_cloned(blob.shared_view());
+                                            joiner.push_cloned(view);
                                         } else {
                                             // SAFETY: the prescan above proved no
                                             // remaining part can run user JS, so this
                                             // Blob (rooted via `_keep`/`arg`) keeps its
                                             // Store alive until `joiner.done()` below.
-                                            joiner.push(unsafe {
-                                                bun_ptr::detach_lifetime(blob.shared_view())
-                                            });
+                                            joiner.push(unsafe { bun_ptr::detach_lifetime(view) });
                                         }
                                         continue;
                                     } else {
@@ -3268,7 +3273,12 @@ impl BlobExt for Blob {
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
                         // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
+                        let view = blob.shared_view();
+                        if !view.is_empty() {
+                            joiner.push_cloned(view);
+                        } else if blob.needs_to_read_file() || blob.is_s3() {
+                            push_file_part(blob, &mut joiner, global)?;
+                        }
                     } else {
                         let utf8 = current.to_utf8(global)?;
                         could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
@@ -3446,6 +3456,129 @@ impl BlobExt for Blob {
             strings::AsciiStatus::NonAscii => Some(false),
         }
     }
+}
+
+/// Reads a file-backed part of a multi-part `new Blob([...])`: `shared_view()` is empty for it.
+#[cold]
+#[inline(never)]
+fn push_file_part(
+    blob: &Blob,
+    joiner: &mut bun_core::string_joiner::StringJoiner,
+    global: &JSGlobalObject,
+) -> JsResult<()> {
+    let Some(store) = blob.store.get() else {
+        return Ok(());
+    };
+    let file = match &store.data {
+        store::Data::Bytes(_) => return Ok(()),
+        store::Data::S3(_) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Blob parts backed by S3 cannot be read synchronously; await .bytes() or .arrayBuffer() first"
+            )));
+        }
+        store::Data::File(file) => file,
+    };
+    let throw = |err: bun_sys::Error| {
+        let err = match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+        };
+        global.throw_value(err.to_js(global))
+    };
+
+    let not_a_file = || {
+        global.throw_invalid_arguments(format_args!(
+            "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first"
+        ))
+    };
+    let is_file_or_dir = |mode| bun_sys::S::ISREG(mode) || bun_sys::S::ISDIR(mode);
+
+    let (fd, _close_on_drop) = match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => (*fd, None),
+        PathOrFileDescriptor::Path(path) => {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let path = path.slice_z(&mut path_buf);
+            // open(2) of a FIFO wakes the writer that waits for a reader, so refuse it unopened.
+            if bun_sys::stat(path).is_ok_and(|stat| !is_file_or_dir(stat.st_mode as _)) {
+                return Err(not_a_file());
+            }
+            // O_NONBLOCK: if the path is a FIFO by now, open(2) must not block the JS thread.
+            let flags = bun_sys::O::RDONLY
+                | bun_sys::O::NONBLOCK
+                | bun_sys::O::CLOEXEC
+                | bun_sys::O::NOCTTY;
+            match bun_sys::File::open(path, flags, 0) {
+                Ok(opened) => (opened.handle(), Some(opened)),
+                Err(err) => return Err(throw(err)),
+            }
+        }
+    };
+    let stat = match bun_sys::fstat(fd) {
+        Ok(stat) => stat,
+        Err(err) => return Err(throw(err)),
+    };
+    if bun_sys::S::ISDIR(stat.st_mode as _) {
+        return Err(throw(bun_sys::Error::from_code(
+            bun_sys::E::EISDIR,
+            bun_sys::Tag::read,
+        )));
+    }
+    if !bun_sys::S::ISREG(stat.st_mode as _) {
+        return Err(not_a_file());
+    }
+
+    let offset = blob.offset.get();
+    let size = blob.size.get();
+    let file_len = stat.st_size.max(0) as SizeType;
+    // st_size==0 may be a virtual file (procfs): grow-until-EOF instead of capping at 0.
+    let avail = if file_len > 0 {
+        file_len.saturating_sub(offset) as usize
+    } else {
+        usize::MAX
+    };
+    let cap = if size != MAX_SIZE {
+        (size as usize).min(avail)
+    } else {
+        avail
+    };
+    if cap == 0 {
+        return Ok(());
+    }
+    let initial = if file_len > 0 { cap } else { 8192.min(cap) }.min(8 << 30);
+    let mut buf: Vec<u8> = Vec::new();
+    if buf.try_reserve_exact(initial).is_err() {
+        return Err(throw(bun_sys::Error::oom()));
+    }
+    buf.resize(initial, 0);
+    let mut total = 0usize;
+    loop {
+        if total == buf.len() {
+            if total == cap {
+                break;
+            }
+            let new_len = buf.len().saturating_mul(2).min(cap);
+            if buf.try_reserve(new_len - buf.len()).is_err() {
+                return Err(throw(bun_sys::Error::oom()));
+            }
+            buf.resize(new_len, 0);
+        }
+        // pread, not read: the cursor of a caller's fd must not decide what a repeated part reads.
+        let n = match bun_sys::pread(
+            fd,
+            &mut buf[total..],
+            (offset as i64).saturating_add(total as i64),
+        ) {
+            Ok(n) => n,
+            Err(err) => return Err(throw(err)),
+        };
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+    buf.truncate(total);
+    joiner.push_owned(buf.into_boxed_slice());
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -230,13 +230,23 @@ function pinned<T extends object>(callerOptions: T) {
   return { options, seen, receiver: () => receiver };
 }
 
-// Resolves with the arguments of `event`. Rejects when 'error' or 'close' comes first.
-function eventOf(emitter: EventEmitter, event: string) {
-  const { promise, resolve, reject } = Promise.withResolvers<any[]>();
-  emitter.once(event, (...args) => resolve(args));
-  emitter.on("error", reject);
-  emitter.once("close", () => reject(new Error(`'close' came before '${event}'`)));
+// The first of `event`, 'error' and 'close', with its arguments. It removes its listeners then.
+function firstOf(emitter: EventEmitter, event: string) {
+  const { promise, resolve } = Promise.withResolvers<{ name: string; args: any[] }>();
+  const names = [event, "error", "close"];
+  const listeners = names.map(name => (...args: any[]) => {
+    names.forEach((name, i) => emitter.off(name, listeners[i]));
+    resolve({ name, args });
+  });
+  names.forEach((name, i) => emitter.on(name, listeners[i]));
   return promise;
+}
+
+// Resolves with the arguments of `event`. Rejects when 'error' or 'close' comes first.
+async function eventOf(emitter: EventEmitter, event: string) {
+  const { name, args } = await firstOf(emitter, event);
+  if (name === event) return args;
+  throw name === "error" ? args[0] : new Error(`'close' came before '${event}'`);
 }
 
 async function secureConnect(socket: tls.TLSSocket) {
@@ -247,13 +257,14 @@ async function secureConnect(socket: tls.TLSSocket) {
   }
 }
 
-// The first of 'secureConnect', 'error' and 'close'.
-function outcomeOf(socket: tls.TLSSocket) {
-  const { promise, resolve } = Promise.withResolvers<string>();
-  socket.on("secureConnect", () => resolve(`secureConnect, authorized=${socket.authorized}`));
-  socket.on("error", error => resolve(`error: ${error.message}`));
-  socket.on("close", () => resolve("close"));
-  return promise.finally(() => socket.destroy());
+async function outcomeOf(socket: tls.TLSSocket) {
+  try {
+    const { name, args } = await firstOf(socket, "secureConnect");
+    if (name === "error") return `error: ${args[0].message}`;
+    return name === "close" ? "close" : `secureConnect, authorized=${socket.authorized}`;
+  } finally {
+    socket.destroy();
+  }
 }
 
 // What `seen()` gives when `this` is the copy of the caller's options that tls.connect() builds.

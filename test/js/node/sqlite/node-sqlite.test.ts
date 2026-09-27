@@ -1840,17 +1840,20 @@ describe("row-shape structure caching", () => {
     const file = path.join(String(dir), "db.sqlite");
     const db1 = new DatabaseSync(file);
     db1.exec("CREATE TABLE t (a INTEGER, b INTEGER); INSERT INTO t VALUES (1, 2)");
-    const stmt = db1.prepare("SELECT * FROM t");
-    expect(stmt.get()).toEqual({ a: 1, b: 2 });
-    const db2 = new DatabaseSync(file);
-    db2.exec("ALTER TABLE t RENAME COLUMN a TO x");
-    db2.close();
-    expect(stmt.get()).toEqual({ x: 1, b: 2 });
-    expect(stmt.all()).toEqual([{ x: 1, b: 2 }]);
+    // The statement lives in its own frame: sqlite3_close_v2 keeps the
+    // file open until every statement is finalized, and on Windows that
+    // blocks tempDir's rm with EBUSY. Once this frame is gone, Bun.gc(true)
+    // below can run the finalizer.
+    (() => {
+      const stmt = db1.prepare("SELECT * FROM t");
+      expect(stmt.get()).toEqual({ a: 1, b: 2 });
+      const db2 = new DatabaseSync(file);
+      db2.exec("ALTER TABLE t RENAME COLUMN a TO x");
+      db2.close();
+      expect(stmt.get()).toEqual({ x: 1, b: 2 });
+      expect(stmt.all()).toEqual([{ x: 1, b: 2 }]);
+    })();
     db1.close();
-    // `stmt` is still reachable, so sqlite3_close_v2 left the connection
-    // in zombie mode with the file open. On Windows that blocks tempDir's
-    // rm with EBUSY; force the finalizer.
     Bun.gc(true);
   });
 

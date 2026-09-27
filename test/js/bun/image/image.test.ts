@@ -562,7 +562,8 @@ describe("Bun.Image", () => {
     // u32le(chunk_size) · payload · pad-to-even }…  A non-VP8X WebP
     // (plain `WebPEncodeRGBA` output) only has a single VP8/VP8L chunk
     // and returns null here. libwebpmux wraps the bitstream in VP8X +
-    // ICCP when a profile is attached.
+    // ICCP when a profile is attached. The decode side walks the same
+    // layout itself, in `codec_webp.rs`.
     function extractWebpIccp(webp: Uint8Array): Uint8Array | null {
       if (webp.length < 12) return null;
       const dv = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
@@ -749,11 +750,11 @@ describe("Bun.Image", () => {
       expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
     });
 
-    test("WebP ICCP transfers to PNG encode — demux extracts the profile", async () => {
+    test("WebP ICCP transfers to PNG encode — the decode reads the profile out", async () => {
       // Build the WebP via Bun.Image (PNG-with-iCCP → WebP) so the test
       // doesn't hand-assemble a VP8X container, then decode THAT WebP
-      // and re-encode to PNG. This exercises `WebPDemuxGetChunk` on the
-      // decode side.
+      // and re-encode to PNG. This exercises `iccp_chunk` on the decode
+      // side; image-adversarial.test.ts pins which containers it accepts.
       const srcPng = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(srcPng).webp({ lossless: true }).bytes();
       const outPng = await new Bun.Image(webp).png().bytes();

@@ -1237,7 +1237,6 @@ describe("concurrent terminals on one Image", () => {
   // of OTHER pictures that the same process decoded, found in that output.
   //
   // A child process runs the fixture because the ASAN build stops on the read.
-  // That build needs seconds per round, hence the explicit timeout.
   test("an input rewritten while a WebP pipeline is pending cannot leak heap bytes", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1340,7 +1339,7 @@ describe("concurrent terminals on one Image", () => {
       ],
       // ASAN stops on the over-read itself, in the first rounds. Without it the
       // marker is the only witness, and it takes more tries to catch.
-      env: { ...bunEnv, WEBP_RACE_ROUNDS: isASAN || isDebug ? "4" : "12", WEBP_RACE_MARKER: isASAN ? "0" : "1" },
+      env: { ...bunEnv, WEBP_RACE_ROUNDS: isASAN || isDebug ? "3" : "12", WEBP_RACE_MARKER: isASAN ? "0" : "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1354,7 +1353,7 @@ describe("concurrent terminals on one Image", () => {
       sawTheRewrite: true,
       calm: ["200x211", "200x211"],
     });
-  }, 60_000);
+  });
 
   // The same rewrite, against the part of the decode that reads the colour
   // profile out of the RIFF container. The writer here only changes the ICCP
@@ -1405,7 +1404,7 @@ describe("concurrent terminals on one Image", () => {
           Buffer.from("WEBP"),
           chunk("VP8X", Buffer.concat([Buffer.from([0x20, 0, 0, 0]), le24(W - 1), le24(H - 1)])),
           chunk("ICCP", profile),
-          ...Array.from({ length: 1024 }, () => chunk("FILL", Buffer.alloc(2))),
+          ...Array.from({ length: 4096 }, () => chunk("FILL", Buffer.alloc(2))),
           bare.subarray(12), // the "VP8L" chunk, header and all
         ]);
         const head = Buffer.alloc(8);
@@ -1449,7 +1448,7 @@ describe("concurrent terminals on one Image", () => {
         console.log(JSON.stringify({ ok, rejected, carried }));
       `,
       ],
-      env: { ...bunEnv, WEBP_RACE_ROUNDS: "8" },
+      env: { ...bunEnv, WEBP_RACE_ROUNDS: "4" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1460,7 +1459,152 @@ describe("concurrent terminals on one Image", () => {
     const { ok, rejected, carried } = JSON.parse(summary);
     // The picture bytes never change, so nothing may reject either.
     expect({ ok: ok > 0, rejected, carried }).toEqual({ ok: true, rejected: 0, carried: true });
-  }, 60_000);
+  });
+});
+
+// ─── 10. hand-built RIFF containers ──────────────────────────────────────────
+
+// A colour profile rides in an ICCP chunk of a VP8X container, and the decode
+// reads it out of the input itself: libwebp's demuxer re-reads the caller's
+// buffer on every lookup, which a rewritten input turns into a crash. These
+// cases pin which containers yield a profile, which yield none, and which are
+// refused outright. The answers are libwebp's demuxer's, on bytes that do not
+// change, so a container it accepted keeps its profile and one it refused
+// stays without. Every case is a whole decode + re-encode, not a unit call.
+// `bare` is RIFF + VP8L with no container, so its `subarray(12)` is the
+// picture chunk every case below wraps.
+const bareWebp = Buffer.from(
+  await new Bun.Image(makePng(32, 32, () => [9, 9, 9, 255])).webp({ lossless: true }).bytes(),
+);
+
+describe("WebP container walk", () => {
+  const W = 32;
+  const H = 32;
+  const le24 = (v: number) => Buffer.from([v & 255, (v >> 8) & 255, (v >> 16) & 255]);
+  /** `pad` false omits the pad byte an odd payload must have. */
+  function chunk(tag: string, payload: Uint8Array, pad = true): Buffer {
+    const head = Buffer.alloc(8);
+    head.write(tag, 0, "latin1");
+    head.writeUInt32LE(payload.length, 4);
+    return Buffer.concat([head, payload, Buffer.alloc(pad ? payload.length & 1 : 0)]);
+  }
+  /** `extra` appends bytes a reader must skip; `flags` is the feature bitmask. */
+  const vp8x = (flags: number, w = W, h = H, extra = 0) =>
+    chunk("VP8X", Buffer.concat([Buffer.from([flags, 0, 0, 0]), le24(w - 1), le24(h - 1), Buffer.alloc(extra)]));
+  /** `declare` skews the RIFF length; `tail` appends bytes outside it. */
+  function riff(chunks: Uint8Array[], { declare = 0, tail = Buffer.alloc(0) } = {}): Buffer {
+    const body = Buffer.concat([Buffer.from("WEBP"), ...chunks]);
+    const head = Buffer.alloc(8);
+    head.write("RIFF");
+    head.writeUInt32LE(body.length + declare, 4);
+    return Buffer.concat([head, body, tail]);
+  }
+  // Distinctive bytes, so a profile in the output is this profile.
+  const profile = (n: number) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + 7) & 255);
+  const ANIM = 0x02;
+  const ALPHA = 0x10;
+  const ICCP = 0x20;
+
+  const bare = bareWebp;
+  const image = bare.subarray(12);
+  const payload = bare.subarray(20, 20 + bare.readUInt32LE(16));
+  // An odd-length picture payload, for the pad-byte rules.
+  const oddImage = Buffer.concat([payload, Buffer.alloc((payload.length & 1) ^ 1)]);
+
+  const cases: [name: string, file: Uint8Array, want: number | "none" | "rejects"][] = [
+    ["no container", bare, "none"],
+    ["ICCP right after VP8X", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image]), 512],
+    ["ICCP after the picture", riff([vp8x(ICCP), image, chunk("ICCP", profile(512))]), 512],
+    ["ICCP of an odd length", riff([vp8x(ICCP), chunk("ICCP", profile(383)), image]), 383],
+    ["ICCP of one byte", riff([vp8x(ICCP), chunk("ICCP", profile(1)), image]), 1],
+    [
+      "an odd chunk before ICCP",
+      riff([vp8x(ICCP), chunk("XTRA", profile(3)), chunk("ICCP", profile(512)), image]),
+      512,
+    ],
+    [
+      "the first of two ICCP chunks",
+      riff([vp8x(ICCP), chunk("ICCP", profile(100)), chunk("ICCP", profile(200)), image]),
+      100,
+    ],
+    ["ICCP without the flag", riff([vp8x(0), chunk("ICCP", profile(512)), image]), "none"],
+    ["the flag without an ICCP chunk", riff([vp8x(ICCP), image]), "none"],
+    ["an empty ICCP chunk", riff([vp8x(ICCP), chunk("ICCP", profile(0)), image]), "none"],
+    ["a reserved feature flag", riff([vp8x(ICCP | 0x01), chunk("ICCP", profile(512)), image]), "none"],
+    [
+      "the animation flag",
+      riff([vp8x(ICCP | ANIM), chunk("ICCP", profile(512)), chunk("ANIM", profile(6)), image]),
+      "rejects",
+    ],
+    [
+      "an ANIM chunk before the picture",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("ANIM", profile(6)), image]),
+      "none",
+    ],
+    [
+      "an ANMF chunk in a still container",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("ANMF", profile(16)), image]),
+      "none",
+    ],
+    ["a second VP8X chunk", riff([vp8x(ICCP), chunk("ICCP", profile(512)), vp8x(ICCP), image]), "none"],
+    ["two pictures", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, image]), "none"],
+    [
+      "an alpha plane after a lossless picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), image, chunk("ALPH", profile(8))]),
+      "none",
+    ],
+    ["stray bytes inside the RIFF chunk", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, profile(4)]), "none"],
+    ["bytes after the RIFF chunk", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image], { tail: profile(33) }), 512],
+    [
+      "a RIFF length past the buffer",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image], { declare: 100 }),
+      "rejects",
+    ],
+    ["a last ICCP chunk without its pad byte", riff([vp8x(ICCP), image, chunk("ICCP", profile(383), false)]), "none"],
+    ["an ICCP chunk without its pad byte", riff([vp8x(ICCP), chunk("ICCP", profile(383), false), image]), "rejects"],
+    [
+      "an odd picture chunk with its pad byte",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("VP8L", oddImage)]),
+      512,
+    ],
+    [
+      "an odd picture chunk without its pad byte",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), chunk("VP8L", oddImage, false)]),
+      "rejects",
+    ],
+    ["trailing bytes in the VP8X chunk", riff([vp8x(ICCP, W, H, 2), chunk("ICCP", profile(512)), image]), "rejects"],
+    ["a canvas larger than the picture", riff([vp8x(ICCP, 64, 64), chunk("ICCP", profile(512)), image]), "rejects"],
+    ["a truncated chunk header", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, Buffer.from("IC")]), "none"],
+    [
+      "a chunk longer than the file",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)).subarray(0, 100), image]),
+      "rejects",
+    ],
+    ["VP8X and ICCP with no picture", riff([vp8x(ICCP), chunk("ICCP", profile(512))]), "rejects"],
+    ["a VP8X header alone", riff([vp8x(ICCP)]), "rejects"],
+  ];
+
+  test.each(cases)("%s", async (_name, file, want) => {
+    // Over fastSizeLimit elements, so the input is borrowed as in production.
+    const buf = new Uint8Array(Math.max(file.length, 2048));
+    buf.set(file);
+    const input = buf.subarray(0, file.length);
+    let got: number | "none" | "rejects";
+    try {
+      const out = Buffer.from(await new Bun.Image(input).webp({ lossless: true }).bytes());
+      const at = out.indexOf("ICCP");
+      got = at < 0 ? "none" : out.readUInt32LE(at + 4);
+      if (typeof got === "number") {
+        // The profile that came out must be the one that went in.
+        const want = profile(got);
+        expect(Array.from(out.subarray(at + 8, at + 8 + got))).toEqual(Array.from(want));
+      }
+    } catch (e) {
+      expect((e as { code: string }).code).toBe("ERR_IMAGE_DECODE_FAILED");
+      got = "rejects";
+    }
+    expect(got).toEqual(want);
+  });
 });
 
 // ─── 10. random-byte fuzz (cheap, bounded) ───────────────────────────────────

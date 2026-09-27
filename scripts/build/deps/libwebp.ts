@@ -2,12 +2,12 @@
  * libwebp — Google's reference WebP codec. Backs Bun.Image WebP
  * decode/encode plus the SharpYUV RGB→YUV converter the encoder prefers.
  *
- * mux/demux are the RIFF-container helpers: demux reads VP8X chunks (ICCP,
- * EXIF, XMP) out of an input WebP without touching the bitstream; mux
- * wraps a raw VP8/VP8L encode in a VP8X container so those chunks can be
- * attached on output. Only the ICCP chunk is used today (ICC profile
- * carry-through for #30197), but the full mux/demux is linked since the
- * TUs are tiny and the EXIF/XMP chunks will need the same plumbing later.
+ * mux is the RIFF-container writer: it wraps a raw VP8/VP8L encode in a VP8X
+ * container so chunks can be attached on output. Only the ICCP chunk is used
+ * today (ICC profile carry-through for #30197), but the whole of mux is
+ * linked since the TUs are tiny and the EXIF/XMP chunks will need the same
+ * plumbing later. Reading a chunk back out of an input is `iccp_chunk` in
+ * codec_webp.rs, not demux: see the DEMUX note below.
  *
  * DirectBuild: no config.h, no codegen. Every dsp/*_{sse2,sse41,neon,msa,
  * mips}*.c file self-guards on WEBP_USE_<ISA> (derived from compiler arch
@@ -75,15 +75,18 @@ const UTILS = [
   "rescaler_utils", "thread_utils", "utils",
 ];
 
-// RIFF container read/write — attaches the ICCP chunk so a non-sRGB source
+// RIFF container writer — attaches the ICCP chunk so a non-sRGB source
 // (Display P3, Adobe RGB, Jpegli XYB) keeps its colour meaning through a
 // WebP re-encode. `anim_decode.c`/`anim_encode.c` (WebPAnimDecoder/
 // WebPAnimEncoder) are omitted: they layer ON TOP of demux/mux, not the
 // reverse, and Bun has no animated-WebP support.
 //
-// Nothing calls demux today: its lookups re-read the caller's buffer, which
-// `codec_webp.rs` cannot allow, so that file reads the ICCP chunk out of an
-// input itself. It stays linked for the EXIF/XMP plumbing (the TU is tiny).
+// Nothing calls demux. Its chunk lookups re-read the caller's buffer, so a JS
+// buffer rewritten mid-decode made `WebPDemuxGetChunk` dereference NULL, and
+// `codec_webp.rs` reads the ICCP chunk out of an input itself. The TU is still
+// compiled and the linker drops it. Taking it off this list is a follow-up:
+// the regression test for that crash builds the commit before the fix, whose
+// `codec_webp.rs` calls into it.
 const DEMUX = ["demux"];
 const MUX = ["muxedit", "muxinternal", "muxread"];
 

@@ -2139,7 +2139,7 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
   const reply = "HTTP/1.1 200 Connection Established\r\n\r\n";
 
   // Runs `onConnect` on the handed-off socket. Then the client reads the connection until it closes.
-  async function readTunnel(
+  async function readWire(
     proto: string,
     onConnect: (socket: Duplex) => void,
     respond = (res: http.ServerResponse) => void res.end(Buffer.alloc(size, "a")),
@@ -2186,17 +2186,21 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
       const closed = once(client, "close");
       client.resume();
       await closed;
-      const wire = Buffer.concat(chunks);
-      const bodyStart = wire.indexOf("\r\n\r\n") + 4;
-      return {
-        bodyBeforeReply: wire.indexOf(reply) - bodyStart,
-        tail: wire.subarray(-"tunnel bytes".length).toString(),
-      };
+      return Buffer.concat(chunks);
     } finally {
       client.destroy();
       server.closeAllConnections();
       server.close();
     }
+  }
+
+  async function readTunnel(...args: Parameters<typeof readWire>) {
+    const wire = await readWire(...args);
+    const bodyStart = wire.indexOf("\r\n\r\n") + 4;
+    return {
+      bodyBeforeReply: wire.indexOf(reply) - bodyStart,
+      tail: wire.subarray(-"tunnel bytes".length).toString(),
+    };
   }
 
   test.each(["http", "https"])("%s: its bytes arrive after that response", async proto => {
@@ -2222,6 +2226,80 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     );
     expect(received).toEqual({ bodyBeforeReply: size, tail: "tunnel bytes" });
   });
+
+  // The tunnel writes nothing, and the response before it never ends: the FIN still follows the bytes of that response.
+  for (const proto of ["http", "https"]) {
+    // Over plain TCP, Windows has taken the whole response by the time the CONNECT arrives, so nothing waits for end() there.
+    test.skipIf(isWindows && proto === "http")(
+      `${proto}: its end() with nothing written sends the FIN after that response`,
+      async () => {
+        let response: http.ServerResponse | undefined;
+        // What the transport still holds of that response when the tunnel ends.
+        let heldAtEnd = -1;
+        const wire = await readWire(
+          proto,
+          socket => {
+            heldAtEnd = response!.writableLength;
+            socket.end();
+          },
+          res => {
+            response = res;
+            res.setHeader("Content-Length", size);
+            // Two writes: a transport that takes one write whole can still refuse the second.
+            res.write(Buffer.alloc(size / 2, "a"));
+            res.write(Buffer.alloc(size / 2, "a"));
+          },
+        );
+        expect(heldAtEnd).toBeGreaterThan(0);
+        expect(wire.length - (wire.indexOf("\r\n\r\n") + 4)).toBe(size);
+      },
+    );
+  }
+
+  // The client ends first. The 'finish' of the tunnel fires when its end() starts to wait for that response, so
+  // the stream has both sides ended, and its auto-destroy closes the socket in front of the bytes that still wait.
+  // Observed on Linux: 2621440 to 2729344 of the 8388608 body bytes, then the FIN. Node sends every byte.
+  for (const proto of ["http", "https"]) {
+    for (const [form, onConnect] of [
+      ["end() in the listener", (socket: Duplex) => void socket.end()],
+      ["end() from its 'end' event", (socket: Duplex) => void socket.resume().on("end", () => socket.end())],
+    ] as const) {
+      test.todo(`${proto}: a client that ended first still gets every byte of that response (${form})`, async () => {
+        const length = 8 * 1024 * 1024;
+        const listener = (req: http.IncomingMessage, res: http.ServerResponse) => {
+          res.setHeader("Content-Length", length);
+          res.write(Buffer.alloc(length, "a"));
+        };
+        const server =
+          proto === "https"
+            ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, listener)
+            : http.createServer(listener);
+        server.on("connect", (req, socket) => onConnect(socket));
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const { port } = server.address() as AddressInfo;
+        const client =
+          proto === "https"
+            ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true })
+            : net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+        try {
+          const chunks: Buffer[] = [];
+          client.on("data", chunk => chunks.push(chunk));
+          client.on("error", () => {});
+          const ended = once(client, "end");
+          client.end(
+            "GET /big HTTP/1.1\r\nHost: x\r\n\r\nCONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+          );
+          await ended;
+          const wire = Buffer.concat(chunks);
+          expect(wire.length - (wire.indexOf("\r\n\r\n") + 4)).toBe(length);
+        } finally {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        }
+      });
+    }
+  }
 
   // The server corks the socket while it parses a read, so the small res.write() of a request in the same packet waits in the cork buffer.
   test("its bytes arrive after a small res.write() of the request before it in the same packet", async () => {

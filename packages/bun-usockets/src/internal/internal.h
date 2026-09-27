@@ -352,6 +352,9 @@ struct us_socket_t {
   /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
    * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
   unsigned char hangup_closes_unsent : 1;
+  /* The peer's FIN behind this side's own FIN is dispatched as on_end before the close (loop.c closes without it otherwise).
+   * For an owner that still reads behind its FIN: node:http's socket.end(). */
+  unsigned char end_after_shutdown : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

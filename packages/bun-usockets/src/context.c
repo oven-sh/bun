@@ -365,6 +365,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->end_after_shutdown = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -546,6 +547,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->end_after_shutdown = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

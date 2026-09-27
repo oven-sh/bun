@@ -471,6 +471,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->end_after_shutdown = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */

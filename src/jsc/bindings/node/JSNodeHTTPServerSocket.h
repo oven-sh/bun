@@ -128,7 +128,7 @@ public:
     /* socket.end(): true when uWS will shut down later, after the buffered response. destroySoon also waits for the body parse and closes behind the FIN. */
     bool shutdownAfterResponseDrains(bool destroySoon);
     /* socket.end() with nothing left to send: the FIN goes out now and the reads stay armed, so that the peer's FIN closes the socket. */
-    JSC::EncodedJSValue halfClose(JSC::JSGlobalObject*);
+    JSC::EncodedJSValue halfClose(JSC::JSGlobalObject*, bool keepReadPause);
 
     /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
     void closeWhenDrained();

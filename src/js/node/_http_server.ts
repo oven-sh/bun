@@ -956,7 +956,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Node's parserOnIncoming stops reading the connection once the bytes
           // queued on responses that do not own the socket yet reach the
           // socket's high water mark, so pipelined requests cannot flood it.
-          if (!socket._paused && (socket[kOutgoingData] ?? 0) >= socket.writableHighWaterMark) {
+          // Not only while socket._paused is false: the FIN of a socket.end() that waited for buffered bytes gives the reads back.
+          if ((socket[kOutgoingData] ?? 0) >= socket.writableHighWaterMark) {
             pausePipelineReads(socket);
           }
         } else if (!is_upgrade) {
@@ -2974,8 +2975,14 @@ function markResponseEndedNT(res) {
 
 function emitPipelinedDrainNT(res) {
   if (!res.destroyed && !res.finished) {
-    res.emit("drain");
+    emitResponseDrain(res);
   }
+}
+
+// Node: a socket that has ended emits no 'drain', so the response on it gets none.
+function emitResponseDrain(res) {
+  if (res[fakeSocketSymbol]?.writableEnded) return;
+  res.emit("drain");
 }
 
 // write()/end() on a response that is still queued behind an in-flight
@@ -3776,7 +3783,7 @@ function flushWriteAccountingNT(res) {
   const needsDrain = (res[kBytesBuffered] ?? 0) >= res.writableHighWaterMark;
   res[kBytesBuffered] = 0;
   if (needsDrain && !res.destroyed && !res.finished) {
-    res.emit("drain");
+    emitResponseDrain(res);
   }
 }
 function scheduleWriteAccountingFlush(res) {
@@ -4100,7 +4107,7 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
 
 function allowWritesToContinue() {
   this._callPendingCallbacks();
-  this.emit("drain");
+  emitResponseDrain(this);
 }
 
 function failPendingWriteCallbacks(res, error) {

@@ -51,8 +51,7 @@ pub use bun_spawn_sys::PidFdType;
 pub use bun_spawn_sys::WindowsOptions;
 pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidT, Rusage, SpawnOptions, SpawnResult, Stdio,
-    StdioKind,
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidT, Rusage, SpawnOptions, SpawnResult, Stdio, StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.

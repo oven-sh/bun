@@ -114,7 +114,7 @@ unsafe extern "C" {
         threadsafe: bool,
     ) -> JSValue;
 
-    fn Bun__JSCFFILibraryCloseFunctions(global: *const JSGlobalObject, library: JSValue);
+    fn Bun__JSCFFILibraryCloseFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
 }
 
 /// `Ok(JSValue::ZERO)` is the C++ side's "could not create" without a
@@ -1319,7 +1319,12 @@ impl FFI {
         jsc::mark_binding();
         // Before `do_close` unloads the code the functions point into.
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (dynamicDowncast) before use.
-        unsafe { Bun__JSCFFILibraryCloseFunctions(global_this, callframe.this()) };
+        let is_running =
+            unsafe { Bun__JSCFFILibraryCloseFunctions(global_this, callframe.this()) };
+        if is_running {
+            // The running call returns into the library, so `do_close` must find none to unload.
+            self.dylib.set(None);
+        }
         self.do_close();
         Ok(JSValue::UNDEFINED)
     }

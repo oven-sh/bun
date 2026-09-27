@@ -76,21 +76,26 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(function));
 }
 
-extern "C" void Bun__JSCFFILibraryCloseFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
+// Returns true if one of the functions is running. Then the caller must keep the library loaded.
+extern "C" bool Bun__JSCFFILibraryCloseFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* library = dynamicDowncast<WebCore::JSFFI>(JSC::JSValue::decode(libraryValue));
     if (!library)
-        return;
+        return false;
     auto* functions = functionsOfLibrary(library);
     if (!functions)
-        return;
+        return false;
+    bool isRunning = false;
     for (unsigned i = 0, length = functions->length(); i < length; ++i) {
         JSC::JSValue value = functions->tryGetIndexQuickly(i);
-        if (auto* function = value ? dynamicDowncast<JSC::JSFFIFunction>(value) : nullptr)
+        if (auto* function = value ? dynamicDowncast<JSC::JSFFIFunction>(value) : nullptr) {
             function->close(vm);
+            isRunning = isRunning || function->isRunning(vm);
+        }
     }
     library->m_functionsValue.clear();
+    return isRunning;
 }
 
 static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation& invocation)

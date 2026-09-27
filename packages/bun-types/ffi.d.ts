@@ -538,6 +538,9 @@ declare module "bun:ffi" {
      *
      * A symbol of a closed {@link dlopen} or {@link linkSymbols} library throws a `TypeError` when called.
      * Calling a symbol of a closed {@link cc} library is undefined behavior.
+     *
+     * `close()` keeps a {@link dlopen} library loaded when a symbol of the library is running, for
+     * example when a {@link JSCallback} that the library calls closes the library. That call then finishes.
      */
     close(): void;
   }

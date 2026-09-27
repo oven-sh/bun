@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync } from "fs";
+import { copyFileSync, existsSync } from "fs";
 import { bunEnv, bunExe, compileFixture, isDebug, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
+import { join } from "path";
 
 import {
   cc,
@@ -973,15 +974,22 @@ it.skipIf(!FFI_FIXTURE_PATH)("ptr argument: ArrayBuffer cells through an FTL-com
 // so each of them has to throw. Runs in a child process: without the fix the first call after close()
 // is a segfault.
 it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws a TypeError", async () => {
+  using dir = tempDir("ffi-close", {});
+  const copies = [1, 2].map(n => {
+    const copy = join(String(dir), "copy" + n + "." + suffix);
+    copyFileSync(FFI_FIXTURE_PATH, copy);
+    return copy;
+  });
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `import { dlopen, linkSymbols } from "bun:ffi";
+      `import { dlopen, JSCallback, linkSymbols } from "bun:ffi";
       const definitions = {
         add_int32_t: { args: ["i32", "i32"], returns: "i32" },
         returns_true: { args: [], returns: "bool" },
         identity_ptr: { args: ["ptr"], returns: "ptr" },
+        cb_result_plus_int32_t: { args: ["callback", "i32"], returns: "i32" },
       };
       const open = () => dlopen(process.env.FFI_FIXTURE_PATH, definitions);
       const results = {};
@@ -1037,6 +1045,28 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
         attempt("close inside valueOf", () => add_int32_t({ valueOf() { lib.close(); return 1; } }, 2));
       }
 
+      for (const [what, warmUp, copy] of [
+        ["cold", 0, process.env.FFI_FIXTURE_COPY_1],
+        ["warm", ${isDebug ? 5_000 : 20_000}, process.env.FFI_FIXTURE_COPY_2],
+      ]) {
+        // close() inside a call: the library calls a callback, and the callback closes the library.
+        // The call returns into the library, so the library has to stay loaded. Each case has a copy
+        // of the library to itself: a library that stays loaded would hide a later unload.
+        const lib = dlopen(copy, definitions);
+        const { cb_result_plus_int32_t } = lib.symbols;
+        let armed = false;
+        const callback = new JSCallback(() => {
+          if (armed) lib.close();
+          return 40;
+        }, { args: [], returns: "i32" });
+        function hot() { return cb_result_plus_int32_t(callback, 2); }
+        for (let i = 0; i < warmUp; i++) hot();
+        armed = true;
+        results["close inside a call, " + what] = hot();
+        attempt("call after a close inside a call, " + what, () => hot());
+        callback.close();
+      }
+
       {
         // close() is per handle.
         const first = open();
@@ -1070,7 +1100,7 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
 
       console.log(JSON.stringify(results, null, 2));`,
     ],
-    env: { ...bunEnv, FFI_FIXTURE_PATH },
+    env: { ...bunEnv, FFI_FIXTURE_PATH, FFI_FIXTURE_COPY_1: copies[0], FFI_FIXTURE_COPY_2: copies[1] },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1087,6 +1117,10 @@ it.skipIf(!FFI_FIXTURE_PATH)("a symbol called after its library's close() throws
       "symbol deleted from lib.symbols before close": closed("add_int32_t"),
       "close inside valueOf, optimized caller": closed("add_int32_t"),
       "close inside valueOf": closed("add_int32_t"),
+      "close inside a call, cold": 42,
+      "call after a close inside a call, cold": closed("cb_result_plus_int32_t"),
+      "close inside a call, warm": 42,
+      "call after a close inside a call, warm": closed("cb_result_plus_int32_t"),
       "closed handle of a file that is open twice": closed("add_int32_t"),
       "open handle of a file that is open twice": 42,
       "closed function as a pointer argument":

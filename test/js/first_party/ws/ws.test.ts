@@ -976,17 +976,23 @@ describe.each([
 
     for (const type of types) ws.addEventListener(type, listener);
     ws.addEventListener("ping", onceListener, { once: true });
+    // What is not a function is ignored, as every listener of these types is in npm ws.
+    for (const notFunction of [undefined, null, { handleEvent: listener }]) {
+      ws.addEventListener("pong", notFunction);
+      ws.removeEventListener("pong", notFunction);
+    }
     const added = types.filter(type => ws.listenerCount(type) !== 0);
+    const pongListeners = ws.listenerCount("pong");
     ws.on("ping", () => pinged.resolve());
     client.ping(Buffer.from([4]));
     await pinged.promise;
     ws.removeAllListeners("ping");
     for (const type of types) ws.removeEventListener(type, listener);
 
-    expect({ added, calls, left: types.filter(type => ws.listenerCount(type) !== 0) }).toEqual(
+    expect({ added, pongListeners, calls, left: types.filter(type => ws.listenerCount(type) !== 0) }).toEqual(
       builtin
-        ? { added: types, calls: [["Buffer"], ["once", "Buffer"]], left: [] }
-        : { added: [], calls: [], left: [] },
+        ? { added: types, pongListeners: 1, calls: [["Buffer"], ["once", "Buffer"]], left: [] }
+        : { added: [], pongListeners: 0, calls: [], left: [] },
     );
   });
 

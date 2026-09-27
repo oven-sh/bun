@@ -1158,7 +1158,9 @@ function isEventTargetType(type) {
 
 function addEventListener(type, handler, options = {}) {
   if (!isEventTargetType(type)) {
-    // npm ws ignores these types. This socket always added the listener, for example for "pong".
+    // npm ws ignores these types. This socket always added a function, for example for "pong".
+    if (typeof handler !== "function") return;
+
     if (options?.once) {
       this.once(type, handler);
     } else {
@@ -1199,7 +1201,7 @@ function addEventListener(type, handler, options = {}) {
 
 function removeEventListener(type, handler) {
   if (!isEventTargetType(type)) {
-    this.removeListener(type, handler);
+    if (typeof handler === "function") this.removeListener(type, handler);
     return;
   }
 

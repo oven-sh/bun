@@ -6,7 +6,6 @@
 #include <wtf/text/MakeString.h>
 #include "BunClientData.h"
 #include "InternalModuleRegistry.h"
-#include "SQLError.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
@@ -14,20 +13,29 @@ namespace Bun {
 
 using namespace JSC;
 
-Structure* createSQLErrorStructure(VM& vm, JSGlobalObject* globalObject, ASCIILiteral className)
+// The Structure of the instances of `MySQLError` or `PostgresError` (src/js/internal/sql/errors.ts)
+// in `realm`. It is not a LazyProperty: an initializer of one has no way to fail.
+static Structure* sqlErrorStructure(VM& vm, Zig::GlobalObject* realm, bool isMySQL)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    auto& slot = isMySQL ? realm->m_mySQLErrorStructure : realm->m_postgresErrorStructure;
+    if (auto* structure = slot.get())
+        return structure;
+
     // The adapter that makes the error has loaded this module, so no JavaScript runs here.
-    JSValue classes = defaultGlobalObject(globalObject)->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::InternalSqlErrors);
+    JSValue classes = realm->internalModuleRegistry()->requireId(realm, vm, InternalModuleRegistry::Field::InternalSqlErrors);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_ASSERT(classes.isObject());
-    JSValue constructor = classes.getObject()->getDirect(vm, Identifier::fromString(vm, className));
+    JSValue constructor = classes.getObject()->getDirect(vm, Identifier::fromString(vm, isMySQL ? "MySQLError"_s : "PostgresError"_s));
     RELEASE_ASSERT(constructor && constructor.isObject());
     // `prototype` of a class is an own data property that user code cannot change.
     JSValue prototype = constructor.getObject()->getDirect(vm, vm.propertyNames->prototype);
     RELEASE_ASSERT(prototype && prototype.isObject());
-    return ErrorInstance::createStructure(vm, globalObject, prototype);
+
+    auto* structure = ErrorInstance::createStructure(vm, realm, prototype);
+    slot.set(vm, realm, structure);
+    return structure;
 }
 
 // An instance of `MySQLError` or `PostgresError` of the realm of `globalObject`, made with no call
@@ -42,9 +50,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__crea
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* realm = defaultGlobalObject(globalObject);
 
-    auto* structure = (isMySQL ? realm->m_mySQLErrorStructure : realm->m_postgresErrorStructure).getInitializedOnMainThread(realm);
+    auto* structure = sqlErrorStructure(vm, defaultGlobalObject(globalObject), isMySQL);
     RETURN_IF_EXCEPTION(scope, {});
 
     ASCIILiteral name = isMySQL ? "MySQLError"_s : "PostgresError"_s;

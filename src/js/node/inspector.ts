@@ -673,7 +673,8 @@ class Session extends EventEmitter {
         if (wt.isMainThread) {
           return new Error("Inspector method NodeWorker.enable is not supported on the main thread yet");
         }
-        const title = `[worker ${wt.threadId}] ${wt.threadName}`;
+        // https://github.com/nodejs/node/blob/v26.3.0/src/inspector/worker_inspector.cc#L28-L31
+        const title = wt.threadName === "" ? `[worker ${wt.threadId}]` : `[worker ${wt.threadId}] ${wt.threadName}`;
         const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
         queueMicrotask(() => {
           this.emit("NodeWorker.attachedToWorker", {

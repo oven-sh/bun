@@ -6315,6 +6315,98 @@ const outcome = async fn => {
   expect(exitCode).toBe(0);
 });
 
+// writeFile opens without O_TRUNC and cuts the previous contents off with
+// ftruncate(2) after writing. On XFS, truncating a file whose size just grew
+// (every new file) synchronously writes the data back, about 1ms per file, so
+// the ftruncate must only be issued when there is an old tail to cut. The
+// LD_PRELOAD shim logs every ftruncate(2) with the file's name (glibc-only:
+// relies on ELF symbol interposition).
+it.skipIf(!isGlibc || !cc)("writeFile only calls ftruncate when the file shrinks", async () => {
+  using dir = tempDir("writefile-ftruncate", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static void log_ftruncate(int fd, long long len) {
+  char link[64], target[4096], line[4200];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+  ssize_t n = readlink(link, target, sizeof target - 1);
+  target[n < 0 ? 0 : n] = 0;
+  const char *name = strrchr(target, '/');
+  int m = snprintf(line, sizeof line, "ftruncate %s %lld\\n", name ? name + 1 : target, len);
+  write(2, line, m);
+}
+
+int ftruncate(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate");
+  log_ftruncate(fd, len);
+  return real(fd, len);
+}
+
+int ftruncate64(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate64");
+  log_ftruncate(fd, len);
+  return real(fd, len);
+}
+`,
+    "same.txt": "x",
+    "grow.txt": "x",
+    "shrink.txt": "xyz",
+    "promises-grow.txt": "x",
+    "promises-shrink.txt": "xyz",
+    "fixture.mjs": `
+      import fs from "node:fs";
+      fs.writeFileSync("new.txt", "x");
+      fs.writeFileSync("same.txt", "y");
+      fs.writeFileSync("grow.txt", "yy");
+      fs.writeFileSync("shrink.txt", "y");
+      await fs.promises.writeFile("promises-new.txt", "x");
+      await fs.promises.writeFile("promises-grow.txt", "yy");
+      await fs.promises.writeFile("promises-shrink.txt", "");
+      const names = fs.readdirSync(".").filter(name => name.endsWith(".txt")).sort();
+      console.log(JSON.stringify(Object.fromEntries(names.map(name => [name, fs.readFileSync(name, "utf8")]))));
+    `,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build ftruncate shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ contents: JSON.parse(stdout), ftruncates: stderr.trim().split("\n") }).toEqual({
+    contents: {
+      "new.txt": "x",
+      "same.txt": "y",
+      "grow.txt": "yy",
+      "shrink.txt": "y",
+      "promises-new.txt": "x",
+      "promises-grow.txt": "yy",
+      "promises-shrink.txt": "",
+    },
+    ftruncates: ["ftruncate shrink.txt 1", "ftruncate promises-shrink.txt 0"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,

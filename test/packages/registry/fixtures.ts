@@ -7,10 +7,22 @@ export const abbreviatedAccept = "application/vnd.npm.install-v1+json; q=1.0, ap
 
 export type Manifest = { name: string; version: string } & Record<string, unknown>;
 
-export async function pack(manifest: Manifest, files: Record<string, string> = {}): Promise<Buffer> {
+const packed = new Map<string, Promise<Buffer>>();
+
+/**
+ * The tarball of a package. The archive holds the time at which it was made, so two archives of the same files can
+ * differ. The same input gives the same bytes here: the first archive is kept.
+ */
+export function pack(manifest: Manifest, files: Record<string, string> = {}): Promise<Buffer> {
   const entries: Record<string, string> = { "package/package.json": JSON.stringify(manifest) };
   for (const [path, content] of Object.entries(files)) entries[`package/${path}`] = content;
-  return Buffer.from(await new Bun.Archive(entries, { compress: "gzip" }).bytes());
+  const key = JSON.stringify(entries);
+  let tarball = packed.get(key);
+  if (tarball === undefined) {
+    tarball = new Bun.Archive(entries, { compress: "gzip" }).bytes().then(bytes => Buffer.from(bytes));
+    packed.set(key, tarball);
+  }
+  return tarball;
 }
 
 export const sha1 = (bytes: Uint8Array) => new Bun.CryptoHasher("sha1").update(bytes).digest("hex");

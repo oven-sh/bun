@@ -71,6 +71,12 @@ export function isValidVersion(version: unknown): version is string {
   return typeof version === "string" && version.length <= 256 && versionPattern.test(version);
 }
 
+/** `1.0.0` of `1.0.0+build.5`. Two versions that differ only in the build metadata are the same version. */
+export function withoutBuildMetadata(version: string): string {
+  const plus = version.indexOf("+");
+  return plus === -1 ? version : version.slice(0, plus);
+}
+
 const xr = `(?:[xX*]|${numeric})`;
 const partial = `[v=\\s]*${xr}(?:\\.${xr}(?:\\.${xr}(?:-?${identifiers})?(?:\\+${identifiers})?)?)?`;
 const primitive = `(?:[<>]?=?|~>?|\\^)\\s*${partial}`;

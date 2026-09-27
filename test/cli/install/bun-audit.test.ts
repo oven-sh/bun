@@ -25,7 +25,7 @@ function fixture(
 }
 
 let server: Bun.Server;
-const upstream = new TestRegistry();
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -43,12 +43,12 @@ beforeAll(async () => {
       return Response.json(fixture);
     },
   });
-  await upstream.start();
+  await verdaccio.start();
 });
 
 afterAll(() => {
   server?.stop();
-  upstream.stop();
+  verdaccio.stop();
 });
 
 function doAuditTest(
@@ -166,7 +166,7 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
         return new Response("not found", { status: 404 });
       }
 
-      const up = await fetch(new URL(url.pathname + url.search, upstream.registryUrl()), {
+      const up = await fetch(new URL(url.pathname + url.search, verdaccio.registryUrl()), {
         method: req.method,
         headers: { accept: req.headers.get("accept") ?? "*/*" },
       });
@@ -174,7 +174,7 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
       if (!up.ok || !contentType.includes("json")) {
         return new Response(up.body, { status: up.status, headers: { "content-type": contentType } });
       }
-      const manifest = JSON.parse((await up.text()).replaceAll(upstream.registryUrl(), proxy.url.href));
+      const manifest = JSON.parse((await up.text()).replaceAll(verdaccio.registryUrl(), proxy.url.href));
       const time = options.rewriteTime?.[packageName];
       if (time) manifest.time = { ...manifest.time, ...time };
       return Response.json(manifest, { status: up.status });

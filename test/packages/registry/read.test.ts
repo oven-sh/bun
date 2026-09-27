@@ -100,6 +100,7 @@ describe("packument", () => {
     expect(reply.headers).toEqual({
       "content-type": "application/vnd.npm.install-v1+json",
       "content-length": String(Buffer.byteLength(reply.text)),
+      "accept-ranges": "bytes",
       "cache-control": "public, max-age=300",
       // One second is the resolution. The header is never older than `modified`.
       "last-modified": "Sat, 02 Mar 2024 10:20:31 GMT",
@@ -231,6 +232,24 @@ describe("packument", () => {
     });
   });
 
+  test("?write=true is the document that a client edits", async () => {
+    const full = await request(`${origin}/plain`);
+    const reply = await request(`${origin}/plain?write=true`, { headers: { accept: abbreviatedAccept } });
+    expect(reply.status).toBe(200);
+    // The full document, whatever the Accept header asks for, and nothing to revalidate it with.
+    expect(reply.json).toEqual(full.json);
+    expect(reply.headers).toEqual({
+      "content-type": "application/json",
+      "content-length": String(Buffer.byteLength(full.text)),
+      "cache-control": "public, max-age=300",
+      vary: "accept-encoding, accept",
+    });
+    const conditional = await request(`${origin}/plain?write=true`, {
+      headers: { "if-none-match": full.headers.etag },
+    });
+    expect(conditional.status).toBe(200);
+  });
+
   test("HEAD", async () => {
     const get = await request(`${origin}/plain`);
     const head = await request(`${origin}/plain`, { method: "HEAD" });
@@ -315,6 +334,40 @@ describe("conditional requests and encodings", () => {
     expect(reply.headers.etag).toBe(used === "identity" ? plain.headers.etag : `W/${plain.headers.etag}`);
   });
 
+  test("Range", async () => {
+    const whole = await request(`${origin}/plain`, { headers: { accept: abbreviatedAccept } });
+    const size = Buffer.byteLength(whole.text);
+    // A part is never encoded, also for a client that accepts an encoding.
+    for (const encoding of ["identity", "gzip, br"]) {
+      const part = await request(`${origin}/plain`, {
+        headers: { accept: abbreviatedAccept, range: "bytes=0-9", "accept-encoding": encoding },
+      });
+      expect(part.status).toBe(206);
+      expect(part.text).toBe(whole.text.slice(0, 10));
+      expect(part.headers).toEqual({
+        "content-type": "application/vnd.npm.install-v1+json",
+        "content-length": "10",
+        "content-range": `bytes 0-9/${size}`,
+        "cache-control": "public, max-age=300",
+        "last-modified": "Sat, 02 Mar 2024 10:20:31 GMT",
+        etag: whole.headers.etag,
+        vary: "accept-encoding, accept",
+      });
+    }
+    const past = await request(`${origin}/plain`, {
+      headers: { accept: abbreviatedAccept, range: `bytes=${size}-` },
+    });
+    expect(past.status).toBe(416);
+    expect(past.text).toBe(`{"error":"Requested range not satisfiable"}`);
+    expect(past.headers).toEqual({
+      "content-type": "application/json",
+      "content-length": "43",
+      "content-range": `bytes */${size}`,
+      "last-modified": "Sat, 02 Mar 2024 10:20:31 GMT",
+      etag: whole.headers.etag,
+    });
+  });
+
   test("a short body is not encoded", async () => {
     const reply = await request(`${origin}/nothing-here`, { headers: { "accept-encoding": "gzip, br" } });
     expect(reply.headers).toEqual({ "content-type": "application/json", "content-length": "21" });
@@ -333,6 +386,7 @@ describe("version", () => {
     const reply = await request(origin + path, { headers: { accept: abbreviatedAccept } });
     expect(reply.status).toBe(200);
     expect(reply.headers["content-type"]).toBe("application/json");
+    expect(reply.headers["cache-control"]).toBe("max-age=300");
     expect(reply.headers).not.toHaveProperty("etag");
     expect(reply.json.version).toBe(version);
     expect(reply.json._id).toBe(`${reply.json.name}@${version}`);
@@ -431,11 +485,13 @@ describe("tarball", () => {
       const reply = await request(`${origin}/plain/-/plain-1.0.0.tgz`, { headers: { range } });
       expect(reply.status).toBe(206);
       expect(reply.headers["content-range"]).toBe(`bytes ${start}-${end}/${size}`);
+      expect(reply.headers).not.toHaveProperty("accept-ranges");
       expect(Buffer.from(reply.bytes).equals(tarball.subarray(start, end + 1))).toBe(true);
     }
     const past = await request(`${origin}/plain/-/plain-1.0.0.tgz`, { headers: { range: `bytes=${size}-` } });
     expect(past.status).toBe(416);
     expect(past.headers["content-range"]).toBe(`bytes */${size}`);
+    expect(past.text).toBe(`{"error":"Requested range not satisfiable"}`);
   });
 });
 
@@ -519,6 +575,28 @@ describe("services", () => {
   test("visibility and collaborators", async () => {
     expect((await request(`${origin}/-/package/plain/visibility`)).json).toEqual({ public: true });
     expect((await request(`${origin}/-/package/plain/collaborators`)).json).toEqual({});
+
+    // A package that is not there is not public, and that is a 200.
+    for (const name of ["nothing-here", "@private%2fhidden"]) {
+      expect(await request(`${origin}/-/package/${name}/visibility`)).toMatchObject({
+        status: 200,
+        text: `{"public":false}`,
+      });
+      expect(await request(`${origin}/-/package/${name}/collaborators`)).toMatchObject({
+        status: 404,
+        text: `{"error":"Package not found"}`,
+      });
+    }
+
+    // A packument ignores credentials that are wrong. This endpoint does not.
+    const unknown = await request(`${origin}/-/package/plain/collaborators`, {
+      headers: { authorization: "Bearer npm_notATokenOfThisRegistry000000000000" },
+    });
+    expect(unknown).toMatchObject({
+      status: 401,
+      text: `{"error":"You must be logged in to publish packages."}`,
+      headers: { "www-authenticate": "Basic, Bearer" },
+    });
   });
 
   test("search", async () => {
@@ -573,6 +651,33 @@ describe("hooks", () => {
       { method: "GET", path: "/plain/-/plain-1.1.0.tgz", status: 200 },
     ]);
     expect(own.requests[0].headers.accept).toBe(abbreviatedAccept);
+  });
+
+  test("an error in intercept fails the test that stops the registry", async () => {
+    const own = new Registry({
+      storage: fixtures.path,
+      intercept: request => {
+        // What a failed expect() in a handler does.
+        if (new URL(request.url).pathname === "/plain") throw new Error("the handler did not expect /plain");
+      },
+    }).start();
+    // The client gets a 500, which a test that only looks at the exit code of bun can miss.
+    const reply = await request(`${own.url}plain`);
+    expect({ status: reply.status, text: reply.text }).toEqual({
+      status: 500,
+      text: `{"error":"Internal Server Error"}`,
+    });
+    expect((await request(`${own.url}everything`)).status).toBe(200);
+    expect(() => own.stop()).toThrow("the handler did not expect /plain");
+    // The error is reported once.
+    expect(() => own.stop()).not.toThrow();
+  });
+
+  test("an answer of the registry is not an error", async () => {
+    const own = new Registry({ storage: fixtures.path }).start();
+    expect((await request(`${own.url}nothing-here`)).status).toBe(404);
+    expect((await request(`${own.url}-/whoami`)).status).toBe(401);
+    expect(() => own.stop()).not.toThrow();
   });
 
   test("a port has one registry", async () => {

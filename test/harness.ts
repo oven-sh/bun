@@ -1909,6 +1909,24 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+type TestRegistry = import("./packages/registry/test-registry.ts").TestRegistry;
+
+/**
+ * @deprecated Use `TestRegistry` from `"registry"`.
+ *
+ * The install tests ran verdaccio through a class of this name. A test that was written for that class still
+ * loads and runs: it gets a `TestRegistry` that listens already, because the old class had its port from the
+ * start. The registry is loaded when a test asks for one, so the other tests do not pay for the import.
+ */
+export const VerdaccioRegistry = function (options?: { packagesPath?: string; configPath?: string }) {
+  if (options?.configPath !== undefined) {
+    throw new Error('There is no verdaccio to configure. Pass the access rules to TestRegistry from "registry".');
+  }
+  const { TestRegistry } = require("./packages/registry/test-registry.ts");
+  return new TestRegistry({ storage: options?.packagesPath }).start();
+} as unknown as new (options?: { packagesPath?: string; configPath?: string }) => TestRegistry;
+export type VerdaccioRegistry = TestRegistry;
+
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
   results.sort();

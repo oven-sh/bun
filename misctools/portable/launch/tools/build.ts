@@ -18,6 +18,8 @@
 //                 clang for the MSVC target (bun tools/windows-host.ts prints
 //                 the commands). --win-host-dir holds host-x64.exe and
 //                 host-arm64.exe; the default is build/portable/inputs/windows in the repository.
+//                 Without the host of an architecture nothing is packed for it: the
+//                 other parts are built, and the exit code is 1.
 //   macos stub    an INPUT FILE as well: host/host_posix.c built on a Mac with
 //                 cc (bun tools/mac-stub.ts prints that script). Without
 //                 --macos-stub-dir the packed file has no macOS stub and its
@@ -274,6 +276,7 @@ if (import.meta.main) {
   const winDir = opt["win-host-dir"] ?? WIN_HOSTS;
   for (const dir of ["stub", "pack", "mac", "macstub"]) await mkdir(`${out}/${dir}`, { recursive: true });
   const key = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16);
+  const withoutWinHost: string[] = [];
 
   for (const arch of arches) {
     if (!(arch in ELF_MACHINE)) throw new Error(`unknown architecture ${arch}`);
@@ -281,11 +284,13 @@ if (import.meta.main) {
     const stub = buildLinuxStub(arch, `${out}/stub`);
     console.log(`  linux stub   ${stub} ${Bun.file(stub).size} bytes (${key(stub)})`);
     const winHost = `${winDir}/${WIN_HOST_NAME[arch]}`;
-    if (!existsSync(winHost))
-      throw new Error(`no Windows host at ${winHost} (bun tools/windows-host.ts prints how a person builds it)`);
-    console.log(
-      `  windows host ${winHost} ${Bun.file(winHost).size} bytes (${key(winHost)}), an input file built on Windows`,
-    );
+    const haveWinHost = existsSync(winHost);
+    if (haveWinHost) {
+      console.log(`  windows host ${winHost} ${Bun.file(winHost).size} bytes (${key(winHost)}), an input file`);
+    } else {
+      withoutWinHost.push(winHost);
+      console.log(`  windows host absent: ${winHost} is not there, nothing is packed for ${arch}`);
+    }
     const macosStub = opt["macos-stub-dir"] ? `${opt["macos-stub-dir"]}/macos-stub-${arch}` : "";
     const haveMacos = !!macosStub && existsSync(macosStub);
     console.log(
@@ -298,7 +303,7 @@ if (import.meta.main) {
     const host = buildLinuxHost(arch, out, images);
     console.log(`  linux host   ${host} ${Bun.file(host).size} bytes (the POSIX host, to test the host path)`);
     const toPack = opt.image ? [opt.image] : [`${images}/${arch}/threads.img`, buildBigBssImage(arch, out, images)];
-    for (const image of toPack) {
+    for (const image of haveWinHost ? toPack : []) {
       const name = image.replace(/.*\//, "").replace(/\.img$/, "");
       const packed = `${out}/pack/${name}-${arch}.com`;
       const cmd = [
@@ -328,5 +333,11 @@ if (import.meta.main) {
       );
       if (!p.success) throw new Error(p.stderr.toString());
     }
+  }
+  if (withoutWinHost.length > 0) {
+    console.error(
+      `no Windows host at ${withoutWinHost.join(", ")} (bun tools/windows-host.ts prints how a person builds it)`,
+    );
+    process.exit(1);
   }
 }

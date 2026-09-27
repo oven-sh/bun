@@ -18,7 +18,9 @@
 //   static   the checking tools: the format, the PE dumps, the signature
 //   not run  Windows and macOS: there is no Windows machine and no Mac here.
 //            The Windows host is an input file, the packed PE is only checked
-//            statically (tools/pe-compare.ts).
+//            statically (tools/pe-compare.ts). A test that reads the Windows host
+//            of an architecture, or a container that holds it, when that input
+//            file is not there.
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -60,6 +62,26 @@ const WIN_HOST: Record<string, string> = {
   x86_64: `${WIN_HOSTS}/host-x64.exe`,
   aarch64: `${WIN_HOSTS}/host-arm64.exe`,
 };
+/** The architectures whose Windows host is not among the input files: tools/build.ts packed nothing for them. */
+const NO_WIN_HOST = Object.keys(WIN_HOST).filter(arch => !existsSync(WIN_HOST[arch]));
+/** Whether a file is a Windows host that is not there, or a container that would hold it. */
+const withoutWinHost = (path: unknown): path is string =>
+  typeof path === "string" &&
+  NO_WIN_HOST.some(
+    arch => path === WIN_HOST[arch] || (path.startsWith(`${out}/pack/`) && path.endsWith(`-${arch}.com`)),
+  );
+/** A test needs an input file that is not there: it could not run, which is not a failure of what it tests. */
+class NoInput extends Error {
+  constructor(path: string) {
+    super(`${path} is not there: the Windows host of its architecture is an input file that was not given`);
+  }
+}
+/** The input file that kept a test from running, if that is why it threw. */
+function noInputOf(e: unknown): NoInput | undefined {
+  if (e instanceof NoInput) return e;
+  const { code, path } = e as NodeJS.ErrnoException;
+  return code === "ENOENT" && withoutWinHost(path) ? new NoInput(path) : undefined;
+}
 const M2 =
   /^m2: threads=8 total=204263652 thread_locals_ok=8\/8 main_tls=unset file_roundtrip=1 wall_year_ok=1 pid_ok=1 /m;
 const BIGBSS = /^bigbss: bss=4 MiB zero_at_start=4194304 written=4194304 data_ok=1 data_writable=1$/m;
@@ -79,6 +101,8 @@ function record(name: string, how: string, runs: number, passes: number, note?: 
 
 type Want = { code?: number; stdout?: RegExp; stderr?: RegExp };
 function once(cmd: string[], env: Record<string, string>, want: Want, cwd?: string): { pass: boolean; why: string } {
+  const absent = cmd.find(withoutWinHost);
+  if (absent !== undefined) throw new NoInput(absent);
   const p = Bun.spawnSync({
     cmd,
     env: { ...process.env, ...env } as Record<string, string>,
@@ -106,6 +130,8 @@ function many(
   cwd?: string,
 ) {
   if (ONLY && !name.includes(ONLY)) return;
+  const absent = cmd.find(withoutWinHost);
+  if (absent !== undefined) return record(name, "not run", 0, 0, new NoInput(absent).message);
   let passes = 0;
   let why = "";
   for (let i = 0; i < runs; i++) {
@@ -121,7 +147,9 @@ function check(name: string, how: string, body: () => string | void) {
   try {
     record(name, how, 1, 1, body() || undefined);
   } catch (e) {
-    record(name, how, 1, 0, String((e as Error).message ?? e));
+    const noInput = noInputOf(e);
+    if (noInput) record(name, "not run", 0, 0, noInput.message);
+    else record(name, how, 1, 0, String((e as Error).message ?? e));
   }
 }
 
@@ -130,7 +158,9 @@ async function checkAsync(name: string, how: string, body: () => Promise<string 
   try {
     record(name, how, 1, 1, (await body()) || undefined);
   } catch (e) {
-    record(name, how, 1, 0, String((e as Error).message ?? e));
+    const noInput = noInputOf(e);
+    if (noInput) record(name, "not run", 0, 0, noInput.message);
+    else record(name, how, 1, 0, String((e as Error).message ?? e));
   }
 }
 

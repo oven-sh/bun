@@ -2286,8 +2286,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
-  /// The queries that then(), catch(), finally() or run() started and that did not reach the pool yet, in start order.
-  /// The list is linked through the queries. `Query` adds to it and takes from it, and close() hands it to the pool.
+  /// The queries that started and did not reach the pool yet, in start order. The list is linked through the queries.
   firstStarted: QueryType<any, any> | undefined;
   lastStarted: QueryType<any, any> | undefined;
 

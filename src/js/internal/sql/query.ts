@@ -14,9 +14,7 @@ const _nextStarted = Symbol("nextStarted");
 
 const PublicPromise = Promise;
 
-/// Gives the started queries of `adapter` to it now, in start order. A close() that waits calls this right before it
-/// stops taking queries, so that a query which started before close() does not find the pool closed.
-/// A query stays in the list after this. Its own start takes it out, and then does nothing more.
+/// For a close() that waits: gives the queries that started and did not reach the pool yet to the pool, in start order.
 function handOffStartedQueries(adapter: DatabaseAdapter<any, any, any>) {
   for (let query = adapter.firstStarted; query !== undefined; query = query[_nextStarted]) {
     if (query[_queryStatus] & SQLQueryStatus.handedOff) {

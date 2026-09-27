@@ -460,8 +460,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     // so we can just no-op here
   }
 
-  /// False while the callback of a begin() has a transaction open: a statement would run inside that transaction and
-  /// resolve, and then close() rolls the transaction back. False when something else closed the database.
+  /// False while a begin() has its transaction open: the statement would run in it, and close() rolls it back.
   #canRunStartedQueries() {
     if (this.firstStarted === undefined) {
       return false;

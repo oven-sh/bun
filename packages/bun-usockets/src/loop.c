@@ -780,10 +780,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * EAGAIN ends the loop, so this is bounded by the receive
                          * buffer. This is what the comment above always described; it
                          * was keyed on the error flag, which kqueue does not set for
-                         * a peer FIN. */
+                         * a peer FIN.
+                         * The read cap only matters when the hint is synthetic
+                         * (us_socket_drain_readable_then_end) and a writer still
+                         * holds the peer end: it keeps refilling the buffer, so
+                         * EAGAIN may never come. 64 reads is far past any kernel
+                         * buffer, so a real hangup never hits it. */
+                        #define EOF_DRAIN_MAX_READS 64
                         if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
-                            continue;
+                            if (++repeat_recv_count <= EOF_DRAIN_MAX_READS) {
+                                continue;
+                            }
+                            break;
                         }
+                        #undef EOF_DRAIN_MAX_READS
                         /* Stop if on_data paused us (us_socket_pause from the data
                          * handler, e.g. fetch() receive backpressure or
                          * net.Socket#pause) — keep honoring the pause instead of

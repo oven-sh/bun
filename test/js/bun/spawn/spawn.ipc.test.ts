@@ -260,6 +260,100 @@ it.concurrent.skipIf(isWindows)("delivers a message sent right before exit on th
   });
 });
 
+// The exit-time drain runs from the exit task, outside a loop tick. bun:test's `expect().resolves`
+// waits by ticking the loop, so an `ipc` callback that uses it ticks from inside the drain. That
+// nested tick sees the child's hangup and closes the channel; it must leave the socket for the
+// outermost tick to free, as the drain still holds it. The parent waits until the child is reaped
+// (its /proc entry is gone), so the exit task is queued before the loop runs again.
+it.skipIf(!isLinux)("a synchronous wait inside the ipc callback during the exit-time drain", async () => {
+  using dir = tempDir("ipc-exit-drain-reenter", {
+    "reenter.test.ts": `
+      import { expect, test } from "bun:test";
+      import { existsSync } from "node:fs";
+
+      test("ipc callback ticks the loop from inside the drain", async () => {
+        const received = [];
+        const ipcDone = Promise.withResolvers();
+        const disconnected = Promise.withResolvers();
+        const proc = Bun.spawn({
+          cmd: [process.execPath, "-e", 'process.send("hello"); Promise.resolve().then(() => process.exit(0));'],
+          stdio: ["ignore", "inherit", "inherit"],
+          serialization: "json",
+          ipc(message) {
+            received.push(message);
+            expect(Bun.sleep(20)).resolves.toBeUndefined();
+            ipcDone.resolve();
+          },
+          onDisconnect() {
+            disconnected.resolve();
+          },
+        });
+        const deadline = Date.now() + 30_000;
+        while (existsSync("/proc/" + proc.pid)) {
+          if (Date.now() > deadline) throw new Error("child was not reaped");
+          Bun.sleepSync(1);
+        }
+        Bun.sleepSync(50);
+        const exitCode = await proc.exited;
+        await disconnected.promise;
+        await ipcDone.promise;
+        expect({ received, exitCode }).toEqual({ received: ["hello"], exitCode: 0 });
+      });
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "reenter.test.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// A grandchild that keeps writing to the inherited channel after the child exits cannot keep
+// the exit-time drain going: the drain stops after a bounded number of reads, the channel
+// closes, and the writer ends with EPIPE.
+it.skipIf(isWindows)("a grandchild still writing to the channel after the child exits", async () => {
+  const received: { fill: string }[] = [];
+  const disconnected = Promise.withResolvers<void>();
+  // Large lines keep the kernel buffer full with few messages, so few JS callbacks run per read.
+  const line = JSON.stringify({ fill: Buffer.alloc(64 * 1024, "x").toString() });
+  await using child = spawn({
+    // fd 3 is the child's end of the channel. `yes` inherits it and writes until the parent
+    // closes its end.
+    cmd: [shellExe(), "-c", 'yes "$LINE" >&3 2>/dev/null & echo $!'],
+    env: { ...bunEnv, LINE: line },
+    stdio: ["ignore", "pipe", "inherit"],
+    serialization: "json",
+    ipc(message) {
+      received.push(message);
+    },
+    onDisconnect() {
+      disconnected.resolve();
+    },
+  });
+  // Stay off the event loop until the writer has filled the channel and the child has exited,
+  // so the exit-time drain meets a full buffer.
+  Bun.sleepSync(200);
+  const grandchildPid = Number((await child.stdout.text()).trim());
+  try {
+    expect(grandchildPid).toBeGreaterThan(0);
+    expect(await child.exited).toBe(0);
+    await disconnected.promise;
+    expect(received.length).toBeGreaterThan(0);
+    expect(received.every(message => message.fill.length === 64 * 1024)).toBe(true);
+  } finally {
+    if (grandchildPid > 0) {
+      try {
+        process.kill(grandchildPid);
+      } catch {}
+    }
+  }
+});
+
 describe("ipc mode json", () => {
   it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {
     // An internal JSON message is "\\x02" + json + "\\n". A line of just the tag

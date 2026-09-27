@@ -108,7 +108,7 @@ export const pins = {
   rust: {
     rustup: "1.28.2",
     channel: "nightly-2026-09-15",
-    components: ["rust-src", "rustfmt", "clippy", "miri"],
+    components: ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"],
     targets: [
       "aarch64-unknown-linux-gnu",
       "x86_64-unknown-linux-gnu",

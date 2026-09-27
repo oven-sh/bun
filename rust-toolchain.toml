@@ -17,7 +17,9 @@ channel = "nightly-2026-09-15"
 # comes with the toolchain install regardless; they're listed here so a dev
 # running `bun run rust:check-all` or `cargo check --target` from any host
 # still gets prebuilt std for every Tier 1/2 triple.
-components = ["rust-src", "rustfmt", "clippy", "miri"]
+# llvm-tools: rustc's own llvm-nm, llvm-objdump, llvm-profdata and the rest, for looking at
+# what it emits. The build does not use them.
+components = ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"]
 targets = [
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-gnu",

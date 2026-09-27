@@ -43,6 +43,7 @@ use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
+use bun_standalone_graph::{NativeLibrarySet, native_libs};
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
@@ -4494,100 +4495,160 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     }
 }
 
-/// Materialise an embedded file (`.node`/`.so`/`.dylib`/`.dll` from
+/// Materialise an embedded shared library (`.node`/`.so`/`.dylib`/`.dll` from
 /// `bun build --compile`) to an on-disk path `dlopen(2)` can open. Called
 /// from `resolve_embedded_node_file_hook` (`process.dlopen()`) and
 /// `ffi_body::FFI::open` (`bun:ffi`).
 ///
-/// The filename is a hash of the contents, so every `dlopen()` of the same
-/// embedded library — across calls, Worker VMs, and restarts — shares one
-/// file instead of leaking a copy per call (#29585). Returns `None` when the
-/// input is empty, absent from the graph, or a filesystem step fails.
-pub(crate) fn resolve_embedded_file_to_buf(
-    input_path: &[u8],
-    extname: &[u8],
-    out_buf: &mut [u8],
-) -> Option<usize> {
+/// A library's own dependencies resolve relative to its on-disk path
+/// (`$ORIGIN`, `@loader_path`, the DLL search path), so the whole embedded
+/// set (`NativeLibrarySet`, recorded at build time) is written once into one
+/// directory that mirrors the `/$bunfs/root/` layout:
+///
+/// ```text
+/// {tmpdir}/.bun-{euid}-{set_hash}/{relative path}
+/// ```
+///
+/// The set hash in the name dedupes across calls, Worker VMs, and restarts
+/// (#29585), and the euid keeps users on a shared `/tmp` from colliding. The
+/// bundler's hoisted `[name]-[hash].node` resolves to its `--asset` twin
+/// (`alias_index`), the copy that sits next to its dependencies. A file the
+/// record does not list (an executable built before the record existed, or a
+/// name without a library extension) is mirrored on its own.
+///
+/// Returns `None` when the input is empty, absent from the graph, or a
+/// filesystem step fails.
+pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]) -> Option<usize> {
     if input_path.is_empty() {
         return None;
     }
 
-    let file = bun_standalone_graph::Graph::get_ref()?.find_ref(input_path)?;
-    let file_contents: &[u8] = file.contents.as_bytes();
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let file_index = graph.find_index(input_path)?;
+    let files = graph.files.values();
+    let set = &graph.native_library_set;
+    let member = set.member(file_index);
+    let target_index = match member {
+        Some(m) if m.alias_index != NativeLibrarySet::NO_ALIAS => m.alias_index as usize,
+        _ => file_index,
+    };
+    let target = &files[target_index];
+    let set_hash = match member {
+        Some(_) => set.set_hash,
+        None => native_libs::hash_set([(
+            target.display_name(),
+            bun_wyhash::hash(target.contents.as_bytes()),
+        )]),
+    };
 
-    // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
-    // users on a shared `/tmp` from colliding.
-    let content_hash = bun_wyhash::hash(file_contents);
     let uid = extract_owner_uid();
-    let mut canonical_name_buf = [0u8; 64];
-    let canonical_name = bun_core::fmt::buf_print_z(
-        &mut canonical_name_buf,
-        format_args!(
-            ".bun-{}-{:x}.{}",
-            uid,
-            content_hash,
-            bun_core::fmt::s(extname)
-        ),
+    let mut dir_name_buf = [0u8; 64];
+    let dir_name = bun_core::fmt::buf_print_z(
+        &mut dir_name_buf,
+        format_args!(".bun-{}-{:x}", uid, set_hash),
     )
     .ok()?;
+    let mut rel_buf = bun_paths::path_buffer_pool::get();
+    let rel = native_libs::mirror_relative_path(target.name, &mut rel_buf[..])?;
 
-    // Reuse the canonical file from a previous run if it is still ours with
-    // the right size. `lstatat` so a planted symlink fails the ISREG check
-    // instead of being followed.
+    // The canonical path: `FFI::open` writes a NUL terminator at
+    // `out_buf[len]`, so `len` has to leave room for it.
+    let tmpdir_path = Fs::RealFS::tmpdir_path();
+    let len = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        tmpdir_path,
+        out_buf,
+        &[dir_name.as_bytes(), rel],
+    )?
+    .len();
+    if len + 1 >= out_buf.len() {
+        return None;
+    }
     let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
-    let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-    if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
-        let size_ok = st.st_size as usize == file_contents.len();
+
+    // Reuse the mirror from a previous call or run when the requested file is
+    // still ours with the right size. `lstat` so a planted symlink fails the
+    // ISREG check instead of being followed.
+    let is_ours = |st: &bun_sys::Stat| -> bool {
+        let size_ok = st.st_size as usize == target.contents.len();
         #[cfg(unix)]
         let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
         #[cfg(windows)]
         let ours = true;
-        if size_ok && ours {
-            return write_absolute(
-                out_buf,
-                Fs::RealFS::tmpdir_path(),
-                canonical_name.as_bytes(),
-            );
-        }
+        size_ok && ours
+    };
+    let mut canonical_rel_buf = bun_paths::path_buffer_pool::get();
+    let canonical_rel = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
+        &mut canonical_rel_buf[..],
+        &[dir_name.as_bytes(), rel],
+    );
+    if bun_sys::lstatat(&tmpdir, canonical_rel).is_ok_and(|st| is_ours(&st)) {
+        return Some(len);
     }
 
-    // Write to a unique scratch name, then atomically rename it into place.
+    // Write the whole set into a scratch directory, then rename it into
+    // place. A directory rename never replaces a non-empty directory, so
+    // whichever Worker or process finishes first owns the canonical name and
+    // every later writer keeps or discards its own copy.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
-
-    // 0600: the file persists, only the owning euid ever dlopens it, and the
-    // embedded bytes may come from a binary that is not world-readable.
-    let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
-
-    let write_ok = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(file_contents)
-        .is_ok();
-    if !write_ok {
-        let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);
+    let scratch_name = Fs::FileSystem::tmpname(b"tmp", &mut scratch_buf[..], set_hash).ok()?;
+    // 0700 / 0600: the mirror persists, only the owning euid ever dlopens it,
+    // and the embedded bytes may come from a binary that is not world-readable.
+    bun_sys::mkdirat(&tmpdir, scratch_name, 0o700).ok()?;
+    let discard_scratch = || {
+        let _ = tmpdir.delete_tree(scratch_name.as_bytes());
+    };
+    // Scoped so the handle is closed before the rename (Windows refuses to
+    // move a directory that is open).
+    let written = {
+        let Ok(scratch) = tmpdir.open_at_with(scratch_name.as_bytes(), bun_sys::O::RDONLY) else {
+            discard_scratch();
+            return None;
+        };
+        let write_member = |file: &bun_standalone_graph::File| -> Option<()> {
+            let mut member_rel_buf = bun_paths::path_buffer_pool::get();
+            let member_rel = native_libs::mirror_relative_path(file.name, &mut member_rel_buf[..])?;
+            let flags = bun_sys::O::WRONLY
+                | bun_sys::O::CREAT
+                | bun_sys::O::EXCL
+                | bun_sys::O::NOFOLLOW
+                | bun_sys::O::CLOEXEC;
+            bun_sys::File::make_openat(&scratch, member_rel, flags, 0o600)
+                .and_then(|f| f.write_all(file.contents.as_bytes()))
+                .ok()
+        };
+        if member.is_some() {
+            set.members
+                .iter()
+                .filter(|m| m.alias_index == NativeLibrarySet::NO_ALIAS)
+                .all(|m| write_member(&files[m.file_index as usize]).is_some())
+        } else {
+            write_member(target).is_some()
+        }
+    };
+    if !written {
+        discard_scratch();
         return None;
     }
 
-    // On sticky `/tmp` the rename fails EACCES/EPERM when another user owns
-    // the destination; fall back to the scratch file.
-    let rename_ok = tmpfile.finish(canonical_name).is_ok();
-
-    let final_name = if rename_ok {
-        canonical_name
-    } else {
-        scratch_name
-    };
-    write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
-}
-
-/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
-fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usize> {
-    let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        tmpdir,
+    if bun_sys::renameat(&tmpdir, scratch_name, &tmpdir, dir_name).is_ok() {
+        return Some(len);
+    }
+    // Another writer won, or the name belongs to someone else on a sticky
+    // `/tmp`: use the canonical mirror if it checks out, else our own copy.
+    if bun_sys::lstatat(&tmpdir, canonical_rel).is_ok_and(|st| is_ours(&st)) {
+        discard_scratch();
+        return Some(len);
+    }
+    let len = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        tmpdir_path,
         out_buf,
-        &[name],
-    );
-    Some(result.len())
+        &[scratch_name.as_bytes(), rel],
+    )?
+    .len();
+    if len + 1 >= out_buf.len() {
+        return None;
+    }
+    Some(len)
 }
 
 /// euid, not uid: `open(2)` sets the new file's owner to euid, so a
@@ -4612,7 +4673,7 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
     }
     let input_path = path.to_utf8();
     let mut path_buf = bun_paths::path_buffer_pool::get();
-    match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
+    match resolve_embedded_file_to_buf(input_path.slice(), &mut path_buf[..]) {
         Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),
         None => bun_core::String::DEAD,
     }

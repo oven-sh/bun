@@ -1307,31 +1307,56 @@ pub(crate) fn collect_compile_assets(
         }
         let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
     }
-    let mut push =
-        |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
-            if seen.contains_key(&dest) {
-                return Err(format!(
-                    "asset {} collides with another embedded file at {}",
-                    bun_fmt::quote(asset),
-                    bun_fmt::quote(&dest),
-                ));
-            }
-            let _ = seen.put(&dest, ());
-            out.push(options::OutputFile {
-                loader: Loader::File,
-                input_loader: Loader::File,
-                output_kind: options::OutputKind::Asset,
-                dest_path: dest.into_boxed_slice(),
-                size: bytes.len(),
-                size_without_sourcemap: bytes.len(),
-                value: options::OutputFileValue::Buffer {
-                    bytes: bytes.into_boxed_slice(),
-                },
-                side: Some(options::Side::Client),
-                ..options::OutputFile::zero_value()
-            });
-            Ok(())
+    // A shared library's source path: the standalone graph uses it to tell that
+    // the bundler's hoisted `[name]-[hash].node` and an `--asset` copy are the
+    // same file (`native_libs`). The resolver records the real path of a hoisted
+    // file, so this is the real path too.
+    let src_path_of = |dir: Fd, name: &[u8], dest: &[u8]| -> Option<Box<[u8]>> {
+        if !bun_standalone_graph::native_libs::is_shared_library_name(dest) {
+            return None;
+        }
+        let mut abs = bun_paths::path_buffer_pool::get();
+        let mut real = bun_paths::path_buffer_pool::get();
+        let abs_z = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+            bun_sys::get_fd_path(dir, &mut abs).ok()?,
+            &mut real[..],
+            &[name],
+        );
+        let mut resolved = bun_paths::path_buffer_pool::get();
+        bun_sys::realpath(abs_z, &mut resolved).ok().map(Box::from)
+    };
+    let mut push = |out: &mut Vec<options::OutputFile>,
+                    asset: &[u8],
+                    dest: Vec<u8>,
+                    bytes: Vec<u8>,
+                    src_path: Option<Box<[u8]>>| {
+        if seen.contains_key(&dest) {
+            return Err(format!(
+                "asset {} collides with another embedded file at {}",
+                bun_fmt::quote(asset),
+                bun_fmt::quote(&dest),
+            ));
+        }
+        let _ = seen.put(&dest, ());
+        let mut file = options::OutputFile {
+            loader: Loader::File,
+            input_loader: Loader::File,
+            output_kind: options::OutputKind::Asset,
+            dest_path: dest.into_boxed_slice(),
+            size: bytes.len(),
+            size_without_sourcemap: bytes.len(),
+            value: options::OutputFileValue::Buffer {
+                bytes: bytes.into_boxed_slice(),
+            },
+            side: Some(options::Side::Client),
+            ..options::OutputFile::zero_value()
         };
+        if let Some(src_path) = src_path {
+            file.set_src_path(src_path);
+        }
+        out.push(file);
+        Ok(())
+    };
 
     let cwd = Fd::cwd();
     let mut zbuf = bun_paths::path_buffer_pool::get();
@@ -1392,7 +1417,7 @@ pub(crate) fn collect_compile_assets(
                     continue;
                 }
                 #[cfg(windows)]
-                let (rel, bytes) = {
+                let (rel, bytes, src_path) = {
                     let mut rel_buf = bun_paths::path_buffer_pool::get();
                     let rel_z = bun_paths::string_paths::from_w_path(
                         &mut rel_buf[..],
@@ -1413,30 +1438,33 @@ pub(crate) fn collect_compile_assets(
                         Ok(b) => b,
                         Err(e) => return fail(e.with_path(&rel)),
                     };
-                    (rel, bytes)
+                    let src_path = src_path_of(entry.dir, base_z.as_bytes(), &rel);
+                    (rel, bytes, src_path)
                 };
                 #[cfg(not(windows))]
-                let (rel, bytes) = {
+                let (rel, bytes, src_path) = {
                     let rel = entry.path.as_bytes().to_vec();
                     let bytes = match bun_sys::File::read_from(entry.dir, entry.basename.as_bytes())
                     {
                         Ok(b) => b,
                         Err(e) => return fail(e.with_path(entry.path.as_bytes())),
                     };
-                    (rel, bytes)
+                    let src_path = src_path_of(entry.dir, entry.basename.as_bytes(), &rel);
+                    (rel, bytes, src_path)
                 };
                 let mut dest = Vec::with_capacity(base.len() + 1 + rel.len());
                 dest.extend_from_slice(base);
                 dest.push(b'/');
                 dest.extend_from_slice(&rel);
-                push(out, asset, dest, bytes)?;
+                push(out, asset, dest, bytes, src_path)?;
             }
         } else if bun_core::S::ISREG(st.st_mode as _) {
             let bytes = match bun_sys::File::read_from(cwd, asset_trimmed) {
                 Ok(b) => b,
                 Err(e) => return fail(e.with_path(asset)),
             };
-            push(out, asset, base.to_vec(), bytes)?;
+            let src_path = src_path_of(cwd, asset_trimmed, base);
+            push(out, asset, base.to_vec(), bytes, src_path)?;
         } else {
             return Err(format!(
                 "asset {} is not a regular file or directory",

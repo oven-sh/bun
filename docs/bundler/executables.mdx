@@ -895,6 +895,12 @@ console.log(addon.hello());
 
 If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` file directly, or it won't bundle correctly.
 
+An addon that links a shared library next to it (through `$ORIGIN` or `@loader_path`) works when that library is embedded too. Pass the directory with `--asset` (see below). At runtime, Bun writes every embedded shared library into one temporary directory that keeps the embedded layout, so the addon finds its dependencies where it expects them.
+
+```bash terminal icon="terminal"
+bun build --compile ./index.ts --asset ./lib --outfile myapp
+```
+
 ### Embed directories
 
 Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.

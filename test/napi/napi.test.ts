@@ -157,7 +157,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
+            // Extracted into a directory that mirrors the embedded layout (#44063).
+            const extractedCount = () =>
+              (readdirSync(String(tmpdir), { recursive: true }) as string[]).filter(f => f.endsWith(".node")).length;
             const count = extractedCount();
             expect(count).toBeGreaterThan(0);
             const again = runSelf();

@@ -1,7 +1,8 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join, sep } from "path";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { dirname, join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
 // debug+ASAN), which blows the 5s default.
@@ -404,6 +405,146 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(expected);
       expect(code).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+});
+
+// https://github.com/oven-sh/bun/issues/44063
+//
+// dlopen() cannot read /$bunfs/, so an embedded shared library is written to a
+// temp path first. A library's own dependencies resolve relative to that path
+// ($ORIGIN on Linux, @loader_path on macOS), so every embedded shared library
+// has to land in one directory that keeps the embedded layout. Needs a C
+// compiler; Windows has no toolchain on CI for a .dll fixture.
+const cc = isWindows ? null : (Bun.which("clang") ?? Bun.which("cc") ?? Bun.which("gcc"));
+
+describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep their layout", () => {
+  const soExt = isMacOS ? "dylib" : "so";
+  const FOO_C = "int foo(void) { return 42; }\n";
+  // N-API addon with no headers: the symbols resolve from the bun executable at dlopen time.
+  const ADDON_C = /* c */ `
+    typedef struct napi_env__* napi_env; typedef struct napi_value__* napi_value;
+    int napi_create_int32(napi_env, int, napi_value*);
+    int napi_set_named_property(napi_env, napi_value, const char*, napi_value);
+    int foo(void);
+    napi_value napi_register_module_v1(napi_env env, napi_value exports) {
+      napi_value v; napi_create_int32(env, foo(), &v);
+      napi_set_named_property(env, exports, "answer", v); return exports;
+    }
+  `;
+  const BAR_C = "int foo(void); int bar(void) { return foo() + 1; }\n";
+
+  async function run_cc(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({ cmd: [cc!, ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (code !== 0) throw new Error(`cc failed (exit ${code})\n${stdout}\n${stderr}`);
+  }
+
+  // lib/libfoo.<so>, then `out` in lib/ that links it and looks for it next to itself.
+  async function buildLibs(dir: string, sources: Record<string, string>) {
+    const foo = isMacOS
+      ? ["-dynamiclib", "foo.c", "-o", `lib/libfoo.dylib`, "-install_name", "@rpath/libfoo.dylib"]
+      : ["-shared", "-fPIC", "foo.c", "-o", "lib/libfoo.so"];
+    await run_cc(dir, foo);
+    for (const [out, src] of Object.entries(sources)) {
+      const link = ["-Llib", "-lfoo", "-Wl,-rpath," + (isMacOS ? "@loader_path" : "$ORIGIN")];
+      const args = isMacOS
+        ? [out.endsWith(".node") ? "-bundle" : "-dynamiclib", src, "-o", out, "-undefined", "dynamic_lookup", ...link]
+        : ["-shared", "-fPIC", src, "-o", out, ...link];
+      await run_cc(dir, args);
+    }
+  }
+
+  // The compiled binary runs from another cwd with its own temp dir, so the
+  // only place the libraries can come from is the executable itself.
+  async function runIsolated(dir: string, extractDir: string) {
+    await using proc = Bun.spawn({
+      cmd: [join(dir, "app" + exe)],
+      cwd: extractDir,
+      env: { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, code };
+  }
+
+  function extracted(extractDir: string, suffix: string): string[] {
+    return (readdirSync(extractDir, { recursive: true }) as string[])
+      .filter(f => f.endsWith(suffix))
+      .map(f => f.split(sep).join("/"));
+  }
+
+  test(
+    "a required .node addon finds the --asset library next to it",
+    async () => {
+      using dir = tempDir("bunfs-addon-sibling", {
+        "foo.c": FOO_C,
+        "addon.c": ADDON_C,
+        "lib/.keep": "",
+        "index.ts": /* ts */ `
+          const addon = require("./lib/addon.node");
+          const direct = { exports: {} as any };
+          process.dlopen(direct, "/$bunfs/root/lib/addon.node");
+          const url = { exports: {} as any };
+          process.dlopen(url, "file:///$bunfs/root/lib/addon.node");
+          console.log(JSON.stringify([addon.answer, direct.exports.answer, url.exports.answer]));
+        `,
+      });
+      await buildLibs(String(dir), { "lib/addon.node": "addon.c" });
+      await compile(String(dir), ["--asset", "lib"]);
+
+      using extractRoot = tempDir("bunfs-addon-sibling-extract", {});
+      const extractDir = String(extractRoot);
+      const first = await runIsolated(String(dir), extractDir);
+      expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(first.stdout.trim()).toBe("[42,42,42]");
+      expect(first.code).toBe(0);
+
+      // One addon file, next to the one library file: the hoisted
+      // `addon-[hash].node` copy resolves to its `lib/addon.node` twin.
+      const addons = extracted(extractDir, ".node");
+      const libs = extracted(extractDir, "libfoo." + soExt);
+      expect(addons).toHaveLength(1);
+      expect(libs).toHaveLength(1);
+      expect(dirname(addons[0])).toBe(dirname(libs[0]));
+      expect(addons[0].endsWith("/lib/addon.node")).toBe(true);
+
+      // A second run reuses the extracted directory.
+      const second = await runIsolated(String(dir), extractDir);
+      expect(second.stdout.trim()).toBe("[42,42,42]");
+      expect(second.code).toBe(0);
+      expect(extracted(extractDir, ".node")).toEqual(addons);
+      expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "bun:ffi dlopen of an embedded library finds its --asset dependency",
+    async () => {
+      using dir = tempDir("bunfs-ffi-sibling", {
+        "foo.c": FOO_C,
+        "bar.c": BAR_C,
+        "lib/.keep": "",
+        "index.ts": /* ts */ `
+          import { dlopen } from "bun:ffi";
+          import hoisted from "./lib/libbar.${soExt}" with { type: "file" };
+          const symbols = { bar: { args: [], returns: "int" } } as const;
+          const a = dlopen(hoisted, symbols).symbols.bar();
+          const b = dlopen("/$bunfs/root/lib/libbar.${soExt}", symbols).symbols.bar();
+          console.log(JSON.stringify([a, b]));
+        `,
+      });
+      await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
+      await compile(String(dir), ["--asset", "lib"]);
+
+      using extractRoot = tempDir("bunfs-ffi-sibling-extract", {});
+      const result = await runIsolated(String(dir), String(extractRoot));
+      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(result.stdout.trim()).toBe("[43,43]");
+      expect(result.code).toBe(0);
     },
     TIMEOUT,
   );

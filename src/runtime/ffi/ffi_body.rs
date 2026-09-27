@@ -1419,33 +1419,20 @@ impl FFI {
 
         let mut filepath_buf = bun_paths::path_buffer_pool::get();
         let name: &[u8] = 'brk: {
-            let ext: &[u8] = match () {
-                // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
-                #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-                () => b"so",
-                #[cfg(target_os = "macos")]
-                () => b"dylib",
-                #[cfg(windows)]
-                () => b"dll",
-                // No arm for other targets (e.g. wasm) — the match fails to
-                // compile there.
-            };
             // Extract a bunfs-embedded shared
             // library (added via `import lib from "./lib.so" with { type:
             // "file" }` and shipped through `bun build --compile`) to a real
-            // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
-            // can't see the bunfs virtual FS. The helper lives in
-            // `crate::jsc_hooks` — same crate, so a direct call.
+            // on-disk path, returning it; libc `dlopen(2)` can't see the
+            // bunfs virtual FS. The helper lives in `crate::jsc_hooks` — same
+            // crate, so a direct call.
             let _ = vm;
             if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
                 name_slice.slice(),
-                ext,
                 &mut filepath_buf[..],
             ) {
-                // NUL-terminate in place so `DynLib::open`
-                // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
+                // NUL-terminate in place so `DynLib::open` can pass the slice
+                // to libc without copying. `resolve_*_to_buf` leaves room for
+                // the terminator, so `filepath_buf[len]` is in bounds.
                 filepath_buf[len] = 0;
                 break 'brk &filepath_buf[0..len];
             }

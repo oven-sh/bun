@@ -25,7 +25,7 @@ import {
   targetOf,
   tripleOf,
 } from "../flags.ts";
-import { RED_ZONE_PATCH, patchMusl } from "../libc/patch_musl.ts";
+import { JIT_SOURCES, RED_ZONE_PATCH, patchMusl } from "../libc/patch_musl.ts";
 import { type Context, type Step, inOut, logOf, runStep } from "./context.ts";
 import { BuildError, fetchArchive, fetchGit, run, sha256File } from "./run.ts";
 
@@ -109,7 +109,11 @@ function musl(ctx: Context): Step {
     "--enable-static",
     `--target=${targetOf(ctx.arch)}`,
   ];
-  const patch = [sha256File(join(TREE, "libc", "patch_musl.ts")), sha256File(RED_ZONE_PATCH)];
+  const patch = [
+    sha256File(join(TREE, "libc", "patch_musl.ts")),
+    sha256File(RED_ZONE_PATCH),
+    ...JIT_SOURCES.map(sha256File),
+  ];
   return {
     name: "musl",
     inputs: [ctx.sources.musl.commit, patch, flags, configure, process.env.LINUX_HEADERS ?? ""],
@@ -167,9 +171,10 @@ function builtins(ctx: Context, before: string): Step {
     `-DCOMPILER_RT_INSTALL_PATH=${ctx.sysroot.resourceDir}`,
   ];
   const lib = join(ctx.sysroot.resourceDir, "lib", tripleOf(ctx.arch));
+  const removedFromBuiltins = ["emutls.c.o", ...(ctx.arch === "aarch64" ? ["clear_cache.c.o"] : [])];
   return {
     name: "builtins",
-    inputs: [before, llvmInputs(ctx), options],
+    inputs: [before, llvmInputs(ctx), options, removedFromBuiltins],
     outputs: [
       ctx.sysroot.builtins,
       join(lib, "clang_rt.crtbegin.o"),
@@ -208,7 +213,9 @@ function builtins(ctx: Context, before: string): Step {
       run(["ninja", "-C", build, "install"], { log: logOf(ctx, "builtins-install") });
       // __emutls_get_address is the libc's (bun_emutls.c). The one of compiler-rt takes its memory from
       // malloc, and a link through the clang driver puts the builtins in front of the libc.
-      run([tool(ctx, "llvm-ar"), "d", ctx.sysroot.builtins, "emutls.c.o"]);
+      // aarch64: __clear_cache is the libc's too (libc/bun_clear_cache.c), which asks a host that is not
+      // Linux. The one of compiler-rt runs the cache instructions itself on every system.
+      run([tool(ctx, "llvm-ar"), "d", ctx.sysroot.builtins, ...removedFromBuiltins]);
       // A copy for a link that names the sysroot only: -lclang_rt.builtins.
       cpSync(ctx.sysroot.builtins, join(ctx.sysroot.lib, "libclang_rt.builtins.a"));
     },

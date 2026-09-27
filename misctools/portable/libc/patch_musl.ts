@@ -14,8 +14,16 @@
  */
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { applyPatch } from "../steps/run.ts";
+
+/**
+ * What an aarch64 image with a JIT needs of its libc, files of their own next to this one: __clear_cache,
+ * and the permission of a thread for memory that code is written to. They go to src/thread/aarch64.
+ */
+export const JIT_SOURCES: readonly string[] = ["bun_clear_cache.c", "bun_jit_permission.c"].map(name =>
+  join(import.meta.dir, name),
+);
 
 /** Hand-written assembly of musl that keeps values below the stack pointer, rewritten with push and pop. */
 export const RED_ZONE_PATCH: string = join(import.meta.dir, "..", "patches", "musl-1.2.5-no-red-zone-asm.diff");
@@ -53,6 +61,228 @@ _Noreturn void __unmapself(void *base, size_t size)
 	__bun_host.thread_exit(base, size);
 	for (;;);
 }
+`;
+
+const ADOPT_C = `#define _GNU_SOURCE
+#include <stddef.h>
+#include <string.h>
+#include <sys/mman.h>
+#include "pthread_impl.h"
+#include "stdio_impl.h"
+#include "libc.h"
+#include "lock.h"
+#include "bun_host.h"
+
+unsigned long __bun_tp_offset;
+
+/* A thread of the list of threads, which is a ring without a head. */
+hidden struct pthread *__bun_thread_anchor;
+
+hidden void __bun_emutls_exit(void);
+hidden void __bun_thread_leave(void *);
+
+extern uintptr_t __stack_chk_guard;
+
+static void dummy_0()
+{
+}
+weak_alias(dummy_0, __pthread_tsd_run_dtors);
+weak_alias(dummy_0, __do_orphaned_stdio_locks);
+weak_alias(dummy_0, __dl_thread_cleanup);
+weak_alias(dummy_0, __membarrier_init);
+
+static volatile size_t dummy = 0;
+weak_alias(dummy, __pthread_tsd_size);
+static void *dummy_tsd[1] = { 0 };
+weak_alias(dummy_tsd, __pthread_tsd_main);
+
+static FILE *volatile dummy_file = 0;
+weak_alias(dummy_file, __stdin_used);
+weak_alias(dummy_file, __stdout_used);
+weak_alias(dummy_file, __stderr_used);
+
+static volatile int adopted_now, adopted_ever;
+
+static void init_file_lock(FILE *f)
+{
+	if (f && f->lock<0) f->lock = 0;
+}
+
+#define ROUND(x) (((x)+PAGE_SIZE-1)&-PAGE_SIZE)
+
+/* Called once, by the first thread, before the program runs. */
+hidden void __bun_threads_init(void)
+{
+	struct pthread *self = __pthread_self();
+	__bun_thread_anchor = self;
+	if (__bun_host.os == BUN_OS_LINUX) {
+#ifdef __x86_64__
+		/* No thread of another maker exists on Linux. The check at an
+		 * entry reads through gs there too, so gs gets a base, and
+		 * what the check finds is not 0. A thread has the base of the
+		 * thread that made it. */
+		static unsigned long not_empty[1] = { 1 };
+		__syscall(SYS_arch_prctl, 0x1001, not_empty);
+#endif
+		__bun_tp_offset = 0;
+		return;
+	}
+	__bun_tp_offset = __bun_host.tcb_offset;
+
+	/* What pthread_create does when it makes the second thread of a
+	 * program. A thread of the host arrives without a call that the image
+	 * makes, at any time, also while the only thread of the image is
+	 * inside of a lock that a program with one thread does not take. So
+	 * the image takes its locks from the start, and the threads of the
+	 * host count as one thread that does not end. */
+	for (FILE *f=*__ofl_lock(); f; f=f->next)
+		init_file_lock(f);
+	__ofl_unlock();
+	init_file_lock(__stdin_used);
+	init_file_lock(__stdout_used);
+	init_file_lock(__stderr_used);
+	__syscall(SYS_rt_sigprocmask, SIG_UNBLOCK, SIGPT_SET, 0, _NSIG/8);
+	self->tsd = (void **)__pthread_tsd_main;
+	__membarrier_init();
+	libc.threaded = 1;
+	libc.threads_minus_1 = 1;
+	libc.need_locks = 1;
+}
+
+/* The calling thread has no thread pointer. Nothing here may read one before
+ * the host has set it: no errno, no lock, no allocation of the C library. */
+void __bun_thread_adopt(void)
+{
+	size_t size = ROUND(libc.tls_size + __pthread_tsd_size);
+	unsigned char *map = (void *)__syscall(SYS_mmap, 0, size,
+		PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+	if ((unsigned long)map > -4096UL) a_crash();
+	unsigned char *tsd = map + size - __pthread_tsd_size;
+	struct pthread *td = __copy_tls(tsd - libc.tls_size);
+	td->self = td;
+	td->map_base = map;
+	td->map_size = size;
+	td->tsd = (void *)tsd;
+	td->locale = &libc.global_locale;
+	td->detach_state = DT_DETACHED;
+	td->robust_list.head = &td->robust_list.head;
+	td->canary = __stack_chk_guard;
+	td->sysinfo = __sysinfo;
+	td->next = td->prev = td;
+	size_t stack[2] = { 0, 0 };
+	if (__syscall(BUN_SYS_adopt_thread, TP_ADJ(td), __bun_thread_leave, stack) < 0)
+		a_crash();
+	/* The number of a thread is the host's to give: it has one now. */
+	td->tid = __syscall(SYS_gettid);
+
+	/* The thread has a thread pointer now. Its stack is the one its
+	 * maker gave it: pthread_getattr_np answers from these. */
+	if (stack[1]) {
+		td->stack = (void *)(stack[0] + stack[1]);
+		td->stack_size = stack[1];
+	}
+	sigset_t set;
+	__block_app_sigs(&set);
+	__tl_lock();
+	libc.threads_minus_1++;
+	struct pthread *anchor = __bun_thread_anchor;
+	td->next = anchor->next;
+	td->prev = anchor;
+	td->next->prev = td;
+	td->prev->next = td;
+	__tl_unlock();
+	__restore_sigs(&set);
+	a_inc(&adopted_now);
+	a_inc(&adopted_ever);
+}
+
+/* The host calls this on an adopted thread that ends: what pthread_exit does
+ * for a thread of the image, without the end of the thread, which is the
+ * host's. The thread has its thread pointer until this returns. */
+hidden void __bun_thread_leave(void *tp)
+{
+	struct pthread *self = __pthread_self();
+	sigset_t set;
+
+	self->canceldisable = 1;
+	self->cancelasync = 0;
+	__pthread_tsd_run_dtors();
+	__bun_emutls_exit();
+
+	__block_app_sigs(&set);
+	LOCK(self->killlock);
+	__tl_lock();
+	self->tid = 0;
+	UNLOCK(self->killlock);
+
+	__vm_lock();
+	volatile void *volatile *rp;
+	while ((rp=self->robust_list.head) && rp != &self->robust_list.head) {
+		pthread_mutex_t *m = (void *)((char *)rp
+			- offsetof(pthread_mutex_t, _m_next));
+		int waiters = m->_m_waiters;
+		int priv = (m->_m_type & 128) ^ 128;
+		self->robust_list.pending = rp;
+		self->robust_list.head = *rp;
+		int cont = a_swap(&m->_m_lock, 0x40000000);
+		self->robust_list.pending = 0;
+		if (cont < 0 || waiters)
+			__wake(&m->_m_lock, 1, priv);
+	}
+	__vm_unlock();
+
+	__do_orphaned_stdio_locks();
+	__dl_thread_cleanup();
+
+	libc.threads_minus_1--;
+	if (__bun_thread_anchor == self) __bun_thread_anchor = self->next;
+	self->next->prev = self->prev;
+	self->prev->next = self->next;
+	self->prev = self->next = self;
+	__tl_unlock();
+	__restore_sigs(&set);
+	a_dec(&adopted_now);
+
+	/* The structure is in the mapping: nothing of it is read after this.
+	 * A mapping that stays is a leak for every thread that ends. */
+	if (__syscall(SYS_munmap, self->map_base, self->map_size))
+		a_crash();
+}
+
+unsigned long __bun_adopted_threads(unsigned long *ever)
+{
+	if (ever) *ever = adopted_ever;
+	return adopted_now;
+}
+
+/* The check of the slot, as a function: for C and C++ that the host OS calls.
+ * Their source does not say that they are entered from outside, so the
+ * compiler is told, with the list of their names, and writes a call of
+ * __sanitizer_cov_trace_pc at the entry of each function of the list and of
+ * no other (clang -fsanitize-coverage=func,trace-pc
+ * -fsanitize-coverage-allowlist=<list>). The name is the compiler's. */
+void __bun_thread_enter(void)
+{
+#ifdef __x86_64__
+	void *tp;
+	__asm__ ("mov %%gs:(%1),%0" : "=r"(tp) : "r"(__bun_tp_offset));
+	if (__builtin_expect(!tp, 0)) __bun_thread_adopt();
+#else
+	/* arm64 has no register that is the thread's on every host: the
+	 * slot is found the way __get_tp finds it. */
+	uintptr_t base;
+	if (__bun_host.os == BUN_OS_LINUX) return;
+	if (__bun_host.os == BUN_OS_WINDOWS) {
+		__asm__ ("mov %0,x18" : "=r"(base));
+	} else {
+		__asm__ ("mrs %0,tpidrro_el0" : "=r"(base));
+		base &= -8UL;
+	}
+	if (__builtin_expect(!*(void **)(base + __bun_host.tcb_offset), 0))
+		__bun_thread_adopt();
+#endif
+}
+weak_alias(__bun_thread_enter, __sanitizer_cov_trace_pc);
 `;
 
 const VFORK_C = `#define _GNU_SOURCE
@@ -148,6 +378,15 @@ function common(tree: Tree): void {
    after its highest. musl finds these on Linux by probing with mremap
    (pthread_getattr_np), which means nothing anywhere else. */
 #define BUN_SYS_main_stack 0x62756e02
+/* 0x62756e03 and 0x62756e04 are the two requests of an image with a JIT, see
+   bun_clear_cache.c and bun_jit_permission.c. */
+/* BUN_SYS_adopt_thread(tp, leave, stack): the calling thread is one that the
+   host or its OS created, and it entered the image. Make tp its thread
+   pointer, and when the thread ends call leave(tp) on it, with the calling
+   convention of the image. stack is two words that the host fills: the
+   lowest address of the stack of the thread, and its size, 0 if it does not
+   know them. A host that does not know the request answers -ENOSYS. */
+#define BUN_SYS_adopt_thread 0x62756e05
 
 struct bun_host {
 	unsigned long os;
@@ -171,6 +410,21 @@ extern struct bun_host __bun_host __attribute__((__visibility__("hidden")));
 /* For the program in the image. */
 unsigned long __bun_host_os(void);
 void *__bun_host_lookup(const char *library, const char *symbol);
+
+/* Threads that the image did not create (bun_adopt.c). Code that the host
+   or its OS calls on a thread of theirs checks the slot of the thread
+   pointer first, and adopts the thread when the slot is empty:
+       if (!*(void **)(thread register + __bun_tp_offset)) __bun_thread_adopt();
+   On x86-64 the thread register of the check is gs on every host. On arm64
+   it is the one of the host, x18 or tpidrro_el0, and the check is
+   __bun_thread_enter. */
+extern unsigned long __bun_tp_offset;
+void __bun_thread_adopt(void);
+/* The check and the adoption, for code whose entry the compiler writes the
+   call of: see bun_adopt.c. */
+void __bun_thread_enter(void);
+/* How many adopted threads there are now, and how many there were. */
+unsigned long __bun_adopted_threads(unsigned long *ever);
 
 #endif
 `,
@@ -397,6 +651,52 @@ static void dummy_0()
 `,
   );
   tree.replace("src/thread/pthread_getattr_np.c", '#include "libc.h"', '#include "libc.h"\n#include "bun_host.h"');
+
+  threads(tree);
+}
+
+/**
+ * Threads that the image did not create: a thread of libuv's pool, of the pool of Windows, the thread
+ * that Windows makes for a console control handler. musl knows the threads that pthread_create made.
+ * Such a thread is adopted when it enters the image: it gets a thread structure of its own, and loses
+ * it when it ends.
+ */
+function threads(tree: Tree): void {
+  tree.write("src/thread/bun_adopt.c", ADOPT_C);
+  tree.replace(
+    "src/env/__libc_start_main.c",
+    `	__init_ssp((void *)aux[AT_RANDOM]);
+`,
+    `	__init_ssp((void *)aux[AT_RANDOM]);
+	__bun_threads_init();
+`,
+  );
+  tree.replace(
+    "src/env/__libc_start_main.c",
+    `static void dummy(void) {}`,
+    `hidden void __bun_threads_init(void);
+
+static void dummy(void) {}`,
+  );
+  // A thread that ends is no longer the way into the list of threads.
+  tree.replace(
+    "src/thread/pthread_create.c",
+    `	if (!--libc.threads_minus_1) libc.need_locks = -1;
+	self->next->prev = self->prev;
+`,
+    `	if (!--libc.threads_minus_1) libc.need_locks = -1;
+	if (__bun_thread_anchor == self) __bun_thread_anchor = self->next;
+	self->next->prev = self->prev;
+`,
+  );
+  tree.replace(
+    "src/thread/pthread_create.c",
+    `hidden void __bun_emutls_exit(void);
+`,
+    `hidden void __bun_emutls_exit(void);
+hidden extern struct pthread *__bun_thread_anchor;
+`,
+  );
 }
 
 function vfork(tree: Tree, arch: string): void {
@@ -652,6 +952,7 @@ int __set_thread_area(void *p)
   tree.write("src/thread/aarch64/__unmapself.c", UNMAPSELF_C);
 
   vfork(tree, "aarch64");
+  for (const source of JIT_SOURCES) tree.write(`src/thread/aarch64/${basename(source)}`, readFileSync(source, "utf8"));
   restorer(tree, "aarch64");
 }
 

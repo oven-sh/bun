@@ -332,8 +332,7 @@ it("a TLS socket that waits in the low-priority queue times out", async () => {
     stderr: "",
     exitCode: 0,
   });
-}, // The fixture blocks for the 4 s between two timeout sweeps.
-30_000);
+}, 30_000); // The fixture blocks for the 4 s between two timeout sweeps.
 
 describe("a listener accepts one connection per event loop iteration", () => {
   const count = 12;
@@ -489,7 +488,13 @@ describe("a listener accepts one connection per event loop iteration", () => {
     };
   }
 
-  it.each(Object.keys(kinds).filter(kind => !(isWindows && kind.endsWith("unix"))))("%s", async kind => {
+  // The handlers of these two run after a handshake, which the clients do not finish.
+  const acceptsWithoutJS = ["Bun.serve tls", "node:https"];
+  // On Windows a path is a named pipe, which has an accept of its own, and the poll count is
+  // the count of referenced libuv handles, which does not move when a server accepts.
+  const skipped = (kind: string) => isWindows && (kind.endsWith("unix") || acceptsWithoutJS.includes(kind));
+
+  it.each(Object.keys(kinds).filter(kind => !skipped(kind)))("%s", async kind => {
     const order: string[] = [];
     const { promise: done, resolve } = Promise.withResolvers<void>();
     let accepted = 0;
@@ -501,12 +506,11 @@ describe("a listener accepts one connection per event loop iteration", () => {
         if (id === count) resolve();
       });
     };
-    // The handlers of these two run after a handshake, which the clients do not finish.
-    const acceptRunsNoJS = kind === "Bun.serve tls" || kind === "node:https";
+    const watched = acceptsWithoutJS.includes(kind);
 
-    await using listener = await queued(kinds[kind], acceptRunsNoJS ? () => {} : arrived);
+    await using listener = await queued(kinds[kind], watched ? () => {} : arrived);
     expect(listener.connected).toBe(true);
-    if (acceptRunsNoJS) watchPolls(arrived);
+    if (watched) watchPolls(arrived);
     await done;
 
     // Each connection, then the immediate its handler scheduled, then the next connection.

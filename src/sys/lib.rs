@@ -1,8 +1,9 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-// bun_sys is a T0 foundation crate that bun_collections depends on; importing
-// it to satisfy disallowed-types would create a dependency cycle. `File` here
-// IS the bun_sys::File the lint routes everyone else through.
+// `File` here IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_methods)]
+// The tests serialize on std's Mutex: bun_threading depends on bun_sys, so
+// using its Mutex here would be a dependency cycle.
+#![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
 

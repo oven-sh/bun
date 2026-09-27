@@ -5,9 +5,9 @@
     non_upper_case_globals,
     deprecated
 )]
-// bun_ptr is a T0 foundation crate that bun_threading and bun_collections
-// depend on; importing either to satisfy disallowed-types would create a
-// dependency cycle.
+// The tests serialize on std's Mutex: bun_threading depends on bun_ptr, so
+// using its Mutex here would be a dependency cycle.
+#![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!

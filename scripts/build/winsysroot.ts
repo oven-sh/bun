@@ -29,7 +29,7 @@
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config } from "./config.ts";
 import { downloadWithRetry, extractTarGz, extractZip } from "./download.ts";
@@ -246,12 +246,10 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
   const arch = msArchName(cfg.arch);
   const pkg = `microsoft.windows.sdk.cpp.${arch}`;
   const url = `https://api.nuget.org/v3-flatcontainer/${pkg}/${UCRT_SERVICING_VERSION}/${pkg}.${UCRT_SERVICING_VERSION}.nupkg`;
-  const stagingDir = join(cfg.cacheDir, `ucrt-servicing-${UCRT_SERVICING_VERSION}`, `${arch}-staging-${process.pid}`);
+  const stagingDir = stagingBeside(libDir);
   const nupkg = join(stagingDir, `${pkg}.nupkg`);
 
   console.log(`fetching serviced UCRT libs (${pkg} ${UCRT_SERVICING_VERSION})`);
-  rmSync(stagingDir, { recursive: true, force: true });
-  mkdirSync(stagingDir, { recursive: true });
   await downloadWithRetry(url, nupkg, "ucrt-servicing");
   await extractZip(nupkg, stagingDir);
 
@@ -322,7 +320,7 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
   console.log(`fetching MSVC CRT + Windows SDK into ${dest} (xwin splat)`);
   // Splat beside `dest` and rename: every checkout on the machine shares the
   // cache, and a build must never see another's half-written sysroot.
-  const staging = `${dest}.staging-${process.pid}`;
+  const staging = stagingBeside(dest);
   const splat = join(staging, "sysroot");
   const args = [
     "--accept-license",
@@ -394,13 +392,51 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
  * share. A build that fetched the same thing meanwhile and published first is
  * reading its own by now, so that one stays.
  */
-export function publishToCache(staged: string, dest: string, isComplete: (dir: string) => boolean): void {
+export function publishToCache(
+  staged: string,
+  dest: string,
+  isComplete: (dir: string) => boolean,
+  rename: (from: string, to: string) => void = renameSync,
+): void {
   if (isComplete(dest)) return;
   rmSync(dest, { recursive: true, force: true });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return rename(staged, dest);
+    } catch (cause) {
+      // Published between the check and here.
+      if (isComplete(dest)) return;
+      // Windows refuses to move a directory while anything in it is open, and an antivirus opens what is new.
+      const held = ["EPERM", "EACCES", "EBUSY"].includes((cause as NodeJS.ErrnoException).code ?? "");
+      if (!held || attempt === 10) throw new BuildError(`Could not move ${staged} to ${dest}`, { cause });
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+    }
+  }
+}
+
+/**
+ * A new directory beside `dest` for this process to fetch into. It is named
+ * for the process, so two that fetch at once do not share one, and what an
+ * interrupted fetch left behind is known by its process being gone. Nothing
+ * else would ever remove that, so this does.
+ */
+export function stagingBeside(dest: string): string {
+  const prefix = `${basename(dest)}.staging-`;
+  for (const name of listDir(dirname(dest))) {
+    if (!name.startsWith(prefix)) continue;
+    const pid = Number(name.slice(prefix.length));
+    if (pid === process.pid || !isRunning(pid)) rmSync(join(dirname(dest), name), { recursive: true, force: true });
+  }
+  const staging = `${dest}.staging-${process.pid}`;
+  mkdirSync(staging, { recursive: true });
+  return staging;
+}
+
+function isRunning(pid: number): boolean {
   try {
-    renameSync(staged, dest);
-  } catch (cause) {
-    // Published between the check and here.
-    if (!isComplete(dest)) throw new BuildError(`Could not move ${staged} to ${dest}`, { cause });
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM"; // someone else's, but running
   }
 }

@@ -11,8 +11,8 @@
  * native toolchain instead.
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { generateCargoConfig } from "../../../scripts/build/cargo-config.ts";
@@ -27,6 +27,7 @@ import { registerDepRules, resolveDep } from "../../../scripts/build/source.ts";
 import {
   ensureWindowsSysroot,
   publishToCache,
+  stagingBeside,
   UCRT_SERVICING_VERSION,
   windowsSysrootCachePath,
 } from "../../../scripts/build/winsysroot.ts";
@@ -297,6 +298,59 @@ describe("publishing a fetch to a cache other builds share", () => {
   test("says so when it cannot, and nobody else has", () => {
     using dir = tempDir("publish", { "dest/half": "" });
     expect(() => publish(String(dir))).toThrow(BuildError);
+  });
+
+  /** A rename that fails with `code` the first `failures` times it is asked. */
+  const reluctant = (code: string, failures: number) => {
+    const rename = Object.assign(
+      (from: string, to: string) => {
+        if (++rename.calls <= failures) throw Object.assign(new Error(code), { code });
+        renameSync(from, to);
+      },
+      { calls: 0 },
+    );
+    return rename;
+  };
+
+  test("tries again while something holds the new files open, as an antivirus does on Windows", () => {
+    using dir = tempDir("publish", { "staged/done": "" });
+    const rename = reluctant("EPERM", 2);
+    publishToCache(join(String(dir), "staged"), join(String(dir), "dest"), isComplete, rename);
+    expect(rename.calls).toBe(3);
+    expect(isComplete(join(String(dir), "dest"))).toBe(true);
+  });
+
+  test("does not try again what trying again cannot help", () => {
+    using dir = tempDir("publish", { "staged/done": "" });
+    const rename = reluctant("ENOSPC", 1);
+    expect(() => publishToCache(join(String(dir), "staged"), join(String(dir), "dest"), isComplete, rename)).toThrow(
+      BuildError,
+    );
+    expect(rename.calls).toBe(1);
+  });
+});
+
+describe("the directory a fetch is staged in", () => {
+  test("is this process's own, and empty even if one of that name was left", () => {
+    using dir = tempDir("staging", { [`dest.staging-${process.pid}/left`]: "" });
+    const staging = stagingBeside(join(String(dir), "dest"));
+    expect(staging).toBe(join(String(dir), `dest.staging-${process.pid}`));
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
+  test("replaces what interrupted fetches left, and leaves alone a fetch that is running", () => {
+    const gone = Bun.spawnSync({ cmd: [bunExe(), "-e", ""], env: bunEnv }).pid;
+    using dir = tempDir("staging", {
+      [`dest.staging-${gone}/dl/package`]: "",
+      [`dest.staging-${process.ppid}/dl/package`]: "",
+      "dest.staging-notapid/x": "",
+      [`other.staging-${gone}/x`]: "",
+      "dest/x": "",
+    });
+    stagingBeside(join(String(dir), "dest"));
+    expect(readdirSync(String(dir)).sort()).toEqual(
+      ["dest", `dest.staging-${process.pid}`, `dest.staging-${process.ppid}`, `other.staging-${gone}`].sort(),
+    );
   });
 });
 

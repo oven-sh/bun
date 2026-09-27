@@ -90,6 +90,12 @@ describe.skipIf(!isWindows)("a build for Windows on Windows", () => {
     expect(native({ webkit: "local" }).winsysroot).toBeUndefined();
   });
 
+  test("refuses a sysroot named together with a local WebKit, rather than dropping it", () => {
+    expect(() => native({ webkit: "local", winsysroot: "C:\\elsewhere" })).toThrow(
+      "--winsysroot cannot be used with --webkit=local on a Windows host",
+    );
+  });
+
   test("has rustc link with lld-link either way: link.exe is Visual Studio's", () => {
     expect(native().msvcLinker).toBe(toolchain.ld);
     expect(native({ webkit: "local" }).msvcLinker).toBe(toolchain.ld);

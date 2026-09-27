@@ -1233,7 +1233,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // webkit=local there: msbuild and WebKit's own cmake compile ICU and WebKit
   // against the installed toolset (msvc.ts), whose STL bun then has to share.
   let winsysroot: string | undefined;
-  if (windows && !(host.os === "windows" && partial.webkit === "local")) {
+  const installedToolset = host.os === "windows" && partial.webkit === "local";
+  if (windows && installedToolset && partial.winsysroot !== undefined) {
+    throw new BuildError("--winsysroot cannot be used with --webkit=local on a Windows host", {
+      hint: "A local WebKit is compiled against the installed Visual Studio toolset, and bun has to match it. Drop one of the two.",
+    });
+  }
+  if (windows && !installedToolset) {
     winsysroot =
       partial.winsysroot !== undefined
         ? isAbsolute(partial.winsysroot)

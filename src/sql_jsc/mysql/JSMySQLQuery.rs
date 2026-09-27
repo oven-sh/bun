@@ -15,6 +15,7 @@ use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use super::js_mysql_connection::MySQLConnection;
+use super::my_sql_request_queue::Turn;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::postgres::command_tag_jsc::CommandTagJsc as _;
 // `my_sql_query` exports both the `MySQLQuery` *struct* and a
@@ -45,6 +46,14 @@ pub struct JSMySQLQuery {
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: MySQLQuery,
+}
+
+/// What a request reads from its JS wrapper to find its statement and to be written.
+#[derive(Copy, Clone)]
+pub(crate) struct QueryValues<'a> {
+    global_object: &'a JSGlobalObject,
+    columns: JSValue,
+    binding: JSValue,
 }
 
 impl JSMySQLQuery {
@@ -152,20 +161,59 @@ impl JSMySQLQuery {
             )));
         }
         this.set_target(target);
-        if let Err(err) = this.run(connection) {
-            // Nothing else completes this request: it never reaches the queue.
-            this.mark_as_failed();
-            if !global_object.has_exception() {
-                return Err(global_object.throw_value(mysql_error_to_js(
-                    global_object,
-                    "failed to execute query",
-                    err,
-                )));
-            }
-            return Err(jsc::JsError::Thrown);
+        // Nothing takes a settled request out of the queue of an idle connection.
+        if this.is_completed() {
+            return Ok(JSValue::UNDEFINED);
         }
-        connection.enqueue_request(this.ref_guard());
-        Ok(JSValue::UNDEFINED)
+        let values = this.values();
+        let text = match this.query.resolve_statement(
+            connection,
+            values.global_object,
+            values.columns,
+            values.binding,
+        ) {
+            Ok(text) => text,
+            Err(err) => {
+                return Err(this.fail_to_start(global_object, "failed to execute query", err));
+            }
+        };
+        // Reading the values for the signature ran user JS.
+        if !connection.is_active() {
+            return Err(this.fail_to_start(
+                global_object,
+                "Connection closed",
+                AnyMySQLError::Error::ConnectionClosed,
+            ));
+        }
+        // The place comes before the conversion: a query that the conversion starts goes behind (#32005).
+        let started = match connection.enqueue_request(this) {
+            Some(turn) => connection.start_request(turn, values, text),
+            None => Ok(()),
+        };
+        let Err(err) = started else {
+            connection.reset_connection_timeout();
+            connection.register_auto_flusher();
+            return Ok(JSValue::UNDEFINED);
+        };
+        connection.remove_request(this);
+        let thrown = this.fail_to_start(global_object, "failed to execute query", err);
+        // The requests that the conversion queued start in this call, as after a failed start in `advance()`.
+        connection.drain_after_failed_start();
+        Err(thrown)
+    }
+
+    /// Completes a request that `do_run` does not leave in the queue, and throws its error.
+    fn fail_to_start(
+        &self,
+        global_object: &JSGlobalObject,
+        message: &'static str,
+        err: AnyMySQLError::Error,
+    ) -> jsc::JsError {
+        self.mark_as_failed();
+        if global_object.has_exception() {
+            return jsc::JsError::Thrown;
+        }
+        global_object.throw_value(mysql_error_to_js(global_object, message, err))
     }
 
     pub fn do_cancel(
@@ -373,7 +421,29 @@ impl JSMySQLQuery {
         );
     }
 
-    pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
+    /// Reads the values, and makes the JS wrapper strong: it holds them while the request is in the queue.
+    pub(crate) fn values(&self) -> QueryValues<'_> {
+        let global_object: &JSGlobalObject = self.global_object();
+        self.this_value.with_mut(|v| v.upgrade(global_object));
+        let or_undefined = |value: Option<JSValue>| match value {
+            Some(value) if !value.is_empty() => value,
+            _ => JSValue::UNDEFINED,
+        };
+        QueryValues {
+            global_object,
+            columns: or_undefined(self.get_columns()),
+            binding: or_undefined(self.get_binding()),
+        }
+    }
+
+    /// Writes the next command of the request, if the connection can take it now.
+    pub(crate) fn run(
+        &self,
+        turn: &Turn<'_>,
+        connection: &MySQLConnection,
+        values: QueryValues<'_>,
+        text: Option<bun_core::Utf8Bytes<'_>>,
+    ) -> Result<(), AnyMySQLError::Error> {
         {
             let q = &self.query;
             if !q.is_pending() || q.is_being_prepared() {
@@ -382,8 +452,7 @@ impl JSMySQLQuery {
                 return Ok(());
             }
         }
-        let global_object: &JSGlobalObject = self.global_object();
-        self.this_value.with_mut(|v| v.upgrade(global_object));
+        let global_object = values.global_object;
         // R-2: errdefer rollback — `&Self` is `Copy`; the guard captures it by
         // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
         // success path below.
@@ -391,12 +460,14 @@ impl JSMySQLQuery {
             s.this_value.with_mut(|v| v.downgrade());
         });
 
-        let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
-        let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
-        if let Err(err) =
-            self.query
-                .run_query(connection, global_object, columns_value, binding_value)
-        {
+        if let Err(err) = self.query.run_query(
+            turn,
+            connection,
+            global_object,
+            values.columns,
+            values.binding,
+            text,
+        ) {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
                 // Throw for side-effect and map to the enum variant.
@@ -420,6 +491,10 @@ impl JSMySQLQuery {
     #[inline]
     pub(crate) fn is_running(&self) -> bool {
         self.query.is_running()
+    }
+    #[inline]
+    pub(crate) fn is_binding(&self) -> bool {
+        self.query.is_binding()
     }
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {

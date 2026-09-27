@@ -685,3 +685,98 @@ export function mysqlReadPackets(buffered: Buffer, onPacket: (seq: number, paylo
   }
   return buffered;
 }
+
+// MySQL COM_STMT_PREPARE response — page_protocol_com_stmt_prepare.html, in the CLIENT_DEPRECATE_EOF
+// framing: COM_STMT_PREPARE_OK, then one ColumnDefinition41 per parameter and one per column.
+export function mysqlStmtPrepareResponse(
+  stmtId: number,
+  numParams: number,
+  columns: { name: string; type: number }[],
+): Buffer {
+  let seq = 1;
+  const parts: Buffer[] = [mysqlStmtPrepareOk(seq++, stmtId, columns.length, numParams)];
+  for (let i = 0; i < numParams; i++) parts.push(mysqlColumnDefinition(seq++, { name: "?", type: 0xfd }));
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  return Buffer.concat(parts);
+}
+
+// MySQL Binary Protocol Resultset Row (page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row):
+//   Int<1>(0x00 header) String<(column_count + 7 + 2) / 8>(NULL bitmap, bit offset 2)
+//   then each non-NULL value in its column type's binary encoding (callers pass values pre-encoded).
+export function mysqlBinaryResultSetRow(seq: number, values: (Buffer | null)[]): Buffer {
+  const bitmap = Buffer.alloc(Math.floor((values.length + 7 + 2) / 8));
+  values.forEach((value, i) => {
+    if (value === null) bitmap[(i + 2) >> 3] |= 1 << ((i + 2) & 7);
+  });
+  const nonNull = values.filter((value): value is Buffer => value !== null);
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x00]), bitmap, ...nonNull]));
+}
+
+// MySQL Binary Protocol Resultset (page_protocol_binary_resultset.html), in the CLIENT_DEPRECATE_EOF
+// framing (same shape as the textual resultset): lenenc(column_count) packet, one ColumnDefinition41
+// per column, one binary row packet per row, then an OK packet with the 0xFE header as the terminator.
+export function mysqlBinaryResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: (Buffer | null)[][],
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlBinaryResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe));
+  return Buffer.concat(parts);
+}
+
+// The parameters of a COM_STMT_EXECUTE payload, for a statement whose parameters are all strings —
+// page_protocol_com_stmt_execute.html:
+//   Int<1>(0x17) Int<4>(statement_id) Int<1>(flags) Int<4>(iteration_count) null_bitmap((num_params + 7) / 8 bytes)
+//   Int<1>(new_params_bind_flag) [Int<2>(type) per parameter] then one string<lenenc> per parameter that is not NULL.
+export function mysqlExecuteStringParameters(payload: Buffer, numParams: number): (string | null)[] {
+  let offset = 1 + 4 + 1 + 4;
+  const nullBitmap = payload.subarray(offset, offset + ((numParams + 7) >> 3));
+  offset += nullBitmap.length;
+  if (payload[offset++] === 1) offset += 2 * numParams;
+  const values: (string | null)[] = [];
+  for (let i = 0; i < numParams; i++) {
+    if (nullBitmap[i >> 3] & (1 << (i & 7))) {
+      values.push(null);
+      continue;
+    }
+    const { value: length, width } = mysqlReadLenencInt(payload, offset);
+    offset += width;
+    values.push(payload.subarray(offset, offset + length).toString("utf-8"));
+    offset += length;
+  }
+  return values;
+}
+
+/**
+ * MySQL mock that completes the handshake and the session setup, then hands every command
+ * (`command` is `payload[0]`, e.g. COM_QUERY 0x03, COM_STMT_PREPARE 0x16, COM_STMT_EXECUTE 0x17)
+ * to the responder of its connection. `connect()` runs once per connection and returns that
+ * responder. Whatever the responder returns is written back.
+ */
+export async function mysqlMockServer(
+  connect: () => (command: number, payload: Buffer) => Buffer | Buffer[] | void,
+): Promise<{ port: number; server: net.Server }> {
+  return listeningServer(socket => {
+    const respond = connect();
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (mysqlAckSessionSetup(socket, payload)) return;
+        const reply = respond(payload[0], payload);
+        if (reply) socket.write(Array.isArray(reply) ? Buffer.concat(reply) : reply);
+      });
+    });
+    socket.on("error", () => {});
+  });
+}

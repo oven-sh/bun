@@ -220,11 +220,6 @@ impl MySQLConnection {
         self.queue.current().is_none() && self.write_buffer.len() == 0
     }
 
-    #[inline]
-    pub(crate) fn enqueue_request(&mut self, request: RefPtr<JSMySQLQuery>) {
-        self.queue.add(request);
-    }
-
     pub(crate) fn flush_queue(&mut self) -> Result<(), FlushQueueError> {
         self.flush_data();
         if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {

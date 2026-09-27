@@ -502,11 +502,8 @@ for (const [compress, decompressor] of [
     },
   ];
   for (const i in variants) {
-    let should_skip = false;
-    if (decompressor === zlib.createZstdDecompress && i == 1) should_skip = true; // fails in node too
-    if (decompressor === zlib.createZstdDecompress && i == 2) should_skip = true; // fails in node too
     // prettier-ignore
-    it.skipIf(should_skip)(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
+    it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
       const variant = variants[i];
       const { promise, resolve, reject } = Promise.withResolvers();
       let output = "";

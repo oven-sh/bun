@@ -154,8 +154,27 @@ function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
   return wsOptions;
 }
 
+// validateHeaderName() and validateHeaderValue() of node:_http_common, which costs as much to load as node:http.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L678-L685
+const RegExpPrototypeExec = RegExp.prototype.exec;
+let invalidHeaderCharRegex;
+function validateHeader(name, value) {
+  if (typeof name !== "string" || !name || !require("internal/validators").checkIsHttpToken(name)) {
+    throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
+  }
+  if (value === undefined) {
+    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+  }
+  invalidHeaderCharRegex ??= /[^\t\x20-\x7e\x80-\xff]/;
+  if (RegExpPrototypeExec.$call(invalidHeaderCharRegex, value) !== null) {
+    throw $ERR_INVALID_CHAR("header content", name);
+  }
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+// `new WebSocket()` in two steps, for `finishRequest`: the socket exists before `request.end()` dials it.
+let prepareWebSocket, startWebSocket;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -240,11 +259,21 @@ class BunWebSocket extends EventEmitter {
           ...headers,
         };
       }
+      if (!prepareWebSocket) {
+        ({ 0: prepareWebSocket, 1: startWebSocket } = $cpp("JSWebSocket.cpp", "createWebSocketPrepareBinding"));
+      }
+      // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L1020-L1024
+      const ws = (this.#ws = prepareWebSocket(
+        url,
+        nativeOptions(protocols, headers, method, proxy, tlsOptions, disableDeflate),
+      ));
+      ws.binaryType = "nodebuffer";
       let lazyRawHeaders;
       let didCallEnd = false;
       const nodeHttpClientRequestSimulated = {
         __proto__: Object.create(EventEmitter.prototype),
         setHeader: function (name, value) {
+          validateHeader(name, value);
           if (!headers) headers = Object.create(null);
           headers[name.toLowerCase()] = value;
         },
@@ -269,8 +298,9 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+            startWebSocket(ws, nativeOptions(protocols, headers, method, proxy, tlsOptions, disableDeflate));
           }
+          return nodeHttpClientRequestSimulated;
         },
         write() {},
         writeHead() {},
@@ -296,9 +326,12 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
-      finishRequest(nodeHttpClientRequestSimulated);
-      if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+      finishRequest(nodeHttpClientRequestSimulated, this);
+      if (!didCallEnd && EventEmitter.prototype.listenerCount.$call(nodeHttpClientRequestSimulated, "socket") > 0) {
+        emitWarning(
+          "finishRequest-socket",
+          "ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun, so a request.end() that waits for it does not run and the WebSocket does not connect. Call request.end() without waiting for 'socket'.",
+        );
       }
       return;
     }
@@ -307,6 +340,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+    $assert(this.#ws === undefined);
     let wsOptions;
     if (headers || proxy || tls || disableDeflate) {
       wsOptions = nativeOptions(protocols, headers, method, proxy, tls, disableDeflate);

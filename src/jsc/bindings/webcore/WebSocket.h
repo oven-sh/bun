@@ -139,6 +139,15 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
+    // create() in two steps, for a caller that learns its headers after it needs the socket.
+    // prepare() makes the checks of create() and returns a CONNECTING socket that has dialed
+    // nothing. It keeps the URL only, so start() takes the options again.
+    static ExceptionOr<Ref<WebSocket>> prepare(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
+    // Dials. Does nothing unless this is the first call and the socket is still CONNECTING.
+    // Options that do not pass the checks any more fail the connection. start() does not throw.
+    void start(WebSocketOptions&&);
+    // For a start() whose options could not be read.
+    void failToStart(String&& reason);
     ~WebSocket();
 
     enum State {
@@ -315,7 +324,8 @@ private:
     // ActiveDOMObject. Read from the GC thread; a stale answer keeps or drops the wrapper one
     // cycle early or late, as upstream tolerates.
     void stop() final;
-    bool virtualHasPendingActivity() const final { return m_state != CLOSED; }
+    // A prepared socket has nothing that can call back, so only script keeps it alive until start().
+    bool virtualHasPendingActivity() const final { return m_state == CONNECTING ? !m_isPrepared : m_state != CLOSED; }
 
     explicit WebSocket(ScriptExecutionContext&);
 
@@ -366,6 +376,8 @@ private:
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };
+    // Between prepare() and start(). Also read from the GC thread, like m_state.
+    bool m_isPrepared { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or

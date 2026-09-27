@@ -336,6 +336,62 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
+ExceptionOr<Ref<WebSocket>> WebSocket::prepare(ScriptExecutionContext& context, const String& url, WebSocketOptions&& options)
+{
+    if (url.isNull())
+        return Exception { SyntaxError };
+
+    auto proxyConfigResult = setupProxy(options.proxyUrl, WTF::move(options.proxyHeadersInit));
+    if (proxyConfigResult.hasException())
+        return proxyConfigResult.releaseException();
+
+    auto socket = adoptRef(*new WebSocket(context));
+    socket->suspendIfNeeded();
+    // Stopped at birth (its context's active objects were already stopped): stays a CLOSED socket.
+    if (socket->m_state == CLOSED)
+        return socket;
+
+    auto transport = socket->validate(url, options.protocols);
+    if (transport.hasException())
+        return transport.releaseException();
+
+    auto headers = FetchHeaders::create(WTF::move(options.headersInit));
+    if (headers.hasException()) [[unlikely]] {
+        socket->m_state = CLOSED;
+        return headers.releaseException();
+    }
+
+    socket->m_isPrepared = true;
+    return socket;
+}
+
+void WebSocket::start(WebSocketOptions&& options)
+{
+    if (!m_isPrepared || m_state != CONNECTING)
+        return;
+    m_isPrepared = false;
+
+    auto proxyConfigResult = setupProxy(options.proxyUrl, WTF::move(options.proxyHeadersInit));
+    if (proxyConfigResult.hasException()) [[unlikely]] {
+        dispatchConnectFailure(proxyConfigResult.releaseException().releaseMessage());
+        return;
+    }
+
+    // connect() assigns m_url, so it cannot take a reference to the string inside it.
+    String url = m_url.string();
+    auto result = dial(url, WTF::move(options), proxyConfigResult.releaseReturnValue());
+    if (result.hasException()) [[unlikely]]
+        dispatchConnectFailure(result.releaseException().releaseMessage());
+}
+
+void WebSocket::failToStart(String&& reason)
+{
+    if (!m_isPrepared || m_state != CONNECTING)
+        return;
+    m_isPrepared = false;
+    dispatchConnectFailure(WTF::move(reason));
+}
+
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
     return create(context, url, Vector<String> { protocol });
@@ -644,7 +700,8 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     if (this->m_upgradeClient == nullptr) {
         dispatchConnectFailure("Failed to connect"_s);
-        // create() still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
+        // create(), or the wrapper that start() was called on, still holds a Ref, so releasing
+        // connect()'s claim here cannot destroy `this`.
         m_pendingActivity = nullptr;
         return {};
     }

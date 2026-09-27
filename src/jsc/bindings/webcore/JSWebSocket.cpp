@@ -1083,4 +1083,58 @@ JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }
 
+// prepare(url, options): `new WebSocket(url, options)` without the dial.
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrepare, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* context = globalObject->scriptExecutionContext();
+    if (!context) [[unlikely]]
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
+    auto url = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    WebSocketOptions options;
+    options.parse(lexicalGlobalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto object = WebSocket::prepare(*context, WTF::move(url), WTF::move(options));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object))));
+}
+
+// start(socket, options): the dial that prepare() left out, with the options as they are now.
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketStart, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* socket = dynamicDowncast<JSWebSocket>(callFrame->argument(0));
+    if (!socket) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+
+    WebSocketOptions options;
+    options.parse(lexicalGlobalObject, callFrame->argument(1));
+    if (throwScope.exception()) [[unlikely]] {
+        // The caller gets the exception. Nothing else can end this socket, so it fails here.
+        socket->wrapped().failToStart("Invalid options"_s);
+        return {};
+    }
+
+    socket->wrapped().start(WTF::move(options));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC::JSValue createWebSocketPrepareBinding(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* binding = constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 0, JSFunction::create(vm, globalObject, 2, "prepare"_s, jsWebSocketPrepare, ImplementationVisibility::Public));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 1, JSFunction::create(vm, globalObject, 2, "start"_s, jsWebSocketStart, ImplementationVisibility::Public));
+    RETURN_IF_EXCEPTION(scope, {});
+    return binding;
+}
+
 }

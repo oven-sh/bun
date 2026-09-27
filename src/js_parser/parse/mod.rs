@@ -9,6 +9,7 @@ pub(crate) mod parse_skip_typescript;
 pub(crate) mod parse_stmt;
 pub mod parse_suffix;
 pub(crate) mod parse_typescript;
+pub(crate) mod type_sink;
 
 use bun_collections::VecExt;
 

@@ -381,62 +381,98 @@ class BunWebSocket extends EventEmitter {
     }
   }
 
-  #armAndOn(event, listener) {
+  #onOrOnce(event, listener, once) {
     if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     if (event === "upgrade" || event === "unexpected-response") {
       this.#ensureHandshakeListener();
-      return super.on(event, listener);
+      return once ? super.once(event, listener) : super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
-    if (mask && (this.#eventId & mask) !== mask) {
-      this.#eventId |= mask;
+    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
+    // Add a native listener if:
+    // 1. For `on()`: no native listener exists yet (will be persistent)
+    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
+    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
+    if (mask && !hasPersistentListener) {
+      // Only set the eventId bit for persistent `on` listeners, not for `once`
+      if (!once) {
+        this.#eventId |= mask;
+      }
       if (event === "open") {
-        this.#ws.addEventListener("open", () => {
-          this.emit("open");
-        });
+        this.#ws.addEventListener(
+          "open",
+          () => {
+            this.emit("open");
+          },
+          once,
+        );
       } else if (event === "close") {
-        this.#ws.addEventListener("close", ({ code, reason, wasClean }) => {
-          this.emit("close", code, reason, wasClean);
-        });
+        this.#ws.addEventListener(
+          "close",
+          ({ code, reason, wasClean }) => {
+            this.emit("close", code, reason, wasClean);
+          },
+          once,
+        );
       } else if (event === "message") {
-        this.#ws.addEventListener("message", ({ data }) => {
-          const isBinary = typeof data !== "string";
-          if (isBinary) {
-            this.emit("message", this.#fragments ? [data] : data, isBinary);
-          } else {
-            let encoded = encoder.encode(data);
-            if (this.#binaryType !== "arraybuffer") {
-              encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+        this.#ws.addEventListener(
+          "message",
+          ({ data }) => {
+            const isBinary = typeof data !== "string";
+            if (isBinary) {
+              this.emit("message", this.#fragments ? [data] : data, isBinary);
+            } else {
+              let encoded = encoder.encode(data);
+              if (this.#binaryType !== "arraybuffer") {
+                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+              }
+              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
             }
-            this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
-          }
-        });
+          },
+          once,
+        );
       } else if (event === "error") {
-        this.#ws.addEventListener("error", err => {
-          if (this.#unexpectedResponseEmitted) return;
-          this.emit("error", err);
-        });
+        this.#ws.addEventListener(
+          "error",
+          err => {
+            if (this.#unexpectedResponseEmitted) return;
+            this.emit("error", err);
+          },
+          once,
+        );
       } else if (event === "ping") {
-        this.#ws.addEventListener("ping", ({ data }) => {
-          this.emit("ping", controlPayload(this.#binaryType, data));
-        });
+        this.#ws.addEventListener(
+          "ping",
+          ({ data }) => {
+            this.emit("ping", controlPayload(this.#binaryType, data));
+          },
+          once,
+        );
       } else if (event === "pong") {
-        this.#ws.addEventListener("pong", ({ data }) => {
-          this.emit("pong", controlPayload(this.#binaryType, data));
-        });
+        this.#ws.addEventListener(
+          "pong",
+          ({ data }) => {
+            this.emit("pong", controlPayload(this.#binaryType, data));
+          },
+          once,
+        );
       }
     }
-    return super.on(event, listener);
+    return once ? super.once(event, listener) : super.on(event, listener);
   }
 
   on(event, listener) {
-    return this.#armAndOn(event, listener);
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  once(event, listener) {
+    return this.#onOrOnce(event, listener, onceObject);
   }
 
   addListener(event, listener) {
-    return this.#armAndOn(event, listener);
+    return this.#onOrOnce(event, listener, undefined);
   }
 
   prependListener(event, listener) {
@@ -458,7 +494,7 @@ class BunWebSocket extends EventEmitter {
     if (eventIds[event] === undefined) return;
     const mask = 1 << eventIds[event];
     if ((this.#eventId & mask) === mask) return;
-    this.#armAndOn(event, noopBridgeListener);
+    this.#onOrOnce(event, noopBridgeListener, undefined);
     super.off(event, noopBridgeListener);
   }
 

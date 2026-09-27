@@ -234,6 +234,19 @@ function validateLocalAddresses(first, second) {
   }
 }
 
+function invalidHostname(hostname) {
+  if (invalidHostname.warned) {
+    return;
+  }
+
+  invalidHostname.warned = true;
+  process.emitWarning(
+    `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
+    "DeprecationWarning",
+    "DEP0118",
+  );
+}
+
 function translateLookupOptions(options) {
   if (!options || typeof options !== "object") {
     options = { family: options };
@@ -289,7 +302,13 @@ function lookup(hostname, options, callback) {
   validateLookupOptions(options);
 
   if (!hostname) {
-    throw $ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string");
+    invalidHostname(hostname);
+    if (options.all) {
+      callback(null, []);
+    } else {
+      callback(null, null, 4);
+    }
+    return;
   }
 
   const family = isIP(hostname);
@@ -765,7 +784,15 @@ const promises = {
     validateLookupOptions(options);
 
     if (!hostname) {
-      return Promise.$reject($ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string"));
+      invalidHostname(hostname);
+      return Promise.$resolve(
+        options.all
+          ? []
+          : {
+              address: null,
+              family: 4,
+            },
+      );
     }
 
     const family = isIP(hostname);

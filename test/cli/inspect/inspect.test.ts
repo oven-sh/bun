@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -16,6 +16,67 @@ const anyPathname = expect.stringMatching(/^\/[a-z0-9-]+$/);
  */
 const randomSocketPathFn = (tempdir: string) => (): string =>
   join(tempdir, Math.random().toString(36).substring(2, 15) + ".sock");
+
+// Keep this test first. When an inspectee aborts, the tests below time out and do not print why.
+// JSC compiles exception-check validation in only when assertions or ASAN are on.
+test.skipIf(!isDebug && !isASAN)("Runtime.evaluate does not trip exception-check validation", async () => {
+  await using child = spawn({
+    cwd: import.meta.dir,
+    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", "inspectee.js"],
+    env: {
+      ...bunEnv,
+      BUN_JSC_validateExceptionChecks: "1",
+      BUN_JSC_dumpSimulatedThrows: "1",
+    },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const decoder = new TextDecoder();
+  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers<URL>();
+  const drained = (async () => {
+    for await (const chunk of child.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      // A chunk can end in the middle of the URL, so read complete lines only.
+      for (const line of stderr.split("\n").slice(0, -1)) {
+        const candidate = line.trim();
+        if (candidate.startsWith("ws://") && URL.canParse(candidate)) resolveUrl(new URL(candidate));
+      }
+    }
+    rejectUrl(new Error("inspectee exited before printing inspector URL:\n" + stderr));
+  })();
+
+  const url = await urlPromise;
+  const ws = new WebSocket(url);
+  let reply: unknown;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+    reply = await new Promise<unknown>((resolve, reject) => {
+      ws.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))));
+      ws.addEventListener("close", ({ code, reason }) => resolve({ closed: { code, reason } }));
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+  } finally {
+    ws.close();
+    child.kill();
+  }
+
+  await Promise.all([child.exited, drained]);
+  // An inspectee that aborts closes the socket with 1006 before it replies.
+  if (child.signalCode === "SIGABRT") {
+    throw new Error(`inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`);
+  }
+  expect(reply).toMatchObject({
+    id: 1,
+    result: { result: { type: "number", value: 2 } },
+  });
+});
 
 describe("websocket", () => {
   const tests = [

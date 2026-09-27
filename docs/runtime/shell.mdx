@@ -158,6 +158,8 @@ You can redirect output to these JavaScript objects:
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (writes to the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (writes to the file)
 
+A buffer target holds a fixed number of bytes. Output that fits is read to the end. When a command writes more than the buffer holds, the shell closes the command's output pipe. The command then gets `EPIPE`, `ECONNRESET`, or `SIGPIPE` on its next write and stops, the same as a writer whose reader has gone away.
+
 ### Example: Redirect input from JavaScript objects (`<`)
 
 To use a JavaScript object as stdin, use the `<` operator:

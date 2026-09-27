@@ -5719,3 +5719,192 @@ describe.concurrent("a socket whose peer sends its FIN first", () => {
     });
   });
 });
+
+// Bun.listen and Bun.connect: what the kernel has not taken of end(data) has to outlive the peer's FIN.
+// With allowHalfOpen: true and an `end` handler the FIN never closed the socket, so those rows need only the
+// queue of end(data). In every other row the close that follows the FIN has to wait for that queue too.
+describe.concurrent("end(data) whose tail is still queued when the peer's FIN is read", () => {
+  const pins = {
+    "tls 1.2": { version: 0x0303, protocol: "TLSv1.2" },
+    "tls 1.3": { version: 0x0304, protocol: "TLSv1.3" },
+  } as const;
+  // More than one send takes from a paused peer on Linux: 2634240 (tcp), 2621440 (tls), 219264 (unix).
+  const sizes = { "tcp": 4 << 20, "unix": 1 << 20, "tls 1.2": 4 << 20, "tls 1.3": 4 << 20 } as const;
+  type Transport = keyof typeof sizes;
+  const STEP = 256 * 1024;
+  const REQUEST = "request\n";
+  let source: Buffer | undefined;
+
+  type Row = {
+    transport: Transport;
+    side: "listen" | "connect";
+    allowHalfOpen: boolean;
+    callSite: "data" | "open" | "end";
+    endHandler: boolean;
+  };
+
+  // A connection that the peer answers: the loop accepts it in one iteration and reads the answer in a later
+  // one, so a read that was due when it started is done by the time it resolves.
+  async function pendingReadsDone() {
+    using cleanup = new DisposableStack();
+    const server = net.createServer(socket => socket.end("x"));
+    cleanup.defer(() => void server.close());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    cleanup.defer(() => void socket.destroy());
+    await once(socket, "data");
+  }
+
+  async function run({ transport, side, allowHalfOpen, callSite, endHandler }: Row) {
+    const N = sizes[transport];
+    const pin = transport === "tls 1.2" || transport === "tls 1.3" ? pins[transport] : undefined;
+    const bytes = (source ??= randomFillSync(Buffer.allocUnsafe(16 << 20)));
+    using dir = transport === "unix" ? tempDir("end-fin", {}) : undefined;
+    const requested = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const peerClosed = Promise.withResolvers<void>();
+    const closeErrors: unknown[] = [];
+    const errors: string[] = [];
+    let filled = 0;
+    let kernelFull = false;
+    let endReturned = -2;
+    let endEvents = 0;
+    let request = "";
+    let protocol: string | undefined;
+    let peer: Socket<unknown> | undefined;
+    let got = 0;
+    let mismatchAt = -1;
+
+    function fillAndEnd(socket: Socket<unknown>) {
+      // The kernel is filled first: Windows takes a first send of any size whole.
+      let took = STEP;
+      while (took === STEP && filled + STEP + N <= bytes.length) {
+        took = socket.write(bytes.subarray(filled, filled + STEP));
+        filled += Math.max(took, 0);
+      }
+      kernelFull = took !== STEP;
+      endReturned = socket.end(bytes.subarray(filled, filled + N));
+    }
+    const underTest: SocketHandler = {
+      open(socket) {
+        if (callSite === "open") fillAndEnd(socket);
+      },
+      data(socket, chunk) {
+        request += chunk.toString();
+        if (request !== REQUEST) return;
+        if (pin) protocol = socket.getTLSVersion();
+        if (callSite === "data") fillAndEnd(socket);
+        requested.resolve();
+      },
+      ...(endHandler
+        ? {
+            end(socket: Socket<unknown>) {
+              endEvents++;
+              if (callSite === "end") fillAndEnd(socket);
+              ended.resolve();
+            },
+          }
+        : {}),
+      close(_socket, error) {
+        closeErrors.push(error);
+        requested.resolve();
+        ended.resolve();
+        closed.resolve();
+      },
+      error(_socket, error) {
+        errors.push(String(error));
+      },
+    };
+
+    function sendRequestAndFin(socket: Socket<unknown>) {
+      peer = socket;
+      socket.pause();
+      socket.write(REQUEST);
+      socket.shutdown();
+    }
+    const peerHandlers: SocketHandler = {
+      // A TLS socket cannot be paused before its handshake has been read.
+      ...(pin ? { handshake: sendRequestAndFin } : { open: sendRequestAndFin }),
+      data(_socket, chunk) {
+        if (mismatchAt === -1 && !chunk.equals(bytes.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+        got += chunk.byteLength;
+      },
+      end() {},
+      close: () => peerClosed.resolve(),
+      error() {},
+    };
+
+    const pinned = (options: Bun.TLSOptions) =>
+      pin && ({ ...options, minVersion: pin.version, maxVersion: pin.version } as Bun.TLSOptions);
+    const accepting = {
+      allowHalfOpen: side === "listen" ? allowHalfOpen : true,
+      tls: pinned({ key: tls.key, cert: tls.cert }),
+      socket: side === "listen" ? underTest : peerHandlers,
+    };
+    const connecting = {
+      allowHalfOpen: side === "connect" ? allowHalfOpen : true,
+      tls: pinned({ ca: tls.cert }),
+      socket: side === "connect" ? underTest : peerHandlers,
+    };
+    const path = dir && join(String(dir), "s.sock");
+    using listener =
+      path === undefined
+        ? Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting })
+        : Bun.listen({ unix: path, ...accepting });
+    using _connected = await (path === undefined
+      ? Bun.connect({ hostname: "127.0.0.1", port: (listener as Bun.TCPSocketListener).port, ...connecting })
+      : Bun.connect({ unix: path, ...connecting }));
+
+    await requested.promise;
+    // Without an `end` handler nothing reports the FIN. It follows the request on the same connection, so the
+    // loop reads it one iteration after the request at the latest.
+    await (endHandler ? ended.promise : pendingReadsDone());
+    const closedBeforePeerRead = closeErrors.length > 0;
+    peer?.resume();
+    await Promise.all([closed.promise, peerClosed.promise]);
+
+    expect({
+      protocol,
+      request,
+      kernelFull,
+      endReturned,
+      endEvents,
+      closedBeforePeerRead,
+      closeErrors,
+      errors,
+      unreceived: filled + N - got,
+      mismatchAt,
+    }).toEqual({
+      protocol: pin?.protocol,
+      request: REQUEST,
+      kernelFull: true,
+      endReturned: N,
+      endEvents: endHandler ? 1 : 0,
+      closedBeforePeerRead: false,
+      closeErrors: [undefined],
+      errors: [],
+      unreceived: 0,
+      mismatchAt: -1,
+    });
+  }
+
+  // end(data) in `end` needs the handler: 5 of the 6 pairs are rows, for 4 transports, 2 sides and 2 options.
+  const calls = (["data", "open", "end"] as const).flatMap(callSite =>
+    (callSite === "end" ? [true] : [true, false]).map(
+      endHandler => [`${callSite}()`, endHandler ? "with" : "without", callSite, endHandler] as const,
+    ),
+  );
+
+  describe.each(["tcp", "unix", "tls 1.2", "tls 1.3"] as const)("%s", transport => {
+    describe.each(["listen", "connect"] as const)("Bun.%s socket", side => {
+      describe.each([false, true])("allowHalfOpen: %p", allowHalfOpen => {
+        // AF_UNIX runs on POSIX only, like the other `unix` tests of this file.
+        it.skipIf(isWindows && transport === "unix").each(calls)(
+          "end(data) in %s %s an end handler",
+          (_where, _handler, callSite, endHandler) => run({ transport, side, allowHalfOpen, callSite, endHandler }),
+        );
+      });
+    });
+  });
+});

@@ -26,7 +26,7 @@ use crate::bake::{self, Side};
 ///
 /// Const-generic over `bake::Side` so that the server and client graphs'
 /// `FileIndex` are distinct types.
-pub struct SideMarker<const SIDE: bake::Side>;
+pub(crate) struct SideMarker<const SIDE: bake::Side>;
 pub(crate) type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
 /// Alias used by `DevServer.route_lookup`.
 pub(crate) type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
@@ -44,7 +44,7 @@ pub(crate) struct InsertEmptyResult<const SIDE: bake::Side> {
 }
 
 /// `bun.GenericIndex(u32, Edge)`.
-pub enum EdgeMarker {}
+pub(crate) enum EdgeMarker {}
 pub(crate) type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 
 /// One edge in the import graph. `File` objects act as nodes in a directional
@@ -53,7 +53,7 @@ pub(crate) type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 /// is implemented using an array of `Edge` objects that act as linked-list
 /// nodes; each file stores the first import and dependency (`EdgeLists`).
 #[derive(Copy, Clone)]
-pub struct Edge<const SIDE: bake::Side> {
+pub(crate) struct Edge<const SIDE: bake::Side> {
     /// The file with the import statement.
     pub(crate) dependency: FileIndex<SIDE>,
     /// The file the import statement references.
@@ -77,7 +77,7 @@ pub(crate) struct EdgeLists {
 }
 
 #[derive(Default)]
-pub enum Content {
+pub(crate) enum Content {
     #[default]
     Unknown,
     /// When stale, the code is "", otherwise it contains at least one
@@ -112,7 +112,7 @@ impl Content {
 /// Per-file metadata, folded across both sides; per-side fields are simply
 /// unused on the other side (costs ~24 bytes/file on the server graph versus
 /// a per-side layout).
-pub struct File {
+pub(crate) struct File {
     /// Server-side `kind`. For client side this mirrors `content.kind()`.
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
@@ -168,7 +168,7 @@ impl Default for File {
 
 /// Pairs a server file with its source map for the chunk currently being
 /// assembled.
-pub struct CurrentChunkSourceMapData {
+pub(crate) struct CurrentChunkSourceMapData {
     pub(crate) file_index: ServerFileIndex,
     pub(crate) source_map: packed_map::Shared,
 }
@@ -178,13 +178,13 @@ pub struct CurrentChunkSourceMapData {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ProcessMode {
+pub(crate) enum ProcessMode {
     Normal,
     Css,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum TraceDependencyGoal {
+pub(crate) enum TraceDependencyGoal {
     StopAtBoundary,
     NoStop,
 }
@@ -215,7 +215,7 @@ pub(crate) enum RouteKind {
 }
 
 #[derive(Copy, Clone)]
-pub enum InsertFailureKey<'a> {
+pub(crate) enum InsertFailureKey<'a> {
     AbsPath(&'a [u8]),
     /// Raw file index into `bundled_files` (side is implied by the graph the
     /// caller is invoking `insert_failure` on).
@@ -237,7 +237,7 @@ pub(crate) enum ReceiveChunkContent {
     Css(u64),
 }
 
-pub struct TakeJSBundleOptionsClient<'a> {
+pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) kind: ChunkKind,
     pub(crate) script_id: source_map_store::Key,
     pub(crate) initial_response_entry_point: &'a [u8],
@@ -271,7 +271,7 @@ struct TempLookup {
 /// still the folded union (see TODO above) until a trait dispatch picks the
 /// per-side layout.
 #[derive(Default)]
-pub struct IncrementalGraph<const SIDE: bake::Side> {
+pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
@@ -300,7 +300,7 @@ pub struct IncrementalGraph<const SIDE: bake::Side> {
 /// Byte-count breakdown of an incremental graph's memory usage (graph
 /// structures, cached code, source maps).
 #[derive(Default, Clone, Copy)]
-pub struct GraphMemoryCost {
+pub(crate) struct GraphMemoryCost {
     pub(crate) graph: usize,
     pub(crate) code: usize,
     pub(crate) source_maps: usize,
@@ -415,7 +415,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// Clears the per-bundle mutation tracking (`current_chunk_*`) without
     /// touching the persisted file/edge storage.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.current_chunk_len = 0;
         match SIDE {
             Side::Client => {

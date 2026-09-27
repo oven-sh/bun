@@ -80,6 +80,8 @@ delete ffi.closeCallback;
 delete ffi.cfunction;
 
 class JSCallback {
+  declare readonly ptr: number | null;
+
   constructor(cb, options) {
     const cell = nativeCallback(options, cb);
     if (Error.isError(cell)) throw cell;
@@ -174,7 +176,7 @@ const native = {
 
 const ccFn = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
 
-function normalizePath(path) {
+function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {
     // import.meta.url returns a file: URL
     // https://github.com/oven-sh/bun/issues/10304

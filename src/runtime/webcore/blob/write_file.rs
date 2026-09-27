@@ -55,6 +55,10 @@ impl bun_jsc::JobContext for WriteFile {
     /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
     /// promise then stays pending.)
     type Js = Box<WriteFilePromise>;
+    #[cfg(windows)]
+    fn waits(this: &Self) -> bool {
+        super::waits_on(this.pathlike())
+    }
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);

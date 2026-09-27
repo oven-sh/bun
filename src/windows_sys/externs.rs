@@ -485,6 +485,7 @@ pub struct FS_INFORMATION_CLASS(pub u32);
 impl FS_INFORMATION_CLASS {
     pub const FileFsVolumeInformation: Self = Self(1);
     pub const FileFsDeviceInformation: Self = Self(4);
+    pub const FileFsFullSizeInformation: Self = Self(7);
 }
 
 /// `FILE_STANDARD_INFORMATION` (`wdm.h`).
@@ -529,6 +530,17 @@ pub struct FILE_FS_DEVICE_INFORMATION {
     pub Characteristics: ULONG,
 }
 
+/// `FILE_FS_FULL_SIZE_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_FS_FULL_SIZE_INFORMATION {
+    pub TotalAllocationUnits: LARGE_INTEGER,
+    /// What the caller's quota leaves of `ActualAvailableAllocationUnits`.
+    pub CallerAvailableAllocationUnits: LARGE_INTEGER,
+    pub ActualAvailableAllocationUnits: LARGE_INTEGER,
+    pub SectorsPerAllocationUnit: ULONG,
+    pub BytesPerSector: ULONG,
+}
+
 /// `FILE_FS_VOLUME_INFORMATION` (`ntifs.h`). `VolumeLabel` is variable-length;
 /// with a fixed-size buffer the call returns `STATUS_BUFFER_OVERFLOW` and the
 /// fixed fields are still populated.
@@ -552,6 +564,7 @@ const _: () = {
     assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, CurrentByteOffset) == 80);
     assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, FileNameLength) == 96);
     assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
+    assert!(core::mem::size_of::<FILE_FS_FULL_SIZE_INFORMATION>() == 32);
     assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
     assert!(core::mem::offset_of!(FILE_FS_VOLUME_INFORMATION, VolumeSerialNumber) == 8);
 };
@@ -1989,14 +2002,6 @@ unsafe extern "system" {
         lpBuffer: LPWSTR,
         lpFilePart: *mut LPWSTR,
     ) -> DWORD;
-
-    pub fn GetDiskFreeSpaceW(
-        lpRootPathName: LPCWSTR,
-        lpSectorsPerCluster: *mut DWORD,
-        lpBytesPerSector: *mut DWORD,
-        lpNumberOfFreeClusters: *mut DWORD,
-        lpTotalNumberOfClusters: *mut DWORD,
-    ) -> BOOL;
 
     pub fn SetFileTime(
         hFile: HANDLE,

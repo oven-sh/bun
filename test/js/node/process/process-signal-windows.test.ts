@@ -177,7 +177,7 @@ describe.skipIf(!isWindows)("console control events", () => {
     await secondProcess.exited;
     expect({ first, second }).toEqual({ first: expect.any(String), second: first });
     // STATUS_CONTROL_C_EXIT
-    expect(exitCode).toBe(0xc000013a & 0xff);
+    expect(exitCode).toBe(0xc000013a);
   });
 });
 
@@ -246,7 +246,7 @@ test.skipIf(!isWindows)("a console window's resize raises SIGWINCH in a process 
   }).symbols;
   const CREATE_NEW_CONSOLE = 0x10;
   const STARTF_USESHOWWINDOW = 0x1;
-  const commandLine = Buffer.from(`"${bunExe()}" "${join(String(dir), "child.js")}" ${port} `, "utf16le");
+  const commandLine = Buffer.from(`"${bunExe()}" "${join(String(dir), "child.js")}" ${port}\0`, "utf16le");
   const startupInfo = new Uint8Array(104);
   const startup = new DataView(startupInfo.buffer);
   startup.setUint32(0, 104, true); // cb

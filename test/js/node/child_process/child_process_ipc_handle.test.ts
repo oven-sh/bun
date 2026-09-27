@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
-describe.skipIf(isWindows)("process.send(message, handle)", () => {
+describe("process.send(message, handle)", () => {
   test.concurrent("bun parent -> bun child: net.Server handle and message both arrive", async () => {
     using dir = tempDir("ipc-handle-bun-bun", {
       "parent.js": `
@@ -188,6 +188,8 @@ process.on('message', (m, server) => {
 
   test
     .skipIf(!node)
+    // Windows: Bun describes the socket in the message, not in the frame Node reads it from; the child never answers.
+    .todoIf(isWindows)
     .concurrent("bun parent -> node child: the user message survives the NODE_HANDLE envelope", async () => {
       using dir = tempDir("ipc-handle-bun-node", {
         "parent.js": `
@@ -442,9 +444,12 @@ process.on('message', (m, socket) => {
     });
   });
 
-  test.concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
-    using dir = tempDir("ipc-handle-dgram", {
-      "parent.js": `
+  // Windows: the child throws "TypeError: Unsupported fd type: UNKNOWN" from node:dgram's bind({ fd }).
+  test
+    .todoIf(isWindows)
+    .concurrent("dgram.Socket handle arrives as a bound dgram.Socket the child can send/receive on", async () => {
+      using dir = tempDir("ipc-handle-dgram", {
+        "parent.js": `
 const { fork } = require('node:child_process');
 const dgram = require('node:dgram');
 
@@ -480,7 +485,7 @@ server.bind(0, '127.0.0.1', () => {
   });
 });
 `,
-      "child.js": `
+        "child.js": `
 const dgram = require('node:dgram');
 process.on('message', (m, socket) => {
   if (!(socket instanceof dgram.Socket)) return process.send({ error: 'handle was ' + typeof socket });
@@ -491,22 +496,22 @@ process.on('message', (m, socket) => {
   process.send('ready');
 });
 `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
+        exitCode: 0,
+        stderr: expect.any(String),
+        response: true,
+      });
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
-      exitCode: 0,
-      stderr: expect.any(String),
-      response: true,
-    });
-  });
 
   test.concurrent("received net.Socket has connecting=false and remoteAddress synchronously", async () => {
     using dir = tempDir("ipc-handle-connecting", {
@@ -666,7 +671,8 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
+  // A socket received on Windows is a SOCKET, which is never 0.
+  test.skipIf(isWindows).concurrent("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
 const { fork } = require('node:child_process');
@@ -708,11 +714,14 @@ process.on('message', (m, sock) => {
   // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
   // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
   // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
-  test.concurrent(
-    "handoff detaches the sender's socket; disconnect() reports disconnected at once but flushes messages queued behind the handle",
-    async () => {
-      using dir = tempDir("ipc-handle-detach-flush", {
-        "parent.js": `
+  // Windows: the message queued behind the handle is dropped (childSawQueuedMessage: false).
+  test
+    .todoIf(isWindows)
+    .concurrent(
+      "handoff detaches the sender's socket; disconnect() reports disconnected at once but flushes messages queued behind the handle",
+      async () => {
+        using dir = tempDir("ipc-handle-detach-flush", {
+          "parent.js": `
 const { fork } = require('node:child_process');
 const net = require('node:net');
 const child = fork('child.js');
@@ -738,41 +747,44 @@ server.listen(0, '127.0.0.1', () => {
   client.on('error', () => {});
 });
 `,
-        "child.js": `
+          "child.js": `
 let sawQueued = false;
 process.on('message', (m, sock) => { if (sock) sock.destroy(); else sawQueued = m.type === 'after-handle'; });
 process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
 `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "parent.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-        out: {
-          childSawQueuedMessage: true,
-          senderEvents: [],
-          connectedAfterDisconnect: false,
-          secondDisconnect: "ERR_IPC_DISCONNECTED",
-        },
-        stderr: "",
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "parent.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+          out: {
+            childSawQueuedMessage: true,
+            senderEvents: [],
+            connectedAfterDisconnect: false,
+            secondDisconnect: "ERR_IPC_DISCONNECTED",
+          },
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
 
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
   // second disconnect() errors, and the parent receives the server, then the message queued behind
   // it (the child only sends it once the handle is acked), then 'disconnect'. The parent reports on
   // 'close', which a fork()ed child reaches only after 'exit', the IPC 'disconnect' and the end of
   // the stderr pipe; 'exit' alone can run before the other two.
-  test.concurrent("a handle sent right before the child's disconnect() is delivered, in send order", async () => {
-    using dir = tempDir("ipc-handle-then-disconnect", {
-      "parent.js": `
+  // Windows: the handle arrives, the message sent after it ("after-handle") does not.
+  test
+    .todoIf(isWindows)
+    .concurrent("a handle sent right before the child's disconnect() is delivered, in send order", async () => {
+      using dir = tempDir("ipc-handle-then-disconnect", {
+        "parent.js": `
 const { fork } = require('node:child_process');
 const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
 const got = [];
@@ -782,7 +794,7 @@ child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(
 child.on('disconnect', () => got.push('disconnect'));
 child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
 `,
-      "child.js": `
+        "child.js": `
 const net = require('node:net');
 const server = net.createServer().listen(0, '127.0.0.1', () => {
   process.send('srv', server);
@@ -795,23 +807,23 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
   process.on('disconnect', () => { process.stderr.write(JSON.stringify({ connectedAfterDisconnect, secondDisconnect })); server.close(); });
 });
 `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: {
+          got: ["handle:srv", "after-handle", "disconnect"],
+          code: 0,
+          child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-      out: {
-        got: ["handle:srv", "after-handle", "disconnect"],
-        code: 0,
-        child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
-      },
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
-  });
 });

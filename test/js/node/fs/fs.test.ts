@@ -124,6 +124,42 @@ it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
   expect(statSync(dirPath).mode & 0o7777).toBe(0o1755);
 });
 
+// A file's attributes are one number, and to write 0 there is to leave them as they are.
+describe.skipIf(!isWindows).each(["chmodSync", "fchmodSync"] as const)("%s changes read-only and nothing else", api => {
+  it.each([[["-A"]], [["-A", "+R"]], [["+A"]], [["+A", "+R"]], [["-A", "+H"]], [["-A", "+H", "+R"]]])(
+    "on a file made with attrib %j",
+    initial => {
+      using dir = tempDir("fs-chmod-attributes", { "file.txt": "contents" });
+      const file = join(fs.realpathSync(String(dir)), "file.txt");
+      const attributes = () => {
+        const line = Bun.spawnSync({ cmd: ["attrib", file] }).stdout.toString();
+        return [...line.slice(0, line.indexOf(file)).replace(/\s/g, "")].sort().join("");
+      };
+      const chmod = (mode: number) => {
+        if (api === "chmodSync") return fs.chmodSync(file, mode);
+        const fd = fs.openSync(file, "r");
+        try {
+          fs.fchmodSync(fd, mode);
+        } finally {
+          fs.closeSync(fd);
+        }
+      };
+      Bun.spawnSync({ cmd: ["attrib", ...initial, file] });
+      const others = attributes().replace("R", "");
+      chmod(0o444);
+      const readOnly = attributes();
+      chmod(0o666);
+      const writable = attributes();
+      chmod(0o666);
+      expect({ readOnly, writable, again: attributes() }).toEqual({
+        readOnly: [...others, "R"].sort().join(""),
+        writable: others,
+        again: others,
+      });
+    },
+  );
+});
+
 it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"],
@@ -1604,6 +1640,69 @@ it.skipIf(!isWindows)("a Buffer path that is not UTF-8 names no file", () => {
   });
 });
 
+// A Windows file name is any sequence of UTF-16 units. WTF-8 is what spells half a surrogate pair in bytes.
+describe.skipIf(!isWindows).each([
+  ["a lead surrogate", [0xed, 0xa0, 0x80]],
+  ["a trail surrogate", [0xed, 0xb0, 0x80]],
+  ["a trail surrogate before a lead one", [0xed, 0xb0, 0x80, 0xed, 0xa0, 0x80]],
+  ["a surrogate pair", [0xf0, 0x9f, 0x98, 0x80]],
+  ["a lead surrogate before a pair", [0xed, 0xa0, 0x80, 0xf0, 0x9f, 0x98, 0x80]],
+])("a name with %s", (_name, bytes) => {
+  const named = (dir: string, before: string, after: string) =>
+    Buffer.concat([Buffer.from(fs.realpathSync(dir) + "\\" + before), Buffer.from(bytes), Buffer.from(after)]);
+
+  it.each([
+    ["in the middle", "w", "x"],
+    ["at the end", "w", ""],
+    ["alone", "", ""],
+  ])("%s comes back from realpath.native and readlink as the bytes that name it", (_where, before, after) => {
+    using dir = tempDir("fs-wtf8-name", {});
+    const file = named(String(dir), before, after);
+    fs.writeFileSync(file, "contents");
+    const link = join(String(dir), "link");
+    fs.symlinkSync(file, link, "file");
+    const found = { realpath: fs.realpathSync.native(file, "buffer"), readlink: fs.readlinkSync(link, "buffer") };
+    expect({
+      realpath: found.realpath.toString("hex"),
+      readlink: found.readlink.toString("hex"),
+      contents: [fs.readFileSync(found.realpath, "utf8"), fs.readFileSync(found.readlink, "utf8")],
+    }).toEqual({ realpath: file.toString("hex"), readlink: file.toString("hex"), contents: ["contents", "contents"] });
+  });
+});
+
+// Win32 resolves `.`, `..` and trailing dots in a `\\.\` path as in any other, and takes a `\\?\` path literally.
+it.skipIf(!isWindows)("rmdir names a directory under \\\\.\\ the way the other calls do", () => {
+  using dir = tempDir("fs-rmdir-device-path", {});
+  const root = fs.realpathSync(String(dir));
+  const attempt = (prefix: string, tail: string) => {
+    for (const name of ["other", "removed"]) fs.mkdirSync(join(root, name), { recursive: true });
+    const spelled = prefix + root + tail;
+    try {
+      const seen = fs.statSync(spelled).isDirectory();
+      fs.rmdirSync(spelled);
+      return { seen, left: fs.existsSync(join(root, "removed")) };
+    } catch (e: any) {
+      return e.code + " " + e.syscall;
+    }
+  };
+  const removed = { seen: true, left: false };
+  expect({
+    plain: attempt("\\\\.\\", "\\removed"),
+    dotDot: attempt("\\\\.\\", "\\other\\..\\removed"),
+    dot: attempt("\\\\.\\", "\\.\\removed"),
+    trailingDot: attempt("\\\\.\\", "\\removed."),
+    literal: attempt("\\\\?\\", "\\removed"),
+    literalDotDot: attempt("\\\\?\\", "\\other\\..\\removed"),
+  }).toEqual({
+    plain: removed,
+    dotDot: removed,
+    dot: removed,
+    trailingDot: removed,
+    literal: removed,
+    literalDotDot: "ENOENT stat",
+  });
+});
+
 // On Windows libuv makes one read per buffer, short or not, and so waits on a pipe for as many writes as there
 // are buffers. Elsewhere it is one readv(2), which returns with what the pipe holds.
 it.skipIf(!isWindows)("readvSync on a pipe goes on to the next buffer after a short read", async () => {
@@ -1736,14 +1835,18 @@ describe("mkdtemp empty prefix", () => {
 });
 
 describe("mkdtemp prefix length", () => {
-  it("a 40000-byte prefix that is not valid UTF-8 fails with an errno code from mkdtempSync and promises.mkdtemp", async () => {
+  it.each([
+    // Bytes that are no name name no file.
+    ["is not valid UTF-8", 0x80, "ENOENT"],
+    ["is valid", 0x70, "ENAMETOOLONG"],
+  ])("a 40000-byte prefix that %s fails from mkdtempSync and promises.mkdtemp", async (_what, byte, onWindows) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const fs = require("fs");
-          const prefix = Buffer.concat([Buffer.alloc(40000, 0x80), Buffer.from("XXXXXX")]);
+          const prefix = Buffer.concat([Buffer.alloc(40000, ${byte}), Buffer.from("XXXXXX")]);
           const codes = [];
           try {
             fs.mkdtempSync(prefix);
@@ -1762,11 +1865,9 @@ describe("mkdtemp prefix length", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Which errno depends on the platform's path limits.
-    expect({ stdout: JSON.parse(stdout || "null"), stderr }).toEqual({
-      stdout: [expect.stringMatching(/^E[A-Z]+$/), expect.stringMatching(/^E[A-Z]+$/)],
-      stderr: "",
-    });
+    // Elsewhere the errno depends on the platform's path limits.
+    const code = isWindows ? onWindows : expect.stringMatching(/^E[A-Z]+$/);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr }).toEqual({ stdout: [code, code], stderr: "" });
     expect(exitCode).toBe(0);
   });
 
@@ -3818,6 +3919,48 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
+  });
+
+  // To the native calls that remove things on Windows "." and ".." are names like any other.
+  it("removes what a relative path with . or .. in it names", async () => {
+    using dir = tempDir("fs-rm-dotted", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const spellings = ["tree", "./tree", "other/../tree", "./other/.././tree", "tree/../tree"];
+          if (process.platform === "win32") spellings.push(".\\\\tree", "other\\\\..\\\\tree");
+          const notRemoved = {};
+          for (const spelled of spellings) {
+            for (const [name, remove] of Object.entries({
+              rmSync: () => fs.rmSync(spelled, { recursive: true }),
+              "rmSync force": () => fs.rmSync(spelled, { recursive: true, force: true }),
+              "promises.rm": () => fs.promises.rm(spelled, { recursive: true }),
+              "promises.rm force": () => fs.promises.rm(spelled, { recursive: true, force: true }),
+            })) {
+              fs.mkdirSync("other", { recursive: true });
+              fs.mkdirSync("tree/inner", { recursive: true });
+              fs.writeFileSync("tree/inner/file.txt", "contents");
+              try {
+                await remove();
+                if (fs.existsSync("tree")) notRemoved[name + " " + spelled] = "returned";
+              } catch (e) {
+                notRemoved[name + " " + spelled] = e.code;
+              }
+            }
+          }
+          console.log(JSON.stringify(notRemoved));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "{}", stderr: "", exitCode: 0 });
   });
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
@@ -6657,6 +6800,22 @@ it("fs.statfs on a missing path fails with ENOENT and syscall statfs", async () 
   await expect(fs.promises.statfs(missing)).rejects.toThrow(expected);
 });
 
+it("fs.statfs describes the volume that a file, a directory or a link is on", () => {
+  using dir = tempDir("fs-statfs-kinds", { "file.txt": "contents", sub: {} });
+  const root = String(dir);
+  fs.symlinkSync(join(root, "file.txt"), join(root, "file-link"), "file");
+  fs.symlinkSync(join(root, "sub"), join(root, "dir-link"), "dir");
+  // What is free changes from one call to the next.
+  const volume = (path: string) => {
+    const { bsize, blocks, bfree, bavail } = statfsSync(path, { bigint: true });
+    return { bsize, blocks, plausible: bsize > 0n && blocks > 0n && bavail <= bfree && bfree <= blocks };
+  };
+  const expected = { ...volume(root), plausible: true };
+  expect(["file.txt", "sub", "file-link", "dir-link"].map(name => volume(join(root, name)))).toEqual(
+    Array(4).fill(expected),
+  );
+});
+
 // An absolute path is opened in another spelling on Windows (`\\?\C:\…`); the error names the caller's.
 it("statfs, appendFile and chown errors carry the path that was passed", async () => {
   using dir = tempDir("fs-error-path", {});
@@ -7882,6 +8041,221 @@ describe("fs.close on stdio descriptors", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("EBADF");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The work pool starts what is queued on it in no particular order. A descriptor closed ahead of
+// what it was given fails those operations, and its number goes to the next file that is opened.
+describe("fs.close() that is not waited for", () => {
+  type Callback = (err: NodeJS.ErrnoException | null) => void;
+  /** The code `start`'s callback is called with, or null. */
+  const codeOf = (start: (callback: Callback) => void) =>
+    new Promise<string | null>(resolve => start(err => resolve(err ? err.code! : null)));
+
+  const megabyte = Buffer.alloc(1 << 20, "m");
+  describe.each<[string, number, ((fd: number, callback: Callback) => void)[]]>([
+    ["one write", 1, [(fd, cb) => fs.write(fd, "a", cb)]],
+    ["two writes", 2, [(fd, cb) => fs.write(fd, "a", cb), (fd, cb) => fs.write(fd, "b", cb)]],
+    ["twenty writes", 20, Array(20).fill((fd: number, cb: Callback) => fs.write(fd, "a", cb))],
+    ["positioned writes", 3, [2, 0, 1].map(position => (fd, cb) => fs.write(fd, "a", position, cb))],
+    ["a write and fsync", 1, [(fd, cb) => fs.write(fd, "a", cb), (fd, cb) => fs.fsync(fd, cb)]],
+    ["a write and fdatasync", 1, [(fd, cb) => fs.write(fd, "a", cb), (fd, cb) => fs.fdatasync(fd, cb)]],
+    ["writev", 2, [(fd, cb) => fs.writev(fd, [Buffer.from("a"), Buffer.from("b")], cb)]],
+    ["writeFile", megabyte.length, [(fd, cb) => fs.writeFile(fd, megabyte, cb)]],
+    ["appendFile", 1, [(fd, cb) => fs.appendFile(fd, "a", cb)]],
+    ["ftruncate", 5, [(fd, cb) => fs.ftruncate(fd, 5, cb)]],
+    ["truncate", 5, [(fd, cb) => fs.truncate(fd as any, 5, cb)]],
+    ["read", 0, [(fd, cb) => fs.read(fd, Buffer.alloc(1), 0, 1, 0, cb)]],
+    ["readv", 0, [(fd, cb) => fs.readv(fd, [Buffer.alloc(1)], 0, cb)]],
+    ["readFile", 0, [(fd, cb) => fs.readFile(fd, cb)]],
+    ["fstat", 0, [(fd, cb) => fs.fstat(fd, cb)]],
+    ["futimes", 0, [(fd, cb) => fs.futimes(fd, 1, 1, cb)]],
+    ["fchmod", 0, [(fd, cb) => fs.fchmod(fd, 0o644, cb)]],
+    ["fchown", 0, [(fd, cb) => fs.fchown(fd, process.getuid?.() ?? 0, process.getgid?.() ?? 0, cb)]],
+  ])("runs after %s", (_name, size, operations) => {
+    it("that came before it", async () => {
+      using dir = tempDir("fs-close-runs-last", {});
+      const rounds = 30;
+      const outcomes: unknown[] = [];
+      for (let round = 0; round < rounds; round++) {
+        const file = join(String(dir), `${round}.txt`);
+        const fd = openSync(file, "w+");
+        const codes = await Promise.all([
+          ...operations.map(operation => codeOf(cb => operation(fd, cb))),
+          codeOf(cb => fs.close(fd, cb)),
+        ]);
+        outcomes.push({ failed: codes.filter(code => code !== null), size: statSync(file).size });
+      }
+      expect(outcomes).toEqual(Array(rounds).fill({ failed: [], size }));
+    });
+  });
+
+  it("does not let a write reach the next file that gets the descriptor's number", async () => {
+    using dir = tempDir("fs-close-fd-reuse", {});
+    const files = 600;
+    const contentsOf = (index: number) => `<${index}>`.padEnd(8, ".").repeat(2);
+    let next = 0;
+    async function flows() {
+      while (next < files) {
+        const index = next++;
+        const half = contentsOf(index).slice(8);
+        const fd = await promisify(fs.open)(join(String(dir), `${index}.txt`), "w");
+        await Promise.all([
+          codeOf(cb => fs.write(fd, half, cb)),
+          codeOf(cb => fs.write(fd, half, cb)),
+          codeOf(cb => fs.close(fd, cb)),
+        ]);
+      }
+    }
+    await Promise.all(Array.from({ length: 64 }, flows));
+    const wrong: unknown[] = [];
+    for (let index = 0; index < files; index++) {
+      const contents = readFileSync(join(String(dir), `${index}.txt`), "utf8");
+      if (contents !== contentsOf(index)) wrong.push({ index, contents });
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("runs before what is given the descriptor after it", async () => {
+    using dir = tempDir("fs-close-then-use", {});
+    const file = join(String(dir), "file.txt");
+    const fd = openSync(file, "w");
+    const codes = await Promise.all([
+      codeOf(cb => fs.write(fd, "before", cb)),
+      codeOf(cb => fs.close(fd, cb)),
+      codeOf(cb => fs.write(fd, "after", cb)),
+      codeOf(cb => fs.fstat(fd, cb)),
+      codeOf(cb => fs.close(fd, cb)),
+    ]);
+    expect({ codes, contents: readFileSync(file, "utf8") }).toEqual({
+      codes: [null, null, "EBADF", "EBADF", "EBADF"],
+      contents: "before",
+    });
+  });
+
+  it("leaves other descriptors alone", async () => {
+    using dir = tempDir("fs-close-other-fd", {});
+    const [closed, kept] = ["closed.txt", "kept.txt"].map(name => openSync(join(String(dir), name), "w"));
+    try {
+      const codes = await Promise.all([
+        codeOf(cb => fs.writeFile(closed, megabyte, cb)),
+        codeOf(cb => fs.close(closed, cb)),
+        codeOf(cb => fs.write(kept, "kept", cb)),
+      ]);
+      expect(codes).toEqual([null, null, null]);
+      expect(fstatSync(kept).size).toBe(4);
+    } finally {
+      closeSync(kept);
+    }
+  });
+
+  it("does not keep a Worker from being terminated", async () => {
+    using dir = tempDir("fs-close-worker-terminate", {});
+    const worker = new Worker(
+      `
+        const fs = require("node:fs");
+        const { parentPort, workerData } = require("node:worker_threads");
+        const chunk = Buffer.alloc(256 * 1024, "w");
+        const ignore = () => {};
+        for (let file = 0; file < 4; file++) {
+          const fd = fs.openSync(workerData + "/" + file + ".txt", "w");
+          for (let write = 0; write < 8; write++) fs.write(fd, chunk, ignore);
+          fs.close(fd, ignore);
+          fs.write(fd, chunk, ignore);
+          fs.close(fd, ignore);
+        }
+        parentPort.postMessage("queued");
+      `,
+      { eval: true, workerData: String(dir) },
+    );
+    expect(await new Promise(resolve => worker.once("message", resolve))).toBe("queued");
+    expect(await worker.terminate()).toBeNumber();
+  });
+});
+
+// The debug C runtime on Windows reports a bad descriptor with an assertion, and stops the process
+// when a second thread has one to report at the same moment.
+it("operations on closed descriptors fail with EBADF, however many threads find out at once", async () => {
+  using dir = tempDir("fs-closed-fds-at-once", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fs = require("node:fs");
+        const fds = Array.from({ length: 16 }, (_, index) => fs.openSync(index + ".txt", "w"));
+        fds.forEach(fd => fs.closeSync(fd));
+        const codeOf = start => new Promise(resolve => start(err => resolve(err ? err.code : null)));
+        const codes = new Set();
+        for (let round = 0; round < 40; round++) {
+          const found = await Promise.all(
+            fds.flatMap(fd => [
+              codeOf(cb => fs.fstat(fd, cb)),
+              codeOf(cb => fs.write(fd, "a", cb)),
+              codeOf(cb => fs.read(fd, Buffer.alloc(1), 0, 1, 0, cb)),
+              codeOf(cb => fs.close(fd, cb)),
+            ]),
+          );
+          for (const code of found) codes.add(code);
+        }
+        console.log(JSON.stringify([...codes]));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    // A debug build warns about every close() of a closed descriptor.
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: `["EBADF"]`, exitCode: 0 });
+});
+
+// A read of a pipe lasts until its other end writes or closes. Nothing is ever written to the
+// child's stdin here, and it asks for more reads than the work pool has threads.
+// Elsewhere `fs.read()` of an empty pipe still occupies one of the pool's threads.
+describe.skipIf(!isWindows).concurrent("reads of a silent pipe do not hold up the work pool", () => {
+  it.each([
+    ["fs.read", `fs.read(0, Buffer.alloc(1), 0, 1, null, () => {})`],
+    ["fs.readv", `fs.readv(0, [Buffer.alloc(1)], () => {})`],
+    ["fs.readFile", `fs.readFile(0, () => {})`],
+    ["fs.promises.readFile", `fs.promises.readFile(0)`],
+    ["Bun.stdin.text", `Bun.stdin.text()`],
+    ["Bun.file(0).arrayBuffer", `Bun.file(0).arrayBuffer()`],
+    ["Bun.write(path, Bun.stdin)", `Bun.write("copy-" + read + ".txt", Bun.stdin)`],
+    [
+      "fs.fstat behind a read",
+      `read === 0 ? fs.read(0, Buffer.alloc(1), 0, 1, null, () => {}) : fs.fstat(0, () => {})`,
+    ],
+  ])("%s", async (_name, startRead) => {
+    using dir = tempDir("fs-silent-pipe", {
+      "fixture.mjs": `
+        import crypto from "node:crypto";
+        import fs from "node:fs";
+        import { promisify } from "node:util";
+        import zlib from "node:zlib";
+        for (let read = 0; read < 8; read++) ${startRead};
+        await Promise.all([
+          fs.promises.stat(import.meta.path),
+          fs.promises.readFile(import.meta.path),
+          Bun.file(import.meta.path).text(),
+          promisify(zlib.gzip)("compressed"),
+          promisify(crypto.pbkdf2)("password", "salt", 1, 8, "sha1"),
+        ]);
+        console.log("the pool did its work");
+        process.exit(0);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "the pool did its work\n", stderr: "", exitCode: 0 });
   });
 });
 

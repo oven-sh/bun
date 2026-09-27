@@ -378,6 +378,39 @@ describe("a channel this side is done with", () => {
     expect(exitCode).toBe(0);
   });
 
+  // On Windows a message is a frame, and Node is handed one frame at a time: what came in the same
+  // read as the message whose handler disconnects is not delivered.
+  it.skipIf(!isWindows).each([1, 2, 5])(
+    "disconnect() from the handler of message %d of 5 that came in one write ends delivery",
+    async last => {
+      const received: unknown[] = [];
+      const disconnected = Promise.withResolvers<void>();
+      await using child = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          rawChannelChild(`
+            channel.write(Buffer.concat([1, 2, 3, 4, 5].map(n => frame(String(n)))));
+            go.then(() => process.exit(0));
+          `),
+        ],
+        env: bunEnv,
+        stdio: ["pipe", "inherit", "inherit"],
+        serialization: "json",
+        ipc(message) {
+          received.push(message);
+          if (message === last) child.disconnect();
+        },
+        onDisconnect: () => disconnected.resolve(),
+      });
+      await disconnected.promise;
+      child.stdin.write("go\n");
+      child.stdin.flush();
+      expect(received).toEqual([1, 2, 3, 4, 5].slice(0, last));
+      expect(await child.exited).toBe(0);
+    },
+  );
+
   // The child sends the parent's own message back three times, with a message of an unknown type after
   // the first, all in one write.
   it("a message that does not decode ends delivery, also of what came with it in the same read", async () => {

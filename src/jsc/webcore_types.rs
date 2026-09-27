@@ -664,45 +664,6 @@ pub mod store {
             }
         }
 
-        /// Takes ownership of a `Box<[u8]>` (global allocator, `cap == len`).
-        /// Paired with [`Bytes::into_boxed_slice`] for round-tripping the
-        /// `is_temporary` handoff in `read_file`.
-        pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
-            let len = bytes.len();
-            let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-            Bytes {
-                ptr: NonNull::new(ptr),
-                len: len as SizeType,
-                cap: len as SizeType,
-                allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: Box::default(),
-            }
-        }
-
-        /// Reclaim the buffer as a `Box<[u8]>`, shrinking if `cap > len`.
-        ///
-        /// Only valid for global-allocator-backed storage (the `init`/
-        /// `init_owned` paths) — asserts on a custom allocator (mmap/memfd).
-        pub fn into_boxed_slice(self) -> Box<[u8]> {
-            let mut this = core::mem::ManuallyDrop::new(self);
-            // `ManuallyDrop` suppresses the `Drop` impl, so free `stored_name`
-            // here explicitly (the buffer itself is reclaimed below).
-            drop(core::mem::take(&mut this.stored_name));
-            let Some(ptr) = this.ptr else {
-                return Box::new([]);
-            };
-            debug_assert!(
-                core::ptr::eq(this.allocator.vtable, bun_alloc::basic::C_ALLOCATOR.vtable),
-                "Bytes::into_boxed_slice on non-global allocator",
-            );
-            // SAFETY: `ptr[..cap]` is the live global-allocator allocation
-            // recorded by `init`/`init_owned`; `len <= cap`. `Vec::from_raw_parts`
-            // reconstitutes ownership, `into_boxed_slice` reallocates iff
-            // `cap > len` so the result has the canonical `Box<[u8]>` layout.
-            unsafe { Vec::from_raw_parts(ptr.as_ptr(), this.len as usize, this.cap as usize) }
-                .into_boxed_slice()
-        }
-
         /// Construct from a raw `(ptr, len, cap)` triple owned by `allocator`.
         ///
         /// # Safety

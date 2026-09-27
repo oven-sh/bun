@@ -17,7 +17,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { spawn as nodeSpawn } from "node:child_process";
+import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -824,7 +824,7 @@ describe("should not hang", () => {
 // poll is unregistered until the next pull, so it could not even observe the
 // child going away. Node: readStop() at the highWaterMark leaves the handle
 // inactive, and a pending read keeps it active.
-describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifetime", () => {
+describe("stdout reader of an unref'd child and process lifetime", () => {
   async function run(script: string) {
     await using proc = spawn({
       cmd: [bunExe(), "-e", script],
@@ -1153,7 +1153,7 @@ describe("close handling", () => {
   describe("stdio[N>=3] blob-like inputs", () => {
     const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
 
-    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+    it("Bun.file(path) at index >= 3 is readable in the child", async () => {
       const file = join(tmp, "stdio-extra-bunfile.txt");
       writeFileSync(file, "from-bun-file");
       await using proc = spawn({
@@ -1165,7 +1165,7 @@ describe("close handling", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
     });
 
-    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+    it("Bun.file(fd) at index >= 3 is readable in the child", async () => {
       const file = join(tmp, "stdio-extra-bunfile-fd.txt");
       writeFileSync(file, "from-bun-file-fd");
       const fd = openSync(file, "r");
@@ -1182,7 +1182,7 @@ describe("close handling", () => {
       }
     });
 
-    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+    it("empty Blob at index >= 3 is treated as ignore", async () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
         env: bunEnv,
@@ -1559,7 +1559,7 @@ it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
+it("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
   const file = join(tmp, "stdin-setup-failure.txt");
   const fixture = `
     const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
@@ -1596,7 +1596,7 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
+it("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
   // Bun.file(fd) as stdout is an fd-backed Blob; extract_blob lowers it to
   // Stdio::Fd before spawn, so the error-path cleanup must recognise it as
   // caller-owned via the Fd variant and leave it open.
@@ -1933,7 +1933,7 @@ describe("onDisconnect", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  it.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
+  it("onDisconnect callback is called when IPC disconnects", async () => {
     const disc = Promise.withResolvers<void>();
 
     let disconnectCalled = false;
@@ -2751,5 +2751,48 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
       `);
       expect(result).toEqual({ report: { stdin: "hi", stdoutIsDevNull: true }, exitCode: 0 });
     });
+  });
+});
+
+// A Windows exit code is 32 bits: 256 is not success, and the code of a crash is an NTSTATUS.
+describe.skipIf(!isWindows).concurrent("an exit code that does not fit in a byte", () => {
+  it.each([255, 256, 257, 512, 65536, 0x7fffffff, 0x80000000, 0xc0000005, 0xffffffff])("%d", async code => {
+    // `exit` takes a signed number.
+    const cmd = [process.env.COMSPEC!, "/d", "/c", "exit " + (code | 0)];
+    const sync = spawnSync({ cmd });
+    const onExit = Promise.withResolvers<number | null>();
+    await using proc = spawn({ cmd, onExit: (_proc, exitCode) => onExit.resolve(exitCode) });
+    const node = Promise.withResolvers<number | null>();
+    nodeSpawn(cmd[0], cmd.slice(1)).on("exit", exitCode => node.resolve(exitCode));
+    expect({
+      spawnSync: [sync.exitCode, sync.success],
+      exited: await proc.exited,
+      exitCode: proc.exitCode,
+      onExit: await onExit.promise,
+      nodeSpawn: await node.promise,
+      nodeSpawnSync: nodeSpawnSync(cmd[0], cmd.slice(1)).status,
+    }).toEqual({
+      spawnSync: [code, false],
+      exited: code,
+      exitCode: code,
+      onExit: code,
+      nodeSpawn: code,
+      nodeSpawnSync: code,
+    });
+  });
+
+  it("is what `bun run` of a script that ends with it exits with", async () => {
+    using dir = tempDir("spawn-wide-exit-code", {
+      "package.json": JSON.stringify({ scripts: { wide: "cmd /d /c exit 256" } }),
+    });
+    for (const shell of ["system", "bun"]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "run", "--silent", "--shell=" + shell, "wide"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "ignore",
+      });
+      expect([shell, await proc.exited]).toEqual([shell, 256]);
+    }
   });
 });

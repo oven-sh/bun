@@ -332,7 +332,8 @@ pub fn GetFileType(hFile: HANDLE) -> DWORD {
     let rc = externs::GetFileType(hFile);
     // `syslog!` self-gates on `env::IS_DEBUG` (see lib.rs); no extra feature
     // flag needed (there is no `debug_logs` feature in bun_sys).
-    bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
+    // Not as an `Fd`: `INVALID_HANDLE_VALUE`, which a closed fd has, is none.
+    bun_sys::syslog!("GetFileType({:p}) = {}", hFile, rc);
     rc
 }
 

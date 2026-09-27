@@ -668,13 +668,6 @@ impl Pipe {
         Fd::from_system(handle)
     }
 
-    /// Closed by [`close_all_for_loop`](super::close_all_for_loop): every
-    /// operation fails with `EBADF` from here on.
-    pub fn is_closed(&self) -> bool {
-        // SAFETY: `inner` is live while the owner's `Pipe` is.
-        unsafe { (*self.raw()).flags.contains(Flags::DETACHED) }
-    }
-
     /// `read_start` without a `read_stop`, EOF or error since.
     pub fn is_reading(&self) -> bool {
         // SAFETY: `inner` is live while the owner's `Pipe` is.
@@ -959,7 +952,6 @@ impl Pipe {
         unsafe { Inner::write_blocking(self.raw(), data) }
     }
 
-    /// The process on the other end of a named pipe.
     /// Whether the pipe was created as a message-type pipe, where a
     /// zero-length write reaches the other end as a read of no bytes. On a
     /// byte-type pipe such a write is dropped.
@@ -1065,6 +1057,7 @@ impl Pipe {
         }
     }
 
+    /// The process on the other end of a named pipe.
     pub fn peer_pid(&self) -> Option<u32> {
         let handle = self.handle();
         let mut pid: u32 = 0;
@@ -2645,8 +2638,8 @@ impl SyncShared {
                 Win32Error::SUCCESS
             }
         };
-        // See `SyncReader::interrupt`: passing through the lock waits out a
-        // cancel that is still spinning, before any other call can take it.
+        // See `SyncReader::take_back`: a cancel that is being issued has
+        // returned before any other call of this thread's can take it.
         self.waiting.store(false, Ordering::Release);
         self.lock.lock();
         self.lock.unlock();

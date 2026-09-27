@@ -1806,7 +1806,9 @@ impl SendQueue {
         let global_this = this.get_global_this();
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         for event in events.drain(..) {
-            if this.input_failed.get() {
+            // Node is handed one frame at a time, so a handler that
+            // disconnects has seen the last one.
+            if this.input_failed.get() || this.input_stopped.get() {
                 // Nothing more is delivered: a socket that came with the rest
                 // has no taker.
                 if let FrameEvent::Socket(Some(unclaimed)) = event {

@@ -836,6 +836,9 @@ pub(crate) mod get_addr_info_request {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
+        fn waits(_: &Self) -> bool {
+            true
+        }
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,

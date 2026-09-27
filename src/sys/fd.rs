@@ -244,9 +244,8 @@ impl FdExt for Fd {
     }
 }
 
-// `fromJS` / `fromJSValidated` / `toJS` / `toJSWithoutMakingCrtOwned` are
-// `*_jsc` aliases — deleted per PORTING.md; they live as extension-trait
-// methods in `bun_sys_jsc`.
+// `from_js` / `from_js_validated` / `to_js` / `to_js_without_making_crt_owned`
+// are extension-trait methods in `bun_sys_jsc`.
 
 // There are deliberately no `std::fs::File`/`Dir` conversion helpers
 // (std::fs is banned). Callers use

@@ -648,7 +648,7 @@ impl<'a> State<'a> {
         }
     }
 
-    fn finalize(&mut self) -> u8 {
+    fn finalize(&mut self) -> u32 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -661,7 +661,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code();
+                        return bun_sys::SignalCode(*signal).to_exit_code().into();
                     }
                     _ => return 1,
                 }
@@ -1076,7 +1076,7 @@ pub(crate) fn run_scripts_with_filter(
 
     let status = state.finalize();
 
-    Global::exit(status as u32);
+    Global::exit(status);
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {

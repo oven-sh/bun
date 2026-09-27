@@ -249,10 +249,13 @@ describe("fs.watch", () => {
   });
 
   // Elsewhere the sequence differs (Linux: two "rename" events). The watcher stays open everywhere.
-  test.skipIf(!isWindows).each([false, true])(
-    "deleting the watched directory reports a rename and no error (recursive: %p)",
-    async recursive => {
-      using dir = tempDir("watch-deleted-dir", { watched: {} });
+  describe.skipIf(!isWindows).each([false, true])("deleting the watched directory (recursive: %p)", recursive => {
+    // `script` sees `fs`, `path`, `root` and `watchTarget()`, which makes `root/watched`, watches it
+    // and resolves with what was heard about the directory itself once the event loop has gone
+    // round 500 more times: asking a deleted directory for its changes again fails again.
+    // No "error" listener: an error is an uncaught exception.
+    async function run(script: string) {
+      using dir = tempDir("watch-deleted-dir", {});
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -260,18 +263,28 @@ describe("fs.watch", () => {
           `
             const fs = require("fs");
             const path = require("path");
-            const target = path.join(process.argv[1], "watched");
-            const log = [];
-            // No "error" listener: an error would be an uncaught exception.
-            const watcher = fs.watch(target, { recursive: ${recursive} });
-            watcher.on("change", (event, filename) => {
-              log.push(event + ":" + path.basename(String(filename)));
-              // Whatever else the deletion produced was dequeued with this event.
-              if (log.length === 1) setImmediate(() => watcher.close());
-            });
-            watcher.on("close", () => log.push("close"));
-            process.on("exit", () => console.log(JSON.stringify(log)));
-            fs.rmdirSync(target);
+            const root = fs.realpathSync(process.argv[1]);
+            function watchTarget(populate, remove) {
+              const target = path.join(root, "watched");
+              fs.mkdirSync(target);
+              populate(target);
+              const { promise, resolve } = Promise.withResolvers();
+              const heard = [];
+              const watcher = fs.watch(target, { recursive: ${recursive} });
+              watcher.on("change", (event, filename) => {
+                if (filename !== target) return;
+                if (heard.push(event) > 1) return;
+                let turns = 0;
+                (function turn() {
+                  if (++turns < 500) setImmediate(turn);
+                  else watcher.close();
+                })();
+              });
+              watcher.on("close", () => resolve(heard));
+              remove(target);
+              return promise;
+            }
+            ${script}
           `,
           String(dir),
         ],
@@ -280,13 +293,38 @@ describe("fs.watch", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify(["rename:watched", "close"]),
-        stderr: "",
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    test("reports one rename and no error", async () => {
+      expect(
+        await run(`console.log(JSON.stringify(await watchTarget(() => {}, target => fs.rmdirSync(target))));`),
+      ).toEqual({ stdout: JSON.stringify(["rename"]), stderr: "", exitCode: 0 });
+    });
+
+    // Its files go first, and each is a change to report: the directory can be gone by the time the
+    // next changes are asked for.
+    test("reports one rename and no error when it had files in it", async () => {
+      const rounds = 40;
+      expect(
+        await run(`
+          const outcomes = [];
+          for (let round = 0; round < ${rounds}; round++) {
+            outcomes.push(
+              await watchTarget(
+                target => {
+                  fs.mkdirSync(path.join(target, "sub"));
+                  for (const name of ["a.txt", "b.txt", "sub/c.txt"]) fs.writeFileSync(path.join(target, name), name);
+                },
+                target => fs.rmSync(target, { recursive: true }),
+              ),
+            );
+          }
+          console.log(JSON.stringify(outcomes));
+        `),
+      ).toEqual({ stdout: JSON.stringify(Array(rounds).fill(["rename"])), stderr: "", exitCode: 0 });
+    });
+  });
 
   // The first watcher is still open, and still the one registered for the path, when the directory
   // comes back. The second has to watch the new directory, not join the one whose directory is gone.
@@ -2043,16 +2081,23 @@ function shortNameOf(file: string): string {
   return path.basename(out.toString("utf16le", 0, length * 2));
 }
 
+// A volume can have 8.3 name creation switched off; then there is no alias to go through.
+const volumeMakesAliases =
+  isWindows &&
+  (() => {
+    const longName = "a rather long file name.txt";
+    using dir = tempDir("fs-watch-alias-probe", { [longName]: "x" });
+    return shortNameOf(path.join(String(dir), longName)) !== longName;
+  })();
+
 // A change made through a file's 8.3 alias is recorded under the alias; the event reports the long
 // name. A change made through the long name is reported as it is.
-test.skipIf(!isWindows)("fs.watch reports the long name for a change made through an 8.3 alias", async () => {
+test.skipIf(!volumeMakesAliases)("fs.watch reports the long name for a change made through an 8.3 alias", async () => {
   using dir = tempDir("fs-watch-short-name", { "a rather long file name.txt": "x", "short.txt": "x" });
   const root = String(dir);
   const longName = "a rather long file name.txt";
 
-  const alias = shortNameOf(path.join(root, longName));
-  // A volume can have 8.3 name creation switched off; then there is no alias to go through.
-  const names = alias === longName ? ["short.txt"] : [alias, "short.txt"];
+  const names = [shortNameOf(path.join(root, longName)), "short.txt"];
 
   const seen: string[] = [];
   const done = Promise.withResolvers<void>();
@@ -2067,12 +2112,12 @@ test.skipIf(!isWindows)("fs.watch reports the long name for a change made throug
   } finally {
     watcher.close();
   }
-  expect(seen.sort()).toEqual((alias === longName ? ["short.txt"] : [longName, "short.txt"]).sort());
+  expect(seen.sort()).toEqual([longName, "short.txt"].sort());
 });
 
 // The alias of every component is resolved in the directory it is in, which is reached from the
 // watched directory itself: the path the watch was started with stops naming it once it is renamed.
-test.skipIf(!isWindows)(
+test.skipIf(!volumeMakesAliases)(
   "fs.watch resolves 8.3 aliases below the watched directory after that directory is renamed",
   async () => {
     const longDir = "a rather long directory name";
@@ -2081,8 +2126,6 @@ test.skipIf(!isWindows)(
     const watched = path.join(String(dir), "watched");
     const dirAlias = shortNameOf(path.join(watched, longDir));
     const fileAlias = shortNameOf(path.join(watched, longDir, longFile));
-    // A volume can have 8.3 name creation switched off; then there is no alias to go through.
-    const viaAliases = dirAlias !== longDir && fileAlias !== longFile;
 
     const seen = Promise.withResolvers<string>();
     const watcher = fs.watch(watched, { recursive: true }, (_event, filename) => {
@@ -2092,7 +2135,7 @@ test.skipIf(!isWindows)(
     try {
       const moved = path.join(String(dir), "moved");
       fs.renameSync(watched, moved);
-      fs.appendFileSync(path.join(moved, viaAliases ? dirAlias : longDir, viaAliases ? fileAlias : longFile), "y");
+      fs.appendFileSync(path.join(moved, dirAlias, fileAlias), "y");
       expect(await seen.promise).toBe(`${longDir}\\${longFile}`);
     } finally {
       watcher.close();

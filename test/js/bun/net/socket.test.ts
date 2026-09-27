@@ -3418,54 +3418,48 @@ Reo=
       };
     }
 
-    it.skipIf(isWindows)(
-      "verifies the server certificate against localhost over a unix socket when no serverName is given",
-      async () => {
-        using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
-        expect(await t.handshake.promise).toEqual({
-          authorizedArg: false,
-          authorizedGetter: false,
-          callbackError: AGENT1_LOCALHOST_MISMATCH,
-          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-          getterError: AGENT1_LOCALHOST_MISMATCH,
-          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-        });
-        await t.closed.promise;
-        expect(t.received).toEqual([]);
-        expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    it("verifies the server certificate against localhost over a unix socket when no serverName is given", async () => {
+      using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError: AGENT1_LOCALHOST_MISMATCH,
+        callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        getterError: AGENT1_LOCALHOST_MISMATCH,
+        getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      await t.closed.promise;
+      expect(t.received).toEqual([]);
+      expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
 
-        using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
-        expect(await ok.handshake.promise).toEqual({
-          authorizedArg: true,
-          authorizedGetter: true,
-          callbackError: null,
-          callbackCode: null,
-          getterError: null,
-          getterCode: null,
-        });
-        ok.client.write("ping");
-        await ok.echoed.promise;
-        expect(ok.received.join("")).toBe("hello-from-server\nping");
-      },
-    );
+      using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
+      expect(await ok.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: true,
+        callbackError: null,
+        callbackCode: null,
+        getterError: null,
+        getterCode: null,
+      });
+      ok.client.write("ping");
+      await ok.echoed.promise;
+      expect(ok.received.join("")).toBe("hello-from-server\nping");
+    });
 
-    it.skipIf(isWindows)(
-      "reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost",
-      async () => {
-        using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
-        expect(await t.handshake.promise).toEqual({
-          authorizedArg: false,
-          authorizedGetter: false,
-          callbackError: AGENT1_LOCALHOST_MISMATCH,
-          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-          getterError: AGENT1_LOCALHOST_MISMATCH,
-          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-        });
-        t.client.write("ping");
-        await t.echoed.promise;
-        expect(t.received.join("")).toBe("hello-from-server\nping");
-      },
-    );
+    it("reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost", async () => {
+      using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError: AGENT1_LOCALHOST_MISMATCH,
+        callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        getterError: AGENT1_LOCALHOST_MISMATCH,
+        getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      t.client.write("ping");
+      await t.echoed.promise;
+      expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/33754

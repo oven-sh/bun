@@ -36,7 +36,9 @@ struct Entry {
 /// Builds the block from `entries` (WTF-8 `NAME=value`).
 ///
 /// Entries without `=` are dropped (`CreateProcessW` rejects the whole block
-/// otherwise). Entries whose names compare equal are all kept, in input order.
+/// otherwise). Of entries whose names compare equal the last one is kept, as
+/// the last assignment to a variable is: a program is given the first one it
+/// finds, and `{ ...process.env, PATH }` comes after the `Path` it replaces.
 /// `compare_names` orders two names; `parent_value` appends this process's
 /// value of a NUL-terminated name and returns whether it has one.
 pub fn make_env_block<'a>(
@@ -66,7 +68,16 @@ pub fn make_env_block<'a>(
 
     let name = |v: &Entry| &strings[v.start..v.start + v.name_len];
     vars.sort_by(|a, b| compare_names(name(a), name(b)));
-
+    // `=C:` and `=D:` are different variables with an empty name each.
+    let is_replaced_by = |v: &Entry, next: &Entry| {
+        v.name_len > 0 && compare_names(name(v), name(next)) == Ordering::Equal
+    };
+    let vars: Vec<&Entry> = vars
+        .iter()
+        .enumerate()
+        .filter(|&(i, v)| !vars.get(i + 1).is_some_and(|next| is_replaced_by(v, next)))
+        .map(|(_, v)| v)
+        .collect();
     let mut block: Vec<u16> = Vec::with_capacity(strings.len() + vars.len() + 2);
     let mut next_var = 0usize;
     let mut next_required = 0usize;
@@ -77,7 +88,7 @@ pub fn make_env_block<'a>(
             Ordering::Less
         } else {
             let required = REQUIRED_VARS[next_required];
-            compare_names(&required[..required.len() - 1], name(&vars[next_var]))
+            compare_names(&required[..required.len() - 1], name(vars[next_var]))
         };
         if order == Ordering::Less {
             let required = REQUIRED_VARS[next_required];
@@ -91,7 +102,7 @@ pub fn make_env_block<'a>(
             }
             next_required += 1;
         } else {
-            let var = &vars[next_var];
+            let var = vars[next_var];
             block.extend_from_slice(&strings[var.start..var.end]);
             block.push(0);
             next_var += 1;
@@ -110,7 +121,7 @@ pub fn make_env_block<'a>(
     block
 }
 
-/// The value of the first `PATH=` entry (any case) of a block.
+/// The value of the `PATH=` entry (any case) of a block.
 pub fn find_path(block: &[u16]) -> Option<&[u16]> {
     let mut rest = block;
     while !rest.is_empty() && rest[0] != 0 {
@@ -253,10 +264,28 @@ mod tests {
     }
 
     #[test]
-    fn keeps_duplicates_and_hidden_drive_entries() {
+    fn the_last_spelling_of_a_name_replaces_the_others() {
         assert_eq!(
-            build(&["foo=1", "FOO=2", "=C:=C:\\dir", "EMPTY="], &[]),
-            ["=C:=C:\\dir", "EMPTY=", "foo=1", "FOO=2"]
+            build(&["foo=1", "FOO=2", "EMPTY="], &[]),
+            ["EMPTY=", "FOO=2"]
+        );
+        assert_eq!(build(&["FOO=2", "foo=1"], &[]), ["foo=1"]);
+        assert_eq!(
+            build(&["a=1", "Foo=1", "b=2", "FOO=2", "c=3", "foo=3"], &[]),
+            ["a=1", "b=2", "c=3", "foo=3"]
+        );
+        assert_eq!(build(&["A=1", "A=2", "A="], &[]), ["A="]);
+        assert_eq!(
+            build(&["Path=old", "PATH=new"], &[("PATH", "ignored")]),
+            ["PATH=new"]
+        );
+    }
+
+    #[test]
+    fn keeps_every_hidden_drive_entry() {
+        assert_eq!(
+            build(&["=D:=D:\\other", "A=1", "=C:=C:\\dir"], &[]),
+            ["=D:=D:\\other", "=C:=C:\\dir", "A=1"]
         );
     }
 

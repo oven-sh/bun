@@ -171,20 +171,6 @@ impl SpawnSyncEventLoop {
         self.event_loop
     }
 
-    /// Shared borrow of the isolated `uws::Loop`.
-    ///
-    /// # Safety (invariant)
-    /// `uws_loop` is set in `init` and freed only in `Drop`, so it is valid for
-    /// all of `self`'s lifetime. The loop is only mutated through `&mut self`
-    /// paths (`uws_loop_mut`), so a shared borrow tied to `&self` cannot
-    /// overlap a unique borrow.
-    #[inline]
-    pub fn uws_loop(&self) -> &uws::Loop {
-        // SAFETY: see doc invariant above — non-null, owned for `self`'s lifetime,
-        // no `&mut` alias while `&self` is held.
-        unsafe { self.uws_loop.as_ref() }
-    }
-
     /// Unique borrow of the isolated `uws::Loop`.
     #[inline]
     pub(crate) fn uws_loop_mut(&mut self) -> &mut uws::Loop {

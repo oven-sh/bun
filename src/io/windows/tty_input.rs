@@ -720,6 +720,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "calls GetNumberOfConsoleInputEvents")]
     fn read_raw_reports_the_os_error() {
         let mut state = RawInputState::new();
         let mut out = Vec::new();

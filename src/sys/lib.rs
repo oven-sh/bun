@@ -1265,15 +1265,6 @@ pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
 }
 
-/// Copy `path` into a NUL-terminated buffer.
-/// Returns `ENAMETOOLONG` if `path` contains an interior NUL.
-#[inline]
-pub fn to_posix_path(
-    path: &[u8],
-) -> core::result::Result<std::ffi::CString, bun_errno::SystemErrno> {
-    std::ffi::CString::new(path).map_err(|_| bun_errno::SystemErrno::ENAMETOOLONG)
-}
-
 #[inline]
 #[cfg(not(windows))]
 fn err_with(tag: Tag) -> Error {
@@ -1374,12 +1365,10 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const preadv: Tag = Tag(77);
     pub const ioctl_ficlone: Tag = Tag(78);
-    pub const accept: Tag = Tag(79);
+    // 79 is `accept`, 81 `connect2` and 84 `try_write` in `name()`; nothing reports them.
     pub const bind2: Tag = Tag(80);
-    pub const connect2: Tag = Tag(81);
     pub const listen: Tag = Tag(82);
     pub const pipe: Tag = Tag(83);
-    pub const try_write: Tag = Tag(84);
     pub const socketpair: Tag = Tag(85);
     pub const setsockopt: Tag = Tag(86);
     pub const rm: Tag = Tag(88);
@@ -3667,12 +3656,24 @@ mod windows_impl {
         let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
     }
+    /// `path` as the name a native call relative to `dir` takes. To
+    /// `NtCreateFile` `.` and `..` are names like any other, so a path that
+    /// has one is resolved first, the way [`openat`] resolves every path.
+    fn nt_path_at<'a>(dir: Fd, path: &ZStr, buf: &'a mut [u16]) -> Maybe<&'a bun_core::WStr> {
+        let path = path.as_bytes();
+        if !bun_core::strings::split_any(path, b"/\\").any(|name| name == b"." || name == b"..") {
+            return Ok(bun_paths::string_paths::to_nt_path(buf, path));
+        }
+        let mut wide = bun_paths::w_path_buffer_pool::get();
+        let wide = super::convert_path_u8_to_u16(&mut wide.0[..], path)?;
+        super::normalize_path_windows(dir, wide, buf)
+    }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = nt_path_at(dir, path, &mut wbuf.0[..])?;
         let made = super::open_dir_at_windows_nt_path(
             dir,
             wpath,
@@ -3691,8 +3692,8 @@ mod windows_impl {
         let to_dir = to_dir.as_fd();
         let mut wf = bun_paths::w_path_buffer_pool::get();
         let mut wt = bun_paths::w_path_buffer_pool::get();
-        let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
-        let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
+        let from_w = nt_path_at(from_dir, from, &mut wf.0[..])?;
+        let to_w = nt_path_at(to_dir, to, &mut wt.0[..])?;
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
     pub(crate) fn renameat2(
@@ -3709,7 +3710,7 @@ mod windows_impl {
     }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = nt_path_at(dir, path, &mut wbuf.0[..])?;
         super::windows::DeleteFileBun(
             wpath,
             super::windows::DeleteFileOptions {
@@ -3903,12 +3904,12 @@ mod windows_impl {
         ) {
             return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
         }
-        let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        if let Err(e) = w::fs::kernel32_path(&mut wbuf[..], path.as_bytes()) {
-            return Err(Error::from_win32(e, Tag::access).with_path(path.as_bytes()));
-        }
-        // SAFETY: `wbuf` holds a NUL-terminated wide path.
-        let attrs = unsafe { w::kernel32::GetFileAttributesW(wbuf.as_ptr()) };
+        let wpath = match w::fs::WPath::new(path.as_bytes()) {
+            Ok(wpath) => wpath,
+            Err(e) => return Err(Error::from_win32(e, Tag::access).with_path(path.as_bytes())),
+        };
+        // SAFETY: a `WPath` is NUL-terminated.
+        let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
             return Err(
                 Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
@@ -4394,7 +4395,7 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.StatFS` / `bun.sys.statfs`.
 // On POSIX `bun.StatFS` aliases `struct statfs` (Linux/macOS/FreeBSD); on
-// Windows it is populated from `GetDiskFreeSpaceW`.
+// Windows it is populated from `FileFsFullSizeInformation`.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 pub type StatFS = libc::statfs;
@@ -6267,34 +6268,6 @@ pub fn normalize_path_windows_opts<'a>(
     Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
 }
 
-/// Open a `\\.\…` device path via kernel32 `CreateFileW`
-/// (NtCreateFile cannot open device paths).
-#[cfg(windows)]
-fn open_windows_device_path(
-    path: &bun_core::WStr,
-    desired_access: u32,
-    creation_disposition: u32,
-    flags_and_attributes: u32,
-) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
-    // SAFETY: path is NUL-terminated UTF-16.
-    let rc = unsafe {
-        w::CreateFileW(
-            path.as_ptr(),
-            desired_access,
-            SHARE_ALL,
-            core::ptr::null_mut(),
-            creation_disposition,
-            flags_and_attributes,
-            core::ptr::null_mut(),
-        )
-    };
-    if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        return Err(Error::from_win32(windows::Win32Error::get(), Tag::open));
-    }
-    Ok(Fd::from_system(rc))
-}
-
 /// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
 /// these get `RootDirectory = null`; any other rooted string stays
 /// dirfd-relative so `NtCreateFile` rejects it (`OBJECT_PATH_SYNTAX_BAD`).
@@ -6338,30 +6311,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
         0
     };
 
-    // NtCreateFile seems to not function on device paths. Since it is
-    // absolute, it can just use CreateFileW.
     let p = path.as_slice();
-    if p.len() >= 4
-        && p[0] == b'\\' as u16
-        && p[1] == b'\\' as u16
-        && p[2] == b'.' as u16
-        && p[3] == b'\\' as u16
-    {
-        return open_windows_device_path(
-            path,
-            flags,
-            if options.op != WindowsOpenDirOp::OnlyOpen {
-                w::FILE_OPEN_IF
-            } else {
-                w::FILE_OPEN
-            },
-            w::FILE_DIRECTORY_FILE
-                | w::FILE_SYNCHRONOUS_IO_NONALERT
-                | windows::FILE_OPEN_FOR_BACKUP_INTENT
-                | open_reparse,
-        );
-    }
-
     let path_len_bytes = (p.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -6686,11 +6636,9 @@ pub struct WindowsFileAttributes {
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
-    let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    windows::fs::kernel32_path(&mut wbuf.0[..], path.as_bytes()).ok()?;
-    // Win32 API does file path normalization, so we do not need the valid path assertion here.
-    // SAFETY: `wbuf` holds the NUL-terminated UTF-16 path written above.
-    let dword = unsafe { w::GetFileAttributesW(wbuf.0.as_ptr()) };
+    let wpath = windows::fs::WPath::new(path.as_bytes()).ok()?;
+    // SAFETY: a `WPath` is NUL-terminated.
+    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
     if dword == windows::INVALID_FILE_ATTRIBUTES {
         return None;
     }
@@ -9589,15 +9537,8 @@ mod normalize_path_windows_tests {
         // query fails deterministically (no closed-handle recycling races).
         // The compose/None-query failure arms are not constructible from a
         // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
-        let nul_path = wide("\\\\.\\NUL\0");
         let nul = scopeguard::guard(
-            open_windows_device_path(
-                bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
-                w::GENERIC_READ,
-                w::OPEN_EXISTING,
-                0,
-            )
-            .expect("open NUL"),
+            open(bun_core::zstr!("\\\\.\\NUL"), O::RDONLY, 0).expect("open NUL"),
             |fd| {
                 let _ = close(fd);
             },

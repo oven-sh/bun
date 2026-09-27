@@ -6281,6 +6281,16 @@ pub(crate) trait FileOpener: Sized {
 #[cfg(not(windows))]
 pub(crate) use io_parking::IoParking;
 
+/// [`JobContext::waits`](bun_jsc::JobContext::waits) for a job that reads or
+/// writes `file`. What a path names is not known before it is opened.
+#[cfg(windows)]
+pub(crate) fn waits_on(file: &PathOrFileDescriptor<'_>) -> bool {
+    match file {
+        PathOrFileDescriptor::Fd(fd) => !bun_sys::windows::fs::is_disk_file(*fd),
+        PathOrFileDescriptor::Path(_) => false,
+    }
+}
+
 // TODO: move to bun_sys?
 pub(crate) trait FileCloser: Sized {
     const IO_TAG: bun_io::Tag;

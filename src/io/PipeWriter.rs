@@ -525,9 +525,6 @@ impl<Parent: BufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    /// On POSIX a `MovableIfWindowsFd` never transfers ownership, so callers
-    /// pass the plain `Fd` (via `MovableIfWindowsFd::get_posix()` when needed).
-    ///
     /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
@@ -1194,10 +1191,10 @@ impl<Parent: BufferedWriterParent> Default for WindowsBufferedWriter<Parent> {
 }
 
 #[cfg(windows)]
-// SAFETY: write completions re-enter via `FileSink::on_write` → JS →
-// `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, kept alive
-// across the callback by the parent ref taken in `write()` (derefed via the
-// callback-end scopeguards); single JS thread.
+// SAFETY: write completions re-enter via `Parent::on_write` (`IOWriter`,
+// `StaticPipeWriter`), which may end the writer; writer is intrusive in
+// `Parent`, kept alive across the callback by the parent ref taken in
+// `write()` (derefed via the callback-end scopeguards); single JS thread.
 unsafe impl<Parent: BufferedWriterParent> bun_ptr::LaunderedSelf for WindowsBufferedWriter<Parent> {}
 
 #[cfg(windows)]
@@ -1235,10 +1232,6 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         mem::size_of::<Self>()
     }
 
-    pub fn get_fd(&self) -> Fd {
-        self.source.as_ref().map_or(Fd::INVALID, Source::get_fd)
-    }
-
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
     }
@@ -1255,10 +1248,6 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
                 source.unref();
             }
         }
-    }
-
-    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
-        self.update_ref(event_loop, true);
     }
 
     pub fn disable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
@@ -1350,11 +1339,10 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
     /// `this` is the writer that submitted the write, kept alive by the
     /// parent ref taken in `write`.
     unsafe fn on_write_result(this: *mut Self, result: sys::Result<usize>) {
-        // `Parent::on_write` (e.g. `FileSink::on_write`)
-        // re-enters JS via promise resolution and may call back into this
-        // writer through a fresh `&mut Self` derived from the parent's
-        // intrusive `writer` field, writing `self.is_done`. Launder so
-        // post-`on_write` reads see fresh state.
+        // `Parent::on_write` (e.g. `IOWriter::on_write`) runs the shell on,
+        // which may call back into this writer through a fresh `&mut Self`
+        // derived from the parent's intrusive `writer` field, writing
+        // `self.is_done`. Launder so post-`on_write` reads see fresh state.
         let this: *mut Self = core::hint::black_box(this);
         // Scopeguard deref to balance write()'s ref: `Parent::on_write` may
         // drop the last external strong ref, and the trailing `is_done` /
@@ -1745,10 +1733,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             + self.outgoing.memory_cost()
     }
 
-    pub fn get_fd(&self) -> Fd {
-        self.source.as_ref().map_or(Fd::INVALID, Source::get_fd)
-    }
-
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty() || self.lent_len > 0
     }
@@ -1767,11 +1751,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
     }
-
-    pub fn watch(&mut self) {
-        // Writes complete on their own; there is nothing to arm.
-    }
-
     pub fn update_ref(&self, _event_loop: EventLoopHandle, value: bool) {
         if let Some(source) = &self.source {
             if value {

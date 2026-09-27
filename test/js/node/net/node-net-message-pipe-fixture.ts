@@ -1,21 +1,21 @@
 // A message-type named pipe server made of blocking Win32 calls, for node-net.test.ts.
-// argv: <pipe name> <"reply-after-end" | "end-first" | "end-then-close">. Prints one line per thing it sees.
+// argv: <pipe name> <"reply-after-end" | "disconnect-after-end" | "end-first" | "end-then-close">.
+// Prints one line per thing it sees.
 import { dlopen, ptr } from "bun:ffi";
 
 const PIPE_ACCESS_DUPLEX = 3;
 const PIPE_TYPE_MESSAGE = 4;
 
-const { CreateNamedPipeW, ConnectNamedPipe, ReadFile, WriteFile, FlushFileBuffers, CloseHandle } = dlopen(
-  "kernel32.dll",
-  {
+const { CreateNamedPipeW, ConnectNamedPipe, DisconnectNamedPipe, ReadFile, WriteFile, FlushFileBuffers, CloseHandle } =
+  dlopen("kernel32.dll", {
     CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
     ConnectNamedPipe: { args: ["i64", "ptr"], returns: "i32" },
+    DisconnectNamedPipe: { args: ["i64"], returns: "i32" },
     ReadFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
     WriteFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
     FlushFileBuffers: { args: ["i64"], returns: "i32" },
     CloseHandle: { args: ["i64"], returns: "i32" },
-  },
-).symbols;
+  }).symbols;
 
 const [name, scenario] = process.argv.slice(2);
 const handle = CreateNamedPipeW(
@@ -60,6 +60,12 @@ if (scenario === "reply-after-end") {
   // Longer than the 50 ms for which a byte-type pipe is still read after end().
   Bun.sleepSync(150);
   console.log("wrote:" + write("late reply"));
+} else if (scenario === "disconnect-after-end") {
+  // What Microsoft's "Multithreaded Pipe Server" sample does when a read returns no bytes.
+  readUntilEndOrClose();
+  console.log("wrote:" + write("reply"));
+  FlushFileBuffers(handle);
+  DisconnectNamedPipe(handle);
 } else {
   write("hello");
   // Returns once the client has read it: a zero-length message behind unread bytes is merged into them.

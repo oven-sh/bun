@@ -266,7 +266,7 @@ pub fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
 pub use crate::string::w;
 pub use crate::strings_impl::{
     EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
-    copy_utf16_into_utf8_with_utf8_len, element_length_latin1_into_utf8,
+    copy_utf16_into_utf8_with_utf8_len, copy_utf16_into_wtf8, element_length_latin1_into_utf8,
     element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
     to_utf8_from_latin1_z, u16_lead, u16_trail,
 };
@@ -2466,10 +2466,14 @@ fn convert_wtf8_to_utf16_in_buffer<'a, const STRICT: bool>(
     if input.len() > buf.len() && element_length_utf8_into_utf16(input) > buf.len() {
         return None;
     }
-    let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
-    if r.is_successful() {
-        debug_assert!(r.count <= buf.len());
-        return Some(&mut buf[..r.count]);
+    // Miri cannot call simdutf, and `bun_spawn_sys`'s unit tests reach this.
+    // The fallback converts valid input as well.
+    if !cfg!(miri) {
+        let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
+        if r.is_successful() {
+            debug_assert!(r.count <= buf.len());
+            return Some(&mut buf[..r.count]);
+        }
     }
     // WTF-8 fallback (invalid byte → U+FFFD; lone surrogates pass through).
     let mut written = 0usize;

@@ -401,6 +401,11 @@ impl WindowsNamedPipe {
 
     fn on_read_error(&self, err: bun_sys::Error) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
+        // A server that answers the end of writing with `DisconnectNamedPipe`
+        // has ended the conversation, as one that closes its handle has.
+        if self.end_of_write.get() == EndOfWrite::Told && err.get_errno() == bun_sys::E::EPIPE {
+            return self.on_read_end();
+        }
         let _keep_alive = self.keep_alive();
         self.on_error(err);
         self.close_writer();

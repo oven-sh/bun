@@ -210,6 +210,10 @@ impl bun_jsc::JobContext for ReadFile {
     /// Where the bytes go: completed by `then`, or cancelled (its `Drop`) when the job comes
     /// back to a VM that is no longer running script and is released unrun.
     type Js = ReadFileCompletionFns;
+    #[cfg(windows)]
+    fn waits(this: &Self) -> bool {
+        super::waits_on(&this.file_store.pathlike)
+    }
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // Starts the read; finishes from the io loop via the token.
         this.run(done);

@@ -225,7 +225,7 @@ node_accessors! {
 // Small types
 // ────────────────────────────────────────────────────────────────────────────
 
-pub(crate) type ExitCode = u16;
+pub(crate) type ExitCode = u32;
 pub(crate) type Pipe = [Fd; 2];
 
 #[repr(u8)]
@@ -1328,7 +1328,7 @@ impl Interpreter {
                             global_this,
                             JSValue::UNDEFINED,
                             &[
-                                JSValue::js_number_from_int32(i32::from(exit_code)),
+                                JSValue::js_number(f64::from(exit_code)),
                                 buffered_stdout,
                                 buffered_stderr,
                             ],

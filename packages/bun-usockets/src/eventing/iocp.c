@@ -35,7 +35,8 @@
  * each completion. This is the mechanism behind wepoll, mio, c-ares and
  * libuv's uv_poll_t. */
 
-extern void Bun__JSC_onBeforeWait(void *_Nonnull jsc_vm, int *_Nullable released_heap_access);
+extern void Bun__JSC_onBeforeWait(void *_Nonnull jsc_vm, int *_Nonnull released_heap_access);
+extern void Bun__JSC_acquireHeapAccessAfterWait(void *_Nonnull jsc_vm);
 /* Closes what Bun still has open on `loop`: pipes, consoles, files, pipe
  * connects and process exit waits. Each cancels its operations. */
 extern void Bun__closeAllForLoop(struct us_loop_t *_Nonnull loop);
@@ -170,6 +171,8 @@ struct us_internal_slow_poll_req {
     int interest;
     int result_events;
     int result_error;
+    /* The socket was in select()'s exceptfds. */
+    int result_except;
     volatile LONG state;
     /* loop->slow_reqs. The loop thread's. */
     struct us_internal_slow_poll_req *prev, *next;
@@ -735,6 +738,7 @@ static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OV
     struct us_internal_afd_poll *poll = req->poll;
     int events = req->result_events;
     int error = req->result_error;
+    int except = req->result_except;
     int stale = req->interest != poll->interest;
     slow_req_unlink(loop, poll, req, req->prev, req->next);
     us_free(req);
@@ -744,6 +748,13 @@ static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OV
             afd_poll_free(poll);
         }
         return;
+    }
+    if (except) {
+        /* A connect that failed, which AFD reports as AFD_POLL_CONNECT_FAIL.
+         * On a connected socket it is out-of-band data. */
+        int kind = afd_poll_owner_kind(poll);
+        events |= LIBUS_SOCKET_WRITABLE;
+        error |= kind == POLL_TYPE_SEMI_SOCKET || kind == -1;
     }
     afd_poll_queue_update(poll);
     if (!stale || error) {
@@ -771,7 +782,8 @@ static DWORD WINAPI slow_poll_thread(LPVOID param) {
         req->result_error = 1;
     } else if (rc > 0) {
         if (FD_ISSET(req->socket, &rfds)) req->result_events |= LIBUS_SOCKET_READABLE;
-        if (FD_ISSET(req->socket, &wfds) || FD_ISSET(req->socket, &efds)) req->result_events |= LIBUS_SOCKET_WRITABLE;
+        if (FD_ISSET(req->socket, &wfds)) req->result_events |= LIBUS_SOCKET_WRITABLE;
+        if (FD_ISSET(req->socket, &efds)) req->result_except = 1;
     }
     HANDLE port = req->port;
     if (InterlockedCompareExchange(&req->state, SLOW_REQ_POSTED, SLOW_REQ_PENDING) == SLOW_REQ_PENDING) {
@@ -1282,8 +1294,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 
     timeout_ns = us_internal_clamp_to_sweep(loop, timeout_ns);
 
+    int released_heap_access = 0;
     if (timeout_ns != 0 && !loop->ready_ops_head && !held_packets && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm, NULL);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, &released_heap_access);
 
     /* After the finalizers above, which stop polls: the flush frees them.
      * Before the hand-off below for the same reason. */
@@ -1322,6 +1335,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
     /* Before anything can allocate again. */
     if (handed_off)
         mi_on_thread_idle_end();
+    /* Before anything touches the JS heap again (this may run a finished collection's epilogue, i.e. destructors). */
+    if (released_heap_access)
+        Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
 
     us_internal_complete_batch(loop, held_packets);
 

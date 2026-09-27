@@ -21,7 +21,10 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
+use std::collections::VecDeque;
 
+use bun_collections::HashMap;
+use bun_core::Fd;
 use bun_io::KeepAlive;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
@@ -206,6 +209,14 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
+    /// Pool thread, before [`run`](Self::run): whether that may wait, for as
+    /// long as it takes, on something outside the process. It then runs on
+    /// [`WorkPool::schedule_wait`]'s threads.
+    fn waits(off: &Self::OffThread) -> bool {
+        let _ = off;
+        false
+    }
+
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -312,6 +323,81 @@ impl JobList {
     }
 }
 
+/// What a job does with a file descriptor that script handed it.
+#[derive(Clone, Copy)]
+pub enum FdUse {
+    Uses(Fd),
+    /// Goes to the pool once every job that was given the descriptor before it
+    /// is back, and before any that is given it afterwards. The pool starts
+    /// jobs in no particular order, and a number that is closed early is the
+    /// next file's: what was still to be written would land there.
+    Closes(Fd),
+}
+
+impl FdUse {
+    pub fn fd(self) -> Fd {
+        match self {
+            Self::Uses(fd) | Self::Closes(fd) => fd,
+        }
+    }
+}
+
+#[derive(Default)]
+struct FdLine {
+    /// Handed to the pool and not back yet.
+    running: u32,
+    /// The one that is running closes the descriptor.
+    closing: bool,
+    waiting: VecDeque<(*mut WorkPoolTask, FdUse)>,
+}
+
+/// A VM's live jobs on file descriptors (JS thread only).
+#[derive(Default)]
+pub struct FdJobs {
+    lines: HashMap<Fd, FdLine>,
+}
+
+impl FdJobs {
+    /// Hands `task` to the pool, now or when its turn comes.
+    fn enter(&mut self, task: *mut WorkPoolTask, fd_use: FdUse) {
+        let line = self.lines.entry(fd_use.fd()).or_default();
+        if line.waiting.is_empty() && line.admits(fd_use) {
+            line.start(task, fd_use);
+        } else {
+            line.waiting.push_back((task, fd_use));
+        }
+    }
+
+    /// A job that [`enter`](Self::enter)ed is back from the pool.
+    fn leave(&mut self, fd: Fd) {
+        let line = self.lines.get_mut(&fd).expect("job entered");
+        line.running -= 1;
+        line.closing = false;
+        while let Some(&(task, fd_use)) = line.waiting.front()
+            && line.admits(fd_use)
+        {
+            line.waiting.pop_front();
+            line.start(task, fd_use);
+        }
+        if line.running == 0 {
+            self.lines.remove(&fd);
+        }
+    }
+}
+
+impl FdLine {
+    /// Whether the job that is first in line goes to the pool now.
+    fn admits(&self, fd_use: FdUse) -> bool {
+        !self.closing && (self.running == 0 || matches!(fd_use, FdUse::Uses(_)))
+    }
+
+    fn start(&mut self, task: *mut WorkPoolTask, fd_use: FdUse) {
+        self.closing = matches!(fd_use, FdUse::Closes(_));
+        self.running += 1;
+        WorkPool::schedule(task);
+    }
+}
+
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
@@ -324,6 +410,8 @@ pub struct Job<C: JobContext> {
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     keep_alive: KeepAlive,
+    /// Its place in the VM's [`FdJobs`].
+    fd: Option<Fd>,
     off: C::OffThread,
     js: C::Js,
 }
@@ -346,6 +434,13 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        Self::schedule_on_fd(cx, off, js, None);
+    }
+
+    /// [`schedule`](Self::schedule) for a job that may be working on a file
+    /// descriptor of script's.
+    #[track_caller]
+    pub fn schedule_on_fd(cx: &JsThread<'_>, off: C::OffThread, js: C::Js, fd_use: Option<FdUse>) {
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -370,19 +465,39 @@ impl<C: JobContext> Job<C> {
                 callback: Self::run_on_pool,
             },
             keep_alive,
+            fd: fd_use.map(FdUse::fd),
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread; the pool owns it now.
+        // SAFETY: live until completed/released on this thread; the pool's from
+        // here, or from its turn on the descriptor.
         unsafe {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).task);
+            let task = &raw mut (*job).task;
+            match fd_use {
+                Some(fd_use) => cx.vm().fd_jobs.with_mut(|jobs| jobs.enter(task, fd_use)),
+                None => WorkPool::schedule(task),
+            }
         }
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {
+        // SAFETY: as in `run`; the job is exclusively the pool's for this callback.
+        unsafe {
+            let this: *mut Self = bun_core::from_field_ptr!(Self, task, task);
+            // A job that `run` hands back unrun has nothing to ask about.
+            let cancelled = (*this).ticket.as_ref().expect("job").cancelled();
+            if !cancelled && C::waits(&(*this).off) {
+                (*task).callback = Self::run;
+                return WorkPool::schedule_wait(task);
+            }
+        }
+        Self::run(task);
+    }
+
+    fn run(task: *mut WorkPoolTask) {
         // SAFETY: only reachable through the `task.callback` slot wired in
         // `schedule`; the pool calls back with exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
@@ -415,10 +530,14 @@ impl<C: JobContext> Job<C> {
         // SAFETY: fn contract.
         let Job {
             mut keep_alive,
+            fd,
             off,
             js,
             ..
         } = unsafe { *Box::from_raw(this) };
+        if let Some(fd) = fd {
+            vm.fd_jobs.with_mut(|jobs| jobs.leave(fd));
+        }
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }

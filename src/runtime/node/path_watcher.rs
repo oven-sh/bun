@@ -30,7 +30,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::ZBox;
-#[cfg(any(target_os = "linux", target_os = "android", windows))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
 #[cfg(not(target_os = "macos"))]
 use bun_core::{Output, zstr};
@@ -2251,35 +2251,41 @@ mod windows_impl {
         ) {
             // SAFETY: caller contract; the kernel is done with `buffer`.
             let request = unsafe { &*this };
-            match error {
-                None if bytes > 0 => request.emit_records(watcher, bytes, name_buf, long_buf),
-                // More changed than `buffer` holds.
-                None => watcher.emit_overflow(),
-                Some(error) => {
-                    if !(error == w::Win32Error::ACCESS_DENIED && request.is_deleted_directory()) {
-                        watcher.emit_error(&sys::Error::from_win32(error, Tag::watch), true);
-                        return;
+            let error = match error {
+                Some(error) => error,
+                None => {
+                    if bytes > 0 {
+                        request.emit_records(watcher, bytes, name_buf, long_buf);
+                    } else {
+                        // More changed than `buffer` holds.
+                        watcher.emit_overflow();
                     }
-                    // The watched directory was deleted: a rename of its full
-                    // path, and nothing is left to ask for. Where deletes do
-                    // not have POSIX semantics the name stays taken while a
-                    // handle to the directory is open.
-                    watcher.emit(WatchEventKind::Rename, watcher.path.as_bytes(), false);
-                    // SAFETY: caller contract; no request is outstanding on `dir`.
-                    unsafe {
-                        w::CloseHandle((*this).dir);
-                        (*this).dir = w::INVALID_HANDLE_VALUE;
+                    // A directory deleted between two requests refuses the
+                    // next one; deleted during one, it fails that one.
+                    // SAFETY: caller contract; no request is outstanding.
+                    match unsafe { DirRequest::issue(this) } {
+                        Ok(()) => return,
+                        Err(error) => error,
                     }
-                    // The next `watch()` of this path has to start a new one.
-                    if let Some(manager) = watcher.manager {
-                        manager.unlink_watcher_locked(core::ptr::from_ref(watcher).cast_mut());
-                    }
-                    return;
                 }
+            };
+            // The next `watch()` of this path has to start a new one.
+            if let Some(manager) = watcher.manager {
+                manager.unlink_watcher_locked(core::ptr::from_ref(watcher).cast_mut());
             }
-            // SAFETY: caller contract; no request is outstanding.
-            if let Err(error) = unsafe { DirRequest::issue(this) } {
+            if !(error == w::Win32Error::ACCESS_DENIED && request.is_deleted_directory()) {
                 watcher.emit_error(&sys::Error::from_win32(error, Tag::watch), true);
+                return;
+            }
+            // The watched directory was deleted: a rename of its full path, and
+            // nothing is left to ask for. Where deletes do not have POSIX
+            // semantics the name stays taken while a handle to the directory
+            // is open.
+            watcher.emit(WatchEventKind::Rename, watcher.path.as_bytes(), false);
+            // SAFETY: caller contract; no request is outstanding on `dir`.
+            unsafe {
+                w::CloseHandle((*this).dir);
+                (*this).dir = w::INVALID_HANDLE_VALUE;
             }
         }
 
@@ -2377,9 +2383,8 @@ mod windows_impl {
                         None => Some(name),
                     };
                     if let Some(reported) = reported {
-                        let n = strings::copy_utf16_into_utf8(&mut name_buf[..], reported).written
-                            as usize;
-                        watcher.emit(event_type, &name_buf[..n], watcher.is_file);
+                        let reported = path::string_paths::from_w_path(&mut name_buf[..], reported);
+                        watcher.emit(event_type, reported.as_bytes(), watcher.is_file);
                     }
                 }
 

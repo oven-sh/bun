@@ -624,25 +624,27 @@ impl IOWriter {
 
         let amt = match write_to_file(fd, front.remaining()) {
             bun_io::WriteResult::Done(amt) | bun_io::WriteResult::Wrote(amt) => amt,
+            #[cfg(not(windows))]
             bun_io::WriteResult::Pending(amt) => {
                 // EAGAIN from a target that was classified non-pollable (a
                 // FIFO or chardev opened by path with O_NONBLOCK). Record the
                 // partial write and restart this writer on the pollable path.
                 front.advance(amt);
                 s.flags.pollable = true;
-                #[cfg(not(windows))]
-                {
-                    s.flags.nonblock = true;
-                }
+                s.flags.nonblock = true;
                 s.started = false;
                 return match self.write() {
                     WriteOutcome::Suspended => Yield::suspended(),
-                    #[cfg(not(windows))]
                     WriteOutcome::IsActuallyFile => {
                         self.on_sync_error(&sys::Error::from_code(E::EAGAIN, sys::Tag::write))
                     }
                     WriteOutcome::Failed(e) => self.on_sync_error(&e),
                 };
+            }
+            // Only a disk file is written here.
+            #[cfg(windows)]
+            bun_io::WriteResult::Pending(_) => {
+                return self.on_sync_error(&sys::Error::from_code(E::EAGAIN, sys::Tag::write));
             }
             // The caller is inside the enqueuing child's trampoline, so the
             // error completion is returned, not `Yield::run` from here.

@@ -65,15 +65,6 @@ impl Source {
         }
     }
 
-    /// Closed from under its owner by a loop teardown.
-    pub fn is_closed(&self) -> bool {
-        match self {
-            Source::Pipe(pipe) => pipe.is_closed(),
-            Source::Tty(tty) => tty.is_closed(),
-            Source::File(_) => false,
-        }
-    }
-
     pub(crate) fn is_active(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_active(),

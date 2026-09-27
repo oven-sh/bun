@@ -6,8 +6,9 @@
 //! `node:fs` exposes on Windows.
 
 use core::ffi::c_void;
+use core::ops::Range;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::{S, Timespec, ZStr};
 use bun_paths::{is_drive_letter_t, is_sep_any_t};
@@ -49,14 +50,6 @@ pub struct Stat {
     pub birthtim: Timespec,
 }
 impl Stat {
-    #[inline]
-    pub fn mtime(&self) -> Timespec {
-        self.mtim
-    }
-    #[inline]
-    pub fn mode(&self) -> u64 {
-        self.st_mode
-    }
     #[inline]
     pub fn size(&self) -> u64 {
         self.st_size
@@ -237,9 +230,8 @@ pub(crate) fn set_current_directory(path: &bun_core::WStr) -> Win32Result<()> {
 }
 
 /// Writes the NUL-terminated `path` into `full`, resolved by
-/// `GetFullPathNameW` and `\\?\`-prefixed. Returns where in `full` it starts
-/// and its length.
-fn write_long_path(path: *const u16, full: &mut [u16]) -> Win32Result<(usize, usize)> {
+/// `GetFullPathNameW` and `\\?\`-prefixed. Returns where in `full` it is.
+fn write_long_path(path: *const u16, full: &mut [u16]) -> Win32Result<Range<usize>> {
     // Room in front of the resolved path for `\\?\UNC\`.
     const RESERVE: usize = 8;
     let capacity = full.len() - RESERVE;
@@ -262,18 +254,18 @@ fn write_long_path(path: *const u16, full: &mut [u16]) -> Win32Result<(usize, us
     let resolved = &full[RESERVE..RESERVE + n];
     Ok(if is_device_path(resolved) {
         // A device name resolved to `\\.\NAME`.
-        (RESERVE, n)
+        RESERVE..RESERVE + n
     } else if n >= 2 && is_sep_any_t(resolved[0]) && is_sep_any_t(resolved[1]) {
         // `\\server\share\…` → `\\?\UNC\server\share\…`
         let start = RESERVE + 1 - 7;
         for (dst, src) in full[start..start + 7].iter_mut().zip(b"\\\\?\\UNC") {
             *dst = u16::from(*src);
         }
-        (start, n - 1 + 7)
+        start..RESERVE + n
     } else {
         let start = RESERVE - 4;
         full[start..RESERVE].copy_from_slice(&super::LONG_PATH_PREFIX);
-        (start, n + 4)
+        start..RESERVE + n
     })
 }
 
@@ -285,18 +277,20 @@ fn lengthen_path_in_place(buf: &mut [u16], len: usize) -> Win32Result<usize> {
         return Ok(len);
     }
     let mut full = bun_paths::w_path_buffer_pool::get();
-    let (start, len) = write_long_path(buf.as_ptr(), &mut full[..])?;
+    let long = write_long_path(buf.as_ptr(), &mut full[..])?;
+    let len = long.len();
     if len >= buf.len() {
         return Err(Win32Error::FILENAME_EXCED_RANGE);
     }
-    buf[..len].copy_from_slice(&full[start..start + len]);
+    buf[..len].copy_from_slice(&full[long]);
     buf[len] = 0;
     Ok(len)
 }
 
 /// `path` as the NUL-terminated wide string a kernel32 call takes, in `buf`:
 /// the form Win32 takes past `MAX_PATH` when it needs that. Returns its length.
-/// Every path that reaches a Win32 call outside a [`WPath`] goes through here.
+/// An absolute `path` gets a `\\?\` prefix and names its file literally, so the
+/// caller has resolved its `.` and `..`.
 pub fn kernel32_path(buf: &mut [u16], path: &[u8]) -> Win32Result<usize> {
     let len = bun_paths::string_paths::try_to_kernel32_path(buf, path)
         .ok_or(Win32Error::INVALID_NAME)?
@@ -354,7 +348,8 @@ impl WPath {
     /// native call.
     fn nt(path: &[u8]) -> Win32Result<WPath> {
         let mut wpath = WPath::converted(path)?;
-        if !is_device_path(wpath.units()) {
+        // Win32 takes a `\\?\` path as it is, and resolves any other.
+        if !(is_device_path(wpath.units()) && wpath.units()[2] == b'?' as u16) {
             wpath = wpath.into_long()?;
         }
         // `\\?\` and `\\.\` are both `\??\`.
@@ -385,11 +380,11 @@ impl WPath {
     /// Resolved by `GetFullPathNameW` and `\\?\`-prefixed.
     fn into_long(self) -> Win32Result<WPath> {
         let mut full = bun_paths::w_path_buffer_pool::get();
-        let (start, len) = write_long_path(self.as_ptr(), &mut full[..])?;
+        let long = write_long_path(self.as_ptr(), &mut full[..])?;
         Ok(WPath {
             buf: full,
-            start,
-            len,
+            start: long.start,
+            len: long.len(),
         })
     }
 
@@ -609,12 +604,6 @@ pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     write_at(fd, buf, None)
 }
 
-/// Whether `fd` is a synchronous file object: [`read`] and [`write`] on it
-/// return when the transfer is done. On one opened with
-/// `FILE_FLAG_OVERLAPPED` they do not. `false` when the query fails.
-///
-/// The query takes a synchronous file object's lock, which I/O another thread
-/// or process has in flight on it holds, as the read or write would.
 /// Whether `fd` is a file on a disk, where a write is over once the file
 /// system has taken the bytes. A write to anything else (a pipe, a console, a
 /// serial port) waits for as long as whatever is at its other end likes.
@@ -622,6 +611,12 @@ pub fn is_disk_file(fd: Fd) -> bool {
     super::GetFileType(fd.native()) == super::FILE_TYPE_DISK
 }
 
+/// Whether `fd` is a synchronous file object: [`read`] and [`write`] on it
+/// return when the transfer is done. On one opened with
+/// `FILE_FLAG_OVERLAPPED` they do not. `false` when the query fails.
+///
+/// The query takes a synchronous file object's lock, which I/O another thread
+/// or process has in flight on it holds, as the read or write would.
 pub fn is_synchronous(fd: Fd) -> bool {
     const FILE_SYNCHRONOUS_IO_ALERT: u32 = 0x0000_0010;
     let mut mode: u32 = 0;
@@ -1487,7 +1482,7 @@ fn readlink_impl(path: &[u8], buf: &mut [u8]) -> core::result::Result<usize, E> 
     let Some(capacity) = buf.len().checked_sub(1) else {
         return Err(E::ENAMETOOLONG);
     };
-    let encoded = bun_core::strings::copy_utf16_into_utf8(&mut buf[..capacity], target);
+    let encoded = bun_core::strings::copy_utf16_into_wtf8(&mut buf[..capacity], target);
     if (encoded.read as usize) < target.len() {
         return Err(E::ENAMETOOLONG);
     }
@@ -1803,7 +1798,11 @@ pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'
             // A volume that cannot answer is `EISDIR`, as in Node.
             super::GetFinalPathNameByHandleError::Failed(e) => to_error(e),
         })?;
-    let len = bun_paths::string_paths::from_w_path(&mut buf.0[..], resolved).len();
+    let resolved = bun_core::strings::trim_prefix_comptime(resolved, &super::LONG_PATH_PREFIX);
+    let last = buf.0.len() - 1;
+    let len =
+        bun_core::strings::copy_utf16_into_wtf8(&mut buf.0[..last], resolved).written as usize;
+    buf.0[len] = 0;
     Ok(&buf.0[..len])
 }
 
@@ -1854,11 +1853,6 @@ pub fn link(from: &ZStr, to: &ZStr) -> Maybe<()> {
 // symlink / junction
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE`, until the OS rejects it
-/// (before Windows 10 1703 the flag is `ERROR_INVALID_PARAMETER`).
-static UNPRIVILEGED_CREATE_FLAG: AtomicU32 =
-    AtomicU32::new(win32::SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
-
 /// `CreateSymbolicLinkW`. The caller says whether the target is a directory;
 /// Windows does not find out for itself.
 pub(crate) fn create_symbolic_link(
@@ -1866,25 +1860,17 @@ pub(crate) fn create_symbolic_link(
     target: *const u16,
     directory: bool,
 ) -> Win32Result<()> {
-    loop {
-        let unprivileged = UNPRIVILEGED_CREATE_FLAG.load(Ordering::Relaxed);
-        let flags = unprivileged
-            | if directory {
-                win32::SYMBOLIC_LINK_FLAG_DIRECTORY
-            } else {
-                0
-            };
-        // SAFETY: the caller passes NUL-terminated wide strings.
-        if unsafe { win32::CreateSymbolicLinkW(link, target, flags) } != 0 {
-            return Ok(());
-        }
-        let error = Win32Error::get();
-        if error == Win32Error::INVALID_PARAMETER && unprivileged != 0 {
-            UNPRIVILEGED_CREATE_FLAG.store(0, Ordering::Relaxed);
-            continue;
-        }
-        return Err(error);
+    let flags = win32::SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+        | if directory {
+            win32::SYMBOLIC_LINK_FLAG_DIRECTORY
+        } else {
+            0
+        };
+    // SAFETY: the caller passes NUL-terminated wide strings.
+    if unsafe { win32::CreateSymbolicLinkW(link, target, flags) } == 0 {
+        return Err(Win32Error::get());
     }
+    Ok(())
 }
 
 fn symlink_impl(target: &ZStr, link: &ZStr, directory: bool) -> Maybe<()> {
@@ -2105,46 +2091,27 @@ fn fchmod_handle(handle: HANDLE, mode: Mode) -> Win32Result<()> {
         return Err(Win32Error::from_ntstatus(status));
     }
 
-    let mut set = |info: &mut win32::FILE_BASIC_INFORMATION| {
-        // SAFETY: `reopened` is live; the info struct matches the class.
-        let status = unsafe {
-            win32::ntdll::NtSetInformationFile(
-                reopened.0,
-                &mut io,
-                ptr::from_mut(info).cast(),
-                core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
-                win32::FILE_INFORMATION_CLASS::FileBasicInformation,
-            )
-        };
-        if win32::NT_SUCCESS(status) {
-            Ok(())
-        } else {
-            Err(Win32Error::from_ntstatus(status))
-        }
-    };
-
-    // Toggling read-only does not take effect unless the archive attribute
-    // is set, so set it for the duration.
-    let clear_archive = info.FileAttributes & win32::FILE_ATTRIBUTE_ARCHIVE == 0;
-    if clear_archive {
-        info.FileAttributes |= win32::FILE_ATTRIBUTE_ARCHIVE;
-        set(&mut info)?;
-    }
-
     if mode & S::IWUSR != 0 {
         info.FileAttributes &= !win32::FILE_ATTRIBUTE_READONLY;
     } else {
         info.FileAttributes |= win32::FILE_ATTRIBUTE_READONLY;
     }
-    set(&mut info)?;
-
-    if clear_archive {
-        info.FileAttributes &= !win32::FILE_ATTRIBUTE_ARCHIVE;
-        if info.FileAttributes == 0 {
-            // 0 means "leave unchanged".
-            info.FileAttributes = win32::FILE_ATTRIBUTE_NORMAL;
-        }
-        set(&mut info)?;
+    if info.FileAttributes == 0 {
+        // 0 means "leave unchanged".
+        info.FileAttributes = win32::FILE_ATTRIBUTE_NORMAL;
+    }
+    // SAFETY: `reopened` is live; the info struct matches the class.
+    let status = unsafe {
+        win32::ntdll::NtSetInformationFile(
+            reopened.0,
+            &mut io,
+            ptr::from_mut(&mut info).cast(),
+            core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
+            win32::FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if !win32::NT_SUCCESS(status) {
+        return Err(Win32Error::from_ntstatus(status));
     }
     Ok(())
 }
@@ -2181,61 +2148,34 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
 
 fn statfs_impl(path: &[u8]) -> Win32Result<StatFS> {
     let wpath = WPath::new(path)?;
-    let mut sectors_per_cluster: u32 = 0;
-    let mut bytes_per_sector: u32 = 0;
-    let mut free_clusters: u32 = 0;
-    let mut total_clusters: u32 = 0;
-    let mut get_disk_free_space = |dir: *const u16| {
-        // SAFETY: `dir` is NUL-terminated; the out-pointers are valid.
-        if unsafe {
-            win32::GetDiskFreeSpaceW(
-                dir,
-                &mut sectors_per_cluster,
-                &mut bytes_per_sector,
-                &mut free_clusters,
-                &mut total_clusters,
-            )
-        } == 0
-        {
-            return Err(Win32Error::get());
-        }
-        Ok(())
+    let handle = create_file(
+        wpath.as_ptr(),
+        win32::FILE_READ_ATTRIBUTES,
+        SHARE_ALL,
+        win32::OPEN_EXISTING,
+        win32::FILE_FLAG_BACKUP_SEMANTICS,
+    )?;
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut info: win32::FILE_FS_FULL_SIZE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `handle` is live; `info` is writable for its size.
+    let status = unsafe {
+        win32::ntdll::NtQueryVolumeInformationFile(
+            handle.0,
+            &mut io,
+            ptr::from_mut(&mut info).cast(),
+            core::mem::size_of::<win32::FILE_FS_FULL_SIZE_INFORMATION>() as u32,
+            win32::FS_INFORMATION_CLASS::FileFsFullSizeInformation,
+        )
     };
-
-    match get_disk_free_space(wpath.as_ptr()) {
-        Ok(()) => {}
-        // `path` is a file; ask about the directory it is in.
-        Err(Win32Error::DIRECTORY) => {
-            let mut parent = bun_paths::w_path_buffer_pool::get();
-            let mut file_part: *mut u16 = ptr::null_mut();
-            // SAFETY: `wpath` is NUL-terminated; `parent` is writable for its
-            // length; `file_part` receives a pointer into `parent`.
-            let n = unsafe {
-                win32::GetFullPathNameW(
-                    wpath.as_ptr(),
-                    parent.len() as u32,
-                    parent.as_mut_ptr(),
-                    &mut file_part,
-                )
-            } as usize;
-            if n == 0 || n >= parent.len() {
-                return Err(Win32Error::DIRECTORY);
-            }
-            if !file_part.is_null() {
-                // SAFETY: `file_part` points into `parent`, at or before its NUL.
-                unsafe { *file_part = 0 };
-            }
-            get_disk_free_space(parent.as_ptr())?;
-        }
-        Err(e) => return Err(e),
+    if win32::NT_ERROR(status) {
+        return Err(Win32Error::from_ntstatus(status));
     }
-
     Ok(StatFS {
         f_type: 0,
-        f_bsize: u64::from(bytes_per_sector) * u64::from(sectors_per_cluster),
-        f_blocks: u64::from(total_clusters),
-        f_bfree: u64::from(free_clusters),
-        f_bavail: u64::from(free_clusters),
+        f_bsize: u64::from(info.SectorsPerAllocationUnit) * u64::from(info.BytesPerSector),
+        f_blocks: info.TotalAllocationUnits as u64,
+        f_bfree: info.ActualAvailableAllocationUnits as u64,
+        f_bavail: info.CallerAvailableAllocationUnits as u64,
         f_files: 0,
         f_ffree: 0,
     })

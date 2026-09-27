@@ -2558,7 +2558,7 @@ it("Bun.file().stream() read text from large file", async () => {
 // A POSIX file is read synchronously inside the stream's pull, so a failing
 // read(2) arrives with no pending read to reject. Windows file reads finish on
 // the loop, where the error lands on a pending read.
-describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
+describe("Bun.file().stream() surfaces read() errors", () => {
   // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
   const eioPath = "/proc/self/mem";
   const itEIO = isLinux ? it : it.skip;
@@ -2616,7 +2616,7 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   // read when its poll fires. A read error must release that poll, or the
   // process never exits. The slave hangup fails the master read with EIO on
   // Linux and ends it on macOS.
-  it("a read error on a pollable fd releases the poll so the process can exit", async () => {
+  it.skipIf(isWindows)("a read error on a pollable fd releases the poll so the process can exit", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

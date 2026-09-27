@@ -396,7 +396,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.handle_exit(status);
     }
 
-    /// Re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
+    /// Re-prime a recycled `BufferedReader` for a fresh socket fd.
     #[cfg(unix)]
     fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
         output

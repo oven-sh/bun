@@ -180,8 +180,8 @@ for (const mode of ctrlCModes) {
     expect(text).not.toContain("NOPE");
     // ...and ended like the child did.
     if (isWindows) {
-      // STATUS_CONTROL_C_EXIT (0xC000013A); Bun.spawn reports the low byte on Windows.
-      expect(exitCode).toBe(0x3a);
+      // STATUS_CONTROL_C_EXIT
+      expect(exitCode).toBe(0xc000013a);
     } else {
       expect(signalCode).toBe("SIGINT");
     }

@@ -324,6 +324,72 @@ test.skipIf(!fault.available() || !isWindows)(
   },
 );
 
+// select() reports a connect that failed in its third set, not as writable.
+test.skipIf(!fault.available() || !isWindows)(
+  "a connect polled with the select() fallback fails when it is refused and succeeds when it is not",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        const listening = server => new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        // A port nothing listens on: one that was just given back.
+        const closed = net.createServer();
+        const refusedPort = await listening(closed);
+        await new Promise(resolve => closed.close(resolve));
+        const server = net.createServer(conn => conn.end("accepted"));
+        const port = await listening(server);
+
+        const viaBun = (hostname, port) =>
+          new Promise(resolve => {
+            const socket = {
+              open: s => (resolve("open"), s.end()),
+              connectError: (_, e) => resolve(e.code),
+              error: (_, e) => resolve("error " + e.code),
+              data() {},
+            };
+            Bun.connect({ hostname, port, socket }).catch(e => resolve(e.code));
+          });
+        const viaNode = (host, port) =>
+          new Promise(resolve => {
+            const socket = net.connect({ host, port });
+            socket.on("connect", () => (resolve("connect"), socket.destroy()));
+            socket.on("error", e => resolve(e.code));
+          });
+
+        fault.set({ syscall: "poll_slow", action: "errno", errno: "EINVAL", repeat: -1 });
+        console.log(
+          JSON.stringify({
+            refused: [await viaBun("127.0.0.1", refusedPort), await viaNode("127.0.0.1", refusedPort)],
+            accepted: [await viaBun("127.0.0.1", port), await viaNode("127.0.0.1", port)],
+            // ::1 is refused: the attempt that fails must not be taken for the connection.
+            everyAddress: [await viaBun("localhost", port), await viaNode("localhost", port)],
+          }),
+        );
+        fault.clear();
+        server.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({
+        refused: ["ECONNREFUSED", "ECONNREFUSED"],
+        accepted: ["open", "connect"],
+        everyAddress: ["open", "connect"],
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Where ntdll has no wait completion packets, a wait on a handle (a listener's accept event, a
 // child process) is a thread-pool wait whose callback posts to the loop's port.
 test.skipIf(!fault.available() || !isWindows)(

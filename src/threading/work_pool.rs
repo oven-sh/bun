@@ -131,11 +131,22 @@ macro_rules! owned_task {
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
+static WAITING_POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
 fn create() -> ThreadPool {
     ThreadPool::init(crate::thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
+        stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
+    })
+}
+
+#[cold]
+fn create_waiting() -> ThreadPool {
+    ThreadPool::init(crate::thread_pool::Config {
+        // Its threads mostly sleep, so a machine with few cores gets as many
+        // as libuv's pool has.
+        max_threads: u32::from(bun_core::get_thread_count()).max(4),
         stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
     })
 }
@@ -148,6 +159,16 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// [`schedule`](Self::schedule) for a task that may wait, for as long as
+    /// that takes, on something outside the process: a name server, the other
+    /// end of a pipe. Those have threads of their own, so that they cannot
+    /// take every thread from the tasks that compute or read a disk.
+    pub fn schedule_wait(task: *mut Task) {
+        WAITING_POOL
+            .get_or_init(create_waiting)
+            .schedule(Batch::from(task));
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of

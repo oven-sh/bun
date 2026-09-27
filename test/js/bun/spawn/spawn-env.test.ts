@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 test("spawn env", async () => {
@@ -63,4 +63,38 @@ test("spawn with an empty env passes nothing else on", async () => {
   expect(names.filter(name => !allowed.includes(name))).toEqual([]);
   if (isWindows) expect(names).toContain("SYSTEMROOT");
   expect(exitCode).toBe(0);
+});
+
+// Windows ignores case in a variable's name and gives a program the first one that matches, and
+// there the variable is spelled `Path`. `cmd.exe` asks Windows; a Bun child would look for itself.
+describe.skipIf(!isWindows).each(["spawn", "spawnSync"] as const)("%s: the last spelling of a name wins", api => {
+  const cmdExe = process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe";
+  async function stdoutOf(command: string, env: Record<string, string | undefined>) {
+    const cmd = [cmdExe, "/d", "/c", command];
+    if (api === "spawnSync") return Bun.spawnSync({ cmd, env, stderr: "inherit" }).stdout.toString();
+    await using proc = spawn({ cmd, env, stdout: "pipe", stderr: "inherit" });
+    return await proc.stdout.text();
+  }
+
+  test.each([
+    [{ Bun_Spelling: "first", BUN_SPELLING: "last" }, "BUN_SPELLING=last"],
+    [{ BUN_SPELLING: "first", bun_spelling: "last" }, "bun_spelling=last"],
+    [{ bun_spelling: "first", A: "1", Bun_Spelling: "second", Z: "2", BUN_SPELLING: "last" }, "BUN_SPELLING=last"],
+    [{ BUN_SPELLING: "first", bun_spelling: "" }, "bun_spelling="],
+    [{ BUN_SPELLING: "only" }, "BUN_SPELLING=only"],
+  ])("%j", async (env, expected) => {
+    const lines = (await stdoutOf("set", env)).split(/\r?\n/);
+    expect(lines.filter(line => /^bun_spelling=/i.test(line))).toEqual([expected]);
+  });
+
+  test("{ ...env, PATH } replaces Path", async () => {
+    const { PATH, Path, ...rest } = bunEnv;
+    const env = { ...rest, Path: PATH ?? Path, PATH: "C:\\replaced" };
+    expect(await stdoutOf("echo %PATH%", env)).toBe("C:\\replaced\r\n");
+  });
+
+  test("a required variable is not added next to another spelling of it", async () => {
+    const lines = (await stdoutOf("set", { SystemRoot: process.env.SYSTEMROOT })).split(/\r?\n/);
+    expect(lines.filter(line => /^systemroot=/i.test(line))).toEqual(["SystemRoot=" + process.env.SYSTEMROOT]);
+  });
 });

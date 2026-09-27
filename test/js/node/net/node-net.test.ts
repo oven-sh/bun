@@ -176,7 +176,9 @@ it.skipIf(!isWindows)("a reply to the last write before end() on a named pipe is
 });
 
 /** Runs node-net-message-pipe-fixture.ts and resolves once its pipe exists. */
-async function messagePipeServer(scenario: "reply-after-end" | "end-first" | "end-then-close") {
+async function messagePipeServer(
+  scenario: "reply-after-end" | "disconnect-after-end" | "end-first" | "end-then-close",
+) {
   const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
   const proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-net-message-pipe-fixture.ts"), name, scenario],
@@ -229,6 +231,28 @@ it.skipIf(!isWindows)(
     await promise;
     expect({ client: events, server: await server.lines() }).toEqual({
       client: ["data:late reply", "end"],
+      server: ["listening", "data:request", "end-of-write", "wrote:true"],
+    });
+  },
+);
+
+it.skipIf(!isWindows)(
+  "a message-type named pipe server that disconnects when it is told of the end of writing ends the stream",
+  async () => {
+    await using server = await messagePipeServer("disconnect-after-end");
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const client = connect(server.name, () => {
+      client.write("request");
+      client.end();
+    });
+    client.on("data", data => events.push("data:" + data));
+    client.on("end", () => events.push("end"));
+    client.on("error", err => events.push("error:" + (err as any).code));
+    client.on("close", hadError => (events.push("close:" + hadError), resolve()));
+    await promise;
+    expect({ client: events, server: await server.lines() }).toEqual({
+      client: ["data:reply", "end", "close:false"],
       server: ["listening", "data:request", "end-of-write", "wrote:true"],
     });
   },
@@ -1424,7 +1448,7 @@ describe.concurrent.skipIf(!isWindows)("closing a named pipe server frees the na
 });
 
 // A pipe server keeps 4 instances waiting for clients. Clients beyond that find the pipe busy and
-// wait on other threads (WaitNamedPipeW); the instance the server creates next wakes all of them
+// wait for an instance; the one the server creates next wakes all of them
 // before the server has started to wait on it, so one of them is usually connected already by then.
 describe.concurrent.skipIf(!isWindows)("a named pipe server under a burst of connects", () => {
   function connectAll(name: string, count: number) {
@@ -3324,9 +3348,7 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   expect(exitCode).toBe(0);
 });
 
-// On Windows the native layer does not report fatal send errors yet (the WSA
-// error translation is a follow-up), so the write error never surfaces there.
-it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+it("a write after the peer reset the connection fails with a write error", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
   // writable side open like Node, so the failure must surface from the write

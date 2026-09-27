@@ -23,7 +23,7 @@ pub(crate) struct Yes {
     /// out to ~BUFSIZ.
     pub(crate) buffer: Vec<u8>,
     pub(crate) buffer_used: usize,
-    /// Chunks written since the event loop last had a turn.
+    /// Chunks that completed in place since the event loop last had a turn.
     pub(crate) chunks_since_bounce: u8,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
@@ -108,9 +108,7 @@ impl Yes {
             .expect("YesTask set in start()");
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
         // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback. `enqueue` ticks the event loop
-        // and may re-enter shell dispatch — we hold no `&mut` derived from
-        // `interp` across the call.
+        // and the later main-thread callback.
         unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }
@@ -161,7 +159,12 @@ impl Yes {
         // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
         // so the tiled buffer is enqueued zero-copy.
         let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
-        stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
+        let next = stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard);
+        if matches!(next, Yield::Suspended) {
+            // The event loop completes this chunk, so it gets its turn.
+            yes.chunks_since_bounce = 0;
+        }
+        next
     }
 
     fn write_failing_error(
@@ -250,7 +253,6 @@ impl YesTask {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mut mini) => {
-                    (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
                             EventLoopTask::Mini(at) => {
@@ -279,7 +281,15 @@ impl YesTask {
     /// callback shape (`fn(*mut T, *mut ())`).
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
         // SAFETY: dispatch contract — `this` is the live task previously passed
-        // to `enqueue`; see `run_from_main_thread`.
-        Self::run_from_main_thread(unsafe { &*this })
+        // to `enqueue`; see `run_from_main_thread`. `mini` is a live event-loop
+        // backref, and tasks run outside the loop's own dispatch.
+        unsafe {
+            // The mini loop looks for I/O only when it has no task to run, and
+            // this one is queued again every time it runs.
+            if let EventLoopHandle::Mini(mini) = (*this).evtloop {
+                (*mini.loop_).tick_without_idle();
+            }
+            Self::run_from_main_thread(&*this)
+        }
     }
 }

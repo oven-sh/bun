@@ -1120,8 +1120,8 @@ impl BufferedReader {
         }
     }
 
-    /// Dispatches what is in `_buffer`. Returns `false` when the reader was
-    /// closed from inside the dispatch.
+    /// Dispatches what is in `_buffer`. Returns what the parent's
+    /// `on_read_chunk` did, and `true` when there was nothing to give it.
     fn on_read_chunk(&mut self, has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(ReaderFlags::RECEIVED_EOF);

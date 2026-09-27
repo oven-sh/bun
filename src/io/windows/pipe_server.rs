@@ -146,15 +146,7 @@ impl PipeServer {
         }
     }
 
-    /// Let listening keep the loop alive (the default).
-    pub fn ref_(&self) {
-        // SAFETY: `inner` is live while the owner's `PipeServer` is.
-        unsafe {
-            (*self.inner.as_ptr()).refd = true;
-            Inner::update_keep_alive(self.inner.as_ptr());
-        }
-    }
-
+    /// Listening keeps the loop alive until this is called.
     pub fn unref(&self) {
         // SAFETY: `inner` is live while the owner's `PipeServer` is.
         unsafe {

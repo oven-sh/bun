@@ -1245,7 +1245,7 @@ pub use self::event_loop::{
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
     PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
+pub use self::job::{Completion, FdUse, Job, JobContext, JsPtr, JsThread, Protected};
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 

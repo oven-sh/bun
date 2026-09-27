@@ -40,6 +40,15 @@ enum VtermState {
     Unsupported,
 }
 
+/// One coordinate of a position on the screen.
+#[derive(Clone, Copy)]
+enum Offset {
+    FromCursor(i32),
+    /// From the top-left of the virtual window.
+    FromOrigin(i32),
+}
+use Offset::{FromCursor, FromOrigin};
+
 #[derive(Clone, Copy)]
 enum AnsiState {
     Normal,
@@ -422,22 +431,18 @@ impl Console {
         }
     }
 
-    /// Screen buffer coordinates for a position that is either relative to the cursor or
-    /// relative to the virtual window's top-left, clipped to the virtual window.
+    /// Screen buffer coordinates for a position, clipped to the virtual window.
     fn make_real_coord(
         &mut self,
         info: &CONSOLE_SCREEN_BUFFER_INFO,
-        x: i32,
-        x_relative: bool,
-        y: i32,
-        y_relative: bool,
+        x: Offset,
+        y: Offset,
     ) -> COORD {
         self.update_virtual_window(info);
 
-        let mut y = if y_relative {
-            i32::from(info.dwCursorPosition.Y) + y
-        } else {
-            self.virtual_offset + y
+        let mut y = match y {
+            FromCursor(y) => i32::from(info.dwCursorPosition.Y) + y,
+            FromOrigin(y) => self.virtual_offset + y,
         };
         if y < self.virtual_offset {
             y = self.virtual_offset;
@@ -445,10 +450,9 @@ impl Console {
             y = self.virtual_offset + self.virtual_height - 1;
         }
 
-        let mut x = if x_relative {
-            i32::from(info.dwCursorPosition.X) + x
-        } else {
-            x
+        let mut x = match x {
+            FromCursor(x) => i32::from(info.dwCursorPosition.X) + x,
+            FromOrigin(x) => x,
         };
         if x < 0 {
             x = 0;
@@ -882,20 +886,20 @@ impl Writer<'_> {
     fn run_csi_command(&mut self, command: char) {
         let count = i32::from(self.state.first_arg_or(1));
         match command {
-            'A' => self.emulate(|w| w.move_caret(0, true, -count, true)),
-            'B' => self.emulate(|w| w.move_caret(0, true, count, true)),
-            'C' => self.emulate(|w| w.move_caret(count, true, 0, true)),
-            'D' => self.emulate(|w| w.move_caret(-count, true, 0, true)),
-            'E' => self.emulate(|w| w.move_caret(0, false, count, true)),
-            'F' => self.emulate(|w| w.move_caret(0, false, -count, true)),
+            'A' => self.emulate(|w| w.move_caret(FromCursor(0), FromCursor(-count))),
+            'B' => self.emulate(|w| w.move_caret(FromCursor(0), FromCursor(count))),
+            'C' => self.emulate(|w| w.move_caret(FromCursor(count), FromCursor(0))),
+            'D' => self.emulate(|w| w.move_caret(FromCursor(-count), FromCursor(0))),
+            'E' => self.emulate(|w| w.move_caret(FromOrigin(0), FromCursor(count))),
+            'F' => self.emulate(|w| w.move_caret(FromOrigin(0), FromCursor(-count))),
             'G' => {
                 let x = self.state.coordinate_arg(0);
-                self.emulate(|w| w.move_caret(x, false, 0, true));
+                self.emulate(|w| w.move_caret(FromOrigin(x), FromCursor(0)));
             }
             'H' | 'f' => {
                 let y = self.state.coordinate_arg(0);
                 let x = self.state.coordinate_arg(1);
-                self.emulate(|w| w.move_caret(x, false, y, false));
+                self.emulate(|w| w.move_caret(FromOrigin(x), FromOrigin(y)));
             }
             'J' | 'K' => {
                 let direction = self.state.first_arg_or(0);
@@ -912,19 +916,11 @@ impl Writer<'_> {
         }
     }
 
-    fn move_caret(
-        &mut self,
-        x: i32,
-        x_relative: bool,
-        y: i32,
-        y_relative: bool,
-    ) -> Result<(), DWORD> {
+    fn move_caret(&mut self, x: Offset, y: Offset) -> Result<(), DWORD> {
         let mut failed_with = None;
         loop {
             let info = screen_buffer_info(self.handle)?;
-            let position = self
-                .console
-                .make_real_coord(&info, x, x_relative, y, y_relative);
+            let position = self.console.make_real_coord(&info, x, y);
             if SetConsoleCursorPosition(self.handle, position) != 0 {
                 return Ok(());
             }
@@ -959,23 +955,27 @@ impl Writer<'_> {
     /// `direction`: 0 = cursor to end, 1 = start to cursor, 2 = everything; of the virtual
     /// window if `entire_screen`, else of the cursor's row.
     fn clear(&mut self, direction: u16, entire_screen: bool) -> Result<(), DWORD> {
-        let (x1, x1_relative) = (0, direction == 0);
-        // The far end is past any real width; `make_real_coord` clips it.
-        let (x2, x2_relative) = if direction == 1 {
-            (0, true)
+        let x1 = if direction == 0 {
+            FromCursor(0)
         } else {
-            (0xFFFF, false)
+            FromOrigin(0)
         };
-        let (y1, y1_relative, y2, y2_relative) = if entire_screen {
-            (x1, x1_relative, x2, x2_relative)
+        // The far end is past any real width; `make_real_coord` clips it.
+        let x2 = if direction == 1 {
+            FromCursor(0)
         } else {
-            (0, true, 0, true)
+            FromOrigin(0xFFFF)
+        };
+        let (y1, y2) = if entire_screen {
+            (x1, x2)
+        } else {
+            (FromCursor(0), FromCursor(0))
         };
 
         let console = &mut *self.console;
         blank_cells(self.handle, |info| {
-            let start = console.make_real_coord(info, x1, x1_relative, y1, y1_relative);
-            let end = console.make_real_coord(info, x2, x2_relative, y2, y2_relative);
+            let start = console.make_real_coord(info, x1, y1);
+            let end = console.make_real_coord(info, x2, y2);
             let width = i32::from(info.dwSize.X);
             let count = (i32::from(end.Y) * width + i32::from(end.X))
                 - (i32::from(start.Y) * width + i32::from(start.X))
@@ -1087,7 +1087,10 @@ impl Writer<'_> {
 
     fn restore_state(&mut self, restore_attributes: bool) -> Result<(), DWORD> {
         if let Some(position) = self.state.saved_position {
-            self.move_caret(i32::from(position.X), false, i32::from(position.Y), false)?;
+            self.move_caret(
+                FromOrigin(i32::from(position.X)),
+                FromOrigin(i32::from(position.Y)),
+            )?;
         }
         if restore_attributes {
             if let Some(saved) = self.state.saved_attributes {

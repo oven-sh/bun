@@ -10,7 +10,7 @@ import { join } from "path";
 // so an abnormal fstat size could trip integerOutOfBounds. Triggering that
 // directly requires fstat to report > 4.5 PB which is not achievable here,
 // but these tests lock in the fd-backed ReadFile path that the fuzzer hit.
-describe.skipIf(isWindows)("Bun.file(fd) read", () => {
+describe("Bun.file(fd) read", () => {
   async function withFd<T>(path: string, fn: (fd: number) => Promise<T>): Promise<T> {
     const fd = openSync(path, "r");
     try {

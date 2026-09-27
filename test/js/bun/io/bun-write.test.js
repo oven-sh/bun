@@ -1838,18 +1838,68 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 // descriptor in the order they were made. On Windows every write was its own job on the work pool,
 // which has no order: the characters came out scrambled, or reversed.
 describe("Bun.write() calls that are not awaited keep their order", () => {
-  const line = "write ordering 0123456789 abcdefghijklmnopqrstuvwxyz";
+  const lines = Array.from(
+    { length: 20 },
+    (_, round) => `round ${String(round).padStart(2, "0")} 0123456789 abcdefghijklmnopqrstuvwxyz`,
+  );
   const fixture = `
-    const line = ${JSON.stringify(line)} + "\\n";
-    for (let round = 0; round < 20; round++) for (const ch of line) Bun.write(Bun.stdout, ch);
+    for (const line of ${JSON.stringify(lines)}) for (const ch of line + "\\n") Bun.write(Bun.stdout, ch);
   `;
 
   it("to a pipe", async () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: (line + "\n").repeat(20), stderr: "" });
+    expect({ stdout, stderr }).toEqual({ stdout: lines.join("\n") + "\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  // The rows a terminal shows after `output`. A Windows pseudoconsole does not pass on what the
+  // program wrote: it sends whatever repaints its own screen, which can paint a row more than once.
+  function screenAfter(output, cols, rows) {
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(" "));
+    let x = 0;
+    let y = 0;
+    const erase = (row, from, to) => grid[row].fill(" ", from, to);
+    const lineFeed = () => {
+      if (++y < rows) return;
+      grid.push(Array(cols).fill(" "));
+      grid.shift();
+      y = rows - 1;
+    };
+    const tokens = /\x1b\[([<-?]?)([\d;]*)[ -/]*([@-~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]|[^]/gu;
+    for (const [token, isPrivate, params, final] of output.matchAll(tokens)) {
+      if (final !== undefined) {
+        if (isPrivate) continue;
+        const [first, second] = params.split(";").map(Number);
+        const count = first || 1;
+        if (final === "H" || final === "f") [y, x] = [count - 1, (second || 1) - 1];
+        else if (final === "A") y -= count;
+        else if (final === "B") y += count;
+        else if (final === "C") x += count;
+        else if (final === "D") x -= count;
+        else if (final === "G") x = count - 1;
+        else if (final === "d") y = count - 1;
+        else if (final === "X") erase(y, x, x + count);
+        else if (final === "K") erase(y, first ? 0 : x, first === 1 ? x + 1 : cols);
+        else if (final === "J") {
+          for (let row = 0; row < rows; row++) if (first >= 2 || (first ? row < y : row > y)) erase(row, 0, cols);
+          if (first < 2) erase(y, first ? 0 : x, first ? x + 1 : cols);
+        }
+        x = Math.min(Math.max(x, 0), cols - 1);
+        y = Math.min(Math.max(y, 0), rows - 1);
+      } else if (token === "\r") x = 0;
+      else if (token === "\n") lineFeed();
+      else if (token === "\b") x = Math.max(x - 1, 0);
+      else if (token.length === 1 && token >= " ") {
+        if (x === cols) {
+          x = 0;
+          lineFeed();
+        }
+        grid[y][x++] = token;
+      }
+    }
+    return grid.map(row => row.join("").trimEnd());
+  }
 
   it("to a terminal", async () => {
     let output = "";
@@ -1871,11 +1921,7 @@ describe("Bun.write() calls that are not awaited keep their order", () => {
     expect(await proc.exited).toBe(0);
     proc.terminal.close();
     await ended.promise;
-    const lines = Bun.stripANSI(output)
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(l => l.length > 0);
-    expect(lines).toEqual(Array(20).fill(line));
+    expect(screenAfter(output, 200, 50).filter(row => row.length > 0)).toEqual(lines);
   });
 });
 
@@ -1909,6 +1955,49 @@ it("Bun.write(Bun.stdout, Bun.file(path), { mode }) resolves when stdout is a pi
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "copied to a pipe\n", stderr: "wrote 17\n" });
   expect(exitCode).toBe(0);
+});
+
+it("Bun.write(fd, Bun.file(path), { mode }) leaves the mode of the caller's file alone", async () => {
+  using dir = tempDir("bun-write-mode-to-fd", { "source.txt": "copied to a descriptor\n", "destination.txt": "" });
+  const destination = join(String(dir), "destination.txt");
+  fs.chmodSync(destination, 0o600);
+  const before = fs.statSync(destination).mode;
+  const fd = fs.openSync(destination, "w");
+  try {
+    expect(await Bun.write(Bun.file(fd), Bun.file(join(String(dir), "source.txt")), { mode: 0o444 })).toBe(23);
+  } finally {
+    fs.closeSync(fd);
+  }
+  expect({ mode: fs.statSync(destination).mode, contents: fs.readFileSync(destination, "utf8") }).toEqual({
+    mode: before,
+    contents: "copied to a descriptor\n",
+  });
+});
+
+describe("Bun.write(path in a directory that does not exist yet, Bun.file(source))", () => {
+  it.each([
+    "source.txt",
+    "./source.txt",
+    "a/../source.txt",
+    "a/./../source.txt",
+    "a/b/../../source.txt",
+    ...(isWindows ? ["a\\..\\source.txt", ".\\source.txt"] : []),
+  ])("copies a source spelled %s", async spelled => {
+    using dir = tempDir("bun-write-dotted-source", { "source.txt": "copied", a: { b: {} } });
+    const destination = join(String(dir), "missing", "copy.txt");
+    expect(await Bun.write(destination, Bun.file(String(dir) + "/" + spelled))).toBe(6);
+    expect(fs.readFileSync(destination, "utf8")).toBe("copied");
+  });
+
+  it("names a source that does not exist, and makes no directory for it", async () => {
+    using dir = tempDir("bun-write-missing-source", { a: {} });
+    const source = String(dir) + "/a/../source.txt";
+    expect(await Bun.write(join(String(dir), "missing", "copy.txt"), Bun.file(source)).catch(e => e)).toMatchObject({
+      code: "ENOENT",
+      path: source,
+    });
+    expect(fs.existsSync(join(String(dir), "missing"))).toBe(false);
+  });
 });
 
 it.skipIf(!isWindows)("Bun.write() to a named pipe this process serves does not wait on its own thread", async () => {

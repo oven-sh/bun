@@ -1383,6 +1383,12 @@ pub mod fd {
         safe fn _close(fd: c_int) -> c_int;
     }
 
+    /// The debug CRT asserts on a bad fd before anything else, which
+    /// `crtDebugReportHook` (c-bindings.cpp) lets pass. An assert that another
+    /// thread raises meanwhile it takes for a re-entrant one and breaks into
+    /// the debugger without asking the hook: one lowio call at a time there.
+    #[cfg(all(windows, debug_assertions))]
+    static LOWIO: super::Mutex<()> = super::Mutex::new(());
     /// The HANDLE a CRT fd owns; `INVALID_HANDLE_VALUE` for a bad fd, and for
     /// a stdio fd with no stream attached (where the CRT reports `-2`).
     #[cfg(windows)]
@@ -1390,6 +1396,8 @@ pub mod fd {
         if fd < 0 {
             return crate::windows_sys::INVALID_HANDLE_VALUE;
         }
+        #[cfg(debug_assertions)]
+        let _one_at_a_time = LOWIO.lock();
         match _get_osfhandle(fd) {
             -2 => crate::windows_sys::INVALID_HANDLE_VALUE,
             h => h as *mut c_void,
@@ -1400,6 +1408,8 @@ pub mod fd {
     /// the CRT fd table is full (`EMFILE`) or the handle is invalid.
     #[cfg(windows)]
     pub fn crt_open_osfhandle(handle: *mut c_void) -> c_int {
+        #[cfg(debug_assertions)]
+        let _one_at_a_time = LOWIO.lock();
         _open_osfhandle(handle as isize, 0)
     }
 
@@ -1410,6 +1420,8 @@ pub mod fd {
         if fd < 0 {
             return -1;
         }
+        #[cfg(debug_assertions)]
+        let _one_at_a_time = LOWIO.lock();
         _close(fd)
     }
     #[cfg(windows)]

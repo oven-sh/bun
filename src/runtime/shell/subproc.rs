@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
-use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::interpreter::{ExitCode, Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
@@ -829,10 +829,10 @@ impl ShellSubprocess {
         // SAFETY: caller contract; the borrow ends at the `;`.
         let interrupted = unsafe { (*this).ctrl_c_child.take() }.is_some()
             && bun_spawn::ctrl_c::child_died_of_it(status);
-        let exit_code: Option<u8> = 'brk: {
+        let exit_code: Option<ExitCode> = 'brk: {
             if let Status::Exited(exited) = &status {
                 if exited.is_ctrl_c_exit() {
-                    break 'brk Some(bun_sys::SignalCode::SIGINT.to_exit_code());
+                    break 'brk Some(bun_sys::SignalCode::SIGINT.to_exit_code().into());
                 }
                 break 'brk Some(exited.code);
             }
@@ -842,7 +842,7 @@ impl ShellSubprocess {
             }
 
             if let Some(code) = status.signal().map(|signal| signal.to_exit_code()) {
-                break 'brk Some(code);
+                break 'brk Some(code.into());
             }
 
             break 'brk None;
@@ -855,7 +855,7 @@ impl ShellSubprocess {
         // before the Yield runs.
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
-        let y = cmd.on_exit(code.into());
+        let y = cmd.on_exit(code);
         // May free `*this`.
         y.run(&handle.interp);
     }
@@ -1611,14 +1611,13 @@ impl PipeReader {
         // No explicit re-arm here (`register_poll()` on POSIX). This callback runs from
         // inside the bun_io read loop, which still holds `&mut self.reader`
         // on its stack and re-registers the poll itself based on the bool we
-        // return (`IOReader::on_read_chunk_cb` and
-        // `WindowsBufferedReader::on_read` document the same contract).
+        // return (`IOReader::on_read_chunk_cb` documents the same contract).
         //
         // Re-arming from here also violates `BufferedReaderParent`'s
         // requirement that `on_read_chunk` never frees the reader:
         // `register_poll()`'s failure path dispatches `on_reader_error`,
         // which drops the last `Arc<PipeReader>` and frees the
-        // `PosixBufferedReader` the loop is still reading through.
+        // `BufferedReader` the loop is still reading through.
         has_more != ReadState::Eof
     }
 

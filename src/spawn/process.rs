@@ -333,7 +333,10 @@ impl Process {
         } else if self.exit_signal != 0 {
             Status::Signaled(self.exit_signal)
         } else {
-            Status::Exited(Exited::from_exit_code(exit_code))
+            Status::Exited(Exited {
+                code: exit_code,
+                signal: 0,
+            })
         };
         bun_core::scoped_log!(PROCESS, "Process.onExit({}) {}", self.pid, status);
         self.on_exit(status, &rusage);
@@ -757,32 +760,20 @@ pub enum Status {
 
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
-    pub code: u8,
+    /// At most 255 on POSIX. On Windows any `GetExitCodeProcess` DWORD, among
+    /// them the NTSTATUS of a crash (0xC0000409).
+    pub code: u32,
     /// The platform's signal number, or `0` for none; see `Status::signal`.
     pub signal: u8,
-    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
-    /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
-    #[cfg(windows)]
-    pub raw: u32,
 }
 
 impl Exited {
-    /// From a `GetExitCodeProcess` DWORD.
-    #[cfg(windows)]
-    fn from_exit_code(raw: u32) -> Exited {
-        Exited {
-            code: raw as u8,
-            signal: 0,
-            raw,
-        }
-    }
-
     /// Ended by the default Ctrl+C handler (`STATUS_CONTROL_C_EXIT`). Never on
     /// POSIX, where that is a `SIGINT` death.
     #[inline]
     pub fn is_ctrl_c_exit(self) -> bool {
         #[cfg(windows)]
-        return self.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT;
+        return self.code == bun_sys::windows::STATUS_CONTROL_C_EXIT;
         #[cfg(not(windows))]
         false
     }
@@ -795,7 +786,7 @@ impl Status {
 
     #[cfg(unix)]
     pub(crate) fn from(pid: PidT, waitpid_result: &Maybe<WaitPidResult>) -> Option<Status> {
-        let mut exit_code: Option<u8> = None;
+        let mut exit_code: Option<u32> = None;
         let mut signal: Option<u8> = None;
 
         match waitpid_result {
@@ -811,7 +802,7 @@ impl Status {
                 let status = result.status as c_int;
 
                 if libc::WIFEXITED(status) {
-                    exit_code = Some(libc::WEXITSTATUS(status) as u8);
+                    exit_code = Some(libc::WEXITSTATUS(status) as u32);
                     // True if the process terminated due to receipt of a signal.
                 }
 
@@ -1848,8 +1839,9 @@ mod spawn_process_body {
                 self.handle = bun_sys::windows::INVALID_HANDLE_VALUE;
             }
 
-            /// `result` is what `ReadFile`/`GetOverlappedResult` answered for the
-            /// read into the spare capacity. Returns whether the pipe is still open.
+            /// `ok` and `bytes_read` are what `ReadFile`/`GetOverlappedResult`
+            /// answered for the read into the spare capacity. Returns whether the
+            /// pipe is still open.
             fn finish_read(&mut self, ok: bool, bytes_read: u32) -> Maybe<bool> {
                 use bun_spawn_sys::windows::win32;
                 if ok {
@@ -2037,7 +2029,10 @@ mod spawn_process_body {
 
             let [stdout, stderr] = &mut drains;
             Ok(Ok(Result {
-                status: Status::Exited(Exited::from_exit_code(exit_code)),
+                status: Status::Exited(Exited {
+                    code: exit_code,
+                    signal: 0,
+                }),
                 stdout: core::mem::take(&mut stdout.bytes),
                 stderr: core::mem::take(&mut stderr.bytes),
             }))

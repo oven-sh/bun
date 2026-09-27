@@ -432,7 +432,7 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
     return storage;
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, int * _Nullable released_heap_access);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, int * _Nonnull released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {

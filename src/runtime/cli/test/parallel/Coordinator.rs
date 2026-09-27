@@ -939,8 +939,7 @@ fn terminate_process_group(pid: libc::pid_t) {
 ///
 /// Windows delivers no signals: an unhandled exception or `__fastfail`
 /// exits with the NTSTATUS as the exit code, so recognized fatal values of
-/// `Exited.raw` (the untruncated code; `Exited.code` is `u8`) classify as
-/// panics too. A fault Bun's crash handler catches still exits with code
+/// `Exited.code` classify as panics too. A fault Bun's crash handler catches still exits with code
 /// 3, indistinguishable from process.exit(3), and stays a per-file
 /// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
@@ -960,7 +959,7 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
     }
     #[cfg(windows)]
     if let SpawnStatus::Exited(e) = status {
-        return is_fatal_windows_exit_code(e.raw);
+        return is_fatal_windows_exit_code(e.code);
     }
     false
 }
@@ -1001,12 +1000,9 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     match status {
         SpawnStatus::Exited(e) => {
-            // Windows: report the untruncated code; NTSTATUS values print in
-            // hex ("exit code 0xC0000409"), the form Windows tooling uses.
-            #[cfg(windows)]
-            let code: u32 = e.raw;
-            #[cfg(not(windows))]
-            let code: u32 = u32::from(e.code);
+            // NTSTATUS values print in hex ("exit code 0xC0000409"), the form
+            // Windows tooling uses.
+            let code = e.code;
             let mut cursor: &mut [u8] = &mut buf[..];
             if code >= 0x8000_0000 {
                 write!(cursor, "exit code 0x{code:08X}").expect("unreachable");

@@ -84,13 +84,6 @@ impl AnyEventLoop {
         }
     }
 
-    /// Convert to an owned [`EventLoopHandle`]. Thin alias for
-    /// [`EventLoopHandle::from_any`].
-    #[inline]
-    pub fn as_handle(this: &mut AnyEventLoop) -> EventLoopHandle {
-        EventLoopHandle::from_any(this)
-    }
-
     pub fn init() -> AnyEventLoop {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }

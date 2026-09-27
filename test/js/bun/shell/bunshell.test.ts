@@ -4225,6 +4225,87 @@ test("a timer fires while `yes` writes to a file", async () => {
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "timer fired\n", stderr: "", exitCode: 0 });
 });
 
+// `bun exec` and `bun run` drive the shell from the CLI's own event loop, not the JavaScript one.
+describe.concurrent("`yes` outside the JavaScript event loop", () => {
+  const reader = `
+    const wanted = Number(process.argv[2]);
+    let total = 0;
+    process.stdin.on("data", chunk => {
+      total += chunk.length;
+      if (total < wanted) return;
+      console.log("read enough");
+      process.exit(0);
+    });`;
+
+  // `yes` writes 8 KiB at a time.
+  test.each([1, 8192, 32767, 32768, 32769, 400_000])("feeds a reader that wants %d bytes", async wanted => {
+    using dir = tempDir("shell-yes-exec", { "reader.js": reader });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", `yes | "${BUN}" reader.js ${wanted}`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "read enough\n", stderr: "", exitCode: 0 });
+  });
+
+  test("feeds a package.json script's reader", async () => {
+    using dir = tempDir("shell-yes-run", {
+      "reader.js": reader,
+      "package.json": JSON.stringify({ scripts: { answer: `yes | "${BUN}" reader.js 400000` } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--silent", "--shell=bun", "answer"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "read enough\n", stderr: "", exitCode: 0 });
+  });
+
+  test("keeps writing to the pipe it was started with", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", "yes"],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let total = 0;
+    for await (const chunk of proc.stdout) {
+      total += chunk.length;
+      if (total >= 400_000) break;
+    }
+    expect(total).toBeGreaterThanOrEqual(400_000);
+  });
+
+  test("keeps writing to a file", async () => {
+    using dir = tempDir("shell-yes-exec-file", {});
+    const out = join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exec", "yes > out.txt"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const size = () =>
+      stat(out).then(
+        s => s.size,
+        () => 0,
+      );
+    while ((await size()) < 400_000 && proc.exitCode === null) await Bun.sleep(1);
+    expect(proc.exitCode).toBe(null);
+  });
+});
+
 // Whatever runs after a command can open, move or delete the file the command was redirected to: the
 // shell's handle is closed by the time the command settles. An open that shares nothing fails with a
 // sharing violation while any other handle to the file exists.

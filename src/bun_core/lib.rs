@@ -1777,6 +1777,40 @@ pub(crate) mod strings_impl {
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }
 
+    /// [`copy_utf16_into_utf8`] for a file name: an unpaired surrogate is
+    /// written as WTF-8 writes it, so the bytes still name the file.
+    pub fn copy_utf16_into_wtf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
+        let mut result = EncodeIntoResult::default();
+        loop {
+            let rest = &utf16[result.read as usize..];
+            let mut paired = 0;
+            while paired < rest.len() {
+                if u16_is_lead(rest[paired])
+                    && rest.get(paired + 1).is_some_and(|&c| u16_is_trail(c))
+                {
+                    paired += 2;
+                } else if u16_is_lead(rest[paired]) || u16_is_trail(rest[paired]) {
+                    break;
+                } else {
+                    paired += 1;
+                }
+            }
+            let out = &mut buf[result.written as usize..];
+            let copied = copy_utf16_into_utf8(out, &rest[..paired]);
+            result.read += copied.read;
+            result.written += copied.written;
+            let out = &mut out[copied.written as usize..];
+            if (copied.read as usize) < paired || paired == rest.len() || out.len() < 3 {
+                return result;
+            }
+            let mut encoded = [0u8; 4];
+            encode_wtf8_rune(&mut encoded, u32::from(rest[paired]));
+            out[..3].copy_from_slice(&encoded[..3]);
+            result.read += 1;
+            result.written += 3;
+        }
+    }
+
     pub fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
         utf16: &[u16],
@@ -2696,6 +2730,8 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_FULL_SIZE_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
     #[cfg(windows)]

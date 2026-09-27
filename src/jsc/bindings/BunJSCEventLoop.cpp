@@ -16,13 +16,12 @@ extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
     vm->heap.acquireAccess();
 }
 
-// `releasedHeapAccess` (null where the loop does not take access back after its wait: the Windows loop): set when this
-// gave up heap access for the wait, in which case Bun__JSC_acquireHeapAccessAfterWait must run before anything touches
-// the JS heap. It does that while an idle collection GarbageCollectionController requested is unfinished
+// `releasedHeapAccess`: set when this gave up heap access for the wait, in which case
+// Bun__JSC_acquireHeapAccessAfterWait must run before anything touches the JS heap. It does that while an idle collection GarbageCollectionController requested is unfinished
 // (JSVMClientData::idleCollectionsPending): a requested collection only advances at this thread's safepoints while this
 // thread holds the collector's conn, and a parked thread has none; without access, the conn goes to the collector thread,
 // which finishes the collection while this one sleeps.
-extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, int* _Nullable releasedHeapAccess)
+extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, int* _Nonnull releasedHeapAccess)
 {
     ASSERT(vm);
     const bool previouslyHadAccess = vm->heap.hasHeapAccess();
@@ -82,7 +81,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, int* _Nullable relea
             vm->didEnterVM = false;
         }
     }
-    if (releasedHeapAccess && previouslyHadAccess && WebCore::clientData(*vm)->idleCollectionsPending.load()) {
+    if (previouslyHadAccess && WebCore::clientData(*vm)->idleCollectionsPending.load()) {
         // If the collector handed the conn back for a stop-the-world phase while this thread was awake, run that phase
         // now rather than at the next time JS happens to run; then park without access so the rest goes on without us.
         vm->heap.stopIfNecessary();

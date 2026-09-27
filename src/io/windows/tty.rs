@@ -538,11 +538,6 @@ impl Tty {
         unsafe { (*self.raw()).flags.contains(Flags::READABLE) }
     }
 
-    pub fn is_closed(&self) -> bool {
-        // SAFETY: `inner` is live while the owner's `Tty` is.
-        unsafe { (*self.raw()).flags.contains(Flags::DETACHED) }
-    }
-
     pub fn is_reading(&self) -> bool {
         // SAFETY: `inner` is live while the owner's `Tty` is.
         let inner = unsafe { &*self.raw() };

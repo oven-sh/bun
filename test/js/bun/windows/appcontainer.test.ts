@@ -341,7 +341,7 @@ main().then(
       expect(r.realpath).toEqual({ sync: "EPERM", native: "OK" });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
       // PipeServer::listen maps that to EADDRINUSE.
-      expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
+      expect(r.pipeNonLocal).toBe("EADDRINUSE");
       expect(r.pipeLocal).toBe("LISTENED");
       expect(r.forkIpc).toBe("OK");
       // No network capability + no loopback exemption: the probe records a

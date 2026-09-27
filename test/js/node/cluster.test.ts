@@ -305,7 +305,7 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("worker exit: 0");
 });
 
-test.skipIf(isWindows)("round-robin accepted sockets honor allowHalfOpen after the client's FIN", async () => {
+test("round-robin accepted sockets honor allowHalfOpen after the client's FIN", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -999,11 +999,9 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
 }, 30_000);
 
-test.skipIf(isWindows)(
-  "SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr",
-  async () => {
-    const dir = tempDirWithFiles("bun-test", {
-      "main.ts": `
+test("SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -1033,12 +1031,11 @@ if (cluster.isPrimary) {
   server.listen({ fd: 2 });
 }
 `,
-    });
-    const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-    expect(stdout).toContain("worker error code: EINVAL");
-    expect(stdout).toContain("stderr open: true");
-  },
-);
+  });
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("worker error code: EINVAL");
+  expect(stdout).toContain("stderr open: true");
+});
 
 test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
   using dir = tempDir("cluster-dgram-adopt-fail", {
@@ -1090,11 +1087,9 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)(
-  "round-robin: RST-while-queued handle is dropped, not shipped stale",
-  async () => {
-    using dir = tempDir("cluster-rst-queued", {
-      "main.ts": `
+test("round-robin: RST-while-queued handle is dropped, not shipped stale", async () => {
+  using dir = tempDir("cluster-rst-queued", {
+    "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
@@ -1129,20 +1124,18 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 test("round-robin worker closes a server.blockList peer silently, like node", async () => {
   using dir = tempDir("cluster-blocklist", {

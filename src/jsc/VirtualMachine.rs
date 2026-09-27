@@ -325,6 +325,7 @@ pub struct VirtualMachine {
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
+    pub(crate) fd_jobs: crate::JsCell<crate::job::FdJobs>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
@@ -3146,6 +3147,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).child_workers).write(Vec::new());
+            addr_of_mut!((*vm).fd_jobs).write(Default::default());
             addr_of_mut!((*vm).handle)
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
@@ -5388,6 +5390,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
+        drop(self.fd_jobs.take());
 
         self.overridden_main.deinit();
 

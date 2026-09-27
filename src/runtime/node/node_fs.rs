@@ -13,6 +13,7 @@ use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
+use bun_jsc::FdUse;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -404,24 +405,36 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
+        /// The file descriptor the operation is on, if it is on one.
+        fn fd_use(&self) -> Option<FdUse> {
+            None
+        }
+    }
+
+    fn uses_fd(file: &PathOrFileDescriptor<'_>) -> Option<FdUse> {
+        match file {
+            PathOrFileDescriptor::Fd(fd) => Some(FdUse::Uses(*fd)),
+            PathOrFileDescriptor::Path(_) => None,
+        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
-    /// already defines.
+    /// already defines. `=> fd_use` is the body of [`FsArgument::fd_use`].
     macro_rules! impl_fs_argument {
-    ( $( $ty:ty ),+ $(,)? ) => {
+    ( $( $ty:ty $( => |$this:ident| $fd_use:expr )? ),+ $(,)? ) => {
         $(
         // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
         // and rooted; the remaining fields are plain data.
         unsafe impl ThreadIsolatedArg for $ty {}
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            $( #[inline] fn fd_use(&self) -> Option<FdUse> { let $this = self; $fd_use } )?
         } )+
     };
 }
     impl_fs_argument!(
         args::Rename<'static>,
-        args::Truncate<'static>,
+        args::Truncate<'static> => |args| uses_fd(&args.path),
         args::Chown<'static>,
         args::Lutimes<'static>,
         args::Chmod<'static>,
@@ -444,17 +457,17 @@ mod _async_tasks {
         args::Cp<'static>,
     );
     impl_fs_argument!(
-        args::FdVectorIo,
-        args::FTruncate,
-        args::Write<'static>,
-        args::Read,
-        args::Fchown,
-        args::FChmod,
-        args::Fstat,
-        args::Futimes,
-        args::FdataSync,
-        args::Fsync,
-        args::Close,
+        args::FdVectorIo => |args| Some(FdUse::Uses(args.fd)),
+        args::FTruncate => |args| Some(FdUse::Uses(args.fd)),
+        args::Write<'static> => |args| Some(FdUse::Uses(args.fd)),
+        args::Read => |args| Some(FdUse::Uses(args.fd)),
+        args::Fchown => |args| Some(FdUse::Uses(args.fd)),
+        args::FChmod => |args| Some(FdUse::Uses(args.fd)),
+        args::Fstat => |args| Some(FdUse::Uses(args.fd)),
+        args::Futimes => |args| Some(FdUse::Uses(args.fd)),
+        args::FdataSync => |args| Some(FdUse::Uses(args.fd)),
+        args::Fsync => |args| Some(FdUse::Uses(args.fd)),
+        args::Close => |args| Some(FdUse::Closes(args.fd)),
     );
     // `ReadFile`/`WriteFile`/`AppendFile` carry an `AbortSignal` field: opt them in
     // so `signal()` exposes it to `AsyncFSTask::then`.
@@ -474,6 +487,10 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
+        #[inline]
+        fn fd_use(&self) -> Option<FdUse> {
+            uses_fd(&self.path)
+        }
     }
     impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
@@ -484,6 +501,10 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
+        }
+        #[inline]
+        fn fd_use(&self) -> Option<FdUse> {
+            uses_fd(&self.file)
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -496,6 +517,10 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.0.signal.as_deref()
+        }
+        #[inline]
+        fn fd_use(&self) -> Option<FdUse> {
+            uses_fd(&self.0.file)
         }
     }
     const _: () = assert!(<args::ReadFile<'static> as FsArgument>::HAVE_ABORT_SIGNAL);
@@ -741,6 +766,16 @@ mod _async_tasks {
         type OffThread = Self;
         type Js = AsyncFSJs;
 
+        /// A read of a pipe or a console lasts until there is something to
+        /// read, and whatever else is asked of that handle meanwhile waits
+        /// behind it.
+        #[cfg(windows)]
+        fn waits(this: &Self) -> bool {
+            this.args
+                .fd_use()
+                .is_some_and(|fd_use| !sys::windows::fs::is_disk_file(fd_use.fd()))
+        }
+
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
@@ -807,7 +842,8 @@ mod _async_tasks {
             tracker.did_schedule(cx.global());
             let completion = FsCompletion::new(cx.global(), callback);
             let value = completion.value();
-            bun_jsc::Job::<Self>::schedule(
+            let fd_use = args.fd_use();
+            bun_jsc::Job::<Self>::schedule_on_fd(
                 cx,
                 Self {
                     args,
@@ -819,6 +855,7 @@ mod _async_tasks {
                     completion,
                     tracker,
                 },
+                fd_use,
             );
             value
         }

@@ -95,7 +95,7 @@ pub(crate) fn do_send(
     call_frame: &CallFrame,
     from: FromEnum,
     // Windows: only a message that carries a handle asks who is on the other end.
-    peer_pid: impl FnOnce() -> u32,
+    peer_pid: &dyn Fn() -> u32,
 ) -> JsResult<JSValue> {
     let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
     #[cfg(not(windows))]
@@ -384,7 +384,7 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
     #[cfg(not(windows))]
     let peer_pid = || 0;
-    do_send(ipc, global, frame, FromEnum::Process, peer_pid)
+    do_send(ipc, global, frame, FromEnum::Process, &peer_pid)
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so

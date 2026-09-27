@@ -210,12 +210,11 @@ pub(crate) mod event_loop_delay_monitor;
 /// every `BackRef` in here points at a live timer.
 pub(crate) type IdMap<T> = ArrayHashMap<i32, BackRef<T, bun_ptr::Root>>;
 
-/// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
+/// i32 is exposed to JavaScript and can be used with clearTimeout and clearInterval.
 #[derive(Default)]
 pub(crate) struct Maps {
     pub(crate) set_timeout: IdMap<TimeoutObject>,
     pub(crate) set_interval: IdMap<TimeoutObject>,
-    pub(crate) set_immediate: IdMap<ImmediateObject>,
 }
 
 // ─── FakeTimers ──────────────────────────────────────────────────────────────

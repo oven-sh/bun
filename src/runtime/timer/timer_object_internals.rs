@@ -245,8 +245,9 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     /// The slot for the ref held while this timer is scheduled (see the
     /// struct field docs).
     fn heap_ref(&self) -> &SelfRef<Self>;
-    /// The `clearTimeout(id)` table a timer of `kind` registers in.
-    fn id_map(maps: &mut Maps, kind: Kind) -> &mut IdMap<Self>;
+    /// The `clearTimeout(id)` table a timer of `kind` registers in. `None` for
+    /// an `Immediate`: nothing looks one up by id.
+    fn id_map(maps: &mut Maps, kind: Kind) -> Option<&mut IdMap<Self>>;
 
     #[inline]
     fn timer_ref(&self) -> TimerRef {
@@ -648,7 +649,9 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
         // remove's O(n) shift + index rebuild here was O(n²) across a sweep.
         if self.internals().flags.get().has_accessed_primitive() {
             timer_all().maps.with_mut(|maps| {
-                let map = Self::id_map(maps, kind);
+                let Some(map) = Self::id_map(maps, kind) else {
+                    return;
+                };
                 if map.swap_remove(&id) {
                     // If this map got
                     // large, shrink it back down. Keys are i32, values are one
@@ -781,16 +784,19 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     }
 
     /// First access mints an `id → timer` entry in `All.maps` so
-    /// `clearTimeout(+t)` / `clearImmediate(+t)` (numeric-id form) can resolve
+    /// `clearTimeout(+t)` / `clearInterval(+t)` (numeric-id form) can resolve
     /// it. `Drop` removes the entry.
     fn to_primitive(this: ThisPtr<Self>) -> JsResult<JSValue> {
         let internals = this.internals();
         if !internals.flags.get().has_accessed_primitive() {
-            internals.update_flags(|f| f.set_has_accessed_primitive(true));
             let kind = internals.flags.get().kind();
-            timer_all()
-                .maps
-                .with_mut(|maps| Self::id_map(maps, kind).put(internals.id, BackRef::from(this)))?;
+            timer_all().maps.with_mut(|maps| {
+                let Some(map) = Self::id_map(maps, kind) else {
+                    return Ok(());
+                };
+                internals.update_flags(|f| f.set_has_accessed_primitive(true));
+                map.put(internals.id, BackRef::from(this))
+            })?;
         }
         Ok(JSValue::js_number(f64::from(internals.id)))
     }

@@ -24,11 +24,11 @@ impl TimerObject for TimeoutObject {
         &self.heap_ref
     }
     #[inline]
-    fn id_map(maps: &mut Maps, kind: Kind) -> &mut IdMap<Self> {
-        match kind {
+    fn id_map(maps: &mut Maps, kind: Kind) -> Option<&mut IdMap<Self>> {
+        Some(match kind {
             Kind::SetInterval => &mut maps.set_interval,
             _ => &mut maps.set_timeout,
-        }
+        })
     }
 }
 

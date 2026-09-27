@@ -25,8 +25,8 @@ impl TimerObject for ImmediateObject {
         &self.heap_ref
     }
     #[inline]
-    fn id_map(maps: &mut Maps, _kind: Kind) -> &mut IdMap<Self> {
-        &mut maps.set_immediate
+    fn id_map(_maps: &mut Maps, _kind: Kind) -> Option<&mut IdMap<Self>> {
+        None
     }
 }
 

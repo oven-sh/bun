@@ -50,6 +50,7 @@ extern "C" {
 
 // Allocates the thread object holding one ref for the caller, takes the keep-alive on the parent
 // event loop, and spawns the thread. Null (with errorMessage set) if nothing was started.
+// spawnFailed is set when the OS refused the thread (ERR_WORKER_INIT_FAILED in Node).
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
@@ -68,7 +69,8 @@ void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    bool* spawnFailed);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -145,6 +147,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     BunString errorMessage = BunStringEmpty;
     BunString name = Bun::toString(m_options.name);
     BunString url = Bun::toString(scriptURL);
+    bool spawnFailed = false;
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
@@ -163,12 +166,19 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        &spawnFailed);
     m_options.preloadModules.clear();
 
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
+        if (spawnFailed) {
+            auto* globalObject = defaultGlobalObject(m_scriptExecutionContext->jsGlobalObject());
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INIT_FAILED, errorMessage.transferToWTFString()));
+            return Exception { ExistingExceptionError };
+        }
         return Exception { TypeError, errorMessage.transferToWTFString() };
     }
     return {};

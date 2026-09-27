@@ -78,7 +78,7 @@ You need [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop D
 winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop" -s msstore
 ```
 
-Any terminal works. Where the build or the test runner uses Visual Studio, it finds the newest installed MSVC toolset and Windows SDK itself, so you do not need a developer shell.
+Any terminal works. A local WebKit build finds the newest installed MSVC toolset and Windows SDK itself, and node-gyp finds a Visual Studio it supports, so you do not need a developer shell.
 
 ## Building
 

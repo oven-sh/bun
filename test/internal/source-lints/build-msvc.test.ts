@@ -30,6 +30,7 @@ function toolset(version: string, libArch = arch, toolsHostArch = libArch): File
   return {
     [`${version}/include/vcruntime.h`]: "",
     [`${version}/lib/${libArch}/msvcrt.lib`]: "",
+    [`${version}/bin/Host${toolsHostArch}/${libArch}/cl.exe`]: "",
     [`${version}/bin/Host${toolsHostArch}/${libArch}/link.exe`]: "",
   };
 }
@@ -113,6 +114,15 @@ describe("findMsvc", () => {
     const { [`14.50.35717/lib/${arch}/msvcrt.lib`]: _libs, ...withoutLibs } = toolset("14.50.35717");
     using _ = machine(root => [
       visualStudio(root, "18", "18.0.0.0", [withoutLibs, toolset("14.44.35207")]),
+      sdk("10.0.26100.0"),
+    ]);
+    expect(findMsvc()).toMatchObject({ toolsVersion: "14.44.35207" });
+  });
+
+  test.each(["cl.exe", "link.exe"])("passes over a newer toolset that lacks %s", exe => {
+    const { [`14.50.35717/bin/Host${arch}/${arch}/${exe}`]: _exe, ...without } = toolset("14.50.35717");
+    using _ = machine(root => [
+      visualStudio(root, "18", "18.0.0.0", [without, toolset("14.44.35207")]),
       sdk("10.0.26100.0"),
     ]);
     expect(findMsvc()).toMatchObject({ toolsVersion: "14.44.35207" });

@@ -79,7 +79,7 @@ function findToolset(arch: MsvcArch): Omit<Msvc, "sdkDir" | "sdkVersion"> {
     const toolsDir = join(vsDir, "VC", "Tools", "MSVC", toolsVersion);
     const complete = ["include/vcruntime.h", `lib/${arch}/msvcrt.lib`].every(f => existsSync(join(toolsDir, f)));
     for (const toolsHostArch of complete ? ([arch, "x64"] as const) : []) {
-      if (existsSync(join(toolsDir, "bin", `Host${toolsHostArch}`, arch, "link.exe"))) {
+      if (["cl.exe", "link.exe"].every(exe => existsSync(join(toolsDir, "bin", `Host${toolsHostArch}`, arch, exe)))) {
         return { arch, toolsHostArch, vsDir, vsVersion, toolsDir, toolsVersion };
       }
     }

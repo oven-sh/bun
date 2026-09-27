@@ -3445,7 +3445,9 @@ async function main(): Promise<void> {
   }
 
   // Tests compile native addons (node-gyp) and C. Without Visual Studio those fail, and the rest still run.
-  if (isWindows) {
+  // Only in CI, whose images have one Visual Studio: VCINSTALLDIR holds node-gyp to the newest, and left alone it
+  // finds one it knows. The node-gyp the tests pin does not know Visual Studio 2026.
+  if (isWindows && isCI) {
     try {
       loadMsvcEnv();
     } catch (error) {

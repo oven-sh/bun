@@ -1251,28 +1251,20 @@ class BunWebSocketMocked extends EventEmitter {
     };
   }
 
+  // The ServerWebSocket built each payload as npm ws emits it: a Buffer, or for a binary frame
+  // the Buffer, ArrayBuffer or Blob that binaryType selects.
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", controlPayload(this.#binaryType, data));
+    this.emit("ping", data);
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", controlPayload(this.#binaryType, data));
+    this.emit("pong", data);
   }
 
-  #message(ws, message) {
+  #message(ws, message, isBinary) {
     this.#ws = ws;
-
-    let isBinary = false;
-    if (typeof message === "string") {
-      // binaryType selects the shape of a binary frame only.
-      message = Buffer.from(message);
-    } else {
-      // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
-      isBinary = true;
-    }
-
     this.emit("message", message, isBinary);
   }
 

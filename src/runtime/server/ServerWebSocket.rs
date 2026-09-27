@@ -514,7 +514,10 @@ impl ServerWebSocket {
 
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let node_http = self.handler().flags.contains(HandlerFlags::NODE_HTTP);
         let data = match opcode {
+            // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L634-L655
+            Opcode::Text if node_http => ArrayBuffer::create_buffer(global_object, message),
             Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
@@ -528,10 +531,15 @@ impl ServerWebSocket {
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
             data,
+            JSValue::js_boolean(matches!(opcode, Opcode::Binary)),
         ];
 
         let mut corker = Corker {
-            args: &arguments,
+            args: if node_http {
+                &arguments
+            } else {
+                &arguments[..2]
+            },
             global_object,
             this_value: JSValue::ZERO,
             callback: on_message_handler,
@@ -624,6 +632,16 @@ impl ServerWebSocket {
         }
     }
 
+    /// The payload of a ping or a pong. `binaryType` selects its shape, except for the
+    /// handlers of node:http.
+    fn control_to_js(&self, global_this: &JSGlobalObject, data: &[u8]) -> JsResult<JSValue> {
+        if self.handler().flags.contains(HandlerFlags::NODE_HTTP) {
+            // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L721
+            return ArrayBuffer::create_buffer(global_this, data);
+        }
+        self.binary_to_js(global_this, data)
+    }
+
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub(crate) fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
@@ -639,7 +657,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let data = self.binary_to_js(global_this, data)?;
+        let data = self.control_to_js(global_this, data)?;
         let args = [
             self.this_value
                 .get()
@@ -671,7 +689,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let data = self.binary_to_js(global_this, data)?;
+        let data = self.control_to_js(global_this, data)?;
         let args = [
             self.this_value
                 .get()

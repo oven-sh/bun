@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -50,29 +50,29 @@ const buffers = [
 
 const messages = [...strings, ...buffers] as const;
 
-// One rule for the client and the server socket of the shim. `type` is the shape of a binary
-// message. npm ws emits ping and pong payloads as a Buffer in every mode. The shim keeps that
-// where it can wrap the payload synchronously. A Blob cannot be wrapped, so "blob" applies to
-// ping and pong payloads too, as it does on the native sockets.
+// `type` is the shape of a binary message on both sockets of the shim. npm ws emits ping and
+// pong payloads as a Buffer in every mode, and so does the server socket. The client socket
+// wraps the payload of the native WebSocket. A Blob cannot be wrapped synchronously, so on the
+// client "blob" applies to ping and pong payloads too: `clientControlType`.
 const binaryTypes = [
   {
     label: "nodebuffer",
     type: Buffer,
-    controlType: Buffer,
+    clientControlType: Buffer,
   },
   {
     label: "arraybuffer",
     type: ArrayBuffer,
-    controlType: Buffer,
+    clientControlType: Buffer,
   },
   {
     label: "blob",
     type: Blob,
-    controlType: Blob,
+    clientControlType: Blob,
   },
 ] as const;
 
-// Names match `type.name` and `controlType.name` above. A plain Uint8Array, which is what
+// Names match `type.name` and `clientControlType.name` above. A plain Uint8Array, which is what
 // the server socket used to emit in "arraybuffer" mode, shows up as "[object Uint8Array]".
 function shapeOf(data: unknown): string {
   if (Buffer.isBuffer(data)) return "Buffer";
@@ -126,7 +126,7 @@ describe("WebSocket", () => {
         done();
       }
     });
-    for (const { label, type, controlType } of binaryTypes) {
+    for (const { label, type, clientControlType } of binaryTypes) {
       test(label, (ws, done) => {
         // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
         ws.binaryType = label as WebSocket["binaryType"];
@@ -141,8 +141,8 @@ describe("WebSocket", () => {
             expect(seen).toEqual({
               binaryType: label,
               message: type.name,
-              ping: controlType.name,
-              pong: controlType.name,
+              ping: clientControlType.name,
+              pong: clientControlType.name,
             });
             done();
           } catch (err) {
@@ -414,8 +414,8 @@ describe("WebSocketServer", () => {
     }
 
     it.each(binaryTypes)(
-      "$label: binary frames arrive as $type.name, ping and pong payloads as $controlType.name",
-      async ({ label, type, controlType }) => {
+      "$label: binary frames arrive as $type.name, ping and pong payloads as Buffer",
+      async ({ label, type }) => {
         const received = await receiveOnServer(
           ws => {
             // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
@@ -431,8 +431,8 @@ describe("WebSocketServer", () => {
         );
 
         expect(received).toEqual([
-          { event: "ping", shape: controlType.name, bytes: [4] },
-          { event: "pong", shape: controlType.name, bytes: [5] },
+          { event: "ping", shape: "Buffer", bytes: [4] },
+          { event: "pong", shape: "Buffer", bytes: [5] },
           { event: "message", shape: type.name, bytes: [1, 2, 3], isBinary: true },
           { event: "message", shape: type.name, bytes: [], isBinary: true },
         ]);
@@ -519,8 +519,8 @@ describe("WebSocketServer", () => {
       expect(binaryTypesSeen).toEqual(["nodebuffer", "arraybuffer"]);
       expect(received).toEqual([
         { event: "message", shape: "ArrayBuffer", bytes: [1], isBinary: true },
-        // the ping arrives after the change to "blob"
-        { event: "ping", shape: "Blob", bytes: [2] },
+        // the ping arrives after the change to "blob", which selects the shape of a message only
+        { event: "ping", shape: "Buffer", bytes: [2] },
         { event: "message", shape: "Blob", bytes: [3], isBinary: true },
         { event: "message", shape: "Buffer", bytes: [4], isBinary: true },
       ]);
@@ -1342,6 +1342,85 @@ describe.each([
       type: "close",
     });
   });
+});
+
+// Under --hot one native server serves every generation of the file. Handlers that node:http
+// gave get what npm ws emits. Handlers that Bun.serve gave get a string and two arguments,
+// also when the server was a node:http server before the edit.
+it("--hot reload from node:http to Bun.serve gives each message handler its own arguments", async () => {
+  using dir = tempDir("hot-ws-to-serve", {
+    "server.mjs": `
+      import { once } from "node:events";
+      import { readFileSync, writeFileSync } from "node:fs";
+      import { createServer } from "node:http";
+      import { WebSocketServer } from "ws";
+
+      globalThis.generation ??= 0;
+      const generation = globalThis.generation++;
+      const received = Promise.withResolvers();
+      const shapeOf = data =>
+        typeof data === "string" ? "string" : Buffer.isBuffer(data) ? "Buffer" : Object.prototype.toString.call(data);
+      let port;
+
+      if (generation < 2) {
+        const server = createServer();
+        const wss = new WebSocketServer({ server });
+        wss.on("connection", ws => {
+          ws.binaryType = "arraybuffer";
+          ws.on("message", (data, isBinary) => received.resolve({ handler: "ws", data: shapeOf(data), isBinary }));
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        port = server.address().port;
+      } else {
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(request, server) {
+            return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+          },
+          websocket: {
+            message(ws, data) {
+              received.resolve({ handler: "Bun.serve", data: shapeOf(data), arguments: arguments.length });
+            },
+          },
+        });
+        port = server.port;
+      }
+
+      globalThis.firstPort ??= port;
+      const client = new WebSocket("ws://127.0.0.1:" + port);
+      client.onopen = () => client.send("text");
+      console.log(JSON.stringify({ generation, samePort: port === globalThis.firstPort, ...(await received.promise) }));
+      client.close();
+
+      if (generation < 2) {
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        process.exit(0);
+      }
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(
+    stdout
+      .split(/\r?\n/)
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line)),
+  ).toEqual([
+    { generation: 0, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
+    { generation: 1, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
+    { generation: 2, samePort: true, handler: "Bun.serve", data: "string", arguments: 2 },
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/7896

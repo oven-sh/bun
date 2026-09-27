@@ -705,8 +705,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         open(ws) {
           ws.data.open(ws);
         },
-        message(ws, message) {
-          ws.data.message(ws, message);
+        message(ws, message, isBinary) {
+          ws.data.message(ws, message, isBinary);
         },
         close(ws, code, reason) {
           ws.data.close(ws, code, reason);

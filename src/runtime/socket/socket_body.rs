@@ -310,6 +310,8 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) owned_ssl_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
 
     pub(crate) flags: Cell<Flags>,
+    /// Errno of a fatal write that `on_close` hands to the `close` handler. 0 when none.
+    pub(crate) write_errno: Cell<u16>,
     pub(crate) ref_count: bun_ptr::RefCount<Self>,
     /// The callbacks this socket dispatches to: shared with its listener and
     /// sibling sockets (server), or with its own reconnects and TLS twin
@@ -920,6 +922,38 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
+    /// Closes on a fatal write errno: `error` gets it, or `close` does with no `error` handler.
+    #[cfg(not(windows))]
+    fn fail_write(
+        this: bun_ptr::ThisPtr<Self>,
+        handlers: &Rc<Handlers>,
+        errno: i32,
+    ) -> JsResult<()> {
+        log!("failWrite {}", errno);
+        let _guard = RefPtr::from_this(this);
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        if handlers.on_error().is_empty() {
+            this.write_errno
+                .set(u16::try_from(errno).unwrap_or(u16::MAX));
+        } else {
+            let global = handlers.global_object;
+            let this_value = this.get_this_value(&global);
+            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(errno, sys::Tag::write),
+                &global,
+            );
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
+        }
+        // Closed without detaching: `on_close` runs, so JS observes `close`.
+        if !this.socket.get().is_detached() {
+            this.socket.get().close(uws::CloseCode::Normal);
+        }
+        Ok(())
+    }
+
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
     /// JS which can call `socket.write()`/`end()`/`reload()` on this same
     /// wrapper via the JS object's `m_ptr`, re-deriving a borrow and mutating
@@ -967,28 +1001,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // longer re-armed, so this dispatch is the last place the errno is
         // visible - swallowing it here acknowledged the bytes to JS, sent a
         // clean FIN, and the peer saw a silently truncated stream. Deliver it
-        // like a failed write (syscall "write", same shape as net.ts
-        // failWrite) and close the socket so 'error' is followed by 'close'.
+        // like a failed write (syscall "write") and close the socket: see `fail_write`.
         #[cfg(not(windows))]
         if fatal_send_errno != 0 {
-            let global = handlers.global_object;
-            let _scope = ScopeExit {
-                socket: this,
-                scope: Some(handlers.enter()),
-            };
-            let this_value = this.get_this_value(&global);
-            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
-                &global,
-            );
-            handlers.call_error_handler(this_value, &[this_value, err_value])?;
-            // The error handler can destroy the socket itself; only close a
-            // still-attached socket. Close without detaching so on_close runs
-            // and JS observes 'close' (mirrors h2's dead-transport close).
-            if !this.socket.get().is_detached() {
-                this.socket.get().close(uws::CloseCode::Normal);
-            }
-            return Ok(());
+            return Self::fail_write(this, &handlers, fatal_send_errno);
         }
         #[cfg(windows)]
         let _ = fatal_send_errno;
@@ -2185,6 +2201,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
+        let write_errno = this.write_errno.replace(0);
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2274,6 +2291,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if err > 2 {
             js_error =
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
+        } else if write_errno != 0 {
+            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(i32::from(write_errno), sys::Tag::write),
+                &global,
+            );
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
@@ -3144,8 +3166,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
     /// a fatal send error (buffer dropped, writable not re-armed).
-    /// On POSIX, `on_writable` consumes the errno: it dispatches the error
-    /// handler and closes the socket. On Windows the errno is still ignored
+    /// On POSIX, `on_writable` passes it to `fail_write`. On Windows the errno is still ignored
     /// (the drain callback is dispatched regardless) - skipping the drain on
     /// fatal made Windows servers reset FIN-terminated responses (see
     /// a5e7ba5905) - until the Windows fatal-write detection is verified.
@@ -3668,6 +3689,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
             flags: Cell::new(initial_flags),
+            write_errno: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3793,6 +3815,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
             flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            write_errno: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -4850,6 +4873,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
         flags: Cell::new(initial_flags),
+        write_errno: Cell::new(0),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

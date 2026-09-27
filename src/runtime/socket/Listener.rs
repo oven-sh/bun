@@ -628,6 +628,7 @@ impl Listener {
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
             flags: Cell::new(listener.accepted_socket_flags()),
+            write_errno: Cell::new(0),
             owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -675,6 +676,7 @@ impl Listener {
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
             // the listener's slice; one small allocation per accept.
             flags: Cell::new(listener.accepted_socket_flags()),
+            write_errno: Cell::new(0),
             owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -1288,6 +1290,7 @@ impl Listener {
                             ),
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
+                            write_errno: Cell::new(0),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1382,6 +1385,7 @@ impl Listener {
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
+                            write_errno: Cell::new(0),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1627,6 +1631,7 @@ fn connect_finish<const IS_SSL: bool>(
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: JsCell::new(owned_ssl_ctx),
             flags: Cell::new(SocketFlags::default()),
+            write_errno: Cell::new(0),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),

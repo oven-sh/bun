@@ -23,7 +23,7 @@
 //                 --macos-stub-dir the packed file has no macOS stub and its
 //                 shell header says so on macOS.
 //   macos check   ../host/host_posix.c compiled to a Mach-O object with the musl
-//                 headers of the sysroot and test/mac_shim.h in place of the
+//                 headers of the sysroot and ../host/mac_declarations.h in place of the
 //                 Apple SDK. A compile check, nothing is linked or run.
 //   image         <images>/<arch>/threads.img from misctools/portable/build.ts, and
 //                 <out>/<arch>/bigbss.img, built here from test/bigbss.c.
@@ -178,7 +178,7 @@ export function buildBigBssImage(arch: Arch, out: string, images: string): strin
 /**
  * The macOS branches of ../host/host_posix.c, compiled to a Mach-O object for the
  * architecture of the image. There is no Apple SDK on this machine, so the
- * musl headers of the sysroot and test/mac_shim.h stand in for it and nothing
+ * musl headers of the sysroot and ../host/mac_declarations.h stand in for it and nothing
  * is linked. A real macOS stub is an input file built on a Mac.
  */
 export function buildMacObject(arch: Arch, out: string, images: string): string {
@@ -200,7 +200,7 @@ export function buildMacObject(arch: Arch, out: string, images: string): string 
       "-isystem",
       `${sysroot.resourceDir}/include`,
       "-include",
-      `${here}/test/mac_shim.h`,
+      `${HOSTS}/mac_declarations.h`,
       "-c",
       "-o",
       o,

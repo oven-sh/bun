@@ -1,8 +1,11 @@
 // Compiles the hosts of the portable image for the systems that the machine that builds the image
 // cannot run, as far as it has what that takes. Nothing is run.
 //
-//   bun check.ts      after ../build.ts x86_64 and ../build.ts aarch64 (the headers of musl), and
-//                     ../tools/windows-sdk.ts. WORK as in ../slice/build.ts.
+//   bun check.ts [--out <dir>] [--out-aarch64 <dir>]
+//                     after "../build.ts test-image" for x86_64 and for aarch64 (the headers of musl),
+//                     and ../tools/windows-sdk.ts. --out and --out-aarch64 are the output directories
+//                     of build.ts for the two architectures (default: build/portable/<arch> in the
+//                     repository). The headers and libraries of Windows are in $SDK, or <out>/winsdk.
 //
 //   Windows x64       ../loop/check-windows.ts compiles and links host_win.c with libuv
 //   Windows arm64     host_win.c is compiled against the headers of the Windows SDK, not linked (the
@@ -17,12 +20,22 @@
 // Exit code 1 if a check fails.
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { REPOSITORY, llvmBin } from "../flags.ts";
 
 const here = dirname(import.meta.path);
-const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
-const llvm = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
-const sdk = resolve(process.env.SDK ?? join(work, "winsdk"));
-const out = join(work, "hostcheck");
+const args = process.argv.slice(2);
+const option = (name: string, fallback: string) => {
+  const at = args.indexOf(name);
+  if (at >= 0 && args[at + 1] === undefined) throw new Error(`${name} needs a directory`);
+  return resolve(at >= 0 ? args[at + 1] : fallback);
+};
+const outputs = {
+  x86_64: option("--out", join(REPOSITORY, "build", "portable", "x86_64")),
+  aarch64: option("--out-aarch64", join(REPOSITORY, "build", "portable", "aarch64")),
+};
+const llvm = llvmBin();
+const sdk = resolve(process.env.SDK ?? join(outputs.x86_64, "winsdk"));
+const out = join(outputs.x86_64, "hostcheck");
 mkdirSync(out, { recursive: true });
 const warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter"];
 
@@ -55,10 +68,11 @@ function usesOfX18(object: string, allowed?: RegExp) {
   });
 }
 for (const [apple, arch, sysroot] of [
-  ["arm64", "aarch64", join(work, "musl-aarch64/sysroot")],
-  ["x86_64", "x86_64", join(work, "musl/sysroot")],
+  ["arm64", "aarch64", join(outputs.aarch64, "sysroot/usr")],
+  ["x86_64", "x86_64", join(outputs.x86_64, "sysroot/usr")],
 ]) {
-  if (!existsSync(join(sysroot, "include/pthread.h"))) throw new Error(`${sysroot} is not there: ../build.ts ${arch} makes it`);
+  if (!existsSync(join(sysroot, "include/pthread.h")))
+    throw new Error(`${sysroot} is not there: "../build.ts test-image --arch ${arch}" makes it`);
   const resource = run([`${llvm}/clang`, "-print-resource-dir"]).stdout.trim();
   const object = join(out, `host_posix.${apple}.o`);
   const compiled = run([

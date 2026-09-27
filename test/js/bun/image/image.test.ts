@@ -404,8 +404,21 @@ describe("Bun.Image", () => {
       // refused and the decode path has to produce the answer.
       const odd = makePng(33, 17, (x, y) => [(x * 7) & 255, (y * 15) & 255, 0, 255]);
       const jpeg = await new Bun.Image(odd).jpeg().bytes();
-      const meta = await new Bun.Image(await new Bun.Image(jpeg).rotate(90).bytes()).metadata();
+      const out = await new Bun.Image(jpeg).rotate(90).bytes();
+      const meta = await new Bun.Image(out).metadata();
       expect({ format: meta.format, w: meta.width, h: meta.height }).toEqual({ format: "jpeg", w: 17, h: 33 });
+
+      // Dimensions alone would pass on a fallback that produced the right
+      // shape and the wrong picture, so compare every pixel against the
+      // resampling path. Both ramps are monotonic across 33 and 17 px, so
+      // there is no wrap for the DCT to ring against and the one extra
+      // generation costs 6/255 at worst — measured mean is 1.3.
+      const viaPng = decodePngRaw(await new Bun.Image(jpeg).rotate(90).png().bytes());
+      const viaJpeg = decodePngRaw(await new Bun.Image(out).png().bytes());
+      expect({ w: viaJpeg.w, h: viaJpeg.h }).toEqual({ w: viaPng.w, h: viaPng.h });
+      let over = 0;
+      for (let i = 0; i < viaPng.data.length; i++) if (Math.abs(viaPng.data[i] - viaJpeg.data[i]) > 16) over++;
+      expect(over).toBe(0);
     });
 
     test(".jpeg() options keep the re-encode", async () => {
@@ -475,6 +488,13 @@ describe("Bun.Image", () => {
       const jpeg = withExifOrientation(await new Bun.Image(quadrantsPng).jpeg().bytes(), 6);
       expect(await new Bun.Image(jpeg).metadata()).toEqual({ width: 32, height: 64, format: "jpeg" });
       const out = await new Bun.Image(jpeg).bytes();
+      // The dimension checks below would also pass on an output that kept an
+      // APP1 whose Orientation had been reset, so look for the segment
+      // itself. The source is the control: it must contain what the output
+      // must not.
+      const exifSig = Buffer.from("Exif\0\0", "binary");
+      expect(Buffer.from(jpeg).includes(exifSig)).toBe(true);
+      expect(Buffer.from(out).includes(exifSig)).toBe(false);
       expect(await new Bun.Image(out).metadata()).toEqual({ width: 32, height: 64, format: "jpeg" });
       expect(await new Bun.Image(out, { autoOrient: false }).metadata()).toEqual({
         width: 32,

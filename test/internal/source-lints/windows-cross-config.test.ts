@@ -11,7 +11,7 @@
  * native toolchain instead.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -32,6 +32,7 @@ import {
   whileHeld,
   windowsSysrootCachePath,
 } from "../../../scripts/build/winsysroot.ts";
+import { isCI } from "../../../scripts/buildkite.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -202,7 +203,8 @@ describe("Microsoft's licenses", () => {
   /** What `ensureWindowsSysroot` says to a person's build that has `cacheDir` and has not accepted anything. */
   const ensure = (cacheDir: string): Promise<unknown> =>
     ensureWindowsSysroot({
-      ...resolveWindowsCross({ ci: false }),
+      // Said, not left to the default: these tests run in CI too, where the default would go and fetch.
+      ...resolveWindowsCross({ ci: false, acceptMicrosoftLicenses: false }),
       cacheDir,
       winsysroot: windowsSysrootCachePath(cacheDir),
     }).then(
@@ -210,11 +212,13 @@ describe("Microsoft's licenses", () => {
       error => error,
     );
 
-  test("only CI accepts them without being told to", () => {
-    expect(resolveWindowsCross({ ci: false }).acceptMicrosoftLicenses).toBe(false);
-    expect(resolveWindowsCross({ ci: false, acceptMicrosoftLicenses: true }).acceptMicrosoftLicenses).toBe(true);
-    expect(resolveWindowsCross({ ci: true }).acceptMicrosoftLicenses).toBe(true);
-    expect(resolveWindowsCross({ ci: false, buildkite: true }).acceptMicrosoftLicenses).toBe(true);
+  test("only a build that runs in CI accepts them without being told to, whatever its flags say", () => {
+    // `bun run build:ci` passes --ci=on --buildkite=on on a person's machine.
+    for (const flags of [{ ci: false }, { ci: true }, { ci: true, buildkite: true }, { ci: false, buildkite: true }]) {
+      expect(resolveWindowsCross(flags).acceptMicrosoftLicenses).toBe(isCI);
+      expect(resolveWindowsCross({ ...flags, acceptMicrosoftLicenses: true }).acceptMicrosoftLicenses).toBe(true);
+      expect(resolveWindowsCross({ ...flags, acceptMicrosoftLicenses: false }).acceptMicrosoftLicenses).toBe(false);
+    }
   });
 
   test("an empty cache fails the build, naming both and the flag, with nothing fetched", async () => {
@@ -342,7 +346,8 @@ describe("the directory a fetch is staged in", () => {
   });
 
   test("replaces what interrupted fetches left, and leaves alone a fetch that is running", () => {
-    const gone = Bun.spawnSync({ cmd: [bunExe(), "-e", ""], env: bunEnv }).pid;
+    // No process has it or will: one that has just exited may have given its own to another already.
+    const gone = 2 ** 31 - 4;
     using dir = tempDir("staging", {
       [`dest.staging-${gone}/dl/package`]: "",
       [`dest.staging-${process.ppid}/dl/package`]: "",

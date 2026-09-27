@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isCI } from "../buildkite.ts";
 import { locations, pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
@@ -1357,7 +1358,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossTarget,
     sysroot,
     winsysroot,
-    acceptMicrosoftLicenses: partial.acceptMicrosoftLicenses ?? (ci || buildkite),
+    // Where the build runs, not `ci`: that is a flag, and `bun run build:ci` is a person passing it.
+    acceptMicrosoftLicenses: partial.acceptMicrosoftLicenses ?? isCI,
     androidNdkRuntimeDir,
     version,
     revision,

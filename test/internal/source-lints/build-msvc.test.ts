@@ -4,7 +4,7 @@
  * at a temporary directory is a whole machine, on any platform.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
@@ -225,7 +225,7 @@ describe("findMsvc", () => {
   });
 
   // On Windows the registry names the machine's real SDK once the usual directory has none.
-  test.skipIf(process.platform === "win32")("says the SDK is missing", () => {
+  test.skipIf(isWindows)("says the SDK is missing", () => {
     using _ = machine(root => [visualStudio(root, "18", "18.0.0.0", [toolset("14.50.35717")])]);
     expect(findError().message).toBe(`No installed Windows SDK has the ${arch} headers and libraries`);
   });

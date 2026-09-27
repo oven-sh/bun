@@ -39,6 +39,12 @@
 // numbers of local labels (inside a symbol they are named by their order). The flags are the ones of
 // bun's release build (scripts/build/rust.ts) without link-time optimisation, which leaves no machine
 // code in a crate, and without debug information, whose line numbers move with every edit.
+//
+// The number of a line. `line!()` is a number in the code: bun's macros that report where they are
+// (todo_panic!, the log of a binding) pass it on. A file that has more lines than it had gives every such
+// macro behind them another number, and that is a difference. It is counted like every other one, and it
+// is named: a difference is "the number of a line" when the two sides are the same but for one number
+// each, and the two numbers are the same line of the same source file in the two trees.
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -231,7 +237,16 @@ function normalized(parsed: Parsed, format: Format) {
 interface Comparison {
   symbols_in_both: number;
   same: number;
-  different: { name: string; lines_before: number; lines_after: number; same_lines_in_another_order: boolean }[];
+  different: {
+    name: string;
+    lines_before: number;
+    lines_after: number;
+    same_lines_in_another_order: boolean;
+    /** The lines that differ have one other number each, and nothing else: the numbers, before and after. */
+    numbers?: [number, number][];
+    /** The source file in which each pair of numbers is the same line, when the trees are known. */
+    line_numbers_of?: string;
+  }[];
   only_before: string[];
   only_after: string[];
   order_is_the_same: boolean;
@@ -285,6 +300,7 @@ function compareFiles(
         lines_before: lines.length,
         lines_after: other.length,
         same_lines_in_another_order: sorted(lines) === sorted(other),
+        numbers: otherNumbers(lines, other),
       });
     if (show && name.includes(show)) {
       console.log(
@@ -296,6 +312,45 @@ function compareFiles(
     }
   }
   return result;
+}
+
+/** The pairs of numbers in which two lists of lines differ, when they differ in nothing else. */
+function otherNumbers(before: string[], after: string[]): [number, number][] | undefined {
+  if (before.length !== after.length) return undefined;
+  const number = /(?<![A-Za-z_.$0-9])\d+(?![A-Za-z_.0-9])/g;
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] === after[i]) continue;
+    if (before[i].replace(number, "N") !== after[i].replace(number, "N")) return undefined;
+    const x = before[i].match(number) ?? [];
+    const y = after[i].match(number) ?? [];
+    const changed = x
+      .map((value, at) => [Number(value), Number(y[at])] as [number, number])
+      .filter(([a, b]) => a !== b);
+    if (changed.length !== 1) return undefined;
+    pairs.push(changed[0]);
+  }
+  return pairs.length ? pairs : undefined;
+}
+
+/** The file, of a list, in which line `before` of the base is line `after` of the branch. */
+function sameLineOf(base: string, branch: string, files: string[], pairs: [number, number][]): string | undefined {
+  for (const file of files) {
+    let a: string[];
+    let b: string[];
+    try {
+      a = readFileSync(join(base, file), "utf8").split("\n");
+      b = readFileSync(join(branch, file), "utf8").split("\n");
+    } catch {
+      continue;
+    }
+    const holds = pairs.every(([before, after]) => {
+      const line = a[before - 1]?.trim();
+      return line !== undefined && line !== "" && line === b[after - 1]?.trim();
+    });
+    if (holds) return file;
+  }
+  return undefined;
 }
 
 function differs(comparison: Comparison) {
@@ -360,7 +415,9 @@ function git(tree: string, args: string[]) {
 
 /** bun's release build for the target (scripts/build/rust.ts), without the flags of link-time optimisation. */
 function releaseFlags(target: string, portable = false) {
-  const flags: string[] = portable ? ["--cfg=bun_portable", "--cfg=rustix_use_libc", "--check-cfg=cfg(rustix_use_libc)"] : [];
+  const flags: string[] = portable
+    ? ["--cfg=bun_portable", "--cfg=rustix_use_libc", "--check-cfg=cfg(rustix_use_libc)"]
+    : [];
   const linux = target.includes("linux") && !target.includes("android");
   if (linux || target.includes("freebsd")) flags.push("-Crelocation-model=static");
   flags.push(
@@ -552,6 +609,10 @@ async function compareTrees(options: Record<string, string>) {
     crates = [...touched].sort();
   }
 
+  const changedFiles = [
+    ...git(branch, ["diff", "--name-only", baseCommit]).split("\n"),
+    ...git(branch, ["ls-files", "--others", "--exclude-standard"]).split("\n"),
+  ].filter(file => file.endsWith(".rs"));
   const graph = metadata(branch, target, true);
   const idOf = new Map(graph.packages.map(p => [p.id, p.name]));
   const members = new Set(graph.workspace_members.map(id => idOf.get(id)!));
@@ -653,6 +714,7 @@ async function compareTrees(options: Record<string, string>) {
       const results: Record<string, unknown> = {};
       let symbols = 0;
       let different = 0;
+      let lineNumbers = 0;
       for (const name of compared) {
         const a = before.get(name),
           b = after.get(name);
@@ -662,6 +724,9 @@ async function compareTrees(options: Record<string, string>) {
           continue;
         }
         const comparison = compareFiles(a.path, b.path, target, options.show);
+        for (const symbol of comparison.different)
+          if (symbol.numbers) symbol.line_numbers_of = sameLineOf(base, branch, changedFiles, symbol.numbers);
+        lineNumbers += comparison.different.filter(symbol => symbol.line_numbers_of !== undefined).length;
         symbols += comparison.symbols_in_both;
         different += comparison.different.length + comparison.only_before.length + comparison.only_after.length;
         if (differs(comparison)) failed = true;
@@ -669,11 +734,13 @@ async function compareTrees(options: Record<string, string>) {
       }
       report.symbols_compared = symbols;
       report.different = different;
+      report.different_in_the_number_of_a_line_only = lineNumbers;
       report.results = results;
     }
   } else {
     const results: Record<string, unknown> = {};
     let different = 0;
+    let linesOnly = 0;
     for (const assertions of ["false", "true"]) {
       for (const name of compared) {
         const texts: string[] = [];
@@ -739,11 +806,45 @@ async function compareTrees(options: Record<string, string>) {
           failed = true;
           const diff = Bun.spawnSync(["diff", "-U2", texts[0], texts[1]], { stdout: "pipe" }).stdout.toString();
           writeFileSync(diffPath, diff);
-          results[key] = { differs: diffPath, lines_of_the_diff: diff.split("\n").length };
+          // Each place that differs: the number of a line, or something else.
+          const places = Bun.spawnSync(["diff", texts[0], texts[1]], { stdout: "pipe", maxBuffer: 1 << 30 })
+            .stdout.toString()
+            .split("\n");
+          let ofLines = 0;
+          const others: string[] = [];
+          for (let at = 0; at < places.length; at++) {
+            if (!/^\d/.test(places[at])) continue;
+            const removed: string[] = [];
+            const added: string[] = [];
+            for (at++; at < places.length && !/^\d/.test(places[at]); at++) {
+              if (places[at].startsWith("< ")) removed.push(places[at].slice(2));
+              else if (places[at].startsWith("> ")) added.push(places[at].slice(2));
+            }
+            at--;
+            const pairs = otherNumbers(removed, added);
+            const named = removed.flatMap(line =>
+              [...line.matchAll(/"((?:src|packages)\/[^"]+\.rs)"/g)].map(match => match[1]),
+            );
+            if (
+              pairs !== undefined &&
+              sameLineOf(base, branch, named.length ? named : changedFiles, pairs) !== undefined
+            )
+              ofLines += pairs.length;
+            else others.push((removed[0] ?? added[0] ?? "").slice(0, 200));
+          }
+          linesOnly += others.length === 0 ? 1 : 0;
+          results[key] = {
+            differs: diffPath,
+            lines_of_the_diff: diff.split("\n").length,
+            places_that_are_the_number_of_a_line: ofLines,
+            other_places: others.length,
+            first_other_places: others.slice(0, 5),
+          };
         }
       }
     }
     report.different = different;
+    report.different_in_the_number_of_a_line_only = linesOnly;
     report.results = results;
   }
 
@@ -791,8 +892,13 @@ for (let i = 0; i < argv.length; i++) {
 if (options.base && options.mode === "all") {
   let worst = 0;
   for (const mode of ["expanded", "asm"]) {
-    const forwarded = argv.flatMap((argument, index) => (argument === "--mode" || argv[index - 1] === "--mode" ? [] : [argument]));
-    const result = Bun.spawnSync(["bun", import.meta.path, ...forwarded, "--mode", mode], { stdout: "inherit", stderr: "inherit" });
+    const forwarded = argv.flatMap((argument, index) =>
+      argument === "--mode" || argv[index - 1] === "--mode" ? [] : [argument],
+    );
+    const result = Bun.spawnSync(["bun", import.meta.path, ...forwarded, "--mode", mode], {
+      stdout: "inherit",
+      stderr: "inherit",
+    });
     worst = Math.max(worst, result.exitCode ?? 2);
   }
   process.exit(worst);

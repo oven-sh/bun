@@ -2,6 +2,7 @@
 use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
+use crate::parser::Runtime::ReplaceableExport;
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
@@ -265,6 +266,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// Puts the export of `entry` in the place of `alias`, a name that a re-export exports and the module does not bind.
+    #[cold]
+    #[inline(never)]
+    fn replace_reexport(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        alias: &'a [u8],
+        entry: &ReplaceableExport,
+    ) {
+        let exported_name: &[u8] = match entry {
+            ReplaceableExport::Inject { name, .. } => name,
+            ReplaceableExport::Replace(_) | ReplaceableExport::Delete => alias,
+        };
+        match entry {
+            ReplaceableExport::Replace(value) | ReplaceableExport::Inject { value, .. }
+                if exported_name == js_ast::ClauseItem::DEFAULT_ALIAS =>
+            {
+                let mut export_default = p.s(
+                    S::ExportDefault {
+                        default_name: js_ast::LocRef::default(),
+                        value: js_ast::StmtOrExpr::Expr(*value),
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                p.visit_and_append_stmt(stmts, &mut export_default)
+                    .expect("unreachable");
+            }
+            ReplaceableExport::Replace(_) => {
+                let declared = p
+                    .declare_symbol(js_ast::symbol::Kind::Other, bun_ast::Loc::EMPTY, alias)
+                    .expect("unreachable");
+                let _ = p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, entry);
+            }
+            ReplaceableExport::Delete | ReplaceableExport::Inject { .. } => {
+                let _ = p.inject_replacement_export(stmts, Ref::NONE, bun_ast::Loc::EMPTY, entry);
+            }
+        }
+    }
+
     fn s_export_from(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
@@ -289,8 +329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    let _ =
-                        p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
+                    Self::replace_reexport(p, stmts, alias, &entry);
                     continue;
                 }
 
@@ -345,15 +384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .get_ptr(alias_name)
                     .cloned()
                 {
-                    let declared = p
-                        .declare_symbol(
-                            js_ast::symbol::Kind::Other,
-                            bun_ast::Loc::EMPTY,
-                            alias_name,
-                        )
-                        .expect("unreachable");
-                    let _ =
-                        p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, &entry);
+                    Self::replace_reexport(p, stmts, alias_name, &entry);
                     return Ok(());
                 }
             }

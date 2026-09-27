@@ -1398,7 +1398,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     sqlite3_int64 length = -1;
-    unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
+    unsigned char* data = sqlite3_serialize(db, attachedName.utf8().legacyCStringPointer(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
         return {};
@@ -1450,10 +1450,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     RETURN_IF_EXCEPTION(scope, {});
     auto entryPointUtf8 = entryPointStr.utf8();
-    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
+    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.legacyCStringPointer();
     auto extensionStringUtf8 = extensionString.utf8();
     char* error;
-    int rc = sqlite3_load_extension(db, extensionStringUtf8.data(), entryPoint, &error);
+    int rc = sqlite3_load_extension(db, extensionStringUtf8.legacyCStringPointer(), entryPoint, &error);
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
@@ -1824,7 +1824,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     JSValue finalizationTarget = callFrame->argument(2);
 
     sqlite3* db = nullptr;
-    int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);
+    int statusCode = sqlite3_open_v2(path.utf8().legacyCStringPointer(), &db, openFlags, nullptr);
 
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));

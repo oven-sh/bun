@@ -206,10 +206,10 @@ public:
                 return;
             }
         }
-        // Non-ASCII path: transcode. The CString has its own NUL terminator
-        // at data()[length()], so length()+1 covers the frame delimiter.
+        // Non-ASCII path: transcode. The NUL terminator is the frame delimiter.
         auto utf8 = m_sb.toString().utf8();
-        sink(utf8.data(), utf8.length() + 1);
+        auto bytes = byteCast<char>(utf8.spanIncludingNullTerminator());
+        sink(bytes.data(), bytes.size());
     }
 
 private:

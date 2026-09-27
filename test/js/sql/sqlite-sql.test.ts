@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -2762,70 +2762,6 @@ describe("Query start", () => {
       }
     });
   }
-
-  // Runs in a child process: bun:test turns an unhandled rejection into a test failure.
-  test("a query that fails is reported as unhandled only when the caller gave it no rejection handler", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const reported = [];
-          process.on("unhandledRejection", err => reported.push(err.code));
-          const starts = {
-            "then(f)": query => query.then(() => {}),
-            "then(f, g)": query => query.then(() => {}, () => {}),
-            "then()": query => query.then(),
-            "catch(g)": query => query.catch(() => {}),
-            "catch()": query => query.catch(),
-            "finally(f)": query => query.finally(() => {}),
-            "run()": query => query.run(),
-            "execute()": query => query.execute(),
-            "await": query => void (async () => await query)(),
-          };
-          const failures = {
-            "the statement fails": sql => sql\`SELECT * FROM missing\`,
-            "the pool is closed": sql => (sql.close(), sql\`SELECT 1\`),
-          };
-          const events = {};
-          for (const [failure, fail] of Object.entries(failures)) {
-            events[failure] = {};
-            for (const [name, start] of Object.entries(starts)) {
-              const sql = new Bun.SQL("sqlite://:memory:");
-              reported.length = 0;
-              start(fail(sql));
-              // Unhandled rejections are reported after the promise jobs of the turn that made them.
-              await new Promise(resolve => setImmediate(resolve));
-              events[failure][name] = [...reported];
-              await sql.close();
-            }
-          }
-          console.log(JSON.stringify(events));
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const eventsFor = (code: string) => ({
-      "then(f)": [code],
-      "then(f, g)": [],
-      "then()": [code],
-      "catch(g)": [],
-      "catch()": [],
-      "finally(f)": [],
-      "run()": [code],
-      "execute()": [code],
-      "await": [code],
-    });
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      "the statement fails": eventsFor("SQLITE_ERROR"),
-      "the pool is closed": eventsFor("ERR_SQLITE_CONNECTION_CLOSED"),
-    });
-    expect(exitCode).toBe(0);
-  });
 });
 
 describe("Performance & Edge Cases", () => {

@@ -971,6 +971,16 @@ pub(crate) mod js_bundler {
                                     "Cannot use compile.include with target 'browser'"
                                 )));
                             }
+                            // Without an explicit entry point, the first expanded include
+                            // below would become `entry_points`' only member —
+                            // `StandaloneModuleGraph` runs the first `EntryPoint`-kind
+                            // output at startup, so an included module (meant to stay
+                            // lazy until a runtime `import()`) would run immediately.
+                            if this.entry_points.count() == 0 {
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "compile.include requires at least one entrypoint"
+                                )));
+                            }
                             match crate::cli::build_command::expand_compile_includes(&patterns) {
                                 Ok(extra) => {
                                     for path in extra.iter() {

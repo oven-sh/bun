@@ -2395,6 +2395,7 @@ fn path_template_print_drops_the_dot_before_an_empty_ext() {
     assert_eq!(run(b"[name]-[hash].[ext]", b""), b"N-00000000");
     assert_eq!(run(b"[dir]/[name].[ext]", b""), b"D/N");
     assert_eq!(run(b"[name].[hash].asset.[ext]", b""), b"N.00000000.asset");
+    assert_eq!(run(b"[name].[ext].gz", b""), b"N.gz");
     // Only a `.` that touches `[ext]` goes; other separators and a non-empty ext are untouched.
     assert_eq!(run(b"[name]-[ext]", b""), b"N-");
     assert_eq!(run(b"[ext]/[name]", b""), b"/N");

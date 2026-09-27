@@ -758,6 +758,24 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // https://github.com/oven-sh/bun/issues/44096
+  // One asset template names a file with an extension and a file without one.
+  itBundled("compile/AssetNamingDirNoExtension", {
+    compile: true,
+    assetNaming: "[dir]/[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import buildId from "./data/BUILD_ID" with { type: "file" };
+        import json from "./data/x.json" with { type: "file" };
+        console.log(JSON.stringify(Bun.embeddedFiles.map(f => f.name).sort()));
+        console.log(await Bun.file(buildId).text(), await Bun.file(json).text());
+      `,
+      "/data/BUILD_ID": "hi",
+      "/data/x.json": "{}",
+    },
+    outfile: "dist/out",
+    run: { stdout: '["data/BUILD_ID","data/x.json"]\nhi {}' },
+  });
   itBundled("compile/EmbeddedFileNamesPerThread", {
     compile: true,
     assetNaming: "[name].[ext]",

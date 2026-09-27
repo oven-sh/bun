@@ -171,5 +171,18 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let [prev, opts] = frame.arguments_as_array::<2>();
     let maybe_tcp = prev.as_::<TCPSocket>();
     let maybe_tls = prev.as_::<TLSSocket>();
-    Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
+    Listener::connect_inner(
+        global,
+        maybe_tcp,
+        maybe_tls,
+        opts,
+        crate::socket::HandlersOwner::NodeNet,
+    )
+}
+
+/// `Bun.listen` for the servers of `node:net`, as `do_connect` is its `Bun.connect`.
+#[bun_jsc::host_fn]
+pub(crate) fn do_listen(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [opts] = frame.arguments_as_array::<1>();
+    Listener::listen_inner(global, opts, crate::socket::HandlersOwner::NodeNet)
 }

@@ -82,7 +82,7 @@ pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tl
 // submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
-pub use handlers::{Handlers, SocketConfig};
+pub use handlers::{Handlers, HandlersOwner, SocketConfig};
 pub use listener::Listener;
 pub use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;

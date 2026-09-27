@@ -28,6 +28,16 @@ unsafe extern "C" {
 
 bun_output::declare_scope!(Listener, visible);
 
+/// Who registered a handler table. It decides what a throw that nothing takes does
+/// ([`Handlers::call_error_handler`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HandlersOwner {
+    /// `Bun.listen` or `Bun.connect`: the error is printed and the socket goes on.
+    Bun,
+    /// `node:net`: the throw is an uncaught exception, as in node.
+    NodeNet,
+}
+
 /// The callbacks and lifecycle bookkeeping shared by a listener and every
 /// socket it accepts, or by one `Bun.connect` socket and its reconnects.
 ///
@@ -52,6 +62,7 @@ pub struct Handlers {
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
     pub(crate) mode: SocketMode,
+    pub(crate) owner: HandlersOwner,
     /// The listener that accepted these sockets, for `mode == Server`.
     ///
     /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
@@ -276,24 +287,26 @@ impl Handlers {
             return Err(bun_jsc::JsError::Thrown);
         }
         let on_error = self.on_error();
+        let keep_alive = self.owner == HandlersOwner::Bun;
 
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ = global_object
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception_keep_alive(
-                    &global_object,
-                    args[1],
-                    bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
-                );
+            let vm = global_object.bun_vm().as_mut();
+            let origin = bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception;
+            let _ = if keep_alive {
+                vm.uncaught_exception_keep_alive(&global_object, args[1], origin)
+            } else {
+                vm.uncaught_exception(&global_object, args[1], origin)
+            };
             return Ok(());
         }
 
-        global_object
-            .bun_vm()
-            .event_loop_mut()
-            .run_callback_keep_alive(on_error, &global_object, this_value, args);
+        let event_loop = global_object.bun_vm().event_loop_mut();
+        if keep_alive {
+            event_loop.run_callback_keep_alive(on_error, &global_object, this_value, args);
+        } else {
+            event_loop.run_callback(on_error, &global_object, this_value, args);
+        }
         Ok(())
     }
 
@@ -301,15 +314,17 @@ impl Handlers {
         global_object: &JSGlobalObject,
         opts: JSValue,
         mode: SocketMode,
+        owner: HandlersOwner,
     ) -> JsResult<Rc<Handlers>> {
         let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
-        Self::from_generated(global_object, &generated, mode)
+        Self::from_generated(global_object, &generated, mode, owner)
     }
 
     pub(crate) fn from_generated(
         global_object: &JSGlobalObject,
         generated: &GeneratedSocketConfigHandlers,
         mode: SocketMode,
+        owner: HandlersOwner,
     ) -> JsResult<Rc<Handlers>> {
         let callbacks = Self::validate_callbacks(global_object, generated)?;
         let wrapped = Self::wrap_with_context(global_object, &callbacks);
@@ -325,6 +340,7 @@ impl Handlers {
             global_object: GlobalRef::from(global_object),
             active_connections: Cell::new(0),
             mode,
+            owner,
             listener: Cell::new(None),
         }))
     }
@@ -487,6 +503,7 @@ impl SocketConfig {
         global: &JSGlobalObject,
         generated: GeneratedSocketConfig,
         mode: SocketMode,
+        owner: HandlersOwner,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
@@ -514,7 +531,7 @@ impl SocketConfig {
                     }
                 }),
                 ssl,
-                handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
+                handlers: Handlers::from_generated(global, &generated.handlers, mode, owner)?,
                 default_data: if generated.data.is_undefined() {
                     JSValue::ZERO
                 } else {
@@ -588,9 +605,10 @@ impl SocketConfig {
         opts: JSValue,
         global_object: &JSGlobalObject,
         mode: SocketMode,
+        owner: HandlersOwner,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, generated, mode)
+        Self::from_generated(vm, global_object, generated, mode, owner)
     }
 }
 

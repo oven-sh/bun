@@ -22,7 +22,7 @@ use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    Handlers, HandlersOwner, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
@@ -172,6 +172,14 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
+        Self::listen_inner(global, opts, HandlersOwner::Bun)
+    }
+
+    pub(crate) fn listen_inner(
+        global: &JSGlobalObject,
+        opts: JSValue,
+        owner: HandlersOwner,
+    ) -> JsResult<JSValue> {
         log!("listen");
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
@@ -180,7 +188,7 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Server)?;
+        let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Server, owner)?;
         // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
         // `Listener` clones out of it.
         //
@@ -1061,7 +1069,7 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
-        Self::connect_inner(global, None, None, opts)
+        Self::connect_inner(global, None, None, opts, HandlersOwner::Bun)
     }
 
     pub(crate) fn connect_inner(
@@ -1069,6 +1077,7 @@ impl Listener {
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
         opts: JSValue,
+        owner: HandlersOwner,
     ) -> JsResult<JSValue> {
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
@@ -1077,7 +1086,7 @@ impl Listener {
 
         // Client mode: these handlers have no owning listener, so
         // `mark_inactive` skips the listener-release branch.
-        let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Client)?;
+        let mut socket_config = SocketConfig::from_js(vm, opts, global, SocketMode::Client, owner)?;
         // No JS wrapper holds the handlers cell until `connect_finish` creates
         // the socket's; the option getters below run user JS that can GC.
         let handlers = Rc::clone(&socket_config.handlers);

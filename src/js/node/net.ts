@@ -116,6 +116,7 @@ function lazyBlockList() {
 }
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const doListen = $newRustFunction("node_net_binding.rs", "doListen", 1);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -3893,7 +3894,7 @@ Server.prototype[kRealListen] = function (
     exclusive = false;
   }
   if (path) {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       unix: path,
       tls,
       // Accepted sockets are always half-open natively; the stream layer
@@ -3927,7 +3928,7 @@ Server.prototype[kRealListen] = function (
       }
     }
   } else if (fd != null) {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       fd,
       hostname,
       tls,
@@ -3940,7 +3941,7 @@ Server.prototype[kRealListen] = function (
       pauseOnConnect: this.pauseOnConnect,
     });
   } else {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       port,
       hostname,
       tls,

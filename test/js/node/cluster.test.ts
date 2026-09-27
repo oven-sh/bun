@@ -1415,3 +1415,53 @@ test.concurrent(
     });
   },
 );
+
+// A worker gets its connections as descriptors from the primary. A 'data'
+// listener on such a socket that throws is an uncaught exception in the
+// worker, as on any other socket of node:net.
+test.concurrent(
+  "a socket 'data' listener in a worker that throws with no 'uncaughtException' listener ends the worker at the throw",
+  async () => {
+    using dir = tempDir("cluster-socket-data-throw", {
+      "index.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("exit", (code, signal) => console.log("worker exit", code, signal));
+        worker.on("message", port => {
+          const client = net.connect(port, "127.0.0.1", () => client.write("x"));
+          client.on("error", () => {});
+        });
+      } else {
+        process.on("exit", code => console.log("exit", code));
+        const server = net.createServer(socket => {
+          socket.on("data", () => {
+            process.nextTick(() => console.log("TICK"));
+            setImmediate(() => console.log("IMMEDIATE"));
+            setTimeout(() => {
+              console.log("TIMER");
+              process.exit(3);
+            }, 0);
+            throw new Error("boom-worker-data");
+          });
+        });
+        server.listen(0, "127.0.0.1", () => process.send(server.address().port));
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\nworker exit 1 null\n",
+      stderr: expect.stringContaining("boom-worker-data"),
+      exitCode: 0,
+    });
+  },
+);

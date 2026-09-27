@@ -272,7 +272,10 @@ static void slot_set(void *tp) { pthread_setspecific(tp_key, tp); }
 static void *thread_x18(void) { return 0; }
 static void slot_release(void) {}
 #elif defined(__x86_64__)
-/* Linux test host: glibc owns fs, so the slot is the first word of a block that gs points at. */
+/* Linux test host: glibc owns fs, so the slot is the first word of a block that gs points at.
+   Windows and macOS give every thread the place of the slot, empty, whoever made the thread. Here
+   a thread has it once slot_set ran on it: the threads of the image, and the threads of this
+   host that enter the image (the library of the tests), which call slot_set(0) first. */
 #define HOST_OS BUN_OS_MACOS
 static unsigned long slot_offset(void) { return 0; }
 static void slot_set(void *tp) {
@@ -285,7 +288,13 @@ static void slot_set(void *tp) {
   block[0] = tp;
 }
 static void *thread_x18(void) { return 0; }
-static void slot_release(void) {}
+static void slot_release(void) {
+  void *block = pthread_getspecific(tp_key);
+  if (!block) return;
+  syscall(SYS_arch_prctl, L_ARCH_SET_GS, 0);
+  pthread_setspecific(tp_key, 0);
+  free(block);
+}
 #else
 /* Linux test host, arm64: the block stands for a Windows TEB, and the slot is
    where TlsSlots[5] is in a TEB. See "x18" above.
@@ -1194,6 +1203,48 @@ static int is_file_request(long n) {
       return 0;
   }
 }
+
+/* ---- requests of an event loop, Linux test host ----
+   What bun's event loop for Linux asks for: epoll, eventfd, sockets, pipes. Passed on as
+   they are, for the same reason. */
+static int is_loop_request(long n) {
+  switch (n) {
+#if defined(__x86_64__)
+    case SYS_epoll_wait: case SYS_eventfd: case SYS_pipe: case SYS_poll: case SYS_accept:
+#endif
+    case SYS_epoll_create1: case SYS_epoll_ctl: case SYS_epoll_pwait: case SYS_epoll_pwait2: case SYS_eventfd2:
+    case SYS_timerfd_create: case SYS_timerfd_settime: case SYS_pipe2: case SYS_ppoll:
+    case SYS_socket: case SYS_socketpair: case SYS_bind: case SYS_listen: case SYS_accept4: case SYS_connect:
+    case SYS_getsockname: case SYS_getpeername: case SYS_setsockopt: case SYS_getsockopt: case SYS_shutdown:
+    case SYS_sendto: case SYS_recvfrom: case SYS_sendmsg: case SYS_recvmsg: case SYS_sendmmsg: case SYS_recvmmsg:
+    case SYS_preadv2: case SYS_pwritev2: case SYS_memfd_create: case SYS_close_range:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/* ---- child processes, Linux test host with BUN_HOST_PROCESSES=1 ----
+   A host starts no other process: fork, execve and wait4 are refused, and the tests of the
+   libc expect that. A program that starts a child on Linux (bun's code for child processes)
+   runs under this host when it is asked to pass those requests on: the libc of the image
+   turns vfork into fork for a host, the child is a copy of this process, host and image,
+   and asks for the rest through its copy of the host until its execve. The filter for
+   syscalls is not installed then: it stays over execve, and the code of the program that
+   execve starts is somewhere else. */
+static int passes_processes;
+static int is_process_request(long n) {
+  switch (n) {
+#if defined(__x86_64__)
+    case SYS_fork:
+#endif
+    case SYS_execve: case SYS_wait4: case SYS_waitid: case SYS_kill: case SYS_pidfd_open: case SYS_pidfd_send_signal:
+    case SYS_setsid: case SYS_setpgid: case SYS_getppid: case SYS_prctl: case SYS_getrusage: case SYS_prlimit64:
+      return passes_processes;
+    default:
+      return 0;
+  }
+}
 #endif
 
 /* ---- functions of the host OS for the image ----
@@ -1217,15 +1268,91 @@ WIN64 static long long test_sum6(int a, long long b, unsigned c, void *d, short 
 WIN64 static double test_mixed(double x, int y, double z, float w, long long v) { return x * 2 + y * 3 + z * 5 + w * 7 + (double)v * 11; }
 WIN64 static struct test_pair test_pair_by_value(struct test_pair p, long long add) { return (struct test_pair){p.second + add, p.first - add}; }
 WIN64 static long long test_callback(TestCallback *callback, void *context) { return callback(context, -1, 20000000000ll, 3000000000u, -4, 5, 6.5) + 1; }
+
+/* A thread that the image did not create calls into the image, as a thread of libuv's pool or of
+   the pool of Windows does on Windows. test_threads(callback, context, threads, calls): that many
+   threads of this host, at the same time, each calls callback(context, number of the thread,
+   number of the call) that many times. The result is the sum of what the calls returned, once
+   every thread has ended and the destructors of its keys have run. */
+typedef WIN64 long long TestThreadCallback(void *, long long, long long);
+struct test_thread {
+  pthread_t thread;
+  TestThreadCallback *callback;
+  void *context;
+  long long number, calls, result;
+};
+static void *test_thread_main(void *p) {
+  struct test_thread *t = p;
+  slot_set(0);
+  for (long long call = 0; call < t->calls; call++) t->result += t->callback(t->context, t->number, call);
+  return 0;
+}
+WIN64 static long long test_threads(TestThreadCallback *callback, void *context, long long threads, long long calls) {
+  if (threads < 1 || threads > 64) return -1;
+  struct test_thread t[64];
+  long long started = 0, result = 0;
+  for (; started < threads; started++) {
+    t[started] = (struct test_thread){.callback = callback, .context = context, .number = started, .calls = calls};
+    if (pthread_create(&t[started].thread, 0, test_thread_main, &t[started])) break;
+  }
+  for (long long i = 0; i < started; i++) {
+    pthread_join(t[i].thread, 0);
+    result += t[i].result;
+  }
+  return started == threads ? result : -1;
+}
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   static const struct { const char *name; void *address; } symbols[] = {
     {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
     {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
+    {"test_threads", (void *)test_threads},
   };
   if (strcmp(library, "bun_host_test")) return 0;
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
     if (!strcmp(symbol, symbols[i].name)) return symbols[i].address;
   return 0;
+}
+#elif X18_HOST
+/* The arm64 Linux test host: test_threads as above. The calling convention is the one of the
+   image. What Windows does for every thread is done here for the threads of the test: x18 is the
+   block of the thread, whose slot is empty, when the thread enters the image. */
+typedef long long TestThreadCallback(void *, long long, long long);
+/* The image function returns to the caller of call_image3. */
+__attribute__((naked)) static long long call_image3(TestThreadCallback *fn, void *a, long long b, long long c, void *x18) {
+  __asm__("mov x18, x4\n mov x16, x0\n mov x0, x1\n mov x1, x2\n mov x2, x3\n br x16\n");
+}
+struct test_thread {
+  pthread_t thread;
+  TestThreadCallback *callback;
+  void *context;
+  long long number, calls, result;
+};
+static void *test_thread_main(void *p) {
+  struct test_thread *t = p;
+  slot_set(0);
+  for (long long call = 0; call < t->calls; call++) t->result += call_image3(t->callback, t->context, t->number, call, thread_x18());
+  return 0;
+}
+__attribute__((used)) static long long test_threads(TestThreadCallback *callback, void *context, long long threads, long long calls) {
+  FORGET_X18();
+  if (threads < 1 || threads > 64) return -1;
+  struct test_thread t[64];
+  long long started = 0, result = 0;
+  for (; started < threads; started++) {
+    t[started] = (struct test_thread){.callback = callback, .context = context, .number = started, .calls = calls};
+    if (pthread_create(&t[started].thread, 0, test_thread_main, &t[started])) break;
+  }
+  for (long long i = 0; i < started; i++) {
+    pthread_join(t[i].thread, 0);
+    result += t[i].result;
+  }
+  return started == threads ? result : -1;
+}
+IMAGE_ENTRY(test_threads)
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  FORGET_X18();
+  if (macos_tp || strcmp(library, "bun_host_test") || strcmp(symbol, "test_threads")) return 0;
+  return (void *)test_threads_entry;
 }
 #else
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
@@ -1446,6 +1573,7 @@ struct thread_slot { int tid; pthread_t thread; struct host_thread *state; };
 static struct thread_slot threads[4096];
 static int thread_count, next_tid;
 static pthread_mutex_t threads_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t main_pthread;
 
 /* A handler of the image may ask for a thread (tkill), so no handler runs while the lock is held. */
 static void threads_lock(sigset_t *saved) {
@@ -1461,6 +1589,12 @@ static void threads_unlock(const sigset_t *saved) {
 static struct host_thread *this_thread(void) {
   struct host_thread *t = pthread_getspecific(thread_key);
   return t ? t : &main_thread;
+}
+/* 0 for a thread that the image did not create and has not adopted yet. */
+static struct host_thread *known_thread(void) {
+  struct host_thread *t = pthread_getspecific(thread_key);
+  if (t) return t;
+  return pthread_equal(pthread_self(), main_pthread) ? &main_thread : 0;
 }
 static void on_image_stack(void *p) {
   struct host_thread *t = p;
@@ -1558,6 +1692,105 @@ __attribute__((used)) static void host_thread_exit(void *base, unsigned long siz
   leave_thread(base, size);
 }
 
+/* ---- threads that the image did not create ----
+   A thread of this host, or of a library of the OS, that runs code of the image: the image gives
+   it a thread pointer when it enters (N_adopt_thread) and takes it back when the thread
+   ends, which the destructor of a key tells. From the request on the thread is a thread of
+   the table, with a number, as the threads are that the image created. The slot and the
+   state of the thread have to be there while the destructor runs, and a C library may empty
+   every key before it calls the destructor of one (musl does): they are kept here, next to
+   the thread pointer, and put back. */
+struct adopted_thread {
+  void *tp;
+  ImageThreadFn leave;
+  void *block;
+  struct host_thread *state;
+};
+static pthread_key_t adopted_key;
+static void adopted_thread_ends(void *p) {
+  struct adopted_thread *a = p;
+  struct host_thread *t = a->state;
+  if (trace) host_log("[host] an adopted thread ends, thread %d, thread pointer %p\n", t->tid, a->tp);
+  pthread_setspecific(thread_key, t);
+#if !defined(__APPLE__)
+  pthread_setspecific(tp_key, a->block);
+#endif
+  call_image(a->leave, a->tp, t->x18);
+  slot_set(0);
+#ifdef __linux__
+  if (test_jitwx && t->in_host != IN_HOST_WAITING) run_release(t);
+#endif
+  sigset_t saved;
+  threads_lock(&saved);
+  for (int i = 0; i < thread_count; i++)
+    if (threads[i].tid == t->tid) {
+      threads[i] = threads[--thread_count];
+      break;
+    }
+  jit_thread_ends(t);
+  threads_unlock(&saved);
+  slot_release();
+  pthread_setspecific(thread_key, 0);
+  free(t);
+  free(a);
+}
+static long host_adopt_thread(void *tp, ImageThreadFn leave, unsigned long *stack) {
+  if (known_thread()) return -L_EINVAL;
+  struct adopted_thread *a = malloc(sizeof *a);
+  struct host_thread *t = calloc(1, sizeof *t);
+  if (!a || !t || pthread_setspecific(adopted_key, a)) {
+    free(a);
+    free(t);
+    return -L_ENOMEM;
+  }
+  t->tls = tp;
+  t->altstack.flags = L_SS_DISABLE;
+  sigset_t saved;
+  threads_lock(&saved);
+  int listed = thread_count < (int)(sizeof threads / sizeof *threads);
+  if (listed) {
+    next_tid = next_tid >= 0x3ffffff0 ? main_tid + 1 : next_tid + 1;
+    t->tid = next_tid;
+    threads[thread_count].thread = pthread_self();
+    threads[thread_count].state = t;
+    threads[thread_count++].tid = t->tid;
+  }
+  threads_unlock(&saved);
+  if (!listed) {
+    pthread_setspecific(adopted_key, 0);
+    free(a);
+    free(t);
+    return -L_EAGAIN;
+  }
+  pthread_setspecific(thread_key, t);
+  slot_set(tp);
+  t->x18 = thread_x18();
+  a->tp = tp;
+  a->leave = leave;
+  a->state = t;
+  a->block = pthread_getspecific(tp_key);
+  if (stack) {
+#if defined(__APPLE__)
+    size_t size = pthread_get_stacksize_np(pthread_self());
+    stack[0] = (unsigned long)pthread_get_stackaddr_np(pthread_self()) - size;
+    stack[1] = size;
+#else
+    pthread_attr_t attr;
+    void *low = 0;
+    size_t size = 0;
+    if (!pthread_getattr_np(pthread_self(), &attr)) {
+      pthread_attr_getstack(&attr, &low, &size);
+      pthread_attr_destroy(&attr);
+    }
+    stack[0] = (unsigned long)low;
+    stack[1] = size;
+#endif
+  }
+  thread_starts(t);
+  if (trace) host_log("[host] a thread of the host is adopted, thread %d, thread pointer %p\n", t->tid, tp);
+  return 0;
+}
+
 static void jit_counts(FILE *f) {
   if (!JIT_BY_FAULTS) return;
   unsigned long others[2] = {jit_switches_of_ended[0], jit_switches_of_ended[1]}, most[2] = {jit_thread_most[0], jit_thread_most[1]}, threads_that_switched = jit_threads_that_switched;
@@ -1585,7 +1818,6 @@ static void jit_counts(FILE *f) {
 
 /* ---- signals ---- */
 static struct l_k_sigaction image_actions[L_NSIG];
-static pthread_t main_pthread;
 __attribute__((unused)) static int syscall_filter_installed;
 static long error_code(int e) { return e ? to_linux_errno(e) : 0; }
 
@@ -2146,7 +2378,7 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
     case N_writev: return host_vector((int)a, (void *)b, c, 1);
     case N_open: return host_open(n, L_AT_FDCWD, (const char *)a, b, c);
     case N_openat: return host_open(n, a, (const char *)b, c, d);
-    case N_close: return a > 2 ? ret(close((int)a)) : 0;
+    case N_close: return (int)a > 2 ? ret(close((int)a)) : 0;
     case N_lseek: return ret(lseek((int)a, (off_t)b, (int)c));
     case N_stat: return host_stat(n, L_AT_FDCWD, (const char *)a, (void *)b, 0);
     case N_lstat: return host_stat(n, L_AT_FDCWD, (const char *)a, (void *)b, L_AT_SYMLINK_NOFOLLOW);
@@ -2233,6 +2465,7 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
       slot_set((void *)b);
       return 0;
     case N_set_tp: slot_set((void *)a); return 0;
+    case N_adopt_thread: return host_adopt_thread((void *)a, (ImageThreadFn)b, (unsigned long *)c);
     /* Code was written to [a, b). On macOS the system has the call for it. The Linux test
        host does what the image does by itself on Linux. */
     case N_clear_cache:
@@ -2274,7 +2507,11 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
     case N_getrandom: return host_getrandom((void *)a, (size_t)b);
 
     /* One process: the host starts no other. */
-    case N_fork: case N_vfork: case N_clone: case N_execve: case N_wait4: return -L_ENOSYS;
+    case N_fork: case N_vfork: case N_clone: case N_execve: case N_wait4:
+#ifdef __linux__
+      if (is_process_request(n)) break;
+#endif
+      return -L_ENOSYS;
     case N_exit: leave_thread(0, 0); return 0;
     case N_exit_group:
       write_counts();
@@ -2288,7 +2525,7 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
       break;
   }
 #ifdef __linux__
-  if (forward_unknown || is_file_request(n)) {
+  if (forward_unknown || is_file_request(n) || is_loop_request(n) || is_process_request(n)) {
     count(forwarded, n);
     long r = syscall(n, a, b, c, d, e, f);
     return r < 0 ? -(long)errno : r;
@@ -2303,7 +2540,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
   count(counts, n);
   if (trace > 2) host_log("[host] %s(%#lx, %#lx, %#lx, %#lx) ...\n", l_request_name(n), a, b, c, d);
 #ifdef __linux__
-  struct host_thread *waits = test_jitwx ? this_thread() : 0;
+  struct host_thread *waits = test_jitwx ? known_thread() : 0;
   if (waits) run_before_request(waits, n);
 #endif
   long r = dispatch(n, a, b, c, d, e, f);
@@ -2502,6 +2739,7 @@ int main(int argc, char **argv) {
   const char *test = getenv("BUN_HOST_TEST") ? getenv("BUN_HOST_TEST") : "";
 #ifdef __linux__
   forward_unknown = getenv("BUN_HOST_FORWARD") && atoi(getenv("BUN_HOST_FORWARD"));
+  passes_processes = getenv("BUN_HOST_PROCESSES") && atoi(getenv("BUN_HOST_PROCESSES"));
   test_winmem = !strcmp(test, "winmem");
   test_overlay = !strcmp(test, "overlay");
   test_jitwx = !strcmp(test, "jitwx");
@@ -2600,6 +2838,7 @@ int main(int argc, char **argv) {
 
   pthread_key_create(&tp_key, 0);
   pthread_key_create(&thread_key, 0);
+  pthread_key_create(&adopted_key, adopted_thread_ends);
   static struct bun_host host;
   host.os = HOST_OS;
   host.tcb_offset = slot_offset();
@@ -2667,6 +2906,9 @@ int main(int argc, char **argv) {
                      (unsigned long long)place.image_off, (void *)base, (void *)image_end, host.os,
                      host.tcb_offset, host_page, forward_unknown ? "ON" : "off", test_winmem ? "by the model of the Windows host" : test_overlay ? "of the system, pages are discarded by a new mapping" : "of the system");
   const char *seccomp = getenv("BUN_HOST_SECCOMP");
+#ifdef __linux__
+  if (passes_processes) seccomp = "0";
+#endif
   if (!(seccomp && !atoi(seccomp))) {
     int r = install_syscall_filter();
     if (r < 0) { fprintf(stderr, "host: the syscall filter was refused (%s). BUN_HOST_SECCOMP=0 runs without it\n", strerror(errno)); return 2; }

@@ -33,6 +33,11 @@
                               executes, 2 the question whether this host needs to be told.
                               The answer to the question is 1 or 0 */
 #define N_jit_write_protect 0x62756e04
+/* N_adopt_thread(tp, leave, stack)  the calling thread is not one that the image created, and
+                              it has entered the image. tp becomes its thread pointer, and when
+                              the thread ends leave(tp) is called on it. stack gets the lowest
+                              address of the stack of the thread and its size */
+#define N_adopt_thread 0x62756e05
 
 #define BUN_OS_LINUX 1
 #define BUN_OS_WINDOWS 2
@@ -414,7 +419,7 @@ static inline const char *l_request_name(long long n) {
     L_NAME(sendfile) L_NAME(truncate) L_NAME(fchdir) L_NAME(link) L_NAME(symlink) L_NAME(chmod) L_NAME(fchmod)
     L_NAME(statfs) L_NAME(fstatfs) L_NAME(linkat) L_NAME(symlinkat) L_NAME(fchmodat) L_NAME(utimensat) L_NAME(preadv)
     L_NAME(pwritev) L_NAME(renameat2) L_NAME(copy_file_range)
-    L_NAME(set_tp) L_NAME(main_stack) L_NAME(clear_cache) L_NAME(jit_write_protect)
+    L_NAME(set_tp) L_NAME(main_stack) L_NAME(clear_cache) L_NAME(jit_write_protect) L_NAME(adopt_thread)
 #undef L_NAME
     default: return "?";
   }

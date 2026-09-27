@@ -63,8 +63,12 @@ macro_rules! impl_timer_object {
             /// for a `Timeout`, by the event loop's immediate queue for an
             /// `Immediate`. Released when it fires for the last time or is
             /// cancelled.
-            pub heap_ref: ::core::cell::Cell<Option<::bun_ptr::RefPtr<Self>>>,
+            pub heap_ref: ::bun_ptr::SelfRef<Self>,
         }
+
+        // mimalloc rounds 97 bytes up to its 112-byte size class.
+        #[cfg(not(debug_assertions))]
+        const _: () = assert!(::core::mem::size_of::<$T>() <= 96);
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
 
@@ -93,7 +97,7 @@ macro_rules! impl_timer_object {
                         super::EventLoopTimerTag::$tag,
                     )),
                     internals: super::TimerObjectInternals::new(id, kind, interval, cx),
-                    heap_ref: ::core::cell::Cell::new(None),
+                    heap_ref: ::bun_ptr::SelfRef::new(),
                 });
                 // `timer`'s ref moves to the JS wrapper (released via `finalize`).
                 let js_value = Self::to_js_nonnull(timer.as_non_null(), cx.global());

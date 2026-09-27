@@ -54,6 +54,9 @@ pub use parent_ref::ParentRef;
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
 
+mod self_ref;
+pub use self_ref::SelfRef;
+
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`
 // (lowest tier, every crate can reach them); re-exported here so callers can
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.

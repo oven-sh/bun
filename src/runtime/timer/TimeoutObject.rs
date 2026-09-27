@@ -1,8 +1,6 @@
-use core::cell::Cell;
-
 use bun_jsc::generated::JSTimeout as js;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_ptr::{JsCell, RefPtr, ThisPtr};
+use bun_ptr::{JsCell, SelfRef, ThisPtr};
 
 use super::{EventLoopTimer, IdMap, Kind, Maps, TimerObject, TimerObjectInternals};
 
@@ -22,7 +20,7 @@ impl TimerObject for TimeoutObject {
         &self.event_loop_timer
     }
     #[inline]
-    fn heap_ref(&self) -> &Cell<Option<RefPtr<Self>>> {
+    fn heap_ref(&self) -> &SelfRef<Self> {
         &self.heap_ref
     }
     #[inline]

@@ -12,7 +12,7 @@
 use core::cell::Cell;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr, SelfRef, ThisPtr};
 
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc::{
@@ -244,7 +244,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     fn event_loop_timer(&self) -> &JsCell<EventLoopTimer>;
     /// The slot for the ref held while this timer is scheduled (see the
     /// struct field docs).
-    fn heap_ref(&self) -> &Cell<Option<RefPtr<Self>>>;
+    fn heap_ref(&self) -> &SelfRef<Self>;
     /// The `clearTimeout(id)` table a timer of `kind` registers in.
     fn id_map(maps: &mut Maps, kind: Kind) -> &mut IdMap<Self>;
 
@@ -267,15 +267,13 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     /// unless it is already held.
     #[inline]
     fn hold_heap_ref(this: ThisPtr<Self>) {
-        let slot = this.heap_ref();
-        let held = slot.take();
-        slot.set(Some(held.unwrap_or_else(|| RefPtr::from_this(this))));
+        SelfRef::hold(this, Self::heap_ref);
     }
 
     /// Release the scheduled-timer ref, if held. May free `this`.
     #[inline]
     fn release_heap_ref(this: ThisPtr<Self>) {
-        drop(this.heap_ref().take());
+        drop(SelfRef::take(this, Self::heap_ref));
     }
 
     fn set_enable_keeping_event_loop_alive(&self, enable: bool) {
@@ -836,7 +834,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     /// which may already have popped the slot: also releases the heap's ref
     /// when `cancel()` finds the slot no longer `ACTIVE`. May free `this`.
     fn release_heap_entry(this: ThisPtr<Self>) {
-        let held = this.heap_ref().take();
+        let held = SelfRef::take(this, Self::heap_ref);
         Self::cancel(this);
         drop(held);
     }

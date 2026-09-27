@@ -26,8 +26,9 @@ const groups = [
     loader: "ts",
     dir: "packages/bun-types",
     pattern: "**/*.d.ts",
-    // `declare module "*" with { type: "text" }` is TypeScript 7.1 syntax that the parser rejects.
-    skip: ["ts7.1/import-attributes.d.ts"],
+    // This directory is for TypeScript 7.1 syntax that the parser rejects,
+    // such as `declare module "*" with { type: "text" }`.
+    skip: ["ts7.1/"],
   },
   { name: "typescript-lib", loader: "ts", dir: "node_modules/typescript/lib", pattern: "lib*.d.ts" },
   { name: "src-js", loader: "ts", dir: "src/js", pattern: "**/*.ts" },
@@ -41,10 +42,10 @@ function load(group) {
   if (!existsSync(dir)) {
     throw new Error(`${group.name}: ${group.dir} does not exist. Run \`bun install\` in the repository root.`);
   }
-  const skip = new Set(group.skip ?? []);
+  const skip = ["node_modules/", ...(group.skip ?? [])];
   const paths = [...new Glob(group.pattern).scanSync({ cwd: dir })]
     .map(path => path.replaceAll("\\", "/"))
-    .filter(path => !path.includes("node_modules/") && !skip.has(path))
+    .filter(path => !skip.some(prefix => path.startsWith(prefix) || path.includes("/" + prefix)))
     .sort();
   if (paths.length === 0) throw new Error(`${group.name}: no file matches ${group.dir}/${group.pattern}`);
   const sources = paths.map(path => readFileSync(join(dir, path), "utf8"));
@@ -53,7 +54,9 @@ function load(group) {
     paths,
     sources,
     bytes: sources.reduce((sum, source) => sum + Buffer.byteLength(source), 0),
-    transpiler: new Bun.Transpiler({ loader: group.loader }),
+    // Without the define, NODE_ENV and BUN_ENV of the caller select the JSX
+    // runtime and fold `process.env.NODE_ENV`, and the work is not the same.
+    transpiler: new Bun.Transpiler({ loader: group.loader, define: { "process.env.NODE_ENV": '"development"' } }),
   };
 }
 
@@ -89,23 +92,48 @@ for (const arg of process.argv.slice(2)) {
   }
 }
 
-const inputs = groups.filter(group => only === undefined || group.name === only).map(load);
+// A group that fails does not stop the other groups.
+function failed(error) {
+  console.error(error.message);
+  if (error.cause) console.error(error.cause);
+  process.exitCode = 1;
+}
+
+const inputs = [];
+for (const group of groups) {
+  if (only !== undefined && group.name !== only) continue;
+  try {
+    inputs.push(load(group));
+  } catch (error) {
+    failed(error);
+  }
+}
 
 if (iterations > 0) {
   const row = (...cells) =>
     console.log(cells.map((cell, i) => (i === 0 ? cell.padEnd(16) : String(cell).padStart(14))).join(""));
   row("group", "files", "input bytes", "passes", "output length", "ms");
   for (const input of inputs) {
-    const start = performance.now();
-    let output = 0;
-    for (let i = 0; i < iterations; i++) output = transformAll(input);
-    const elapsed = performance.now() - start;
-    row(input.name, input.paths.length, input.bytes, iterations * (input.repeat ?? 1), output, elapsed.toFixed(1));
+    try {
+      const start = performance.now();
+      let output = 0;
+      for (let i = 0; i < iterations; i++) output = transformAll(input);
+      const elapsed = performance.now() - start;
+      row(input.name, input.paths.length, input.bytes, iterations * (input.repeat ?? 1), output, elapsed.toFixed(1));
+    } catch (error) {
+      failed(error);
+    }
   }
 } else {
   const { bench, group, run } = await import("../runner.mjs");
   group("transformSync", () => {
     for (const input of inputs) {
+      try {
+        transformAll({ ...input, repeat: 1 });
+      } catch (error) {
+        failed(error);
+        continue;
+      }
       const size = ((input.bytes * (input.repeat ?? 1)) / 1024) | 0;
       bench(`${input.name}, ${size} KB`, () => transformAll(input));
     }

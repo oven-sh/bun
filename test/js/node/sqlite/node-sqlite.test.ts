@@ -1,4 +1,4 @@
-import { describe as jscDescribe, heapStats } from "bun:jsc";
+import { heapStats, describe as jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, statSync } from "node:fs";
@@ -1848,6 +1848,10 @@ describe("row-shape structure caching", () => {
     expect(stmt.get()).toEqual({ x: 1, b: 2 });
     expect(stmt.all()).toEqual([{ x: 1, b: 2 }]);
     db1.close();
+    // `stmt` is still reachable, so sqlite3_close_v2 left the connection
+    // in zombie mode with the file open. On Windows that blocks tempDir's
+    // rm with EBUSY; force the finalizer.
+    Bun.gc(true);
   });
 
   test("get()/all()/iterate() reuse one row Structure across calls", () => {
@@ -1879,7 +1883,7 @@ describe("row-shape structure caching", () => {
       expect(stmt.all("1").map(structureId)).toEqual([id]);
       expect([...stmt.iterate("1")].map(structureId)).toEqual([id]);
     }
-    // A rename still invalidates the cache.
+    // A rename still invalidates the cache, whichever column it hits.
     const stmt = db.prepare("SELECT * FROM t");
     const before = stmt.get();
     db.exec("ALTER TABLE t RENAME COLUMN a TO x");
@@ -1887,6 +1891,15 @@ describe("row-shape structure caching", () => {
     expect(Object.keys(after)).toEqual(["x", "b", "c", "d", "e"]);
     expect(structureId(after)).not.toBe(structureId(before));
     expect(structureId(stmt.get())).toBe(structureId(after));
+    db.exec("ALTER TABLE t RENAME COLUMN e TO z");
+    const last = stmt.get();
+    expect(Object.keys(last)).toEqual(["x", "b", "c", "d", "z"]);
+    expect(structureId(last)).not.toBe(structureId(after));
+    db.exec("ALTER TABLE t RENAME COLUMN c TO y");
+    const middle = stmt.get();
+    expect(Object.keys(middle)).toEqual(["x", "b", "y", "d", "z"]);
+    expect(structureId(middle)).not.toBe(structureId(last));
+    expect(structureId(stmt.get())).toBe(structureId(middle));
     db.close();
   });
 

@@ -4651,20 +4651,16 @@ impl MirrorSet<'_> {
             let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
                 return false;
             };
-            let parent = match bun_paths::dirname(rel) {
+            let parent_dir = match bun_paths::dirname(rel) {
                 Some(parent) => {
                     match dir.make_open_path(parent, bun_sys::OpenDirOptions::default()) {
-                        Ok(parent) => parent,
+                        Ok(parent) => Some(parent),
                         Err(_) => return false,
                     }
                 }
-                None => bun_sys::Dir::from_fd(dir.fd),
+                None => None,
             };
-            let parent = scopeguard::guard(parent, |parent| {
-                if parent.fd != dir.fd {
-                    parent.fd.close();
-                }
-            });
+            let parent = parent_dir.as_ref().map_or(dir.fd, |d| d.fd);
             let mut tmp_buf = bun_paths::path_buffer_pool::get();
             let Ok(tmp_name) = Fs::FileSystem::tmpname(b"tmp", &mut tmp_buf[..], self.hash) else {
                 return false;
@@ -4676,13 +4672,13 @@ impl MirrorSet<'_> {
                 | bun_sys::O::EXCL
                 | bun_sys::O::NOFOLLOW
                 | bun_sys::O::CLOEXEC;
-            let written = bun_sys::File::openat(parent.fd, tmp_name.as_bytes(), flags, 0o600)
+            let written = bun_sys::File::openat(parent, tmp_name.as_bytes(), flags, 0o600)
                 .and_then(|f| f.write_all(file.contents.as_bytes()))
                 .is_ok();
-            if written && bun_sys::renameat(parent.fd, tmp_name, parent.fd, name).is_ok() {
+            if written && bun_sys::renameat(parent, tmp_name, parent, name).is_ok() {
                 return true;
             }
-            let _ = bun_sys::unlinkat(parent.fd, tmp_name);
+            let _ = bun_sys::unlinkat(parent, tmp_name);
             false
         };
         // Our directory with a member missing or wrong (a temp sweeper took it):

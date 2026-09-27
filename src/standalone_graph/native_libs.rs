@@ -48,10 +48,16 @@ impl NativeLibrarySet {
     }
 }
 
-/// `.node`, `.dylib`, `.dll`, `.so`, and a versioned soname: `.so` followed by
-/// digits and dots only (`libvips-cpp.so.42`, `libvips-cpp.so.8.17.3`).
+/// `.node`, `.dylib`, `.dll` (any case), `.so`, and a versioned soname: `.so`
+/// followed by digits and dots only (`libvips-cpp.so.42`, `libvips-cpp.so.8.17.3`).
 pub fn is_shared_library_name(name: &[u8]) -> bool {
-    if name.ends_with(b".node") || name.ends_with(b".dylib") || name.ends_with(b".dll") {
+    let ends_with_ignore_case = |suffix: &[u8]| {
+        name.len() >= suffix.len() && name[name.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+    };
+    if ends_with_ignore_case(b".node")
+        || ends_with_ignore_case(b".dylib")
+        || ends_with_ignore_case(b".dll")
+    {
         return true;
     }
     let Some(so) = strings::index_of(name, b".so") else {
@@ -139,6 +145,7 @@ mod tests {
             b"libvips-cpp.so.8.17.3",
             b"lib/libfoo.dylib",
             b"foo.dll",
+            b"OCI.DLL",
         ] {
             assert!(is_shared_library_name(name), "{}", bstr::BStr::new(name));
         }

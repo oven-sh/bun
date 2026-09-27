@@ -1351,6 +1351,14 @@ impl StandaloneModuleGraph {
 
         let module_count = modules.count();
         modules.lock_pointers(); // make the pointers stable forever
+        // A repeated name collapsed into one entry: the record's indexes no longer fit.
+        if native_library_set
+            .members
+            .iter()
+            .any(|m| m.file_index as usize >= module_count)
+        {
+            native_library_set = NativeLibrarySet::default();
+        }
 
         // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
         let mut dirs = StringArrayHashMap::<()>::new();
@@ -1535,10 +1543,13 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
     let mut candidates: Vec<Candidate> = Vec::new();
     for (i, output_file) in module_files.iter().enumerate() {
         let rel_name = module_dest_path(output_file);
-        if is_stored_as_string(output_file) || !native_libs::is_shared_library_name(rel_name) {
+        let src_path = output_file.src_path.text;
+        // A hoisted `libfoo.so.1` is named `libfoo.so-[hash].1`: its source name still says what it is.
+        let is_library = native_libs::is_shared_library_name(rel_name)
+            || native_libs::is_shared_library_name(path::basename(src_path));
+        if is_stored_as_string(output_file) || !is_library {
             continue;
         }
-        let src_path = output_file.src_path.text;
         let real_path = (!src_path.is_empty()).then(|| {
             let mut z_buf = bun_paths::path_buffer_pool::get();
             let mut real_buf = bun_paths::path_buffer_pool::get();

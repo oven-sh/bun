@@ -360,6 +360,11 @@ describe("cli.ts", () => {
 
   test.concurrent.each([
     [["--port=70000"], `--port must be a number from 0 to 65535, got "70000"`],
+    [["--port=-1"], `--port must be a number from 0 to 65535, got "-1"`],
+    [["--port="], `--port must be a number from 0 to 65535, got ""`],
+    [["--port= "], `--port must be a number from 0 to 65535, got " "`],
+    [["--port=0x50"], `--port must be a number from 0 to 65535, got "0x50"`],
+    [["--port=1e3"], `--port must be a number from 0 to 65535, got "1e3"`],
     [["--port=0", "--user=someone"], `--user must be name:password, got "someone"`],
     [["--port=0", "--user=someone:"], "A password is required"],
     [["--port=0", "--user=some/one:secret"], "Name may not contain non-url-safe chars"],

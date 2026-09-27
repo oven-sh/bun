@@ -34,8 +34,9 @@ function run() {
     return;
   }
 
-  const port = Number(values.port);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  // Only digits: Number() makes 0 of "" and of " ", and it takes "0x50" and "1e3".
+  const port = /^[0-9]+$/.test(values.port) ? Number(values.port) : NaN;
+  if (!(port <= 65535)) {
     throw new Error(`--port must be a number from 0 to 65535, got "${values.port}"`);
   }
 

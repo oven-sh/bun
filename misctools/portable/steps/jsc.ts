@@ -426,6 +426,14 @@ function link(ctx: Context, before: string): Step {
   };
 }
 
+/**
+ * The allocator of the image, for an image that is not the one of JavaScriptCore (test/commit.c). `sysroot`
+ * is the identity of the whole sysroot, as for `buildJsc`. Returns the identity of the allocator.
+ */
+export async function buildMimalloc(ctx: Context, sysroot: string): Promise<string> {
+  return await runStep(ctx, mimalloc(ctx, sysroot));
+}
+
 /** `sysroot` is the identity of the sysroot that everything here is compiled and linked against. */
 export async function buildJsc(ctx: Context, sysroot: string): Promise<void> {
   const allocator = await runStep(ctx, mimalloc(ctx, sysroot));

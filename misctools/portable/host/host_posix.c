@@ -1257,6 +1257,26 @@ static int is_process_request(long n) {
    program in the image uses the libc of the image there), so the test host only has a library
    of its own, "bun_host_test", with functions in the calling convention of Windows x64: the
    image calls them the way it calls Win32 on a Windows host. */
+#if defined(__linux__)
+/* test_fill(buffer, bytes) of the library: a system call writes into memory of the image, and
+   the host does not know that memory, as it does not know what bun's code for Windows hands to
+   ReadFile. So nothing calls model_touch() for it. The kernel fills the buffer with random
+   bytes. With the memory model of the Windows host a page that is not committed has no access:
+   the kernel answers EFAULT where Windows answers ERROR_NOACCESS. The request is issued as a
+   syscall: getrandom() of a libc may be code of the process (the vDSO), whose fault the host
+   would answer by committing the page. The result is the number of bytes that were written, or
+   the negative errno when there were none. */
+static long long kernel_fills(unsigned char *buffer, long long bytes) {
+  long long done = 0;
+  while (done < bytes) {
+    long got = syscall(SYS_getrandom, buffer + done, (size_t)(bytes - done), 0);
+    if (got < 0 && errno == EINTR) continue;
+    if (got <= 0) return done ? done : to_linux_errno(errno);
+    done += got;
+  }
+  return done;
+}
+#endif
 #if defined(__APPLE__)
 #include <dlfcn.h>
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
@@ -1306,11 +1326,12 @@ WIN64 static long long test_threads(TestThreadCallback *callback, void *context,
   }
   return started == threads ? result : -1;
 }
+WIN64 static long long test_fill(void *buffer, long long bytes) { return kernel_fills(buffer, bytes); }
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   static const struct { const char *name; void *address; } symbols[] = {
     {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
     {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
-    {"test_threads", (void *)test_threads},
+    {"test_threads", (void *)test_threads}, {"test_fill", (void *)test_fill},
   };
   if (strcmp(library, "bun_host_test")) return 0;
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
@@ -1354,10 +1375,18 @@ __attribute__((used)) static long long test_threads(TestThreadCallback *callback
   return started == threads ? result : -1;
 }
 IMAGE_ENTRY(test_threads)
+__attribute__((used)) static long long test_fill(void *buffer, long long bytes X18_AT_ENTRY_AFTER_TWO) {
+  CHECK_X18("test_fill", 0l);
+  FORGET_X18();
+  return kernel_fills(buffer, bytes);
+}
+IMAGE_ENTRY(test_fill)
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   FORGET_X18();
-  if (macos_tp || strcmp(library, "bun_host_test") || strcmp(symbol, "test_threads")) return 0;
-  return (void *)test_threads_entry;
+  if (macos_tp || strcmp(library, "bun_host_test")) return 0;
+  if (!strcmp(symbol, "test_threads")) return (void *)test_threads_entry;
+  if (!strcmp(symbol, "test_fill")) return (void *)test_fill_entry;
+  return 0;
 }
 #else
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {

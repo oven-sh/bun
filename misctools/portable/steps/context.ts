@@ -69,13 +69,32 @@ export interface Step {
   make: () => void | Promise<void>;
 }
 
+const stampOf = (ctx: Context, step: Step) => inOut(ctx, "stamps", step.name);
+
+/** What the stamp of a step records: the step was built from these inputs, by this compiler. */
+export function stepIdentity(ctx: Context, step: Step): string {
+  return identityOf([ctx.compiler, step.inputs]);
+}
+
+/** The identity of a step whose output is current, undefined for a step that `runStep` would run. */
+export function currentStep(ctx: Context, step: Step): string | undefined {
+  const identity = stepIdentity(ctx, step);
+  return isCurrent(stampOf(ctx, step), identity, step.outputs) ? identity : undefined;
+}
+
+/** Takes away what a step has made, for a step that cannot run any more. */
+export function forgetStep(ctx: Context, step: Step): void {
+  rmSync(stampOf(ctx, step), { force: true });
+  for (const output of step.outputs) rmSync(output, { force: true });
+}
+
 /**
  * Runs a step unless its output is current: the stamp of the last run records the same inputs and every
  * output exists. Returns the identity of the step, for the inputs of the steps after it.
  */
 export async function runStep(ctx: Context, step: Step): Promise<string> {
-  const identity = identityOf([ctx.compiler, step.inputs]);
-  const stamp = inOut(ctx, "stamps", step.name);
+  const identity = stepIdentity(ctx, step);
+  const stamp = stampOf(ctx, step);
   if (isCurrent(stamp, identity, step.outputs)) {
     console.log(`[${step.name}] up to date`);
     return identity;

@@ -9,6 +9,8 @@
  *                the memory functions of LLVM libc. A step whose output is current is skipped.
  *   test-image   the test images of the libc: threads.img, linux_paths.img, requests.img, raw_syscall.img
  *                (x86_64), and memory_model, the test of host/memory.h. Builds the libc if it has to.
+ *                And commit.img, which links bun's mimalloc, when `sysroot` has built all of the sysroot:
+ *                it builds mimalloc then, if it has to.
  *   host         the POSIX host (host/host_posix.c) for this machine. With an --arch that is not this
  *                machine's: the static Linux host of that architecture, which runs under qemu-<arch>.
  *   jsc          JavaScriptCore's shell as an image: jsc.img. Builds the sysroot, bun's mimalloc and WebKit
@@ -23,7 +25,7 @@
  *   test         builds the host and the test images, then runs every image by itself and through the
  *                host, each test --runs times, the static checks of the libc and the images, and the
  *                scenarios of jsc.img if `jsc` has built it. An image of another architecture than this
- *                machine runs under qemu-<arch>, and so does its host.
+ *                machine runs under qemu-<arch>, and so does its host. commit.img runs if it is built.
  *
  *   --arch   the architecture of the image. Default: the one of this machine.
  *   --out    the output directory. Default: build/portable/<arch> in the repository.

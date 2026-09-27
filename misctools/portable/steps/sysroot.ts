@@ -26,7 +26,7 @@ import {
   tripleOf,
 } from "../flags.ts";
 import { JIT_SOURCES, RED_ZONE_PATCH, patchMusl } from "../libc/patch_musl.ts";
-import { type Context, type Step, inOut, logOf, runStep } from "./context.ts";
+import { type Context, type Step, currentStep, inOut, logOf, runStep, stepIdentity } from "./context.ts";
 import { BuildError, fetchArchive, fetchGit, run, sha256File } from "./run.ts";
 
 /** compiler-rt's x86_64/floatundixf.S keeps a value below the stack pointer. */
@@ -457,18 +457,38 @@ function writeConfigFile(ctx: Context): void {
   writeFileSync(join(ctx.sysroot.root, "portable.cfg"), lines.join("\n") + "\n");
 }
 
+/** The steps in their order. Each gets the identity of the one before it. The first two are the libc. */
+const STEPS: ((ctx: Context, before: string) => Step)[] = [musl, builtins, runtimes, icu, memfn];
+const STEPS_OF_THE_LIBC = 2;
+
 /** The libc and the builtins: what a C program links against. Returns the identity of the two. */
 export async function buildLibc(ctx: Context): Promise<string> {
-  const libc = await runStep(ctx, musl(ctx));
-  return await runStep(ctx, builtins(ctx, libc));
+  let identity = "";
+  for (const step of STEPS.slice(0, STEPS_OF_THE_LIBC)) identity = await runStep(ctx, step(ctx, identity));
+  return identity;
+}
+
+/**
+ * What `buildSysroot` would find, step by step: the identity that the step has with the sources and flags of
+ * now, and whether its output is current. Nothing is built. The identity of the last step is the one of the
+ * sysroot.
+ */
+export function sysrootSteps(ctx: Context): { name: string; identity: string; current: boolean }[] {
+  const found: { name: string; identity: string; current: boolean }[] = [];
+  let before = "";
+  for (const make of STEPS) {
+    const step = make(ctx, before);
+    const current = currentStep(ctx, step);
+    before = current ?? stepIdentity(ctx, step);
+    found.push({ name: step.name, identity: before, current: current !== undefined });
+  }
+  return found;
 }
 
 /** Every step, in order. */
 export async function buildSysroot(ctx: Context): Promise<string> {
   let identity = await buildLibc(ctx);
-  identity = await runStep(ctx, runtimes(ctx, identity));
-  identity = await runStep(ctx, icu(ctx, identity));
-  identity = await runStep(ctx, memfn(ctx, identity));
+  for (const step of STEPS.slice(STEPS_OF_THE_LIBC)) identity = await runStep(ctx, step(ctx, identity));
   writeConfigFile(ctx);
   const libraries = readdirSync(ctx.sysroot.lib).filter(name => name.endsWith(".a"));
   console.log(`sysroot: ${ctx.sysroot.root} (${libraries.sort().join(" ")})`);

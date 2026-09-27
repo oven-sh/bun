@@ -413,9 +413,7 @@ public:
     // object's inline storage, we precompute one null-prototype Structure
     // with a slot per distinct column name and then fill each row via
     // putDirectOffset instead of running the generic put machinery per
-    // cell. Built lazily on the first step() that yields columns and
-    // kept until SQLite re-prepares the statement with different
-    // column names.
+    // cell. Built lazily on the first step() that yields columns.
     JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
     void invalidateRowStructure();
     bool cachedRowNamesMatch();
@@ -441,16 +439,10 @@ private:
     // JSSQLStatement).
     size_t m_extraMemorySize = 0;
     int m_rowColumnCount = -1;
-    // Column names (UTF-8, in result-column order) the cached row
-    // structure was built from, and the statement's
-    // SQLITE_STMTSTATUS_REPREPARE count at that time. Column *count*
-    // alone isn't a sufficient shape key: sqlite3_prepare_v2
-    // transparently re-prepares on SQLITE_SCHEMA, so after an ALTER
-    // TABLE … RENAME COLUMN the same statement returns the same
-    // count with different names. ensureRowStructure() validates the
-    // cache once per reset cycle (m_rowResetGeneration) against the
-    // re-prepare count, and against the name bytes only when that
-    // count moved.
+    // Column names (UTF-8, result-column order) and the statement's
+    // SQLITE_STMTSTATUS_REPREPARE count when m_rowStructure was built.
+    // A re-prepare (ALTER TABLE … RENAME COLUMN) keeps the column count
+    // but can change the names, so count alone is not a valid key.
     WTF::Vector<WTF::CString> m_rowColumnNames;
     int m_rowReprepareCount = -1;
     unsigned m_rowResetGeneration = 0;

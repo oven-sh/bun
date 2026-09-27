@@ -3,6 +3,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
+use bun_ast::ts::DecoratorMetadata;
 use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
@@ -734,7 +735,7 @@ impl<'a> Transpiler<'a> {
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
                     }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                    self.options.decorator_metadata = tsconfig.decorator_metadata();
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
                     if let Some(v) = tsconfig.use_define_for_class_fields {
                         self.options.use_define_for_class_fields = v;
@@ -995,7 +996,7 @@ pub struct ParseOptions<'a, 'b> {
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
-    pub emit_decorator_metadata: bool,
+    pub decorator_metadata: DecoratorMetadata,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
     pub remove_cjs_module_wrapper: bool,
@@ -1602,12 +1603,13 @@ impl<'a> Transpiler<'a> {
                     is_entry_point: false,
                 };
 
-                opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                opts.features.decorator_metadata = this_parse.decorator_metadata;
                 // emitDecoratorMetadata implies legacy/experimental decorators, as it only
                 // makes sense with TypeScript's legacy decorator system (reflect-metadata).
                 // TC39 standard decorators have their own metadata mechanism.
                 opts.features.standard_decorators = !loader.is_typescript()
-                    || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
+                    || !(this_parse.experimental_decorators
+                        || this_parse.decorator_metadata.is_on());
                 opts.features.allow_runtime = self.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
                     this_parse.set_breakpoint_on_first_line;
@@ -2938,7 +2940,7 @@ impl<'a> Transpiler<'a> {
                 // the option fields needed for `ParseOptions` first.
                 let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
                 let dirname_fd = resolve_result.dirname_fd;
-                let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
+                let decorator_metadata = resolve_result.flags.decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 let use_define_for_class_fields =
                     resolve_result.flags.use_define_for_class_fields();
@@ -2968,7 +2970,7 @@ impl<'a> Transpiler<'a> {
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
                     jsx,
-                    emit_decorator_metadata,
+                    decorator_metadata,
                     experimental_decorators,
                     use_define_for_class_fields,
                     virtual_source: None,

@@ -10,6 +10,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
+use bun_ast::ts::DecoratorMetadata;
 use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
@@ -107,7 +108,7 @@ pub struct ParseTask {
 
     pub(crate) known_target: options::Target,
     pub(crate) module_type: options::ModuleType,
-    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) decorator_metadata: DecoratorMetadata,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
@@ -287,7 +288,7 @@ impl ParseTask {
             jsx: resolve_result.jsx.clone(),
             source_index,
             module_type: resolve_result.module_type,
-            emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
+            decorator_metadata: resolve_result.flags.decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
             use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
             package_version,
@@ -341,7 +342,7 @@ impl Default for ParseTask {
             stage: ParseTaskStage::NeedsSourceCode,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
-            emit_decorator_metadata: false,
+            decorator_metadata: DecoratorMetadata::Off,
             experimental_decorators: false,
             use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
@@ -620,7 +621,7 @@ pub mod parse_worker {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             module_type: options::ModuleType::Unknown,
-            emit_decorator_metadata: false,
+            decorator_metadata: DecoratorMetadata::Off,
             experimental_decorators: false,
             use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
@@ -2539,12 +2540,12 @@ pub mod parse_worker {
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
-        opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+        opts.features.decorator_metadata = task.decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).
         // TC39 standard decorators have their own metadata mechanism.
         opts.features.standard_decorators = !loader.is_typescript()
-            || !(task.experimental_decorators || task.emit_decorator_metadata);
+            || !(task.experimental_decorators || task.decorator_metadata.is_on());
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
         // Modeled as

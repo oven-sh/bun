@@ -6,6 +6,7 @@
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
+use ::bun_ast::ts::DecoratorMetadata;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_core::MutableString;
@@ -133,6 +134,8 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
+        // Bits 4..=5 encode [`DecoratorMetadata`]; write via `set_decorator_metadata`.
+        const DECORATOR_METADATA_STRICT = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
@@ -191,12 +194,16 @@ impl ResultFlags {
         self.set(Self::IS_FROM_NODE_MODULES, v)
     }
     #[inline]
-    pub fn emit_decorator_metadata(self) -> bool {
-        self.contains(Self::EMIT_DECORATOR_METADATA)
+    pub fn decorator_metadata(self) -> DecoratorMetadata {
+        DecoratorMetadata::new(
+            self.contains(Self::EMIT_DECORATOR_METADATA),
+            self.contains(Self::DECORATOR_METADATA_STRICT),
+        )
     }
     #[inline]
-    pub(crate) fn set_emit_decorator_metadata(&mut self, v: bool) {
-        self.set(Self::EMIT_DECORATOR_METADATA, v)
+    pub(crate) fn set_decorator_metadata(&mut self, mode: DecoratorMetadata) {
+        self.set(Self::EMIT_DECORATOR_METADATA, mode.is_on());
+        self.set(Self::DECORATOR_METADATA_STRICT, mode.strict_null_checks());
     }
     #[inline]
     pub fn experimental_decorators(self) -> bool {

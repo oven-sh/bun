@@ -150,6 +150,41 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
+/// How the parser emits `design:*` metadata for legacy decorators. This is
+/// tsconfig's `emitDecoratorMetadata` widened with the effective
+/// `strictNullChecks` value, because tsc's type serializer reads both.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum DecoratorMetadata {
+    /// `emitDecoratorMetadata` is off.
+    #[default]
+    Off = 0,
+    /// `emitDecoratorMetadata` is on and `strictNullChecks` is off.
+    Loose = 1,
+    /// `emitDecoratorMetadata` is on and `strictNullChecks` is on.
+    Strict = 2,
+}
+
+impl DecoratorMetadata {
+    pub const fn new(emit_decorator_metadata: bool, strict_null_checks: bool) -> Self {
+        match (emit_decorator_metadata, strict_null_checks) {
+            (false, _) => Self::Off,
+            (true, false) => Self::Loose,
+            (true, true) => Self::Strict,
+        }
+    }
+
+    #[inline]
+    pub const fn is_on(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    #[inline]
+    pub const fn strict_null_checks(self) -> bool {
+        matches!(self, Self::Strict)
+    }
+}
+
 #[derive(Clone, Default)]
 pub enum Metadata {
     #[default]

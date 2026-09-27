@@ -1586,8 +1586,11 @@ impl<'a> Resolver<'a> {
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
-                result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
+                result.flags.set_decorator_metadata(
+                    result
+                        .flags
+                        .decorator_metadata()
+                        .max(tsconfig.decorator_metadata()),
                 );
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators,

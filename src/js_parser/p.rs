@@ -7440,7 +7440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let mut array = BumpVec::<Expr>::new_in(self.arena);
 
-                        if self.options.features.emit_decorator_metadata {
+                        if self.options.features.decorator_metadata.is_on() {
                             self.emit_decorator_metadata_for_prop(prop, &mut array, loc);
                         }
 
@@ -7677,7 +7677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if s_class.class.ts_decorators.len_u32() > 0 {
                     let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
 
-                    if self.options.features.emit_decorator_metadata {
+                    if self.options.features.decorator_metadata.is_on() {
                         if let Some(cf) = constructor_function {
                             // design:paramtypes
                             let constructor_args: &[G::Arg] = cf.func.args.slice();
@@ -9705,7 +9705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use
-            opts.features.emit_decorator_metadata = false;
+            opts.features.decorator_metadata = bun_ast::ts::DecoratorMetadata::Off;
         }
 
         let unwrap_all_requires = 'brk: {

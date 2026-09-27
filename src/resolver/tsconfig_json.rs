@@ -226,6 +226,11 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
+    /// The `design:*` metadata mode this tsconfig asks for.
+    pub fn decorator_metadata(&self) -> bun_ast::ts::DecoratorMetadata {
+        bun_ast::ts::DecoratorMetadata::new(self.emit_decorator_metadata, false)
+    }
+
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
 

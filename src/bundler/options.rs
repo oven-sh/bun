@@ -2,6 +2,7 @@
 //! into the concrete `BundleOptions` the bundler and runtime consume.
 
 use bun_analytics as analytics;
+use bun_ast::ts::DecoratorMetadata;
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -1207,7 +1208,7 @@ pub struct BundleOptions<'a> {
     pub bundler_feature_flags: Option<Box<StringSet>>,
     pub loaders: LoaderHashTable,
     pub jsx: jsx::Pragma,
-    pub emit_decorator_metadata: bool,
+    pub decorator_metadata: DecoratorMetadata,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
     pub auto_import_jsx: bool,
@@ -1459,7 +1460,7 @@ impl<'a> BundleOptions<'a> {
                 .map(|s| Box::new(bun_core::handle_oom(s.clone()))),
             loaders: bun_core::handle_oom(self.loaders.clone()),
             jsx: self.jsx.clone(),
-            emit_decorator_metadata: self.emit_decorator_metadata,
+            decorator_metadata: self.decorator_metadata,
             experimental_decorators: self.experimental_decorators,
             use_define_for_class_fields: self.use_define_for_class_fields,
             auto_import_jsx: self.auto_import_jsx,
@@ -1724,7 +1725,7 @@ impl<'a> BundleOptions<'a> {
             bundler_feature_flags,
 
             jsx: jsx::Pragma::default(),
-            emit_decorator_metadata: false,
+            decorator_metadata: DecoratorMetadata::Off,
             experimental_decorators: false,
             use_define_for_class_fields: true,
             auto_import_jsx: true,

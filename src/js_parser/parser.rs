@@ -232,7 +232,7 @@ pub mod Runtime {
         pub commonjs_at_runtime: bool,
         pub unwrap_commonjs_to_esm: bool,
 
-        pub emit_decorator_metadata: bool,
+        pub decorator_metadata: bun_ast::ts::DecoratorMetadata,
         pub standard_decorators: bool,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
@@ -301,7 +301,7 @@ pub mod Runtime {
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
-                emit_decorator_metadata: false,
+                decorator_metadata: bun_ast::ts::DecoratorMetadata::Off,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,
@@ -359,30 +359,31 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
-                self.top_level_await,
-                self.auto_import_jsx,
-                self.allow_runtime,
-                self.inlining,
-                self.commonjs_named_exports,
-                self.minify_syntax,
-                self.minify_identifiers,
-                self.minify_keep_names,
-                self.dead_code_elimination,
-                self.set_breakpoint_on_first_line,
-                self.trim_unused_imports,
-                self.dont_bundle_twice,
-                self.commonjs_at_runtime,
-                self.emit_decorator_metadata,
-                self.standard_decorators,
-                self.lower_using,
-                self.repl_mode,
+            // One byte per option. `decorator_metadata` hashes as its `u8`
+            // value so `Off`/`Loose` keep the bytes the old bool produced and
+            // only `Strict` entries get a new key.
+            let bytes: [u8; 17] = [
+                self.top_level_await as u8,
+                self.auto_import_jsx as u8,
+                self.allow_runtime as u8,
+                self.inlining as u8,
+                self.commonjs_named_exports as u8,
+                self.minify_syntax as u8,
+                self.minify_identifiers as u8,
+                self.minify_keep_names as u8,
+                self.dead_code_elimination as u8,
+                self.set_breakpoint_on_first_line as u8,
+                self.trim_unused_imports as u8,
+                self.dont_bundle_twice as u8,
+                self.commonjs_at_runtime as u8,
+                self.decorator_metadata as u8,
+                self.standard_decorators as u8,
+                self.lower_using as u8,
+                self.repl_mode as u8,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
-            // `[bool; N]` is N bytes of 0x00/0x01.
-            // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
-            hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+            hasher.update(&bytes);
             hasher.update(&[self.react_compiler as u8]);
 
             // Hash --feature flags. These directly affect transpiled output via

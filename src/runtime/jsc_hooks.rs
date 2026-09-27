@@ -2520,8 +2520,8 @@ fn transpile_source_code_inner(
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    emit_decorator_metadata: unsafe {
-                        (*jsc_vm).transpiler.options.emit_decorator_metadata
+                    decorator_metadata: unsafe {
+                        (*jsc_vm).transpiler.options.decorator_metadata
                     },
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     experimental_decorators: unsafe {

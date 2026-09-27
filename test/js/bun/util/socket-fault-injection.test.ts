@@ -129,6 +129,22 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     }
   });
 
+  test("hits() leaves out a call that a 'short' rule did not shorten", async () => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const client = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    try {
+      fault.set({ syscall: "send", action: "short", bytes: 4, repeat: -1 });
+      const counts: number[] = [];
+      for (const payload of ["ab", "abcdefgh"]) {
+        client.write(payload);
+        counts.push(fault.hits("send"));
+      }
+      expect(counts).toEqual([0, 1]);
+    } finally {
+      client.end();
+    }
+  });
+
   test("rules can target each hooked syscall", () => {
     for (const sc of ["recv", "send", "writev", "sendmsg", "recvmsg", "connect", "accept"] as const) {
       expect(fault.set({ syscall: sc, action: "none" })).toBe(true);

@@ -882,6 +882,130 @@ it.serial("instances should be finalized when GC'd", async () => {
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
 });
 
+// Every case throws from the constructor, before anything is dialed.
+describe("WebSocket constructor rejects", () => {
+  const url = "ws://127.0.0.1:1/";
+  const invalidCA = { class: "TypeError", message: expect.stringContaining("TLSOptions.ca") };
+  const missingUnixPath = href => ({
+    class: "SyntaxError",
+    message: `Invalid url for WebSocket ${href} (missing unix socket path)`,
+  });
+
+  it.each([
+    ["an invalid URL", ["not a url"], { class: "SyntaxError", message: "Invalid url for WebSocket not a url" }],
+    [
+      "an invalid URL with options",
+      ["not a url", {}],
+      { class: "SyntaxError", message: "Invalid url for WebSocket not a url" },
+    ],
+    [
+      "a URL scheme that is not ws, wss, http, https, ws+unix or wss+unix",
+      ["ftp://127.0.0.1:1/"],
+      { class: "SyntaxError", message: "Wrong url scheme for WebSocket ftp://127.0.0.1:1/" },
+    ],
+    [
+      "a URL with a fragment",
+      [url + "path#frag"],
+      { class: "SyntaxError", message: "URL has fragment component ws://127.0.0.1:1/path#frag" },
+    ],
+    [
+      "a subprotocol with a space",
+      [url, ["a b"]],
+      { class: "SyntaxError", message: "Wrong protocol for WebSocket 'a b'" },
+    ],
+    ["an empty subprotocol", [url, [""]], { class: "SyntaxError", message: "Wrong protocol for WebSocket ''" }],
+    [
+      "a subprotocol with a space in options.protocols",
+      [url, { protocols: ["a b"] }],
+      { class: "SyntaxError", message: "Wrong protocol for WebSocket 'a b'" },
+    ],
+    [
+      "a duplicate subprotocol",
+      [url, ["a", "a"]],
+      { class: "SyntaxError", message: "WebSocket protocols contain duplicates:a'" },
+    ],
+    [
+      "a duplicate subprotocol in options.protocols",
+      [url, { protocols: ["a", "a"] }],
+      { class: "SyntaxError", message: "WebSocket protocols contain duplicates:a'" },
+    ],
+    ["a ws+unix: URL with no path", ["ws+unix:"], missingUnixPath("ws+unix:")],
+    ["a ws+unix: URL with an empty authority and no path", ["ws+unix://"], missingUnixPath("ws+unix://")],
+    ["a ws+unix: URL whose path starts with a colon", ["ws+unix::/request"], missingUnixPath("ws+unix::/request")],
+    ["a wss+unix: URL whose path starts with a colon", ["wss+unix::/request"], missingUnixPath("wss+unix::/request")],
+    [
+      "an invalid proxy URL",
+      [url, { proxy: "not a url" }],
+      { class: "SyntaxError", message: "Invalid proxy URL: not a url" },
+    ],
+    [
+      "a proxy protocol that is not http or https",
+      [url, { proxy: "socks5://127.0.0.1:1" }],
+      { class: "SyntaxError", message: 'Unsupported proxy protocol "socks5" (expected "http" or "https")' },
+    ],
+    [
+      "an invalid header name",
+      [url, { headers: { "bad name": "x" } }],
+      { class: "TypeError", message: "Invalid header name: 'bad name'" },
+    ],
+    [
+      "an invalid header value",
+      [url, { headers: { "x-a": "a\r\nb: c" } }],
+      { class: "TypeError", message: "Header 'x-a' has invalid value" },
+    ],
+    [
+      "a header value outside latin1",
+      [url, { headers: { "x-a": "\u{1F600}" } }],
+      { class: "TypeError", message: expect.any(String) },
+    ],
+    ["an invalid tls option", ["wss://127.0.0.1:1/", { tls: { ca: 123 } }], invalidCA],
+
+    // When two inputs are invalid, the error names the one that is checked first.
+    [
+      "the URL before the subprotocols",
+      [url + "#frag", ["a", "a"]],
+      { class: "SyntaxError", message: "URL has fragment component ws://127.0.0.1:1/#frag" },
+    ],
+    [
+      "an invalid subprotocol before a duplicate subprotocol",
+      [url, ["a", "a", "b c"]],
+      { class: "SyntaxError", message: "Wrong protocol for WebSocket 'b c'" },
+    ],
+    [
+      "the subprotocols before the unix socket path",
+      ["ws+unix:", ["a", "a"]],
+      { class: "SyntaxError", message: "WebSocket protocols contain duplicates:a'" },
+    ],
+    [
+      "the proxy URL before the URL",
+      ["not a url", { proxy: "not a url" }],
+      { class: "SyntaxError", message: "Invalid proxy URL: not a url" },
+    ],
+    ["the tls options before the URL", ["wss://127.0.0.1:1/#frag", { tls: { ca: 123 } }], invalidCA],
+    [
+      "the URL before the header names",
+      [url + "#frag", { headers: { "bad name": "x" } }],
+      { class: "SyntaxError", message: "URL has fragment component ws://127.0.0.1:1/#frag" },
+    ],
+    [
+      "a URL with a fragment when rejectUnauthorized is set",
+      [url + "#frag", { tls: { rejectUnauthorized: false } }],
+      {
+        class: "SyntaxError",
+        message: "URL has fragment component ws://127.0.0.1:1/#frag",
+      },
+    ],
+  ])("%s", (_label, args, expected) => {
+    let thrown;
+    try {
+      new WebSocket(...args).terminate();
+    } catch (error) {
+      thrown = { class: error.constructor.name, message: error.message };
+    }
+    expect(thrown).toEqual(expected);
+  });
+});
+
 // The Zig-heap-allocated SSLConfig (holding duped cert/key/ca strings) used
 // to leak on every early-return path between parseSSLConfig and the point
 // where the Zig upgrade client takes ownership: throwing option getters

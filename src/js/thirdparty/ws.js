@@ -143,6 +143,18 @@ function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
 }
 
+// The options object of the native WebSocket. It offers permessage-deflate by default, so
+// `perMessageDeflate: false` is passed only when the caller turned the offer off.
+function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
+  const wsOptions = { protocols };
+  if (headers) wsOptions.headers = headers;
+  if (method) wsOptions.method = method;
+  if (proxy) wsOptions.proxy = proxy;
+  if (tls) wsOptions.tls = tls;
+  if (disableDeflate) wsOptions.perMessageDeflate = false;
+  return wsOptions;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -296,16 +308,9 @@ class BunWebSocket extends EventEmitter {
   }
 
   #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
-    // The native WebSocket keeps permessage-deflate enabled by default;
-    // forward `perMessageDeflate: false` only when the caller asked to disable.
     let wsOptions;
     if (headers || proxy || tls || disableDeflate) {
-      wsOptions = { protocols };
-      if (headers) wsOptions.headers = headers;
-      if (method) wsOptions.method = method;
-      if (proxy) wsOptions.proxy = proxy;
-      if (tls) wsOptions.tls = tls;
-      if (disableDeflate) wsOptions.perMessageDeflate = false;
+      wsOptions = nativeOptions(protocols, headers, method, proxy, tls, disableDeflate);
     } else {
       wsOptions = protocols;
     }

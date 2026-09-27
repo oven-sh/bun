@@ -734,6 +734,8 @@ fn entries_loaded_mid_evaluation(
 enum OrderFrame {
     Enter(u32),
     Leave(u32),
+    /// The entry point's file runs something here: `init_x()` / `require_x()`, or an external `import`.
+    EntryRuns,
 }
 
 /// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the entry point's own files that must run before a file of the parent.
@@ -756,18 +758,41 @@ fn files_that_leave_entry_chunk(
     // The own files that do more than declare, in evaluation order. The first `cut` of them precede such a file of the parent.
     let mut candidates: Vec<u32> = Vec::new();
     let mut cut = 0;
+    // What the entry point's file runs stays in its chunk, and so do the own files after that.
+    let mut entry_ran = false;
+    let flags = this.graph.meta.items_flags();
+    let entry_records = this.graph.ast.items_import_records()[entry_source as usize].as_slice();
+    let entry_parts_live = &this.graph.parts_live[entry_source as usize];
+    let first_external_import = this.graph.ast.items_parts()[entry_source as usize]
+        .as_slice()
+        .iter()
+        .enumerate()
+        .position(|(part_index, part)| {
+            entry_parts_live.is_set(part_index)
+                && part.import_record_indices.iter().any(|&i| {
+                    let record = &entry_records[i as usize];
+                    record.kind == ImportKind::Stmt
+                        && !record.source_index.is_valid()
+                        && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                })
+        })
+        .map_or(u32::MAX, |part_index| part_index as u32);
     let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
         let file = match frame {
             OrderFrame::Leave(file) => {
                 if live(file) && file != entry_source && !this.loading_file_only_declares(file) {
-                    if own(file) {
-                        candidates.push(file);
-                    } else {
+                    if !own(file) {
                         cut = candidates.len();
+                    } else if !entry_ran {
+                        candidates.push(file);
                     }
                 }
+                continue;
+            }
+            OrderFrame::EntryRuns => {
+                entry_ran = true;
                 continue;
             }
             OrderFrame::Enter(file) => file,
@@ -795,9 +820,15 @@ fn files_that_leave_entry_chunk(
         }
         stack.push(OrderFrame::Leave(file));
         let mark = stack.len();
-        for_each_edge(this, file, live(file), |_, edge| {
+        for_each_edge(this, file, live(file), |part_index, edge| {
             if let Edge::Import(other) = edge {
+                if file == entry_source && part_index > first_external_import {
+                    stack.push(OrderFrame::EntryRuns);
+                }
                 stack.push(OrderFrame::Enter(other));
+                if file == entry_source && flags[other as usize].wrap != WrapKind::None {
+                    stack.push(OrderFrame::EntryRuns);
+                }
             }
         });
         stack[mark..].reverse();

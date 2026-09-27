@@ -879,6 +879,46 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "store\nsecond\nback\nthird function\nfirst 3\nindex s\nlazy s" },
   });
+  // index.js runs the first import itself, and index.js cannot move.
+  for (const [name, specifier, options] of [
+    ["CommonJS", "./setup.cjs", { files: { "/setup.cjs": `globalThis.APP = { name: "app" };` } }],
+    [
+      "External",
+      "ext-setup",
+      {
+        external: ["ext-setup"],
+        runtimeFiles: {
+          "/node_modules/ext-setup/package.json": `{ "name": "ext-setup", "type": "module", "main": "index.js" }`,
+          "/node_modules/ext-setup/index.js": `globalThis.APP = { name: "app" };`,
+        },
+      },
+    ],
+  ] as const) {
+    itBundled("splitting/EntryFileAfterImportThatEntryRunsStays/" + name, {
+      ...options,
+      files: {
+        "/index.js": /* js */ `
+          import "./first.js";
+          import "${specifier}";
+          import "./reader.js";
+          import { Store } from "./store.js";
+          console.log("index", new Store().name);
+          import("./settings.js");
+        `,
+        "/first.js": `console.log("first"); globalThis.FIRST = 1;`,
+        "/reader.js": `console.log("reader", globalThis.APP.name);`,
+        "/store.js": `console.log("store", globalThis.FIRST); export class Store { name = "s"; }`,
+        "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+        ...("files" in options ? options.files : {}),
+      },
+      entryPoints: ["/index.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "first\nstore 1\nreader app\nindex s\nsettings s" },
+    });
+  }
   itBundled("splitting/EntryFilesAfterSharedCodeStay", {
     files: {
       ...setupBeforeShared(""),

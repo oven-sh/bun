@@ -11,7 +11,6 @@ const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
 const _nextStarted = Symbol("nextStarted");
-const _previousStarted = Symbol("previousStarted");
 
 const PublicPromise = Promise;
 
@@ -52,7 +51,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
   public [_nextStarted]: Query<any, any> | undefined;
-  public [_previousStarted]: Query<any, any> | undefined;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -175,12 +173,11 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     // A query of a transaction or of a reserved connection runs on that connection, not through the pool.
     const adapter = this[_flags] & SQLQueryFlags.allowUnsafeTransaction ? undefined : this[_adapter];
     if (adapter !== undefined) {
-      const previous = adapter.lastStarted;
-      if (previous === undefined) {
+      const last = adapter.lastStarted;
+      if (last === undefined) {
         adapter.firstStarted = this;
       } else {
-        previous[_nextStarted] = this;
-        this[_previousStarted] = previous;
+        last[_nextStarted] = this;
       }
       adapter.lastStarted = this;
     }
@@ -189,18 +186,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     await undefined;
 
     if (adapter !== undefined) {
-      const previous = this[_previousStarted];
+      // Promise jobs run in the order in which they were queued, so this query is the first one in the list.
+      $assert(adapter.firstStarted === this, "a started query leaves the list in start order");
       const next = this[_nextStarted];
-      if (previous === undefined) {
-        adapter.firstStarted = next;
-      } else {
-        previous[_nextStarted] = next;
-        this[_previousStarted] = undefined;
-      }
+      adapter.firstStarted = next;
       if (next === undefined) {
-        adapter.lastStarted = previous;
+        adapter.lastStarted = undefined;
       } else {
-        next[_previousStarted] = previous;
         this[_nextStarted] = undefined;
       }
       if (this[_queryStatus] & SQLQueryStatus.handedOff) {

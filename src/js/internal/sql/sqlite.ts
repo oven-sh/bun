@@ -463,9 +463,13 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   /// False while the callback of a begin() has a transaction open: a statement would run inside that transaction and
   /// resolve, and then close() rolls the transaction back. False when something else closed the database.
   #canRunStartedQueries() {
-    const db = this.db;
-    if (this.firstStarted === undefined || db === null) {
+    if (this.firstStarted === undefined) {
       return false;
+    }
+    const db = this.db;
+    if (db === null) {
+      // The database did not open. connect() rejects each query with the error of the open.
+      return true;
     }
     try {
       return !(db.inTransaction && this.closeHandlers.size > 0);
@@ -475,12 +479,14 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   async close(options?: { timeout?: number }) {
+    // A getter can run code of the caller here, and that code can call close(). So this read comes before `_closed`.
+    const timeout = options?.timeout;
     if (this._closed) {
       return;
     }
 
     // `!=`: "0" closes at once too, as it does for the other adapters.
-    if (options?.timeout != 0 && this.#canRunStartedQueries()) {
+    if (timeout != 0 && this.#canRunStartedQueries()) {
       handOffStartedQueries(this);
       // A hand-off can run code of the caller, and that code can close the database.
       if (this._closed) {

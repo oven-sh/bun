@@ -2950,8 +2950,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         args: &mut [JSValue],
         buffer_unwritten_data: bool,
     ) -> WriteResult {
-        // Nothing is accepted after `end()`, whose tail may still be draining.
-        let ended = self.flags.get().contains(Flags::END_AFTER_FLUSH);
+        // Nothing is accepted after `end()`, whose tail may still be draining. The raw half queues none.
+        let flags = self.flags.get();
+        let ended = flags.contains(Flags::END_AFTER_FLUSH) && !flags.contains(Flags::BYPASS_TLS);
         if args[0].is_undefined() {
             if ended {
                 return WriteResult::Success {
@@ -3395,16 +3396,20 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         let _guard = this.ref_guard();
-        let result = match this.write_or_end::<true>(global, args.mut_(), true) {
+        // No writable event reaches the raw half of an `upgradeTLS` pair: it makes one send.
+        let queues_tail = !this.flags.get().contains(Flags::BYPASS_TLS);
+        let result = match this.write_or_end::<true>(global, args.mut_(), queues_tail) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
                 if wrote < 0 {
                     JSValue::js_number(wrote as f64)
                 } else {
-                    if usize::try_from(wrote).expect("int cast") == total {
+                    let sent = usize::try_from(wrote).expect("int cast");
+                    if sent == total {
                         let _ = this.internal_flush();
                     }
-                    JSValue::js_number(total as f64)
+                    let accepted = if queues_tail { total } else { sent };
+                    JSValue::js_number(accepted as f64)
                 }
             }
         };

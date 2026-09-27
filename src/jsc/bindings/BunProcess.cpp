@@ -1291,7 +1291,7 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));
 
-    return process->wrapped().emitForBindings(signalNameIdentifier, args);
+    return process->wrapped().emit(signalNameIdentifier, args);
 }
 
 #if OS(WINDOWS)

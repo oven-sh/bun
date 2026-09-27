@@ -116,12 +116,6 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
     return false;
 }
 
-bool EventEmitter::hasActiveEventListeners(const Identifier& eventType) const
-{
-    auto* data = eventTargetData();
-    return data && data->eventListenerMap.containsActive(eventType);
-}
-
 bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
@@ -260,22 +254,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
-        if (exception) [[unlikely]] {
-            auto errorIdentifier = vm.propertyNames->error;
-            auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
-            if (!hasErrorListener || eventType == errorIdentifier) {
-                // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
-            } else if (hasErrorListener) {
-                MarkedArgumentBuffer expcep;
-                JSValue errorValue = exception->value();
-                if (!errorValue) {
-                    errorValue = JSC::jsUndefined();
-                }
-                expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTF::move(expcep));
-            }
-        }
+        if (exception) [[unlikely]]
+            Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
     }
 
     return fired;

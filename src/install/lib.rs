@@ -404,6 +404,7 @@ impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// Basename of the shared `node` / `bun` shim directory (ASCII-only).
+    #[cfg(not(windows))]
     pub const BUN_NODE_DIR_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bun-node-debug"
     } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
@@ -725,9 +726,7 @@ impl RunCommand {
 
         // Running as a shim already (nested `--bun`): reuse its directory.
         buf[..exe_dir.len()].copy_from_slice(exe_dir);
-        let len = if Self::ends_with_dir_name(exe_dir, Self::BESIDE_EXE_DIR_NAME)
-            || Self::ends_with_dir_name(exe_dir, Self::BUN_NODE_DIR_NAME)
-        {
+        let len = if Self::is_shim_dir(exe_dir) {
             exe_dir.len()
         } else {
             Self::append_dir_name(&mut buf, exe_dir.len(), Self::BESIDE_EXE_DIR_NAME)?
@@ -752,7 +751,12 @@ impl RunCommand {
         while temp_dir_len > 0 && bun_paths::is_sep_any_t::<u16>(buf[temp_dir_len - 1]) {
             temp_dir_len -= 1;
         }
-        let len = Self::append_dir_name(&mut buf, temp_dir_len, Self::BUN_NODE_DIR_NAME)?;
+        let mut name_buf = [0u8; Self::TEMP_SHIM_DIR_NAME_LEN];
+        let len = Self::append_dir_name(
+            &mut buf,
+            temp_dir_len,
+            Self::temp_shim_dir_name(&mut name_buf, launched),
+        )?;
         if Self::plant_windows_node_shims_in(
             &mut buf,
             len,
@@ -773,14 +777,46 @@ impl RunCommand {
         Ok(Self::windows_node_shim_at(&buf[..len], image))
     }
 
-    /// `path` ends with `\<name>` (ASCII, case-insensitive).
-    fn ends_with_dir_name(path: &[u16], name: &str) -> bool {
-        path.len() > name.len()
-            && bun_paths::is_sep_any_t::<u16>(path[path.len() - name.len() - 1])
-            && path[path.len() - name.len()..]
+    /// The last component of `path` is `bun-node` or `bun-node-<16 hex digits>`
+    /// (ASCII, case-insensitive): a directory this bun plants shims in.
+    fn is_shim_dir(path: &[u16]) -> bool {
+        let start = path
+            .iter()
+            .rposition(|&c| bun_paths::is_sep_any_t::<u16>(c))
+            .map_or(0, |i| i + 1);
+        let name = &path[start..];
+        let prefix = if name.len() == Self::BESIDE_EXE_DIR_NAME.len() {
+            Self::BESIDE_EXE_DIR_NAME
+        } else if name.len() == Self::TEMP_SHIM_DIR_NAME_LEN {
+            Self::TEMP_SHIM_DIR_PREFIX
+        } else {
+            return false;
+        };
+        name[..prefix.len()]
+            .iter()
+            .zip(prefix.bytes())
+            .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&b))
+            && name[prefix.len()..]
                 .iter()
-                .zip(name.bytes())
-                .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&b))
+                .all(|&c| c < 0x80 && (c as u8).is_ascii_hexdigit())
+    }
+
+    const TEMP_SHIM_DIR_PREFIX: &'static str = "bun-node-";
+    /// `bun-node-` + 16 hex digits.
+    const TEMP_SHIM_DIR_NAME_LEN: usize = Self::TEMP_SHIM_DIR_PREFIX.len() + 16;
+
+    /// `%TEMP%\bun-node-<hash>`: keyed on the path bun was launched as, so the name
+    /// is stable across upgrades of one install and distinct for two installs.
+    /// Case-insensitive, like the path itself.
+    fn temp_shim_dir_name<'a>(
+        buf: &'a mut [u8; Self::TEMP_SHIM_DIR_NAME_LEN],
+        launched: &bun_core::WStr,
+    ) -> &'a str {
+        let prefix = Self::TEMP_SHIM_DIR_PREFIX.as_bytes();
+        let hash = bun_wyhash::hash_ascii_lowercase(0, bytemuck::cast_slice(launched.as_slice()));
+        buf[..prefix.len()].copy_from_slice(prefix);
+        bun_core::fmt::bytes_to_hex_lower(&hash.to_be_bytes(), &mut buf[prefix.len()..]);
+        core::str::from_utf8(buf).expect("prefix and hex digits are ASCII")
     }
 
     /// Appends `\<name>` to `buf[..dir_len]`, keeping room for `SHIM_NAME_ROOM`.

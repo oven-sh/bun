@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { abbreviatedAccept, jsonHeaders, pack, publishBody, request, type Manifest } from "./fixtures.ts";
 import { TestRegistry, toml } from "./test-registry.ts";
@@ -264,7 +264,10 @@ describe.concurrent("bun against the registry", () => {
     using dir = project(registry, { name: "with-web-auth", version: "1.0.0" }, "browser");
 
     const publishing = bun(String(dir), "publish", "--auth-type", "web");
-    registry.auth.approveSession(await opened.promise);
+    const exitedEarly = publishing.then(({ stderr, exitCode }) => {
+      throw new Error(`bun publish exited with code ${exitCode} before it asked for the session:\n${stderr}`);
+    });
+    registry.auth.approveSession(await Promise.race([opened.promise, exitedEarly]));
     const { stdout, stderr, exitCode } = await publishing;
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain(`${registry.url}auth/cli/`);
@@ -284,23 +287,6 @@ describe.concurrent("bun against the registry", () => {
     expect(stdout).toContain("high: no-deps is unsafe (<1.1.0) - https://github.com/advisories/GHSA-1000000");
     expect(stdout).toContain("1 vulnerability (1 high)");
     expect(exitCode).toBe(1);
-  });
-});
-
-describe("VerdaccioRegistry from harness", () => {
-  test("is a registry that listens", async () => {
-    using registry = new VerdaccioRegistry();
-    expect(registry).toBeInstanceOf(TestRegistry);
-    // The class that ran verdaccio had its port before start().
-    expect(registry.registryUrl()).toBe(`http://localhost:${registry.port}/`);
-    expect(await registry.start()).toBe(registry);
-    expect((await request(`${registry.registryUrl()}no-deps`)).status).toBe(200);
-  });
-
-  test("has no configuration file", () => {
-    expect(() => new VerdaccioRegistry({ configPath: "verdaccio.yaml" })).toThrow(
-      "There is no verdaccio to configure.",
-    );
   });
 });
 

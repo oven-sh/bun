@@ -62,7 +62,8 @@ export interface RegistryOptions {
   recordRequests?: boolean;
   /**
    * Runs before the registry handles a request. A returned Response is the answer. This is how a test makes the
-   * registry fail or stall for one URL.
+   * registry fail or stall for one URL. It gets a copy of the request, so it can read the body of a request that
+   * the registry answers.
    */
   intercept?: (
     request: Request,
@@ -209,7 +210,7 @@ export class Registry {
   async fetch(request: Request): Promise<Response> {
     let response: Response;
     try {
-      const intercepted = await this.options.intercept?.(request, this);
+      const intercepted = await this.options.intercept?.(request.clone(), this);
       response = intercepted instanceof Response ? intercepted : await this.#route(request, new URL(request.url));
     } catch (error) {
       if (error instanceof RegistryError) {

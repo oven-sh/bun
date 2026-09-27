@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { isIPv6 } from "harness";
 import { abbreviatedAccept, md5, request, sha1, sha512, storage } from "./fixtures.ts";
 import { Registry } from "./index.ts";
+import { urlHost } from "./registry.ts";
 
 let fixtures: Awaited<ReturnType<typeof storage>>;
 let registry: Registry;
@@ -678,6 +680,29 @@ describe("hooks", () => {
     expect((await request(`${own.url}nothing-here`)).status).toBe(404);
     expect((await request(`${own.url}-/whoami`)).status).toBe(401);
     expect(() => own.stop()).not.toThrow();
+  });
+
+  test.each([
+    [undefined, "localhost"],
+    ["127.0.0.1", "localhost"],
+    ["localhost", "localhost"],
+    // A registry that listens on every address is there on the loopback too.
+    ["0.0.0.0", "localhost"],
+    ["::", "localhost"],
+    ["::1", "[::1]"],
+    ["fe80::1", "[fe80::1]"],
+    ["192.168.1.10", "192.168.1.10"],
+    ["registry.test", "registry.test"],
+  ])("the URL of a registry on %p has the host %s", (hostname, host) => {
+    expect(urlHost(hostname)).toBe(host);
+  });
+
+  test.skipIf(!isIPv6())("the URL of a registry on the IPv6 loopback reaches it", async () => {
+    using own = new Registry({ storage: fixtures.path, hostname: "::1" }).start();
+    expect(own.url).toBe(`http://[::1]:${own.port}/`);
+    const reply = await request(`${own.url}plain`, { headers: { accept: abbreviatedAccept } });
+    expect(reply.status).toBe(200);
+    expect(reply.json.versions["1.0.0"].dist.tarball).toBe(`${own.url}plain/-/plain-1.0.0.tgz`);
   });
 
   test("a port has one registry", async () => {

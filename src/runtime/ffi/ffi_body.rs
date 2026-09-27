@@ -1319,8 +1319,7 @@ impl FFI {
         jsc::mark_binding();
         // Before `do_close` unloads the code the functions point into.
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (dynamicDowncast) before use.
-        let is_running =
-            unsafe { Bun__JSCFFILibraryCloseFunctions(global_this, callframe.this()) };
+        let is_running = unsafe { Bun__JSCFFILibraryCloseFunctions(global_this, callframe.this()) };
         if is_running {
             // The running call returns into the library, so `do_close` must find none to unload.
             self.dylib.set(None);

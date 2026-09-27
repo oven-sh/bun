@@ -9,6 +9,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::node::fs as node_fs;
+use crate::node::types::PathLikeExt as _;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
@@ -30,7 +31,7 @@ use super::SizeType;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
+    Bytes, Data, DataTag, File, FileSource, IsAllAscii, PinnedFile, S3, SerializeTag, Store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -86,6 +87,39 @@ pub(crate) trait S3Ext {
 
 pub(crate) trait FileExt {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
+}
+
+/// The reads of a pinned file. They resolve its path as a `Bun.file()` open does.
+pub(crate) trait PinnedFileExt {
+    /// The one way to read a pinned file: the descriptor comes back only if it still matches.
+    fn open_verified(&self, flags: i32) -> bun_sys::Result<(bun_sys::Fd, bun_sys::Stat)>;
+    /// `PinnedFile::recheck` by path, for `uv_fs_copyfile`, which takes no descriptor.
+    #[cfg(windows)]
+    fn recheck_path(&self) -> bun_sys::Result<()>;
+}
+
+impl PinnedFileExt for PinnedFile {
+    fn open_verified(&self, flags: i32) -> bun_sys::Result<(bun_sys::Fd, bun_sys::Stat)> {
+        let fd = {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let path = self.pathlike_for_unverified_open().path();
+            bun_sys::open(path.slice_z(&mut buf), flags, 0)?
+        };
+        match bun_sys::fstat(fd).and_then(|stat| self.verify(&stat).map(|()| stat)) {
+            Ok(stat) => Ok((fd, stat)),
+            Err(err) => {
+                bun_sys::FdExt::close(fd);
+                Err(err)
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn recheck_path(&self) -> bun_sys::Result<()> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = self.pathlike_for_unverified_open().path();
+        self.verify(&bun_sys::stat(path.slice_z(&mut buf))?)
+    }
 }
 
 pub(crate) trait BytesExt {
@@ -173,15 +207,16 @@ impl StoreExt for Store {
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         match &self.data {
             Data::File(file) => {
+                let pathlike = file.pathlike_ignoring_pin();
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =
-                    if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
+                    if matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
                         PathOrFileDescriptorSerializeTag::Fd
                     } else {
                         PathOrFileDescriptorSerializeTag::Path
                     };
                 writer.write_int_le::<u8>(pathlike_tag as u8)?;
 
-                match &file.pathlike {
+                match pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
                         // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
                         // `#[repr(transparent)]` over an integer (`i32` posix /
@@ -194,6 +229,14 @@ impl StoreExt for Store {
                         writer.write_int_le::<u32>(path_slice.len() as u32)?;
                         writer.write_all(path_slice)?;
                     }
+                }
+
+                if let Some(pinned) = file.pinned() {
+                    let (size, mtime_nsec) = pinned.size_and_mtime_nsec();
+                    writer.write_int_le::<u64>(size)?;
+                    writer.write_int_le::<i64>(mtime_nsec)?;
+                    writer.write_int_le::<u32>(file.mode)?;
+                    writer.write_int_le::<u64>(file.last_modified)?;
                 }
             }
             Data::S3(s3) => {
@@ -219,7 +262,7 @@ impl StoreExt for Store {
 
 impl FileExt for File {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        match &self.pathlike {
+        match self.pathlike_ignoring_pin() {
             PathOrFileDescriptor::Path(path_like) => {
                 // The `*Binding` arg is unused in `AsyncFSTask::create`.
                 let binding = node_fs::Binding::default();
@@ -302,7 +345,7 @@ impl S3Ext for S3 {
                         // compute the error (which reads `promise.get()`) first.
                         let err_val = err.to_js_with_async_stack(
                             global_object,
-                            self_.store.get_path(),
+                            self_.store.path_for_display(),
                             self_.promise.get(),
                         );
                         self_.promise.reject(global_object, err_val)?;
@@ -379,7 +422,7 @@ impl S3Ext for S3 {
                         // compute the error (which reads `promise.get()`) first.
                         let err_val = err.to_js_with_async_stack(
                             global_object,
-                            self_.store.get_path(),
+                            self_.store.path_for_display(),
                             self_.promise.get(),
                         );
                         self_.promise.reject(global_object, err_val)?;

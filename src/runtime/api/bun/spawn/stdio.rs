@@ -8,7 +8,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
-use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::blob::store::{Data as StoreData, FileSource, PinnedFileExt as _};
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
@@ -60,6 +60,8 @@ pub(crate) enum Stdio {
     Blob(webcore::blob::Any),
     #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     Memfd(Fd),
+    /// A descriptor this process opened for the child. It is closed once the child has it.
+    OwnedFd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
     /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
@@ -238,8 +240,8 @@ impl Stdio {
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let StoreData::File(ref file) = store.data {
-                            match file.pathlike {
-                                PathOrFileDescriptor::Fd(store_fd) => {
+                            match file.lazy_pathlike() {
+                                Some(&PathOrFileDescriptor::Fd(store_fd)) => {
                                     if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
@@ -265,11 +267,12 @@ impl Stdio {
 
                                     break 'brk SpawnOptionsStdio::Pipe(store_fd);
                                 }
-                                PathOrFileDescriptor::Path(ref path) => {
+                                Some(PathOrFileDescriptor::Path(path)) => {
                                     break 'brk SpawnOptionsStdio::Path(
                                         path.slice().to_vec().into_boxed_slice(),
                                     );
                                 }
+                                None => {}
                             }
                         }
                     }
@@ -293,7 +296,7 @@ impl Stdio {
             #[cfg(windows)]
             Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
-            Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
+            Self::Fd(fd) | Self::OwnedFd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(not(windows))]
             Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(windows)]
@@ -590,8 +593,8 @@ impl Stdio {
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
-                    match file.pathlike {
-                        PathOrFileDescriptor::Fd(store_fd) => {
+                    match file.source() {
+                        FileSource::Lazy(&PathOrFileDescriptor::Fd(store_fd)) => {
                             if Some(store_fd) == fd {
                                 *self = Stdio::Inherit;
                             } else {
@@ -624,8 +627,28 @@ impl Stdio {
 
                             return Ok(());
                         }
-                        PathOrFileDescriptor::Path(ref path) => {
+                        FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
                             *self = Stdio::Path(path.clone());
+                            return Ok(());
+                        }
+                        // The child reads its stdin, so the file is compared at this open only.
+                        FileSource::Pinned(pinned) if i == 0 => {
+                            let flags = bun_sys::O::RDONLY | bun_sys::O::NOCTTY;
+                            return match pinned.open_verified(flags) {
+                                Ok((verified, _)) => {
+                                    *self = Stdio::OwnedFd(verified);
+                                    Ok(())
+                                }
+                                Err(_) => {
+                                    let err = webcore::blob::not_readable_error(global);
+                                    Err(global.throw_value(err))
+                                }
+                            };
+                        }
+                        // Any other slot takes the path, as it does for a `Bun.file()`.
+                        FileSource::Pinned(pinned) => {
+                            *self =
+                                Stdio::Path(pinned.pathlike_for_unverified_open().path().clone());
                             return Ok(());
                         }
                     }
@@ -674,7 +697,7 @@ impl Drop for Stdio {
             Self::Blob(blob) => {
                 blob.detach();
             }
-            Self::Memfd(fd) => {
+            Self::Memfd(fd) | Self::OwnedFd(fd) => {
                 fd.close();
             }
             Self::ReadableStream(_) => {

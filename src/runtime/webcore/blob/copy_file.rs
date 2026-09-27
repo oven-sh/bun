@@ -2,9 +2,10 @@
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
+use crate::webcore::blob::store::{FileSource, PinnedFileExt as _};
+use crate::webcore::blob::{self, MAX_SIZE, SizeType, Store};
 #[cfg(not(windows))]
-use crate::webcore::blob::{self, MkdirpTarget, Retry, store};
-use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
+use crate::webcore::blob::{MkdirpTarget, Retry, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
@@ -53,6 +54,8 @@ pub(crate) struct CopyFile {
     pub(crate) source_fd: Fd,
 
     pub(crate) system_error: Option<SystemError>,
+    /// The pinned source no longer matches its pin: the copy rejects with `NotReadableError`.
+    pub(crate) source_not_readable: bool,
 
     pub(crate) read_len: SizeType,
 
@@ -121,6 +124,7 @@ impl CopyFile {
             destination_fd: Fd::INVALID,
             source_fd: Fd::INVALID,
             system_error: None,
+            source_not_readable: false,
             read_len: 0,
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
@@ -135,14 +139,15 @@ impl CopyFile {
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
+        if self.source_not_readable {
+            drop(self.store.take());
+            return promise.reject(global_this, Ok(blob::not_readable_error(global_this)));
+        }
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
-        if matches!(
-            self.source_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        ) && system_error.path.is_empty()
-        {
-            system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
+        if system_error.path.is_empty() {
+            if let Some(path) = self.source_file_store.display_path() {
+                system_error.path = bun_core::String::clone_utf8(path);
+            }
         }
 
         if system_error.message.is_empty() {
@@ -165,7 +170,7 @@ impl CopyFile {
     ) -> jsc::JsResult<()> {
         drop(self.source_store.take()); // source_store.?.deref()
 
-        if self.system_error.is_some() {
+        if self.system_error.is_some() || self.source_not_readable {
             return self.reject(promise, global_this);
         }
 
@@ -177,12 +182,17 @@ impl CopyFile {
 
     #[cfg(not(windows))]
     pub(crate) fn do_close(&mut self) {
-        let close_input = !matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Fd(_)
-        ) && self.destination_fd != Fd::INVALID;
-        let close_output = !matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Fd(_))
-            && self.source_fd != Fd::INVALID;
+        let close_input =
+            self.destination_file_store.fd().is_none() && self.destination_fd != Fd::INVALID;
+        let close_output = self.source_file_store.fd().is_none() && self.source_fd != Fd::INVALID;
+
+        // node compares a pinned file again after it has read it.
+        if close_output
+            && self.system_error.is_none()
+            && let Some(pinned) = self.source_file_store.pinned()
+        {
+            self.source_not_readable = pinned.recheck(self.source_fd).is_err();
+        }
 
         // Apply destination mode using fchmod before closing.
         // This ensures mode is applied even when overwriting existing files, since
@@ -230,14 +240,18 @@ impl CopyFile {
         // open source file first
         // if it fails, we don't want the extra destination file hanging out
         if matches!(WHICH, IOWhich::Both | IOWhich::Source) {
-            self.source_fd = match bun_sys::open(
-                self.source_file_store
-                    .pathlike
-                    .path()
-                    .slice_z(&mut path_buf1),
-                OPEN_SOURCE_FLAGS,
-                0,
-            ) {
+            // A pinned source is verified here, before the destination is opened and truncated.
+            let opened = match self.source_file_store.source() {
+                FileSource::Lazy(source) => {
+                    bun_sys::open(source.path().slice_z(&mut path_buf1), OPEN_SOURCE_FLAGS, 0)
+                }
+                FileSource::Pinned(pinned) => {
+                    let opened = pinned.open_verified(OPEN_SOURCE_FLAGS).map(|(fd, _)| fd);
+                    self.source_not_readable = opened.is_err();
+                    opened
+                }
+            };
+            self.source_fd = match opened {
                 bun_sys::Result::Ok(result) => {
                     match result.make_lib_uv_owned_for_syscall(
                         bun_sys::Tag::open,
@@ -262,7 +276,11 @@ impl CopyFile {
                 // detach `dest` lifetime from `self` (borrowck) — slice_z
                 // copies into path_buf1, so build the ZStr directly from the buffer.
                 let dest_len = {
-                    let s = self.destination_file_store.pathlike.path().slice();
+                    let s = self
+                        .destination_file_store
+                        .pathlike_ignoring_pin()
+                        .path()
+                        .slice();
                     let n = s.len().min(path_buf1.len() - 1);
                     path_buf1[..n].copy_from_slice(&s[..n]);
                     path_buf1[n] = 0;
@@ -304,7 +322,12 @@ impl CopyFile {
 
                         self.system_error = Some(
                             errno
-                                .with_path(self.destination_file_store.pathlike.path().slice())
+                                .with_path(
+                                    self.destination_file_store
+                                        .pathlike_ignoring_pin()
+                                        .path()
+                                        .slice(),
+                                )
                                 .to_system_error(),
                         );
                         return Err(bun_errno::from_errno(errno.errno as i32).into());
@@ -327,7 +350,7 @@ impl CopyFile {
         total_written: &mut u64,
     ) -> Result<(), crate::Error> {
         let bun_opened_dest = matches!(
-            self.destination_file_store.pathlike,
+            self.destination_file_store.pathlike_ignoring_pin(),
             PathOrFileDescriptor::Path(_)
         );
         let cap = if unknown_size {
@@ -594,21 +617,24 @@ impl CopyFile {
             // from the buffer (not `self`) after dropping the first borrow.
             let dest_len = self
                 .destination_file_store
-                .pathlike
+                .pathlike_ignoring_pin()
                 .path()
                 .slice_z(&mut dest_buf)
                 .len();
             // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
             let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
-            match bun_sys::clonefile(
-                self.source_file_store
-                    .pathlike
-                    .path()
-                    .slice_z(&mut source_buf),
-                dest,
-            ) {
+            let source = self
+                .source_file_store
+                .lazy_path()
+                .expect("`run_async` tries `clonefile` for a `Bun.file(path)` source only");
+            match bun_sys::clonefile(source.slice_z(&mut source_buf), dest) {
                 bun_sys::Result::Err(errno) => {
-                    let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
+                    let err_path = self
+                        .destination_file_store
+                        .pathlike_ignoring_pin()
+                        .path()
+                        .slice()
+                        .to_vec();
                     match blob::mkdir_if_not_exists(self, &errno, dest, &err_path) {
                         Retry::Continue => continue,
                         Retry::Fail => {}
@@ -637,12 +663,12 @@ impl CopyFile {
             #[cfg(not(target_os = "macos"))]
             let stat_: Option<Stat> = None;
 
-            if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
-                self.destination_fd = *fd;
+            if let Some(fd) = self.destination_file_store.fd() {
+                self.destination_fd = fd;
             }
 
-            if let PathOrFileDescriptor::Fd(fd) = &self.source_file_store.pathlike {
-                self.source_fd = *fd;
+            if let Some(fd) = self.source_file_store.fd() {
+                self.source_fd = fd;
             }
 
             // Do we need to open both files?
@@ -651,13 +677,11 @@ impl CopyFile {
                 // This is the fastest way to copy a file.
                 #[cfg(target_os = "macos")]
                 {
+                    // `clonefile` takes a path, so a pinned source is copied from its descriptor.
                     if self.offset == 0
+                        && let Some(source) = self.source_file_store.lazy_path()
                         && matches!(
-                            self.source_file_store.pathlike,
-                            PathOrFileDescriptor::Path(_)
-                        )
-                        && matches!(
-                            self.destination_file_store.pathlike,
+                            self.destination_file_store.pathlike_ignoring_pin(),
                             PathOrFileDescriptor::Path(_)
                         )
                     {
@@ -666,12 +690,7 @@ impl CopyFile {
 
                             // stat the output file, make sure it:
                             // 1. Exists
-                            match bun_sys::stat(
-                                self.source_file_store
-                                    .pathlike
-                                    .path()
-                                    .slice_z(&mut path_buf),
-                            ) {
+                            match bun_sys::stat(source.slice_z(&mut path_buf)) {
                                 bun_sys::Result::Ok(result) => {
                                     stat_ = Some(result);
 
@@ -703,7 +722,7 @@ impl CopyFile {
                                         let _ = unsafe {
                                             bun_sys::c::truncate(
                                                 self.destination_file_store
-                                                    .pathlike
+                                                    .pathlike_ignoring_pin()
                                                     .path()
                                                     .slice_z(&mut path_buf)
                                                     .as_ptr(),
@@ -720,7 +739,7 @@ impl CopyFile {
                                     if let Some(mode) = self.destination_mode {
                                         match bun_sys::chmod(
                                             self.destination_file_store
-                                                .pathlike
+                                                .pathlike_ignoring_pin()
                                                 .path()
                                                 .slice_z(&mut path_buf),
                                             mode,
@@ -751,14 +770,12 @@ impl CopyFile {
                 }
                 // Do we need to open only one file?
             } else if self.destination_fd == Fd::INVALID {
-                self.source_fd = self.source_file_store.pathlike.fd();
-
                 if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
                     return;
                 }
                 // Do we need to open only one file?
             } else if self.source_fd == Fd::INVALID {
-                self.destination_fd = self.destination_file_store.pathlike.fd();
+                self.destination_fd = self.destination_file_store.pathlike_ignoring_pin().fd();
 
                 if self.do_open_file::<{ IOWhich::Source }>().is_err() {
                     return;
@@ -773,7 +790,7 @@ impl CopyFile {
             debug_assert!(self.source_fd.is_valid());
 
             if matches!(
-                self.destination_file_store.pathlike,
+                self.destination_file_store.pathlike_ignoring_pin(),
                 PathOrFileDescriptor::Fd(_)
             ) {
                 // nothing to do for the Fd case
@@ -812,7 +829,7 @@ impl CopyFile {
 
                 if PREALLOCATE_SUPPORTED
                     && matches!(
-                        self.destination_file_store.pathlike,
+                        self.destination_file_store.pathlike_ignoring_pin(),
                         PathOrFileDescriptor::Path(_)
                     )
                     && self.max_length > PREALLOCATE_LENGTH
@@ -881,7 +898,7 @@ impl CopyFile {
                 // fcopyfile rewrites dest from offset 0 and the slice trim is
                 // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
                 if matches!(
-                    self.destination_file_store.pathlike,
+                    self.destination_file_store.pathlike_ignoring_pin(),
                     PathOrFileDescriptor::Path(_)
                 ) {
                     let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
@@ -916,7 +933,7 @@ impl CopyFile {
             #[cfg(target_os = "freebsd")]
             {
                 if matches!(
-                    self.destination_file_store.pathlike,
+                    self.destination_file_store.pathlike_ignoring_pin(),
                     PathOrFileDescriptor::Path(_)
                 ) {
                     let mut total_written: u64 = 0;
@@ -1026,7 +1043,7 @@ fn read_write_loop_capped(
 }
 
 // Ownership is encoded in the types, so cleanup is all field `Drop`:
-// `source_file_store.pathlike` is a `PathLike` clone that is independently
+// `source_file_store`'s path is a `PathLike` clone that is independently
 // droppable — `PathLike::clone` dupes owned string buffers (freed by the
 // clone's own `CowSlice` drop), bumps refs for WTF-backed slices, and only
 // shares the backing for borrowed-string/Buffer variants (whose owner is kept
@@ -1366,6 +1383,14 @@ impl<'a> CopyFileWindows<'a> {
             return;
         }
 
+        // node compares a pinned file again after it has read it.
+        if let Some(pinned) = self.source_file_store.data.as_file().pinned()
+            && pinned.recheck(self.read_write_loop.source_fd).is_err()
+        {
+            self.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
+            return;
+        }
+
         let written = self.read_write_loop.written;
         self.on_complete(written);
     }
@@ -1412,7 +1437,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_pathlike(
-        pathlike: &mut PathOrFileDescriptor,
+        pathlike: &PathOrFileDescriptor,
         must_close: &mut bool,
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {
@@ -1451,14 +1476,56 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
+    /// `false`: the copy failed and `self` is gone.
+    fn prepare_source(&mut self) -> bool {
+        // Already open when `mkdirp` retries the copy of a pinned source.
+        if self.read_write_loop.source_fd != Fd::INVALID {
+            return true;
+        }
+        let must_close = &mut self.read_write_loop.must_close_source_fd;
+        let opened = match self.source_file_store.data.as_file().source() {
+            FileSource::Lazy(pathlike) => {
+                Self::prepare_pathlike(pathlike, must_close, true).map_err(Some)
+            }
+            FileSource::Pinned(pinned) => match pinned.open_verified(bun_sys::O::RDONLY) {
+                Ok((fd, _)) => {
+                    *must_close = true;
+                    Ok(fd)
+                }
+                Err(_) => Err(None),
+            },
+        };
+        match opened {
+            Ok(fd) => {
+                self.read_write_loop.source_fd = fd;
+                true
+            }
+            Err(Some(err)) => {
+                self.throw(err);
+                false
+            }
+            Err(None) => {
+                self.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
+                false
+            }
+        }
+    }
+
     fn prepare_read_write_loop(&mut self) {
+        // A pinned source is verified before the destination is opened and truncated.
+        let source_first = self.source_file_store.data.as_file().pinned().is_some();
+        if source_first && !self.prepare_source() {
+            return;
+        }
+
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut Store::data_mut(&self.destination_file_store)
-                .as_file_mut()
-                .pathlike,
+            self.destination_file_store
+                .data
+                .as_file()
+                .pathlike_ignoring_pin(),
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1474,19 +1541,9 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
-        self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut Store::data_mut(&self.source_file_store)
-                .as_file_mut()
-                .pathlike,
-            &mut self.read_write_loop.must_close_source_fd,
-            true,
-        ) {
-            bun_sys::Result::Ok(fd) => fd,
-            bun_sys::Result::Err(err) => {
-                self.throw(err);
-                return;
-            }
-        };
+        if !source_first && !self.prepare_source() {
+            return;
+        }
 
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
@@ -1522,10 +1579,10 @@ impl<'a> CopyFileWindows<'a> {
         let source_file_store = &mut self.source_file_store.data.as_file();
 
         let new_path: &bun_core::ZStr = 'brk: {
-            match &destination_file_store.pathlike {
+            match destination_file_store.pathlike_ignoring_pin() {
                 PathOrFileDescriptor::Path(_) => {
                     break 'brk destination_file_store
-                        .pathlike
+                        .pathlike_ignoring_pin()
                         .path()
                         .slice_z(&mut pathbuf1);
                 }
@@ -1570,11 +1627,22 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
         let old_path: &bun_core::ZStr = 'brk: {
-            match &source_file_store.pathlike {
-                PathOrFileDescriptor::Path(_) => {
-                    break 'brk source_file_store.pathlike.path().slice_z(&mut pathbuf2);
+            match source_file_store.source() {
+                // `uv_fs_copyfile` takes a path, so the file is compared before and after it.
+                FileSource::Pinned(pinned) => {
+                    if pinned.recheck_path().is_err() {
+                        self.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
+                        return;
+                    }
+                    break 'brk pinned
+                        .pathlike_for_unverified_open()
+                        .path()
+                        .slice_z(&mut pathbuf2);
                 }
-                PathOrFileDescriptor::Fd(fd) => {
+                FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
+                    break 'brk path.slice_z(&mut pathbuf2);
+                }
+                FileSource::Lazy(PathOrFileDescriptor::Fd(fd)) => {
                     let fd = *fd;
                     match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
@@ -1643,13 +1711,20 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub(crate) fn throw(&mut self, err: bun_sys::Error) {
+        self.reject(move |global_this, promise| err.to_js_with_async_stack(global_this, promise));
+    }
+
+    fn reject(
+        &mut self,
+        to_js: impl FnOnce(&jsc::JSGlobalObject, &mut JSPromise) -> jsc::JsResult<JSValue>,
+    ) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // `swap()` returns a `&mut JSPromise` into a GC-owned cell (not into
         // `self`), but its lifetime is elided to `&mut self`. Decay to a raw pointer so
         // borrowck doesn't tie it to `self` across `destroy` below.
         let promise = JSPromise::opaque_mut(self.promise.swap());
-        let err_instance = err.to_js_with_async_stack(global_this, promise);
+        let err_instance = to_js(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
@@ -1673,7 +1748,10 @@ impl<'a> CopyFileWindows<'a> {
         // Apply destination mode if specified (async)
         if let Some(mode) = self.destination_mode {
             if matches!(
-                self.destination_file_store.data.as_file().pathlike,
+                self.destination_file_store
+                    .data
+                    .as_file()
+                    .pathlike_ignoring_pin(),
                 PathOrFileDescriptor::Path(_)
             ) {
                 self.written_bytes = written;
@@ -1688,7 +1766,7 @@ impl<'a> CopyFileWindows<'a> {
                     .destination_file_store
                     .data
                     .as_file()
-                    .pathlike
+                    .pathlike_ignoring_pin()
                     .path()
                     .slice_z(&mut pathbuf)
                     .as_ptr();
@@ -1714,7 +1792,7 @@ impl<'a> CopyFileWindows<'a> {
                 // chmod failed to start - reject the promise to report the error.
                 if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
                     let destination = &self.destination_file_store.data.as_file();
-                    if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
+                    if let PathOrFileDescriptor::Path(p) = destination.pathlike_ignoring_pin() {
                         err = err.with_path(p.slice());
                     }
                     self.throw(err);
@@ -1756,7 +1834,12 @@ impl<'a> CopyFileWindows<'a> {
         let mut node_fs_ = node_fs::NodeFS::default();
         let _ = node_fs_.truncate(
             &node_fs::args::Truncate {
-                path: self.destination_file_store.data.as_file().pathlike.clone(),
+                path: self
+                    .destination_file_store
+                    .data
+                    .as_file()
+                    .pathlike_ignoring_pin()
+                    .clone(),
                 len: u64::try_from(self.size).expect("int cast"),
                 flags: 0,
             },
@@ -1785,7 +1868,10 @@ impl<'a> CopyFileWindows<'a> {
         // `core::ptr::from_mut(self)` for `completion_ctx` below.
         let path: *const [u8] = {
             let destination = &self.destination_file_store.data.as_file();
-            if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
+            if !matches!(
+                destination.pathlike_ignoring_pin(),
+                PathOrFileDescriptor::Path(_)
+            ) {
                 self.throw(bun_sys::Error {
                     errno: bun_sys::SystemErrno::EINVAL as u16,
                     syscall: bun_sys::Tag::mkdir,
@@ -1793,7 +1879,7 @@ impl<'a> CopyFileWindows<'a> {
                 });
                 return;
             }
-            let path_slice = destination.pathlike.path().slice();
+            let path_slice = destination.pathlike_ignoring_pin().path().slice();
             // BORROW: not owned — `destination_file_store` (and thus its path) is held in
             // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
             // on `self` before any `destroy`).
@@ -1845,7 +1931,12 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         // ENOENT from the probe counts as "missing"; any other error leaves
         // the mkdirp+retry path available.
         let source_missing = errno == bun_sys::E::ENOENT
-            && match &this.source_file_store.data.as_file().pathlike {
+            && match this
+                .source_file_store
+                .data
+                .as_file()
+                .pathlike_ignoring_pin()
+            {
                 PathOrFileDescriptor::Path(p) => {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     matches!(
@@ -1876,7 +1967,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         } else {
             &this.destination_file_store
         };
-        match &store.data.as_file().pathlike {
+        match store.data.as_file().pathlike_ignoring_pin() {
             PathOrFileDescriptor::Path(p) => {
                 err = err.with_path(p.slice());
             }
@@ -1889,8 +1980,20 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
+    if let Some(pinned) = this.source_file_store.data.as_file().pinned()
+        && pinned.recheck_path().is_err()
+    {
+        this.reject(|global_this, _| Ok(blob::not_readable_error(global_this)));
+        return;
+    }
+
     // uv_fs_copyfile leaves `statbuf` empty.
-    let size = match &this.destination_file_store.data.as_file().pathlike {
+    let size = match this
+        .destination_file_store
+        .data
+        .as_file()
+        .pathlike_ignoring_pin()
+    {
         PathOrFileDescriptor::Path(p) => {
             let mut buf = bun_paths::path_buffer_pool::get();
             bun_sys::stat(p.slice_z(&mut buf)).map(|stat| stat.size())
@@ -1920,7 +2023,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     let rc = this.io_request.result;
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
         let destination = &this.destination_file_store.data.as_file();
-        if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
+        if let PathOrFileDescriptor::Path(p) = destination.pathlike_ignoring_pin() {
             err = err.with_path(p.slice());
         }
         this.throw(err);

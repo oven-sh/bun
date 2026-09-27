@@ -105,7 +105,7 @@ impl Readable {
 
         match &stdio {
             Stdio::Inherit => Readable::Inherit,
-            Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
+            Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) | Stdio::OwnedFd(..) => Readable::Ignore,
             Stdio::Fd(fd) => {
                 #[cfg(unix)]
                 {

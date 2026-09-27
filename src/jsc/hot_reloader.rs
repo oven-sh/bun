@@ -6,12 +6,8 @@ use bun_collections::StringHashMap;
 use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
-#[cfg(not(bun_portable))]
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 use bun_paths::SEP;
-#[cfg(bun_portable)]
-#[cfg(not(windows))]
-use bun_paths::sep;
 use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
@@ -1214,7 +1210,7 @@ where
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()] =
                                                 cfg_select! {
-                                                    bun_portable => sep(),
+                                                    bun_portable => bun_paths::sep(),
                                                     _ => SEP,
                                                 };
 

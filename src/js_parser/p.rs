@@ -9410,16 +9410,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.symbols[self.require_ref.inner_index() as usize].use_count_estimate > 0
         };
 
-        // Move the
-        // parser's accumulated runtime-helper refs into the Ast so the linker /
-        // printer can emit `__require`, `__toESM`, etc. Precompute `require_ref`
-        // first since it reads `__require` from the same struct we're taking.
         let require_ref = self
             .runtime_imports
             .__require
             .to_nullable()
             .unwrap_or(self.require_ref);
-        let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
         if !self.commonjs_named_exports_deoptimized {
             self.mark_commonjs_exports_that_ignore_this();
@@ -9444,7 +9439,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // returned up the `_parse → parse → cache → transpiler` chain (see
         // `js_parser::Result` PERF NOTE).
         Ok(Box::new(js_ast::Ast {
-            runtime_imports,
             module_scope,
             exports_ref: self.exports_ref,
             wrapper_ref,

@@ -2,7 +2,6 @@ use core::mem::{align_of, size_of};
 
 use bun_alloc::AllocError;
 
-use crate::autolinks::is_list_bullet;
 use crate::parser::{self, BlockHeader, Parser};
 use crate::types::{self, BlockType, Container, VerbatimLine};
 
@@ -157,19 +156,8 @@ impl Parser<'_> {
 
     pub(crate) fn is_container_compatible(&self, existing: &Container, new: &Container) -> bool {
         let _ = self;
-        // Same container type
-        if existing.ch == b'>' && new.ch == b'>' {
-            return true;
-        }
-        // Same list marker type
-        if existing.ch == new.ch {
-            return true;
-        }
-        // Bullet lists: different bullet chars are compatible
-        if is_list_bullet(existing.ch) && is_list_bullet(new.ch) {
-            return false;
-        }
-        false
+        // Two block quotes, or two list items with the same marker.
+        existing.ch == new.ch
     }
 
     pub(crate) fn process_all_blocks(&mut self) -> Result<(), parser::Error> {

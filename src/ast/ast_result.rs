@@ -8,7 +8,6 @@ use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::array_hash_map::{AutoContext, StringContext};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
-use crate::runtime;
 use crate::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
     Ref, Scope, SlotCounts, StoreStr, Target,
@@ -23,7 +22,6 @@ pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, Ast
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
-    pub runtime_imports: runtime::Imports,
 
     pub nested_scope_slot_counts: SlotCounts,
 
@@ -111,7 +109,6 @@ impl<'a> Ast<'a> {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
-            runtime_imports: Default::default(),
             nested_scope_slot_counts: SlotCounts::default(),
             uses_exports_ref: false,
             uses_module_ref: false,

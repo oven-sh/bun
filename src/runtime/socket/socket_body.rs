@@ -3745,7 +3745,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -4175,7 +4175,7 @@ pub(crate) struct StoredVerifyError {
 // ──────────────────────────────────────────────────────────────────────────
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct Flags: u16 {
         const IS_ACTIVE            = 1 << 0;
         /// Prevent onClose from calling into JavaScript while we are finalizing
@@ -4184,7 +4184,6 @@ bitflags::bitflags! {
         const HANDSHAKE_COMPLETE   = 1 << 3;
         const EMPTY_PACKET_PENDING = 1 << 4;
         const END_AFTER_FLUSH      = 1 << 5;
-        const OWNED_PROTOS         = 1 << 6;
         const IS_PAUSED            = 1 << 7;
         const ALLOW_HALF_OPEN      = 1 << 8;
         /// Set on the `raw` half of an `upgradeTLS` pair. Writes route through
@@ -4246,13 +4245,6 @@ fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        // Default: `owned_protos` true, all others false.
-        Flags::OWNED_PROTOS
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -272,10 +272,6 @@ impl CreateCommand {
         let mut create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
 
-        if positionals.is_empty() {
-            return CreateListExamplesCommand::exec(ctx);
-        }
-
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader = DotEnv::Loader::init();
@@ -302,8 +298,7 @@ impl CreateCommand {
         // `Progress::start` returns
         // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
         // Convert to `*mut` immediately so `progress` and `node` can be used
-        // independently below (same pattern as `CreateListExamplesCommand::exec`
-        // at the bottom of this file).
+        // independently below.
         let node: *mut ProgressNode = match example_tag {
             ExampleTag::JslikeFile => progress.start(
                 ProgressBuf::print(format_args!("Analyzing {}", bstr::BStr::new(template)))?,
@@ -368,11 +363,10 @@ impl CreateCommand {
 
                                     let examples = Example::fetch_all_local_and_remote(
                                         ctx,
-                                        None,
                                         &mut env_loader,
                                         filesystem,
                                     )?;
-                                    Example::print(&examples, Some(dirname));
+                                    Example::print(&examples, dirname);
                                     Global::exit(1);
                                 } else {
                                     node.end();
@@ -431,11 +425,10 @@ impl CreateCommand {
 
                                 let examples = Example::fetch_all_local_and_remote(
                                     ctx,
-                                    None,
                                     &mut env_loader,
                                     filesystem,
                                 )?;
-                                Example::print(&examples, Some(dirname));
+                                Example::print(&examples, dirname);
                                 Global::crash();
                             } else {
                                 node.end();
@@ -735,9 +728,6 @@ impl CreateCommand {
         node.end();
         progress.refresh();
 
-        let is_nextjs = false;
-        let is_create_react_app = false;
-        let create_react_app_entry_point_path: &[u8] = b"";
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut postinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut has_dependencies: bool = false;
@@ -1213,17 +1203,6 @@ impl CreateCommand {
             bun_core::pretty!(
                 "\n<b>Created <green>{}<r> project successfully\n",
                 bstr::BStr::new(bun_paths::basename(template)),
-            );
-        }
-
-        if is_nextjs {
-            bun_core::pretty!(
-                "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun --use next<r>\n",
-            );
-        } else if is_create_react_app {
-            bun_core::pretty!(
-                "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun {}<r>\n",
-                bstr::BStr::new(create_react_app_entry_point_path),
             );
         }
 
@@ -1709,7 +1688,6 @@ impl ExampleTag {
 // RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
 // process-lifetime, not stack locals.
 static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
-static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
 // Static so the borrowed slice satisfies `URL<'static>` for
@@ -1720,23 +1698,8 @@ static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
 
-    pub(crate) fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
+    pub(crate) fn print(examples: &[Example], app_name: &[u8]) {
         for example in examples {
-            // SAFETY: single-threaded CLI access to static buffer
-            let app_name_buf = unsafe { &mut *APP_NAME_BUF.get() };
-            let app_name: &[u8] = default_app_name.unwrap_or_else(|| {
-                let mut cursor: &mut [u8] = &mut app_name_buf[..];
-                let cap = cursor.len();
-                write!(
-                    &mut cursor,
-                    "./{}-app",
-                    bstr::BStr::new(&example.name[0..example.name.len().min(492)])
-                )
-                .expect("unreachable");
-                let written = cap - cursor.len();
-                &app_name_buf[..written]
-            });
-
             if !example.description.is_empty() {
                 bun_core::pretty!(
                     "  <r># {}<r>\n  <b>bun create <cyan>{}<r><b> {}<r>\n<d>  \n\n",
@@ -1756,14 +1719,10 @@ impl Example {
 
     pub(crate) fn fetch_all_local_and_remote(
         ctx: &Command::Context,
-        mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
         filesystem: &mut fs::FileSystem,
     ) -> crate::Result<Vec<Example>> {
-        let remote_examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
-        if let Some(node_) = node {
-            node_.end();
-        }
+        let remote_examples = Example::fetch_all(ctx, env_loader)?;
 
         let mut examples: Vec<Example> = remote_examples.into_vec();
         {
@@ -2155,7 +2114,6 @@ impl Example {
     pub(crate) fn fetch_all(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
-        progress_node: Option<&mut ProgressNode>,
     ) -> crate::Result<Box<[Example]>> {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
@@ -2173,10 +2131,6 @@ impl Example {
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
-
-        if Output::enable_ansi_colors_stdout() {
-            async_http.client.progress_node = progress_node.map(core::ptr::NonNull::from);
-        }
 
         let response = match async_http.send_sync(mutable) {
             Ok(r) => r,
@@ -2288,60 +2242,6 @@ impl Example {
             examples_object.data.tag_name(),
         );
         Global::exit(1);
-    }
-}
-
-struct CreateListExamplesCommand;
-
-impl CreateListExamplesCommand {
-    fn exec(ctx: &Command::Context) -> crate::Result<()> {
-        let filesystem = fs::FileSystem::init(None)?;
-        let mut env_loader = DotEnv::Loader::init();
-
-        env_loader.load_process()?;
-
-        let mut progress = Progress {
-            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
-            ..Default::default()
-        };
-        // `Progress::start` returns `&mut Node` borrowing `progress`; detach
-        // via raw pointer so `progress.refresh()` can re-borrow below.
-        let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
-        progress.refresh();
-
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *filesystem };
-        // SAFETY: `node` points into `progress`, which outlives this call; single-threaded.
-        let examples = Example::fetch_all_local_and_remote(
-            ctx,
-            Some(unsafe { &mut *node }),
-            &mut env_loader,
-            filesystem,
-        )?;
-        bun_core::prettyln!(
-            "Welcome to bun! Create a new project by pasting any of the following:\n",
-        );
-        Output::flush();
-
-        Example::print(&examples, None);
-
-        bun_core::prettyln!(
-            "<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n",
-        );
-
-        if let Some(homedir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
-            bun_core::prettyln!(
-                "<d>This command is completely optional. To add a new local template, create a folder in {}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-                bstr::BStr::new(homedir),
-            );
-        } else {
-            bun_core::prettyln!(
-                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-            );
-        }
-
-        Output::flush();
-        Ok(())
     }
 }
 

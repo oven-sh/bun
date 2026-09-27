@@ -447,32 +447,6 @@ impl Parser<'_> {
                     line.r#type = LineType::Atxheader;
                     line.data = atx_result.level;
                     line.beg = atx_result.content_beg;
-
-                    // Trim trailing whitespace
-                    while line.end > line.beg
-                        && (helpers::is_blank(self.text[(line.end - 1) as usize])
-                            || self.text[(line.end - 1) as usize] == b'\t')
-                    {
-                        line.end -= 1;
-                    }
-                    // Trim optional closing # sequence
-                    if line.end > line.beg && self.text[(line.end - 1) as usize] == b'#' {
-                        let mut tmp = line.end;
-                        while tmp > line.beg && self.text[(tmp - 1) as usize] == b'#' {
-                            tmp -= 1;
-                        }
-                        // The closing # must be preceded by space (or be the entire content)
-                        if tmp == line.beg || helpers::is_blank(self.text[(tmp - 1) as usize]) {
-                            line.end = tmp;
-                            // Trim trailing whitespace again
-                            while line.end > line.beg
-                                && helpers::is_blank(self.text[(line.end - 1) as usize])
-                            {
-                                line.end -= 1;
-                            }
-                        }
-                    }
-
                     break;
                 }
             }

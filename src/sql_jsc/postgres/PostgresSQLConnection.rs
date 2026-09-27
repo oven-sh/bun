@@ -12,7 +12,7 @@ use crate::jsc::{
 };
 use bun_boringssl as BoringSSL;
 use bun_boringssl_sys::OwnedSslCtx;
-use bun_collections::{OffsetByteList, StringHashMap, StringMap};
+use bun_collections::{OffsetByteList, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
@@ -135,8 +135,6 @@ pub struct PostgresSQLConnection {
     // weak `JsRef`, never a bare `JSValue` — this struct is heap-allocated and
     // the conservative GC scan covers stack/registers only.
     pub(crate) js_value: JsCell<crate::jsc::JsRef>,
-
-    pub(crate) backend_parameters: JsCell<StringMap>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
     // into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
@@ -1198,7 +1196,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
-            backend_parameters: JsCell::new(StringMap::init(true)),
             database,
             user: username,
             password,
@@ -2471,17 +2468,8 @@ impl PostgresSQLConnection {
                 let _ = protocol::CopyData::decode_internal(reader.reborrow())?;
             }
             MessageType::ParameterStatus => {
-                let parameter_status =
-                    protocol::ParameterStatus::decode_internal(reader.reborrow())?;
-                self.backend_parameters
-                    .with_mut(|m| {
-                        m.insert(
-                            parameter_status.name.slice(),
-                            parameter_status.value.slice(),
-                        )
-                    })
-                    .map_err(|_| AnyPostgresError::OutOfMemory)?;
-                // parameter_status dropped at scope end
+                // Decode to consume the message from the stream; the payload is unused.
+                let _ = protocol::ParameterStatus::decode_internal(reader.reborrow())?;
             }
             MessageType::ReadyForQuery => {
                 let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;

@@ -956,7 +956,7 @@ describe("WebSocket constructor rejects", () => {
     [
       "a header value outside latin1",
       [url, { headers: { "x-a": "\u{1F600}" } }],
-      { class: "TypeError", message: expect.any(String) },
+      { class: "TypeError", message: "Type error" },
     ],
     ["an invalid tls option", ["wss://127.0.0.1:1/", { tls: { ca: 123 } }], invalidCA],
 

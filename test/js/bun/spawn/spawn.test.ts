@@ -679,13 +679,13 @@ describe.skipIf(!isLinux && !isAndroid)("the waiter thread reports the exit of a
       // The flag is read when BUN_GARBAGE_COLLECTOR_LEVEL is set, and bunEnv sets it.
       env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
       stdin: "ignore",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { events: stdout.trim(), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { events: stdout.trim(), stderr, exitCode };
   }
-  const inOrder = { events: JSON.stringify(["ready", "last", "exit"]), exitCode: 0 };
+  const inOrder = { events: JSON.stringify(["ready", "last", "exit"]), stderr: "", exitCode: 0 };
 
   it.concurrent("what the child wrote to its stdout", async () => {
     const result = await run(/* js */ `
@@ -742,7 +742,7 @@ describe.skipIf(!isLinux && !isAndroid)("the waiter thread reports the exit of a
       });
       waitForTheExitToBePosted(child.pid);
     `);
-    expect(result).toEqual({ events: JSON.stringify(["exit"]), exitCode: 0 });
+    expect(result).toEqual({ events: JSON.stringify(["exit"]), stderr: "", exitCode: 0 });
   });
 });
 

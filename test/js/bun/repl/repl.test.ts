@@ -336,7 +336,7 @@ describe.concurrent("Bun REPL", () => {
   test.skipIf(!isLinux && !isAndroid)(
     "reports the exit of a child after the next input on the waiter thread",
     async () => {
-      const { outputs, exitCode } = await runRepl(
+      const { outputs, stderr, exitCode } = await runRepl(
         [
           `globalThis.child = Bun.spawn({ cmd: ["sleep", "60"], stdio: ["ignore", "ignore", "ignore"], onExit: () => console.log("exit reported") }); "spawned"`,
           // Stays in this input until the child is dead. The waiter thread handles its children in spawn order.
@@ -357,8 +357,11 @@ describe.concurrent("Bun REPL", () => {
         // The flag is read when BUN_GARBAGE_COLLECTOR_LEVEL is set, and bunEnv sets it.
         { env: { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } },
       );
-      expect(outputs).toEqual([`"spawned"`, `"killed"\nexit reported`, `"next"`]);
-      expect(exitCode).toBe(0);
+      expect({ outputs, stderr, exitCode }).toEqual({
+        outputs: [`"spawned"`, `"killed"\nexit reported`, `"next"`],
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 

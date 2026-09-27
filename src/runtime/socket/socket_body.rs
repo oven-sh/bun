@@ -978,6 +978,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let handlers = this.get_handlers();
         let callback = handlers.on_writable();
+        if callback.is_empty()
+            && this.buffered_data_for_node_net.get().len() == 0
+            && !this
+                .flags
+                .get()
+                .intersects(Flags::END_AFTER_FLUSH | Flags::EMPTY_PACKET_PENDING)
+        {
+            return Ok(());
+        }
 
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.

@@ -5148,6 +5148,169 @@ it.skipIf(!socketFaultInjection.available())(
   },
 );
 
+// A send that failed for good reports its errno on POSIX only, and only on a socket without TLS.
+describe.concurrent.skipIf(isWindows)("end(data) whose queued tail cannot be sent", () => {
+  const N = 16 * 1024 * 1024;
+
+  // Its own process: an uncaught error sets the exit code, and fault rules are process-wide.
+  async function expectResult(script: string, result: unknown) {
+    // The unix path in the script is relative: an absolute tempdir path can exceed sun_path.
+    using dir = tempDir("socket-write-error", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let printed: unknown = stdout.trim();
+    try {
+      printed = JSON.parse(stdout.trim());
+    } catch {}
+    expect({ result: printed, stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({ result, stderr: "" });
+    expect(exitCode).toBe(0);
+  }
+
+  // `reports` are the handlers through which the socket under test tells how it ended.
+  const prelude = (size: number, withError: boolean) => /* js */ `
+    const payload = require("node:crypto").randomFillSync(Buffer.allocUnsafe(${size}));
+    const events = [];
+    let got = 0;
+    let mismatchAt = -1;
+    const closed = Promise.withResolvers();
+    const peerClosed = Promise.withResolvers();
+    function receive(chunk) {
+      if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+      got += chunk.byteLength;
+    }
+    const reports = {
+      ...(${withError} && { error: (s, err) => void events.push("error " + err.code + " " + err.syscall) }),
+      close(s, err) {
+        events.push(err === undefined ? "close" : "close " + err.code + " " + err.syscall);
+        closed.resolve();
+      },
+    };
+  `;
+
+  // The server answers end(payload), and the peer leaves once it has read what the kernel took of it.
+  const disconnectScript = (peerFin: boolean, withError: boolean) => /* js */ `
+    ${prelude(N, withError)}
+    const server = Bun.listen({
+      unix: "s.sock",
+      socket: {
+        data(s) {
+          events.push("end " + s.end(payload));
+        },
+        ...reports,
+      },
+    });
+    await Bun.connect({
+      unix: "s.sock",
+      allowHalfOpen: true,
+      socket: {
+        open(s) {
+          s.write("request");
+          if (${peerFin}) s.shutdown();
+        },
+        data(s, chunk) {
+          receive(chunk);
+          // A read shorter than the 512 KiB receive buffer emptied the kernel queue, so this close is not a reset.
+          if (chunk.byteLength >= 512 * 1024) return;
+          events.push("peer closes");
+          s.close();
+        },
+        close: () => peerClosed.resolve(),
+        error() {},
+      },
+    });
+    await Promise.all([closed.promise, peerClosed.promise]);
+    server.stop(true);
+    console.log(JSON.stringify({ events, complete: got === payload.length, mismatchAt }));
+  `;
+
+  // `retry` is what sends the queued tail again: the writable event, socket.flush(), or the flush after open().
+  const injectedScript = (retry: "writable" | "flush" | "open", withError: boolean) => /* js */ `
+    const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+    ${prelude(64 * 1024, withError)}
+    const retry = ${JSON.stringify(retry)};
+    function endThenFailTheRetry(s) {
+      // Only the first send is short, so a tail is queued. Its retry is the next send on this fd.
+      fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1, fd: s.fd });
+      events.push("end " + s.end(payload));
+      fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd: s.fd });
+    }
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          if (retry === "open") endThenFailTheRetry(s);
+        },
+        data(s) {
+          endThenFailTheRetry(s);
+          if (retry !== "flush") return;
+          events.push("flush");
+          s.flush();
+        },
+        drain: () => void events.push("drain"),
+        ...reports,
+      },
+    });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          if (retry !== "open") s.write("request");
+        },
+        data: (s, chunk) => receive(chunk),
+        close: () => peerClosed.resolve(),
+        error() {},
+      },
+    });
+    await Promise.all([closed.promise, peerClosed.promise]);
+    fault.clear();
+    server.stop(true);
+    console.log(JSON.stringify({ events, got, mismatchAt }));
+  `;
+
+  const rows = [
+    ["without an error handler the process stays up and close carries the write error", false],
+    ["the error handler gets the write error, then close carries none", true],
+  ] as const;
+  // The error is reported once: by close, or by the error handler ahead of a close without one.
+  const reported = (withError: boolean) => (withError ? ["error EPIPE write", "close"] : ["close EPIPE write"]);
+
+  describe.each([
+    ["a peer that disconnects early", false],
+    ["a peer that disconnects early after its FIN", true],
+  ] as const)("%s", (_name, peerFin) => {
+    // Linux only: kqueue reports a peer that left as an error event, so the retry never runs there.
+    it.skipIf(!isLinux).each(rows)("%s", (_title, withError) =>
+      expectResult(disconnectScript(peerFin, withError), {
+        events: [`end ${N}`, "peer closes", ...reported(withError)],
+        complete: false,
+        mismatchAt: -1,
+      }),
+    );
+  });
+
+  describe.each([
+    ["the event loop's retry", "writable", []],
+    ["socket.flush()", "flush", ["flush"]],
+    ["the flush after open()", "open", []],
+  ] as const)("an injected EPIPE in %s", (_name, retry, called) => {
+    it.skipIf(!socketFaultInjection.available()).each(rows)("%s", (_title, withError) =>
+      expectResult(injectedScript(retry, withError), {
+        events: ["end 65536", ...called, ...reported(withError)],
+        got: 1024,
+        mismatchAt: -1,
+      }),
+    );
+  });
+});
+
 // TLS took all of end(data), so the wrapper is detached and only usockets holds the unsent ciphertext.
 it.concurrent.skipIf(!socketFaultInjection.available()).each([
   ["TLSv1.2", "close_notify and FIN"],

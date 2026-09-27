@@ -36,11 +36,6 @@ void JSFFICStringConstructor::finishCreation(VM& vm)
     Base::finishCreation(vm, 3, "CString"_s, PropertyAdditionMode::WithoutStructureTransition);
 }
 
-JSC_DEFINE_HOST_FUNCTION(callFFICString, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return constructFFICString(globalObject, callFrame);
-}
-
 static inline bool isSafeIntegerValue(JSValue value)
 {
     if (value.isInt32())
@@ -51,7 +46,7 @@ static inline bool isSafeIntegerValue(JSValue value)
     return std::isfinite(number) && std::trunc(number) == number && std::abs(number) <= maxSafeInteger();
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructFFICString, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static ALWAYS_INLINE EncodedJSValue transcodeCString(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -71,6 +66,16 @@ JSC_DEFINE_HOST_FUNCTION(constructFFICString, (JSGlobalObject * globalObject, Ca
     JSValue transcoded = JSValue::decode(Bun__FFI__CString__transcode(globalObject, JSValue::encode(ptrValue), JSValue::encode(offsetArgument), JSValue::encode(lengthArgument)));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(transcoded);
+}
+
+JSC_DEFINE_HOST_FUNCTION(callFFICString, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return transcodeCString(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(constructFFICString, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return transcodeCString(globalObject, callFrame);
 }
 
 }

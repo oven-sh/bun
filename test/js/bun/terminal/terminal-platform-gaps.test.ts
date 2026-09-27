@@ -347,6 +347,38 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(Bun.stripANSI(output)).toContain("RECORDS=[] DONE");
   });
 
+  // QuickEdit, insert mode and mouse input are the user's settings, in the same word.
+  test.skipIf(!isWindows)("GAP: setRawMode(false) leaves a console that is not raw as it found it", async () => {
+    const { output } = await runInTerminal(
+      `const { dlopen, ptr } = require("bun:ffi");
+       const k32 = dlopen("kernel32.dll", {
+         GetStdHandle: { args: ["i32"], returns: "ptr" },
+         GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+         SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
+       }).symbols;
+       const input = k32.GetStdHandle(-10);
+       const mode = () => {
+         const word = new Uint32Array(1);
+         if (!k32.GetConsoleMode(input, ptr(word))) throw new Error("GetConsoleMode");
+         return word[0];
+       };
+       // ENABLE_EXTENDED_FLAGS | ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE, and line input.
+       if (!k32.SetConsoleMode(input, 0x80 | 0x40 | 0x20 | 0x7)) throw new Error("SetConsoleMode");
+       const found = mode();
+       process.stdin.setRawMode(false);
+       const untouched = mode();
+       process.stdin.setRawMode(true);
+       const raw = mode();
+       process.stdin.setRawMode(false);
+       process.stdout.write("MODES=" + JSON.stringify({ found, untouched, lineInputWhileRaw: raw & 0x2, lineInputAfter: mode() & 0x2 }) + " DONE");
+       process.exit(0);`,
+      { readyMarker: " DONE", done: o => o.includes(" DONE") },
+    );
+    expect(Bun.stripANSI(output)).toContain(
+      'MODES={"found":231,"untouched":231,"lineInputWhileRaw":0,"lineInputAfter":2} DONE',
+    );
+  });
+
   // The key that ends input is Ctrl-Z at the start of a line on Windows and Ctrl-D on POSIX.
   test("SAME: a shell builtin that reads the terminal ends at the end-of-input key, and the next one reads on", async () => {
     const end = isWindows ? "\x1a\r" : "\x04";

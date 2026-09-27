@@ -41,14 +41,8 @@ const ORPHANED: u32 = 5;
 
 enum Request {
     None,
-    Read {
-        len: usize,
-        offset: Option<u64>,
-    },
-    Write {
-        data: WriteData,
-        callback: Callback<sys::Result<usize>>,
-    },
+    Read { len: usize, offset: Option<u64> },
+    Write { data: WriteData },
 }
 
 enum WriteData {
@@ -82,6 +76,8 @@ struct Inner {
     /// Who hears about reads. Kept apart from the request so it can change
     /// while the work pool holds the request.
     reader: Option<ReadCallback>,
+    /// Who hears about the write that is out. Apart from the request likewise.
+    writer: Option<Callback<sys::Result<usize>>>,
     buf: Vec<u8>,
     /// [`File::adopt_write_buffer`]: freed with `self`.
     adopted: Vec<u8>,
@@ -119,6 +115,7 @@ impl File {
             released: AtomicBool::new(false),
             request: Request::None,
             reader: None,
+            writer: None,
             buf: Vec::new(),
             adopted: Vec::new(),
             result: Ok(0),
@@ -194,10 +191,10 @@ impl File {
         ctx: *mut T,
         on_write: unsafe fn(*mut T, sys::Result<usize>),
     ) -> sys::Result<()> {
-        self.start(Request::Write {
-            data: WriteData::Borrowed(data.as_ptr(), data.len()),
-            callback: Callback::new(ctx, on_write),
-        })
+        self.start_write(
+            WriteData::Borrowed(data.as_ptr(), data.len()),
+            Callback::new(ctx, on_write),
+        )
     }
 
     /// As [`write`](Self::write), for bytes the request should own: nothing
@@ -208,10 +205,27 @@ impl File {
         ctx: *mut T,
         on_write: unsafe fn(*mut T, sys::Result<usize>),
     ) -> sys::Result<()> {
-        self.start(Request::Write {
-            data: WriteData::Owned(data),
-            callback: Callback::new(ctx, on_write),
-        })
+        self.start_write(WriteData::Owned(data), Callback::new(ctx, on_write))
+    }
+
+    fn start_write(
+        &mut self,
+        data: WriteData,
+        writer: Callback<sys::Result<usize>>,
+    ) -> sys::Result<()> {
+        self.start(Request::Write { data })?;
+        // SAFETY: `inner` is live while the owner's `File` is; the work pool
+        // never looks at `writer`.
+        unsafe { (*self.inner.as_ptr()).writer = Some(writer) };
+        Ok(())
+    }
+
+    /// The write that is out (if any) ends without its `on_write` running: for
+    /// an owner that will not be there. Its bytes still have to outlive it
+    /// ([`adopt_write_buffer`](Self::adopt_write_buffer)).
+    pub fn forget_writer(&mut self) {
+        // SAFETY: as in `start_write`.
+        unsafe { (*self.inner.as_ptr()).writer = None };
     }
 
     /// `buffer` is kept until the file itself is freed: for an owner about to
@@ -510,7 +524,11 @@ impl Inner {
                         reader.invoke(event);
                     }
                 }
-                Request::Write { callback, .. } => callback.invoke(result),
+                Request::Write { .. } => {
+                    if let Some(writer) = (*this).writer.take() {
+                        writer.invoke(result);
+                    }
+                }
             }
             (*this).completing = false;
             // The callback may have dropped the owner's `File`, or asked for

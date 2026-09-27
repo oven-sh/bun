@@ -144,6 +144,11 @@ pub fn set_console_mode(input: HANDLE, mode: Mode) -> sys::Result<()> {
     if unsafe { win::GetNumberOfConsoleInputEvents(input, &raw mut events) } == 0 {
         return Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode));
     }
+    if mode == Mode::Normal && current_mode() == Mode::Normal {
+        // The console is as it was found. Its other bits (QuickEdit, insert
+        // mode, mouse input) are the user's.
+        return Ok(());
+    }
     if mode != Mode::Normal && LINE_MODE.load(Ordering::Acquire).is_null() {
         // SAFETY: plain Win32 call: manual-reset, not set, unnamed.
         let event = unsafe { win::CreateEventW(ptr::null_mut(), 1, 0, ptr::null()) };

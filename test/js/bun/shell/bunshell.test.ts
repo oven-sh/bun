@@ -4198,7 +4198,7 @@ test.skipIf(!isWindows)("starting builtins on a stdin that another reader is par
 });
 
 // `yes` never stops by itself and a disk file takes every chunk without waiting, so the builtin has to
-// give the event loop its turn. The child is killed if it does not: it would fill the disk.
+// give the event loop its turn. If it does not, the child is killed when the test times out.
 test("a timer fires while `yes` writes to a file", async () => {
   using dir = tempDir("shell-yes-to-file", {});
   await using proc = Bun.spawn({
@@ -4219,9 +4219,7 @@ test("a timer fires while `yes` writes to a file", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const watchdog = setTimeout(() => proc.kill(), 2000);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  clearTimeout(watchdog);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "timer fired\n", stderr: "", exitCode: 0 });
 });
 

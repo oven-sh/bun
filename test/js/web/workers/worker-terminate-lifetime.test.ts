@@ -1181,9 +1181,7 @@ test(
       ["Bun.write(path, new Response(child.stdout))", "terminate()"],
       ["Bun.write(path, new Response(jsStream))", "terminate()"],
       ["Bun.spawn({ stdin: response.body })", "terminate()"],
-      // Windows closes a worker's pipes in the stop phase, before the last sweep, and the sink then
-      // keeps the ref of its pending JS pump: a leak on another path than the one tested here.
-      ...(isWindows ? [] : [["Bun.spawn({ stdin: jsStream })", "terminate()"]]),
+      ["Bun.spawn({ stdin: jsStream })", "terminate()"],
     ];
     using dir = tempDir("worker-ends-mid-pipe", {
       "worker.js": `

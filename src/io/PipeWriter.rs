@@ -1811,6 +1811,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 }
                 Source::File(file) => {
                     file.adopt_write_buffer(mem::take(&mut self.current_payload.list));
+                    file.forget_writer();
                 }
                 Source::Tty(_) => {}
             }
@@ -1821,6 +1822,20 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     pub fn close(&mut self) {
         let report = !self.closed_without_reporting;
         self.close_source(report);
+    }
+
+    /// For a parent whose VM is shutting down. The loop has stopped turning, so
+    /// the result of a write that is out never arrives, and neither does the
+    /// release of the parent ref taken for it. Lets go of the source and
+    /// returns whether there was such a write: its ref is the caller's to
+    /// release.
+    pub fn abandon_write_in_flight(&mut self) -> bool {
+        let in_flight =
+            self.source.is_some() && (self.current_payload.is_not_empty() || self.lent_len > 0);
+        if in_flight {
+            self.close_without_reporting();
+        }
+        in_flight
     }
 
     /// Close the source without invoking `Parent::on_close` — for a parent

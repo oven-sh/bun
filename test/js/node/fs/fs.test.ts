@@ -8149,6 +8149,33 @@ describe("fs.close() that is not waited for", () => {
     }
   });
 
+  // The read is over when the other end of the pipe says so, which here is never.
+  it.each([
+    "fs.read(0, Buffer.alloc(1), 0, 1, null, () => {})",
+    "fs.readv(0, [Buffer.alloc(1)], () => {})",
+    "fs.readFile(0, () => {})",
+  ])("does not wait for %s on a pipe nothing is written to", async read => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+           ${read};
+           fs.close(0, err => {
+             console.log("closed", err ? err.code : null);
+             process.exit(0);
+           });`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "closed null\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   it("does not keep a Worker from being terminated", async () => {
     using dir = tempDir("fs-close-worker-terminate", {});
     const worker = new Worker(

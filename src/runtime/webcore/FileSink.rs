@@ -1029,6 +1029,10 @@ impl FileSink {
                     // a task that will never run.
                     FileSink::deref(this);
                 }
+                #[cfg(windows)]
+                if (*this).writer.with_mut(|w| w.abandon_write_in_flight()) {
+                    FileSink::deref(this);
+                }
             }
         }
     }

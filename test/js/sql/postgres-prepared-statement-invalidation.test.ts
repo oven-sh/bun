@@ -404,6 +404,87 @@ test("postgres: every pipelined Bind that hits 26000 is re-run once under one fr
   }
 });
 
+// The idle check runs when the error arrives, but the retry is written only
+// after the requests ahead of it answer. If one of those is a BEGIN, the
+// session is in a transaction block by then. The retry must not run inside a
+// block the query was issued before: it surfaces the original error instead.
+test("postgres: a retry queued behind a pipelined BEGIN surfaces the 26000 instead of running in the block", async () => {
+  const parses: string[] = [];
+  const queries = new Map<string, string>(); // statement name -> query text
+  const known = new Set<string>();
+  let bound: { name: string; param: Buffer | null } | null = null;
+  let inBlock = false;
+  const mock = await pgMockServer((type, body) => {
+    switch (type) {
+      case "P": {
+        const name = body.subarray(0, body.indexOf(0)).toString("utf-8");
+        const after = body.indexOf(0) + 1;
+        const query = body.subarray(after, body.indexOf(0, after)).toString("utf-8");
+        parses.push(name);
+        queries.set(name, query);
+        known.add(name);
+        return pgParseComplete();
+      }
+      case "D": {
+        const name = body.subarray(1, body.indexOf(0, 1)).toString("utf-8");
+        const params = queries.get(name)!.includes("$1") ? [25 /* text */] : [];
+        return [pgParameterDescription(params), pgRowDescription([{ name: "v", typeOid: 25 }])];
+      }
+      case "B": {
+        const afterPortal = body.indexOf(0) + 1;
+        const name = body.subarray(afterPortal, body.indexOf(0, afterPortal)).toString("utf-8");
+        if (!known.has(name)) {
+          bound = null;
+          return pgErrorResponse({ S: "ERROR", C: "26000", M: `prepared statement "${name}" does not exist` });
+        }
+        bound = { name, param: pgBindParameters(body)[0] ?? null };
+        return pgBindComplete();
+      }
+      case "E": {
+        if (bound === null) return;
+        const query = queries.get(bound.name)!;
+        if (query === "BEGIN") {
+          inBlock = true;
+          return pgCommandComplete("BEGIN");
+        }
+        if (query === "COMMIT") {
+          inBlock = false;
+          return pgCommandComplete("COMMIT");
+        }
+        return [pgDataRow([bound.param!]), pgCommandComplete("SELECT 1")];
+      }
+      case "S":
+        bound = null;
+        return pgReadyForQuery(inBlock ? "T" : "I");
+    }
+  });
+
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1, idleTimeout: 5 });
+    const echo = (text: string) => sql`select ${text} as v`;
+    expect(await echo("0")).toEqual([{ v: "0" }]);
+    await sql`BEGIN`;
+    await sql`COMMIT`;
+    // The server forgets the select statement only. BEGIN stays prepared, so
+    // the next BEGIN is a cache hit and pipelines behind the stale select.
+    for (const [name, query] of queries) if (query !== "BEGIN" && query !== "COMMIT") known.delete(name);
+
+    const [stale, begin] = await Promise.allSettled([echo("1"), sql`BEGIN`]);
+    await sql`COMMIT`;
+    // With the session idle again the next run re-prepares as usual.
+    const after = await echo("2");
+    expect({
+      stale: stale.status === "rejected" ? (stale.reason as any).errno : stale.value,
+      begin: begin.status,
+      after,
+      // warm-up select, BEGIN, COMMIT, then only the re-Parse for echo("2")
+      parses: parses.length,
+    }).toEqual({ stale: "26000", begin: "fulfilled", after: [{ v: "2" }], parses: 4 });
+  } finally {
+    mock.server.close();
+  }
+});
+
 // The retry is capped at one attempt per query: a server that answers every
 // Bind with 26000 must not loop forever.
 test("postgres: a 26000 on the re-prepared Bind is surfaced instead of retried again", async () => {

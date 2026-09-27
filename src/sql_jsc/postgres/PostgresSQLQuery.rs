@@ -53,6 +53,9 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
+    /// The 26000/0A000 that triggered a re-prepare. Surfaced if the session
+    /// is no longer idle when the retry would be written.
+    pub(crate) retry_error: JsCell<Option<protocol::ErrorResponse>>,
 }
 
 impl Default for PostgresSQLQuery {
@@ -64,6 +67,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
+            retry_error: JsCell::new(None),
         }
     }
 }

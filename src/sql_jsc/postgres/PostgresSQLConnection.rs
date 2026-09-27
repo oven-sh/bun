@@ -1944,6 +1944,25 @@ impl PostgresSQLConnection {
                     // Parse written but not Bind / statement still Parsing) undo
                     // this via note_request_pending() before returning/continuing.
                     self.note_request_written();
+                    if req.flags.get().reprepared
+                        && self.tx_status.get() != protocol::TransactionStatusIndicator::I
+                        && let Some(err) = req.retry_error.take()
+                    {
+                        // A request on the wire ahead of the retry opened a
+                        // transaction block. Surface the original error instead.
+                        let ev = crate::postgres::protocol::error_response_jsc::to_js(
+                            &err,
+                            self.global(),
+                        );
+                        req.on_js_error(ev, self.global());
+                        if offset == 0 {
+                            self.discard_request(&req);
+                        } else {
+                            req.status.set(QueryStatus::Fail);
+                            offset += 1;
+                        }
+                        continue;
+                    }
                     if req.flags.get().simple {
                         if self.pipelined_requests.get() > 0
                             || !self
@@ -3066,6 +3085,7 @@ impl PostgresSQLConnection {
                                 f.binary = false;
                             });
                             self.note_request_pending();
+                            request.retry_error.set(Some(err));
                             // The re-Parse waits for the siblings still on the wire.
                             self.requeue_for_retry(&request);
                             self.update_ref();

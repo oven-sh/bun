@@ -166,10 +166,19 @@ function everyCfg(all: Token[], edits: Edits, done: Done) {
   }
 }
 
-/** `fd.native()`: the image's `Fd` gives what the place asks for, and the code for one OS asks for one thing. */
+/**
+ * `fd.native()`: the image's `Fd` gives what the place asks for, and the code for one OS asks for one thing.
+ * A place that names the type of it names `FdNative`, which is the one of POSIX in the image: the code for
+ * Windows takes `FdNative__windows` of bun_core.
+ */
 function everyNative(all: Token[], edits: Edits, rules: Rules, done: Done) {
   const type = rules.os === "windows" ? "*mut ::core::ffi::c_void" : "i32";
   for (let i = 1; i + 2 < all.length; i++) {
+    if (rules.os === "windows" && all[i].kind === "ident" && all[i].text === "FdNative") {
+      edits.replace(all[i].start, all[i].end, "FdNative__windows");
+      done.native++;
+      continue;
+    }
     if (all[i].text !== "native" || all[i - 1].text !== "." || all[i + 1].text !== "(" || all[i + 1].partner !== i + 2)
       continue;
     edits.insert(all[i].end, `::<${type}>`);

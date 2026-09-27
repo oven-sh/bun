@@ -1290,86 +1290,113 @@ describe.concurrent("bun run", () => {
       const shimDir = join(String(dir), "bin", "bun-node");
       expect(dirname(await run()).toLowerCase()).toBe(shimDir.toLowerCase());
 
-      // A child started from the shim keeps the old image mapped.
-      await using child = Bun.spawn({
-        cmd: [join(shimDir, "node.exe"), "-e", "console.log('up'); setTimeout(() => {}, 1e9)"],
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const reader = child.stdout.getReader();
-      expect(new TextDecoder().decode((await reader.read()).value)).toContain("up");
-
+      // A child started from the shim keeps its image mapped.
+      const holdShim = async () => {
+        const child = Bun.spawn({
+          cmd: [join(shimDir, "node.exe"), "-e", "console.log('up'); setTimeout(() => {}, 1e9)"],
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const reader = child.stdout.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain("up");
+        return child;
+      };
       // An upgrade that renames the new file over bun.exe leaves the two shims
       // as the only links of the mapped image.
-      copyFileSync(bunExe(), join(String(dir), "bin", "new.exe"));
-      renameSync(join(String(dir), "bin", "new.exe"), bin);
+      const upgrade = () => {
+        copyFileSync(bunExe(), join(String(dir), "bin", "new.exe"));
+        renameSync(join(String(dir), "bin", "new.exe"), bin);
+      };
 
+      await using first = await holdShim();
+      upgrade();
       expect(dirname(await run()).toLowerCase()).toBe(shimDir.toLowerCase());
       expect(readdirSync(shimDir).sort()).toEqual(["bun.exe", "bun.exe.old", "node.exe"]);
       expect(readdirSync(temp)).toEqual([]);
-      child.kill();
+
+      // `.old` is still mapped by the first child, so the next stale shim gets a pid suffix.
+      await using second = await holdShim();
+      upgrade();
+      expect(dirname(await run()).toLowerCase()).toBe(shimDir.toLowerCase());
+      const names = readdirSync(shimDir).sort();
+      expect(names).toHaveLength(4);
+      expect(names.filter(n => /^bun\.exe\.\d+\.old$/.test(n))).toHaveLength(1);
+      expect(names.filter(n => !/\.\d+\.old$/.test(n))).toEqual(["bun.exe", "bun.exe.old", "node.exe"]);
+
+      // Once no process maps them, the next replace sweeps every `.old`.
+      first.kill();
+      second.kill();
+      await Promise.all([first.exited, second.exited]);
+      upgrade();
+      expect(dirname(await run()).toLowerCase()).toBe(shimDir.toLowerCase());
+      expect(readdirSync(shimDir).sort()).toEqual(["bun.exe", "node.exe"]);
     },
+    30_000,
   );
 
   // https://github.com/oven-sh/bun/issues/44090 — the %TEMP% tier used to be
   // named after the build sha: the path moved on every upgrade, and two
   // installs of one build shared (and fought over) one directory. It is now
   // keyed on the path bun.exe was launched as.
-  it.if(isWindows)("keys the %TEMP% node shim dir on the bun.exe path (#44090)", async () => {
-    using dir = tempDir("bun-run-node-shim-temp-name", {
-      "a/bin/bun-node": "not a directory",
-      "b/bin/bun-node": "not a directory",
-      "tmp/.keep": "",
-      "package.json": JSON.stringify({
-        name: "shim",
-        scripts: { v: `node -e "console.log(process.execPath)"` },
-      }),
-    });
-    const env = Object.fromEntries(
-      Object.entries(bunEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
-    );
-    env.PATH = (process.env.PATH ?? "")
-      .split(";")
-      .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
-      .join(";");
-    const temp = join(String(dir), "tmp");
-    env.TEMP = temp;
-    env.TMP = temp;
-
-    const run = async (bin: string) => {
-      await using proc = Bun.spawn({
-        cmd: [bin, "--bun", "run", "--silent", "v"],
-        cwd: String(dir),
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
+  it.if(isWindows)(
+    "keys the %TEMP% node shim dir on the bun.exe path (#44090)",
+    async () => {
+      using dir = tempDir("bun-run-node-shim-temp-name", {
+        "a/bin/bun-node": "not a directory",
+        "b/bin/bun-node": "not a directory",
+        "tmp/.keep": "",
+        "package.json": JSON.stringify({
+          name: "shim",
+          scripts: { v: `node -e "console.log(process.execPath)"` },
+        }),
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      const shimDir = dirname(stdout.trim());
-      expect(dirname(shimDir).toLowerCase()).toBe(temp.toLowerCase());
-      expect(basename(shimDir)).toStartWith("bun-node-");
-      return basename(shimDir);
-    };
+      const env = Object.fromEntries(
+        Object.entries(bunEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
+      );
+      env.PATH = (process.env.PATH ?? "")
+        .split(";")
+        .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
+        .join(";");
+      const temp = join(String(dir), "tmp");
+      env.TEMP = temp;
+      env.TMP = temp;
 
-    const a = join(String(dir), "a", "bin", "bun.exe");
-    const b = join(String(dir), "b", "bin", "bun.exe");
-    copyFileSync(bunExe(), a);
-    copyFileSync(bunExe(), b);
+      const run = async (bin: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bin, "--bun", "run", "--silent", "v"],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        const shimDir = dirname(stdout.trim());
+        expect(dirname(shimDir).toLowerCase()).toBe(temp.toLowerCase());
+        expect(basename(shimDir)).toStartWith("bun-node-");
+        return basename(shimDir);
+      };
 
-    const nameA = await run(a);
-    expect(await run(a)).toBe(nameA);
-    expect(await run(a.toUpperCase())).toBe(nameA);
-    expect(await run(b)).not.toBe(nameA);
+      const a = join(String(dir), "a", "bin", "bun.exe");
+      const b = join(String(dir), "b", "bin", "bun.exe");
+      copyFileSync(bunExe(), a);
+      copyFileSync(bunExe(), b);
 
-    // An in-place upgrade keeps the name and relinks the shim.
-    copyFileSync(bunExe(), join(String(dir), "a", "bin", "new.exe"));
-    renameSync(join(String(dir), "a", "bin", "new.exe"), a);
-    expect(await run(a)).toBe(nameA);
-    expect(statSync(join(temp, nameA, "node.exe")).ino).toBe(statSync(a).ino);
-  });
+      const nameA = await run(a);
+      expect(await run(a)).toBe(nameA);
+      expect(await run(a.toUpperCase())).toBe(nameA);
+      expect(await run(b)).not.toBe(nameA);
+
+      // An in-place upgrade keeps the name and relinks the shim.
+      copyFileSync(bunExe(), join(String(dir), "a", "bin", "new.exe"));
+      renameSync(join(String(dir), "a", "bin", "new.exe"), a);
+      expect(await run(a)).toBe(nameA);
+      expect(statSync(join(temp, nameA, "node.exe")).ino).toBe(statSync(a).ino);
+    },
+    30_000,
+  );
 
   // https://github.com/oven-sh/bun/issues/30711 — nested `--bun` used to rewrite
   // the BUN_NODE_DIR/{bun,node} shim to point at ITSELF. After the OUTER `--bun`

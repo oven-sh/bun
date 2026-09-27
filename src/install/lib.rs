@@ -1011,6 +1011,7 @@ impl RunCommand {
     /// lets it be renamed. A stale `<dest>` that a `--bun` child still runs is moved
     /// to `<dest>.old` (or `<dest>.<pid>.old` when `.old` is itself still mapped) so
     /// the name stays in this directory instead of dropping to the next tier.
+    /// Every replace first removes the `*.old` files whose image is no longer mapped.
     fn replace_windows_node_shim(
         buf: &mut [u16],
         dest_len: usize,
@@ -1027,10 +1028,10 @@ impl RunCommand {
         dest[..dest_len].copy_from_slice(&buf[..dest_len]);
         dest[dest_len] = 0;
 
+        Self::sweep_old_windows_node_shims(bun_paths::resolve_path::dirname_w(&dest[..dest_len]));
         let mut aside = bun_paths::w_path_buffer_pool::get();
         let old = strings::w!(".old\0");
-        let old_len = Self::with_suffix(&mut aside, &dest[..dest_len], old);
-        let _ = bun_sys::unlink_w(WStr::from_buf(&aside[..], old_len));
+        Self::with_suffix(&mut aside, &dest[..dest_len], old);
 
         let mut tmp_len = dest_len;
         buf[tmp_len] = b'.' as u16;
@@ -1079,6 +1080,11 @@ impl RunCommand {
             }
             if moved {
                 result = replace();
+                if result.is_err() {
+                    // The new image is what is held (a scanner, say), not the stale one. Put it back.
+                    // SAFETY: both arguments are NUL-terminated wide strings.
+                    unsafe { win::kernel32::MoveFileExW(aside.as_ptr(), dest.as_ptr(), 0) };
+                }
             }
         }
         if let Err(code) = result {
@@ -1088,6 +1094,43 @@ impl RunCommand {
         }
         buf[dest_len] = 0;
         Ok(())
+    }
+
+    /// Unlinks every `*.old` in `dir`. One that a process still maps stays for the next sweep.
+    fn sweep_old_windows_node_shims(dir: &[u16]) {
+        use bun_core::WStr;
+
+        let Ok(fd) = bun_sys::open_dir_at_windows(
+            bun_sys::Fd::cwd(),
+            dir,
+            bun_sys::WindowsOpenDirOptions {
+                iterable: true,
+                ..Default::default()
+            },
+        ) else {
+            return;
+        };
+        let dir_fd = bun_sys::Dir::from_fd(fd);
+        let mut path = bun_paths::w_path_buffer_pool::get();
+        let mut iter = bun_sys::iterate_dir(dir_fd.fd());
+        while let Ok(Some(entry)) = iter.next() {
+            let name = entry.name.slice();
+            let suffix = name.len().checked_sub(4).map(|at| &name[at..]);
+            let is_old = suffix.is_some_and(|tail| {
+                tail.iter()
+                    .zip(b".old")
+                    .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(b))
+            });
+            if !is_old || dir.len() + 1 + name.len() >= path.len() {
+                continue;
+            }
+            path[..dir.len()].copy_from_slice(dir);
+            path[dir.len()] = b'\\' as u16;
+            let len = dir.len() + 1 + name.len();
+            path[dir.len() + 1..len].copy_from_slice(name);
+            path[len] = 0;
+            let _ = bun_sys::unlink_w(WStr::from_buf(&path[..], len));
+        }
     }
 
     /// Writes `<base><suffix>` into `out` and returns its length without the NUL.

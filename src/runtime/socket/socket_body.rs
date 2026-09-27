@@ -3179,7 +3179,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
     /// a fatal send error (buffer dropped, writable not re-armed).
-    /// On POSIX, `on_writable` passes it to `fail_write`. On Windows the errno is still ignored
+    /// On POSIX, `on_writable`, `on_open` and `flush` pass it to `fail_write`. On Windows the errno is still ignored
     /// (the drain callback is dispatched regardless) - skipping the drain on
     /// fatal made Windows servers reset FIN-terminated responses (see
     /// a5e7ba5905) - until the Windows fatal-write detection is verified.
@@ -3266,13 +3266,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let _guard = this.ref_guard();
+        let guard = this.ref_guard();
+        let this = guard.this_ptr();
         let fatal_send_errno = this.internal_flush();
         #[cfg(not(windows))]
         if fatal_send_errno != 0 {
             if let Some(handlers) = this.handlers_opt() {
-                // SAFETY: `_guard` keeps `this` alive for this call.
-                let this = unsafe { bun_ptr::ThisPtr::new(this.as_ctx_ptr()) };
                 Self::fail_write(this, &handlers, fatal_send_errno)?;
             }
         }

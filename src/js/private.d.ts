@@ -70,7 +70,7 @@ declare module "bun" {
   function listen<Data = undefined>(options: FdSocketOptions<Data>): SocketListener<Data>;
 
   // The form of `Bun.serve` that `node:http` uses: requests go to `onNodeHTTPRequest` instead of `fetch` / `routes`.
-  // Its websocket handlers get what npm `ws` emits: a `Buffer` for a text frame, a ping and a pong, and `isBinary`.
+  // Its websocket handlers get the payloads that npm `ws` emits: a `Buffer` for a text frame, and `isBinary`.
   namespace Serve {
     interface NodeHTTPWebSocketHandler<WebSocketData> extends Omit<WebSocketHandler<WebSocketData>, "message"> {
       message(

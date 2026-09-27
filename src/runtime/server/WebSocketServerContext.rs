@@ -54,8 +54,7 @@ bitflags::bitflags! {
     pub struct HandlerFlags: u8 {
         const SSL             = 1 << 0;
         const PUBLISH_TO_SELF = 1 << 1;
-        /// These handlers came with `onNodeHTTPRequest`. They get what npm `ws` emits: a
-        /// `Buffer` for a text frame, a ping and a pong, and `isBinary` after a message.
+        /// The handlers came with `onNodeHTTPRequest`: they get the payloads that npm `ws` emits.
         const NODE_HTTP       = 1 << 2;
         // remaining 5 bits: padding
     }

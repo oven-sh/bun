@@ -632,8 +632,7 @@ impl ServerWebSocket {
         }
     }
 
-    /// The payload of a ping or a pong. `binaryType` selects its shape, except for the
-    /// handlers of node:http.
+    /// The payload of a ping or a pong.
     fn control_to_js(&self, global_this: &JSGlobalObject, data: &[u8]) -> JsResult<JSValue> {
         if self.handler().flags.contains(HandlerFlags::NODE_HTTP) {
             // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L721

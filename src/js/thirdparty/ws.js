@@ -1261,8 +1261,7 @@ class BunWebSocketMocked extends EventEmitter {
     this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
-  // node:http hands over what npm ws emits: a Buffer for a text frame, and the frame type. A
-  // bridge over the handlers of a Bun.serve() of its own hands over a string and no frame type.
+  // A bridge that is not node:http's hands over what Bun.serve() gives: a string, and no frame type.
   #message(ws, message, isBinary) {
     this.#ws = ws;
 

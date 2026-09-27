@@ -1809,7 +1809,14 @@ impl VirtualMachine {
                 panic!("made it past process.exit()");
             }
             // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
-            self.unhandled_error_counter += 1;
+            // The counter says that the run ended on an error: `on_before_exit` then skips
+            // 'beforeExit'. A report that the main run goes on after does not count.
+            let run_goes_on = (unhandled == Unhandled::KeepAlive || self.suppress_fatal_uncaught)
+                && self.is_main_thread
+                && self.hot_reload == HotReload::None;
+            if !run_goes_on {
+                self.unhandled_error_counter += 1;
+            }
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, report);
         }

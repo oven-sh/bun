@@ -3041,6 +3041,106 @@ describe("a native callback that throws with no 'uncaughtException' listener end
   });
 });
 
+// The handlers of Bun.serve websockets and of Bun.listen print an uncaught
+// error and go on. The run did not end on that error: when the loop is empty
+// later, 'beforeExit' fires as on any other run. The status stays 1.
+describe("'beforeExit' fires after an uncaught error that the run went on after", () => {
+  it.concurrent.each([
+    {
+      name: "a Bun.serve websocket message handler",
+      message: "ws-boom",
+      source: `
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("not a websocket");
+          },
+          websocket: {
+            message(ws, message) {
+              if (message === "boom") throw new Error("ws-boom");
+              ws.send("echo:" + message);
+            },
+          },
+        });
+        const url = "ws://127.0.0.1:" + server.port;
+        const first = new WebSocket(url);
+        first.onopen = () => {
+          first.send("boom");
+          first.send("first");
+        };
+        first.onmessage = () => {
+          const second = new WebSocket(url);
+          second.onopen = () => second.send("second");
+          second.onmessage = event => {
+            console.log("served", event.data);
+            first.close();
+            second.close();
+            server.stop(true);
+          };
+        };
+      `,
+      stdout: "served echo:second\nbeforeExit 1\nexit 1\n",
+    },
+    {
+      name: "a Bun.listen data handler",
+      message: "listen-boom",
+      source: `
+        let served = 0;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(socket, chunk) {
+              socket.end("echo:" + chunk);
+              if (++served === 2) server.stop(true);
+              throw new Error("listen-boom");
+            },
+          },
+        });
+        function client(message, then) {
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open(socket) {
+                socket.write(message);
+              },
+              data(socket, chunk) {
+                console.log("served", String(chunk));
+              },
+              close() {
+                then?.();
+              },
+            },
+          });
+        }
+        client("first", () => client("second"));
+      `,
+      stdout: "served echo:first\nserved echo:second\nbeforeExit 1\nexit 1\n",
+    },
+  ])("$name", async ({ source, message, stdout: expected }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("beforeExit", code => console.log("beforeExit", code));
+         process.on("exit", code => console.log("exit", code));
+         ${source}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: expect.stringContaining(message),
+      exitCode: 1,
+    });
+  });
+});
+
 it("a throwing Bun.listen data handler with no error: handler keeps the server alive", async () => {
   using dir = tempDir("bun-listen-handler-throw", {
     "server.js": `

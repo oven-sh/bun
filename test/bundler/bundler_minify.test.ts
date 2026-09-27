@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
   // A direct eval at the top level of a file the bundler wraps in a CommonJS
@@ -1197,6 +1197,8 @@ describe("bundler", () => {
         capture(new Array());
         capture(new Array(3));
         capture(new Array(1, 2, 3));
+        capture(new Array(...unknownValue));
+        capture(new Array(5, ...unknownValue));
         
         // Test Array with non-numeric single arguments (should convert to literal)
         capture(new Array("string"));
@@ -1237,6 +1239,8 @@ describe("bundler", () => {
   2,
   3
 ]`, // new Array(1, 2, 3) -> [1, 2, 3]
+      "Array(...unknownValue)", // a spread may leave a single number behind, which is a length
+      "Array(5, ...unknownValue)",
       `[
   "string"
 ]`, // new Array("string") -> ["string"]
@@ -1329,6 +1333,12 @@ describe("bundler", () => {
         const a3 = new Array(n);
         const a4 = Array(n);
         capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
+
+        // A spread can leave a single number behind at runtime, and then it is a length
+        const none = [];
+        const a5 = new Array(5, ...none);
+        capture(a5.length === 5);
+        capture(0 in a5 === false);
         
         // Test Object semantics
         const o1 = new Object();
@@ -1357,6 +1367,8 @@ describe("bundler", () => {
       "0 in sparse === !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
+      "a5.length === 5",
+      "0 in a5 === !1",
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -1367,7 +1379,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 
@@ -1679,6 +1691,137 @@ describe("bundler", () => {
       // indexTarget and indexIndex both end up here.
       expect(code.match(/return v\[i\];/g)).toHaveLength(2);
       expect(code.match(/let keep = /g)).toHaveLength(10);
+    },
+  });
+
+  // Every top-level statement of /esm.js hoists, so it gets no `init_esm()`
+  // wrapper and `require("./esm.js")` prints as `__toCommonJS(exports_esm)`
+  // alone: the first token after whichever keyword comes before it.
+  const requireEsmAfterKeyword: BundlerTestInput = {
+    files: {
+      "/entry.js": /* js */ `
+        function afterReturn() { return require("./esm.js").get(); }
+        function afterTypeof() { return typeof require("./esm.js"); }
+        function afterThrow() { try { throw require("./esm.js").get(); } catch (e) { return e; } }
+        function afterVoid() { return void require("./esm.js"); }
+        function* afterYield() { yield require("./esm.js").get(); }
+        async function afterAwait() { return await require("./esm.js").get(); }
+        function afterCase(x) { switch (x) { case require("./esm.js").get(): return "matched"; } return "no match"; }
+        function afterIn() { return "val" in require("./esm.js"); }
+        function afterInstanceof(x) { return x instanceof require("./esm.js").Base; }
+        function afterElse(c) { if (c) return "then"; else require("./esm.js").record("else"); return globalThis.seen.join(); }
+        function afterDo() { do require("./esm.js").record("do"); while (false); return globalThis.seen.join(); }
+        function afterOf() { const out = []; for (const x of require("./esm.js").chars) out.push(x); return out.join(); }
+        function afterForIn() { const out = []; for (const k in require("./esm.js")) out.push(k); return out.sort().join(); }
+        function afterExtends() { return class extends require("./esm.js").Base {}; }
+        console.log("return", afterReturn());
+        console.log("typeof", afterTypeof());
+        console.log("throw", afterThrow());
+        console.log("void", afterVoid());
+        console.log("yield", afterYield().next().value);
+        console.log("await", await afterAwait());
+        console.log("case", afterCase("v4"));
+        console.log("in", afterIn());
+        console.log("instanceof", afterInstanceof(afterExtends().prototype));
+        console.log("else", afterElse(false));
+        console.log("do", afterDo());
+        console.log("of", afterOf());
+        console.log("for-in", afterForIn());
+        console.log("extends", afterExtends().tag);
+      `,
+      "/esm.js": /* js */ `
+        export const val = "v4";
+        export const chars = "ab";
+        export function get() { return val; }
+        export function record(x) { (globalThis.seen ??= []).push(x); }
+        export class Base { static tag = "base"; }
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: `
+        return v4
+        typeof object
+        throw v4
+        void undefined
+        yield v4
+        await v4
+        case matched
+        in true
+        instanceof true
+        else else
+        do else,do
+        of a,b
+        for-in Base,chars,get,record,val
+        extends base
+      `,
+    },
+  };
+  itBundled("minify/RequireEsmWithoutInitAfterKeyword", {
+    ...requireEsmAfterKeyword,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("init_esm");
+      // What comes before each inlined require(), in source order.
+      const before = [...code.matchAll(/(\w+ ?)__toCommonJS\(exports_esm\)/g)].map(match => match[1]);
+      expect(before).toEqual([
+        "return ",
+        "typeof ",
+        "throw ",
+        "void ",
+        "yield ",
+        "await ",
+        "case ",
+        "in ",
+        "instanceof ",
+        "else ",
+        "do ",
+        "of ",
+        "in ",
+        "extends ",
+      ]);
+    },
+  });
+  // `bun build --minify`: `__toCommonJS` gets a one-letter name, so the glued form is `returns(...)`.
+  itBundled("minify/RequireEsmWithoutInitAfterKeywordAllMinify", {
+    ...requireEsmAfterKeyword,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    backend: "cli",
+  });
+
+  // https://github.com/oven-sh/bun/issues/30669
+  itBundled("minify/RequireBunAfterKeyword", {
+    files: {
+      "/entry.js": /* js */ `
+        function afterReturn() { return require("bun"); }
+        function afterTypeof() { return typeof require("bun"); }
+        function afterIn() { return "version" in require("bun"); }
+        function importAfterReturn() { return import("bun"); }
+        async function importAfterAwait() { return await import("bun"); }
+        console.log("return", afterReturn() === Bun);
+        console.log("typeof", afterTypeof());
+        console.log("in", afterIn());
+        console.log("return import()", (await importAfterReturn()).version === Bun.version);
+        console.log("await import()", (await importAfterAwait()).version === Bun.version);
+      `,
+    },
+    target: "bun",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const before = [...api.readFile("/out.js").matchAll(/(\w+ ?)globalThis\.Bun/g)].map(match => match[1]);
+      expect(before).toEqual(["return ", "typeof ", "in "]);
+    },
+    run: {
+      stdout: `
+        return true
+        typeof object
+        in true
+        return import() true
+        await import() true
+      `,
     },
   });
 });

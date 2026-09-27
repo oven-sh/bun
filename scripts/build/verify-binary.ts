@@ -23,7 +23,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { closeSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { type BinaryExpectations, symbolList, versionScriptGlobals } from "./binary-expectations.ts";
 import { BuildError, assert } from "./error.ts";
 
@@ -73,7 +73,14 @@ function versionLeq(a: string, b: string): boolean {
   return true;
 }
 
-type CheckName = "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info";
+type CheckName =
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "hardening"
+  | "debug info"
+  | "size";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -113,6 +120,10 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
     "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
     "unintended side effect of a linker-flag or toolchain change; find that change.",
+  ],
+  size: [
+    "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
+    "means one of those came in: look for a new panic message, a `core::fmt` use, or a new dependency.",
   ],
   "debug info": [
     "The profile binary is what crash reports and profilers are symbolized against; it",
@@ -404,6 +415,12 @@ function verifyElf(spec: VerifySpec): void {
       );
     const bindNow = /BIND_NOW|\bNOW\b/.test(info.match(/DynamicSection \[[\s\S]*?\n\]/)?.[0] ?? "");
     if (bindNow !== expect.elf.bindNow) violations.push(`BIND_NOW ${bindNow}, expected ${expect.elf.bindNow}`);
+    const tlsSegment = phdrs.some(b => /PT_TLS/.test(field(b, "Type") ?? ""));
+    if (tlsSegment !== expect.elf.tlsSegment)
+      violations.push(
+        `PT_TLS ${tlsSegment ? "present" : "absent"}, expected ${expect.elf.tlsSegment ? "present" : "absent"}` +
+          (tlsSegment ? ": some thread-locals are not emulated TLS" : ""),
+      );
     const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
     report("hardening", `${props.length} hardening properties`, violations, props);
   }
@@ -584,11 +601,10 @@ function verifyPE(spec: VerifySpec): void {
     const syms = [...text.matchAll(/^\s+Symbol: (\S+) \(\d+\)/gm)].map(m => m[1]!);
     const pat = globToRegExp(expect.forbiddenImports);
     const bad = syms.filter(s => pat.test(s));
-    report(
-      "imports",
-      `${syms.length} imported symbols`,
-      bad.map(s => `+ ${s} (forbidden import)`),
-    );
+    report("imports", `${syms.length} imported symbols`, [
+      ...bad.map(s => `+ ${s} (forbidden import)`),
+      ...(expect.importedSymbols !== undefined ? setDifference(syms, expect.importedSymbols) : []),
+    ]);
   }
 
   // 5. hardening + subsystem/OS version
@@ -820,7 +836,21 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
 
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * `--warn-only` (first argument): the same scan and the same report, but a
+ * finding does not fail the step. bun.ts passes it for every local (non-CI)
+ * build and for ASan and debug builds in CI (see binaryChecksWarnOnly there);
+ * release builds in CI fail on a finding.
+ */
 function main(argv: string[]): number {
+  if (argv[0] !== "--warn-only") return scan(argv);
+  const status = scan(argv.slice(1));
+  if (status !== 1) return status;
+  console.log("warning: findings above do not fail this build (local, ASan or debug); they fail release builds in CI.");
+  return 0;
+}
+
+function scan(argv: string[]): number {
   const [mode, ...args] = argv;
   if (mode === "binary") {
     const [specPath] = args;
@@ -829,6 +859,14 @@ function main(argv: string[]): number {
     if (spec.expect.format === "elf") verifyElf(spec);
     else if (spec.expect.format === "macho") verifyMachO(spec);
     else verifyPE(spec);
+    if (spec.expect.maxFileSize !== undefined) {
+      const { size } = statSync(spec.exe);
+      report(
+        "size",
+        `${size} bytes`,
+        size > spec.expect.maxFileSize ? [`${size} bytes, expected at most ${spec.expect.maxFileSize}`] : [],
+      );
+    }
     let failed = 0;
     for (const r of results) {
       console.log(
@@ -865,6 +903,7 @@ if (import.meta.main ?? process.argv[1] === import.meta.filename) {
     process.exit(main(process.argv.slice(2)));
   } catch (err) {
     console.error(err instanceof BuildError ? err.format() : err);
-    process.exit(1);
+    // A scan that could not run is a finding like any other.
+    process.exit(process.argv[2] === "--warn-only" ? 0 : 1);
   }
 }

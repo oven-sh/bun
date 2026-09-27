@@ -12,8 +12,8 @@
  *
  * ## Why not auto-register in each emit function?
  *
- * Considered. The problem: some rules are SHARED (e.g. `cc`/`cxx` are used by
- * bun.ts, direct deps and deps/webkit.ts alike). If each emit
+ * Considered. The problem: some rules are SHARED (e.g. dep_configure is
+ * used by both source.ts deps AND webkit.ts local mode). If each emit
  * function auto-registered, we'd need idempotent registration (rule
  * already exists → skip). That's not hard, but it makes the "which rule
  * lives where" question fuzzy. Explicit registration is clearer.
@@ -42,16 +42,16 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // cxx, cc, pch, link, ar
   registerCompileRules(n, cfg);
 
-  // dep_fetch, dep_fetch_prebuilt, dep_cargo, direct-dep helpers, and the
-  // WebKit/ICU codegen rules.
+  // dep_fetch, dep_fetch_prebuilt, dep_configure, dep_build, dep_cargo
+  // WebKit prebuilt uses dep_fetch_prebuilt; local uses dep_configure/dep_build.
   registerDepRules(n, cfg);
 
   // codegen, esbuild, bun_install + codegen/stamps dir stamps
   registerCodegenRules(n, cfg);
 
-  // rust_build
+  // rust_plan, rust_rustc, rust_build_script
   registerRustRules(n, cfg);
 
-  // shim_dylib (darwin+asan only)
+  // host_tool_cc (darwin cross), shim_crt_decompress (musl + rust-lld)
   registerShimRules(n, cfg);
 }

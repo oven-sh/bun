@@ -23,15 +23,15 @@ use bun_sys::{self as sys, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
-pub use super::interpreter as interpret;
-pub use super::subproc; // declared once in `shell/mod.rs`
+pub(crate) use super::interpreter as interpret;
+pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
 // The encoding-agnostic lex/parse/AST surface lives in the lower-tier
 // `bun_shell_parser` crate so `Interpreter::parse` can compile without the
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-pub use bun_shell_parser::parse::{
+pub(crate) use bun_shell_parser::parse::{
     IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
     LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
@@ -107,10 +107,10 @@ impl fmt::Display for ShellErr {
 
 // ───────────────────────────── Test ─────────────────────────────
 
-pub mod test {
+pub(crate) mod test {
     use super::*;
 
-    pub enum TestToken<'a> {
+    pub(crate) enum TestToken<'a> {
         Pipe,
         DoublePipe,
         Ampersand,
@@ -518,7 +518,7 @@ pub(crate) fn handle_template_value(
 
 // ───────────────────────────── ShellSrcBuilder ─────────────────────────────
 
-pub struct ShellSrcBuilder<'a> {
+pub(crate) struct ShellSrcBuilder<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) outbuf: &'a mut Vec<u8>,
     pub(crate) jsstrs_to_escape: &'a mut Vec<BunString>,
@@ -679,7 +679,7 @@ impl<'a> ShellSrcBuilder<'a> {
 // ───────────────────────────── TestingAPIs ─────────────────────────────
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     #[bun_jsc::host_fn]
@@ -881,4 +881,4 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the codegen splits on capitalisation runs).
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

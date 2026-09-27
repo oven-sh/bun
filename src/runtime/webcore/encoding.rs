@@ -823,7 +823,7 @@ fn construct_from_u16_dyn(input: &[u16], encoding: Encoding) -> Vec<u8> {
 
 /// Extension trait — see module note above for why this lives in
 /// `bun_runtime`.
-pub trait BunStringEncode {
+pub(crate) trait BunStringEncode {
     fn encode(&self, enc: Encoding) -> Vec<u8>;
 }
 
@@ -835,7 +835,7 @@ impl BunStringEncode for bun_core::String {
 }
 
 /// `EncodedSlice` encoding. Extension trait — encoder bodies live in this crate.
-pub trait EncodedSliceEncode {
+pub(crate) trait EncodedSliceEncode {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8>;
 }
 

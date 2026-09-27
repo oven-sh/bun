@@ -327,9 +327,6 @@ pub struct PackageManager {
 
     pub(crate) track_installed_bin: TrackInstalledBin,
 
-    // progress bar stuff when not stack allocated
-    pub(crate) root_progress_node: *mut ProgressNode, // BORROW_FIELD — self.progress.start() returns &self.progress.root
-
     pub to_update: bool,
 
     pub subcommand: Subcommand,
@@ -2092,7 +2089,6 @@ pub fn init(
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
-        wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
@@ -2497,6 +2493,7 @@ fn init_with_runtime_once(
                 max_concurrent_lifecycle_scripts: cli
                     .concurrent_scripts
                     .unwrap_or((cpu_count * 2) as usize),
+                runtime_auto_install: true,
                 ..Default::default()
             }
         );
@@ -2552,7 +2549,6 @@ fn init_with_runtime_once(
         wr!(scripts_node, None);
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
-        wr!(root_progress_node, core::ptr::null_mut());
         wr!(to_update, false);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
@@ -2628,11 +2624,7 @@ fn init_with_runtime_once(
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        // `Progress::start` returns `&mut Node` borrowing `manager.progress.root`.
-        // Coerce to a raw pointer immediately so the borrow doesn't outlive the
-        // statement; `root_progress_node` is BORROW_FIELD into `self.progress`.
-        let node: *mut ProgressNode = manager.progress.start(b"", 0);
-        manager.root_progress_node = node;
+        let _ = manager.progress.start(b"", 0);
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }

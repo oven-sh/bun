@@ -12,12 +12,12 @@
 #![allow(non_snake_case)]
 
 // ─── pure-Rust leaf (no JSC) — always compiles ───────────────────────────
-pub mod diff {
+pub(crate) mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
     #[path = "printDiff.rs"]
-    pub mod print_diff;
+    pub(crate) mod print_diff;
     #[path = "text_diff.rs"]
-    pub mod text_diff;
+    pub(crate) mod text_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ macro_rules! unary_predicate_matcher {
     ($method:ident, $name:literal, |$v:ident| $pred:expr) => {
         impl $crate::test_runner::expect_core::Expect {
             #[::bun_jsc::host_fn(method)]
-            pub fn $method(
+            pub(crate) fn $method(
                 &self,
                 g: &::bun_jsc::JSGlobalObject,
                 f: &::bun_jsc::CallFrame,
@@ -134,17 +134,17 @@ macro_rules! throw_pretty_static {
 }
 
 cfg_jsc! {
-    #[path = "bun_test.rs"]       pub mod bun_test;
-    #[path = "Collection.rs"]     pub mod collection;
-    #[path = "debug.rs"]          pub mod debug;
-    #[path = "diff_format.rs"]    pub mod diff_format;
-    #[path = "DoneCallback.rs"]   pub mod done_callback;
-    #[path = "Execution.rs"]      pub mod execution;
-    #[path = "jest.rs"]           pub mod jest;
-    #[path = "Order.rs"]          pub mod order;
-    #[path = "pretty_format.rs"]  pub mod pretty_format;
-    #[path = "ScopeFunctions.rs"] pub mod scope_functions;
-    #[path = "snapshot.rs"]       pub mod snapshot;
+    #[path = "bun_test.rs"]       pub(crate) mod bun_test;
+    #[path = "Collection.rs"]     pub(crate) mod collection;
+    #[path = "debug.rs"]          pub(crate) mod debug;
+    #[path = "diff_format.rs"]    pub(crate) mod diff_format;
+    #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
+    #[path = "Execution.rs"]      pub(crate) mod execution;
+    #[path = "jest.rs"]           pub(crate) mod jest;
+    #[path = "Order.rs"]          pub(crate) mod order;
+    #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
+    #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
+    #[path = "snapshot.rs"]       pub(crate) mod snapshot;
 
     // expect.rs is the umbrella file (Expect struct + asymmetric matchers +
     // ExpectStatic + mock helpers); each `expect/to*.rs` adds one inherent
@@ -154,27 +154,27 @@ cfg_jsc! {
     // build/debug/codegen/generated_classes.rs); the `pub mod expect` façade
     // below layers matcher submodules + shims on top via `pub use`.
     #[path = "expect.rs"]
-    pub mod expect_core;
+    pub(crate) mod expect_core;
 }
 
 cfg_jsc! {
-    pub mod timers {
-        #[path = "FakeTimers.rs"] pub mod fake_timers;
+    pub(crate) mod timers {
+        #[path = "FakeTimers.rs"] pub(crate) mod fake_timers;
     }
 }
 
 cfg_jsc! {
-pub mod expect {
+pub(crate) mod expect {
     // Re-export the umbrella surface so every matcher can `use super::*`.
-    pub use super::expect_core::*;
-    pub use super::expect_core::mock;
+    pub(crate) use super::expect_core::*;
+    pub(crate) use super::expect_core::mock;
     pub(crate) use super::diff_format::DiffFormatter;
 
     /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
     /// `cache: true` slots from jest.classes.ts). Exposed as a
     /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
     /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
-    pub mod js {
+    pub(crate) mod js {
         ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
     }
 
@@ -204,7 +204,7 @@ pub mod expect {
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
 
-    pub trait JSValueTestExt {
+    pub(crate) trait JSValueTestExt {
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
@@ -274,7 +274,7 @@ pub mod expect {
 
     /// Result of `JSValue::as_big_int_compare`.
     #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
+    pub(crate) enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
     /// `super::make_formatter(global_this)`
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
@@ -419,7 +419,7 @@ pub mod expect {
     /// exposes `quote_strings` as a public field, not a chained setter. A
     /// handful of matcher modules write
     /// `Formatter::new(g).with_quote_strings(true)`.
-    pub trait FormatterTestExt: Sized {
+    pub(crate) trait FormatterTestExt: Sized {
         fn with_quote_strings(self, b: bool) -> Self;
     }
     impl<'a> FormatterTestExt for Formatter<'a> {
@@ -433,7 +433,7 @@ pub mod expect {
     // Trivial one-liners live together in `simple_matchers`.
     macro_rules! matchers {
         ( $( $file:literal => $mod:ident ),* $(,)? ) => {
-            $( #[path = $file] pub mod $mod; )*
+            $( #[path = $file] pub(crate) mod $mod; )*
         };
     }
     matchers! {
@@ -491,8 +491,8 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
-    pub use done_callback::DoneCallback;
-    pub use expect::{
+    pub(crate) use done_callback::DoneCallback;
+    pub(crate) use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
         ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,

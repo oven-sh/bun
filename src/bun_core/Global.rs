@@ -236,56 +236,100 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
 }
 
 // ─── SignalCode — single source of truth ──────────────────────────────────
-// Rust has no enum reflection, so the 31
+// Rust has no enum reflection, so this platform's
 // (name,number) pairs live in ONE X-macro below; every consumer — the closed
-// enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
+// enum here (a discriminant is the platform's own number), `ALL`, `name`, `description`,
 // `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
-#[macro_export]
+#[cfg(unix)]
 macro_rules! for_each_signal {
     ($cb:ident) => {
         $cb! {
-            SIGHUP = 1, SIGINT = 2, SIGQUIT = 3, SIGILL = 4, SIGTRAP = 5, SIGABRT = 6,
-            SIGBUS = 7, SIGFPE = 8, SIGKILL = 9, SIGUSR1 = 10, SIGSEGV = 11, SIGUSR2 = 12,
-            SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIG16 = 16, SIGCHLD = 17, SIGCONT = 18,
-            SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22, SIGURG = 23, SIGXCPU = 24,
-            SIGXFSZ = 25, SIGVTALRM = 26, SIGPROF = 27, SIGWINCH = 28, SIGIO = 29, SIGPWR = 30,
-            SIGSYS = 31,
+            SIGHUP = libc::SIGHUP, "Terminal hung up";
+            SIGINT = libc::SIGINT, "Quit request";
+            SIGQUIT = libc::SIGQUIT, "Quit request";
+            SIGILL = libc::SIGILL, "Illegal instruction";
+            SIGTRAP = libc::SIGTRAP, "Trace or breakpoint trap";
+            SIGABRT = libc::SIGABRT, "Abort";
+            SIGBUS = libc::SIGBUS, "Misaligned address error";
+            SIGFPE = libc::SIGFPE, "Floating point exception";
+            SIGKILL = libc::SIGKILL, "Forced quit";
+            SIGUSR1 = libc::SIGUSR1, "User defined signal 1";
+            SIGSEGV = libc::SIGSEGV, "Address boundary error";
+            SIGUSR2 = libc::SIGUSR2, "User defined signal 2";
+            SIGPIPE = libc::SIGPIPE, "Broken pipe";
+            SIGALRM = libc::SIGALRM, "Timer expired";
+            SIGTERM = libc::SIGTERM, "Polite quit request";
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            SIGSTKFLT = libc::SIGSTKFLT, "Stack fault";
+            SIGCHLD = libc::SIGCHLD, "Child process status changed";
+            SIGCONT = libc::SIGCONT, "Continue previously stopped process";
+            SIGSTOP = libc::SIGSTOP, "Forced stop";
+            SIGTSTP = libc::SIGTSTP, "Stop request from job control (^Z)";
+            SIGTTIN = libc::SIGTTIN, "Stop from terminal input";
+            SIGTTOU = libc::SIGTTOU, "Stop from terminal output";
+            SIGURG = libc::SIGURG, "Urgent socket condition";
+            SIGXCPU = libc::SIGXCPU, "CPU time limit exceeded";
+            SIGXFSZ = libc::SIGXFSZ, "File size limit exceeded";
+            SIGVTALRM = libc::SIGVTALRM, "Virtual timer expired";
+            SIGPROF = libc::SIGPROF, "Profiling timer expired";
+            SIGWINCH = libc::SIGWINCH, "Window size change";
+            SIGIO = libc::SIGIO, "I/O on asynchronous file descriptor is possible";
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            SIGPWR = libc::SIGPWR, "Power failure";
+            SIGSYS = libc::SIGSYS, "Bad system call";
+        }
+    };
+}
+
+// Windows: the CRT's <signal.h>, plus SIGHUP, SIGQUIT, SIGKILL and SIGWINCH from libuv's uv/win.h.
+#[cfg(not(unix))]
+macro_rules! for_each_signal {
+    ($cb:ident) => {
+        $cb! {
+            SIGHUP = 1, "Terminal hung up";
+            SIGINT = 2, "Quit request";
+            SIGQUIT = 3, "Quit request";
+            SIGILL = 4, "Illegal instruction";
+            SIGABRT = 22, "Abort";
+            SIGFPE = 8, "Floating point exception";
+            SIGKILL = 9, "Forced quit";
+            SIGSEGV = 11, "Address boundary error";
+            SIGTERM = 15, "Polite quit request";
+            SIGWINCH = 28, "Window size change";
         }
     };
 }
 
 macro_rules! __define_signal_code {
-    ($($name:ident = $n:literal),* $(,)?) => {
-        /// Signal name table. Index = POSIX signal number; `[0]` is "" sentinel
-        /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
-        pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
-
-        /// Closed `#[repr(u8)]` enum over `1..=31` (the open newtype lives in
-        /// `bun_sys::SignalCode`). Generated from `for_each_signal!`.
-        #[repr(u8)]
+    ($($(#[$cfg:meta])* $name:ident = $n:expr, $desc:literal;)*) => {
+        /// This platform's named signals and their numbers; `bun_sys::SignalCode` holds any number.
+        #[repr(i32)]
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         #[allow(clippy::upper_case_acronyms)]
-        pub enum SignalCode { $($name = $n,)* }
+        pub enum SignalCode { $($(#[$cfg])* $name = $n,)* }
 
         impl SignalCode {
             pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
 
-            /// Raw signal number → variant for the closed `1..=31` range;
-            /// `None` for `0` or anything outside it.
-            #[inline]
-            pub const fn from_raw(n: u8) -> Option<SignalCode> {
-                match n { $($n => Some(Self::$name),)* _ => None }
-            }
+            /// Every variant, in table order.
+            pub const ALL: &'static [SignalCode] = &[$($(#[$cfg])* Self::$name,)*];
 
             /// Signal name — every variant is named (enum is exhaustive).
             #[inline]
-            pub fn name(self) -> &'static str { SIGNAL_NAMES[self as u8 as usize] }
+            pub fn name(self) -> &'static str {
+                match self { $($(#[$cfg])* Self::$name => stringify!($name),)* }
+            }
+
+            /// From https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
+            pub fn description(self) -> &'static str {
+                match self { $($(#[$cfg])* Self::$name => $desc,)* }
+            }
 
             /// Name-bytes → variant.
             /// 31-arm match; the optimizer turns it into a small string switch.
             #[inline]
             pub fn from_name(s: &[u8]) -> Option<SignalCode> {
-                match s { $(_ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => None }
+                match s { $($(#[$cfg])* _ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => None }
             }
         }
     };
@@ -293,69 +337,9 @@ macro_rules! __define_signal_code {
 for_each_signal!(__define_signal_code);
 
 impl SignalCode {
-    /// This table uses Linux numbering; returns the current platform's number
-    /// (they differ on macOS/BSD), or `None` when the platform lacks the signal.
-    pub fn platform_number(self) -> Option<i32> {
-        #[cfg(unix)]
-        {
-            use SignalCode as S;
-            Some(match self {
-                S::SIGHUP => libc::SIGHUP,
-                S::SIGINT => libc::SIGINT,
-                S::SIGQUIT => libc::SIGQUIT,
-                S::SIGILL => libc::SIGILL,
-                S::SIGTRAP => libc::SIGTRAP,
-                S::SIGABRT => libc::SIGABRT,
-                S::SIGBUS => libc::SIGBUS,
-                S::SIGFPE => libc::SIGFPE,
-                S::SIGKILL => libc::SIGKILL,
-                S::SIGUSR1 => libc::SIGUSR1,
-                S::SIGSEGV => libc::SIGSEGV,
-                S::SIGUSR2 => libc::SIGUSR2,
-                S::SIGPIPE => libc::SIGPIPE,
-                S::SIGALRM => libc::SIGALRM,
-                S::SIGTERM => libc::SIGTERM,
-                S::SIG16 => return None,
-                S::SIGCHLD => libc::SIGCHLD,
-                S::SIGCONT => libc::SIGCONT,
-                S::SIGSTOP => libc::SIGSTOP,
-                S::SIGTSTP => libc::SIGTSTP,
-                S::SIGTTIN => libc::SIGTTIN,
-                S::SIGTTOU => libc::SIGTTOU,
-                S::SIGURG => libc::SIGURG,
-                S::SIGXCPU => libc::SIGXCPU,
-                S::SIGXFSZ => libc::SIGXFSZ,
-                S::SIGVTALRM => libc::SIGVTALRM,
-                S::SIGPROF => libc::SIGPROF,
-                S::SIGWINCH => libc::SIGWINCH,
-                S::SIGIO => libc::SIGIO,
-                #[cfg(target_os = "linux")]
-                S::SIGPWR => libc::SIGPWR,
-                #[cfg(not(target_os = "linux"))]
-                S::SIGPWR => return None,
-                S::SIGSYS => libc::SIGSYS,
-            })
-        }
-        #[cfg(not(unix))]
-        {
-            // Windows numbering: CRT <signal.h> plus libuv's synthetic SIGHUP/SIGQUIT/SIGKILL/
-            // SIGWINCH (vendor/libuv/include/uv/win.h). The enum discriminants are Linux numbers
-            // and must not leak here (SIGABRT is 22 on Windows, not 6).
-            use SignalCode as S;
-            match self {
-                S::SIGHUP => Some(1),
-                S::SIGINT => Some(2),
-                S::SIGQUIT => Some(3),
-                S::SIGILL => Some(4),
-                S::SIGABRT => Some(22),
-                S::SIGFPE => Some(8),
-                S::SIGKILL => Some(9),
-                S::SIGSEGV => Some(11),
-                S::SIGTERM => Some(15),
-                S::SIGWINCH => Some(28),
-                _ => None,
-            }
-        }
+    /// `None` when this platform has no name for `n` (Linux real-time signals, macOS SIGEMT, 0).
+    pub fn from_number(n: i32) -> Option<SignalCode> {
+        Self::ALL.iter().copied().find(|signal| *signal as i32 == n)
     }
 }
 

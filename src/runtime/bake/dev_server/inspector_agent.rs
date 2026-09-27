@@ -163,7 +163,9 @@ impl BunFrontendDevServerAgent {
 }
 
 // HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
-pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDevServerAgentHandle) {
+pub(crate) fn frontend_dev_server_agent_set_enabled(
+    agent: *mut InspectorBunFrontendDevServerAgentHandle,
+) {
     // `VirtualMachine::get()` is valid here: the C++ inspector agent invokes
     // this on the JS thread, after the VM is initialized.
     if let Some(dbg) = VirtualMachine::get().debugger.as_deref() {

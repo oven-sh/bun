@@ -4,7 +4,6 @@ pub mod AnyTaskWithExtraContext;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
-pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
@@ -29,7 +28,7 @@ pub mod any_event_loop;
 // ─── public surface ─────────────────────────────────────────────────────────
 
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
-pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
+pub use ConcurrentTask::{ContextId, Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers avoid
 // the type/module namespace collision on the PascalCase form.

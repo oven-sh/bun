@@ -15,14 +15,13 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use bun_core::{self, Output};
 #[cfg(windows)]
 use bun_jsc as jsc;
-use bun_sys;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::file_range::FileRange;
 use super::frame;
 
-pub struct Worker {
+pub(crate) struct Worker {
     // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
     // parity, but mutation sites (`live_workers`, `on_worker_exit`, `frame`)
     // go through `cast_mut()`. The pointer is created from `&raw mut coord` in
@@ -390,7 +389,7 @@ impl ChannelOwner for Worker {
 /// Reads worker stdout/stderr. Accumulates into the worker's `captured` buffer
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
-pub struct WorkerPipe {
+pub(crate) struct WorkerPipe {
     pub(crate) reader: bun_io::BufferedReader,
     pub(crate) worker: *const Worker,
     /// EOF or error observed.

@@ -167,9 +167,12 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 /* Loop related */
 /* `eof` values for us_internal_dispatch_ready_poll: nonzero = read-side EOF hint (half-open honored);
- * LIBUS_POLL_HANGUP = epoll EPOLLHUP, both directions down, re-reported until the fd is closed. */
+ * LIBUS_POLL_HANGUP = epoll EPOLLHUP, both directions down, re-reported until the fd is closed;
+ * LIBUS_POLL_DRAIN = no kernel event, the owner knows the peer is gone (us_socket_drain_readable_then_end);
+ * the read loop is capped, as something else may still hold the peer end and keep writing. */
 #define LIBUS_POLL_EOF 1
 #define LIBUS_POLL_HANGUP 2
+#define LIBUS_POLL_DRAIN 4
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);

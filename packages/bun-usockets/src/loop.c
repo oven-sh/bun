@@ -781,19 +781,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * buffer. This is what the comment above always described; it
                          * was keyed on the error flag, which kqueue does not set for
                          * a peer FIN.
-                         * The read cap only matters when the hint is synthetic
-                         * (us_socket_drain_readable_then_end) and a writer still
-                         * holds the peer end: it keeps refilling the buffer, so
-                         * EAGAIN may never come. 64 reads is far past any kernel
-                         * buffer, so a real hangup never hits it. */
-                        #define EOF_DRAIN_MAX_READS 64
+                         * LIBUS_POLL_DRAIN is not a kernel event: the owner knows the
+                         * peer process is gone, but something else may hold the peer
+                         * end and keep refilling the buffer, so EAGAIN may never come.
+                         * Cap that drain; a real hangup or error reads to the end. */
+                        #define DRAIN_MAX_READS 64
                         if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
-                            if (++repeat_recv_count <= EOF_DRAIN_MAX_READS) {
+                            if (!(eof & LIBUS_POLL_DRAIN) || ++repeat_recv_count <= DRAIN_MAX_READS) {
                                 continue;
                             }
                             break;
                         }
-                        #undef EOF_DRAIN_MAX_READS
+                        #undef DRAIN_MAX_READS
                         /* Stop if on_data paused us (us_socket_pause from the data
                          * handler, e.g. fetch() receive backpressure or
                          * net.Socket#pause) — keep honoring the pause instead of

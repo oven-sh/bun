@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isLinux, isWindows, shellExe, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -265,62 +266,58 @@ it.concurrent.skipIf(isWindows)("delivers a message sent right before exit on th
 // nested tick sees the child's hangup and closes the channel; it must leave the socket for the
 // outermost tick to free, as the drain still holds it. The parent waits until the child is reaped
 // (its /proc entry is gone), so the exit task is queued before the loop runs again.
-it.skipIf(!isLinux)(
-  "a synchronous wait inside the ipc callback during the exit-time drain",
-  async () => {
-    using dir = tempDir("ipc-exit-drain-reenter", {
-      "reenter.test.ts": `
-      import { expect, test } from "bun:test";
-      import { existsSync } from "node:fs";
-
-      test("ipc callback ticks the loop from inside the drain", async () => {
-        const received = [];
-        const ipcDone = Promise.withResolvers();
-        const disconnected = Promise.withResolvers();
-        const proc = Bun.spawn({
-          cmd: [process.execPath, "-e", 'process.send("hello"); Promise.resolve().then(() => process.exit(0));'],
-          stdio: ["ignore", "inherit", "inherit"],
-          serialization: "json",
-          ipc(message) {
-            received.push(message);
-            expect(Bun.sleep(20)).resolves.toBeUndefined();
-            ipcDone.resolve();
-          },
-          onDisconnect() {
-            disconnected.resolve();
-          },
-        });
-        const deadline = Date.now() + 30_000;
-        while (existsSync("/proc/" + proc.pid)) {
-          if (Date.now() > deadline) throw new Error("child was not reaped");
-          Bun.sleepSync(1);
-        }
-        Bun.sleepSync(50);
-        const exitCode = await proc.exited;
-        await disconnected.promise;
-        await ipcDone.promise;
-        expect({ received, exitCode }).toEqual({ received: ["hello"], exitCode: 0 });
-      });
-    `,
+it.skipIf(!isLinux)("a synchronous wait inside the ipc callback during the exit-time drain", async () => {
+  const parent = `
+    const { expect } = require("bun:test");
+    const { existsSync } = require("node:fs");
+    const received = [];
+    const ipcDone = Promise.withResolvers();
+    const disconnected = Promise.withResolvers();
+    const child = Bun.spawn({
+      cmd: [process.execPath, "-e", 'process.send("hello"); Promise.resolve().then(() => process.exit(0));'],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "json",
+      ipc(message) {
+        received.push(message);
+        expect(Bun.sleep(20)).resolves.toBeUndefined();
+        ipcDone.resolve();
+      },
+      onDisconnect() {
+        disconnected.resolve();
+      },
     });
-    await using proc = spawn({
-      cmd: [bunExe(), "test", "reenter.test.ts"],
-      cwd: String(dir),
-      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain(" 1 pass");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+    const deadline = Date.now() + 30_000;
+    while (existsSync("/proc/" + child.pid)) {
+      if (Date.now() > deadline) throw new Error("child was not reaped");
+      Bun.sleepSync(1);
+    }
+    Bun.sleepSync(50);
+    const exitCode = await child.exited;
+    await disconnected.promise;
+    await ipcDone.promise;
+    console.log(JSON.stringify({ received, exitCode }));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", parent],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ received: ["hello"], exitCode: 0 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 // A grandchild that keeps writing to the inherited channel after the child exits cannot keep
 // the exit-time drain going: the drain stops after a bounded number of reads, the channel
-// closes, and the writer ends with EPIPE.
+// closes, and the writer ends with EPIPE. What the grandchild wrote is not guaranteed to arrive
+// (on macOS the 8 KB socketpair buffer holds less than one line), so only its integrity is checked.
 it.skipIf(isWindows)("a grandchild still writing to the channel after the child exits", async () => {
+  using dir = tempDir("ipc-grandchild-writer", {});
+  const sentinel = path.join(String(dir), "started");
   const received: { fill: string }[] = [];
   const disconnected = Promise.withResolvers<void>();
   // Large lines keep the kernel buffer full with few messages, so few JS callbacks run per read.
@@ -328,8 +325,8 @@ it.skipIf(isWindows)("a grandchild still writing to the channel after the child 
   await using child = spawn({
     // fd 3 is the child's end of the channel. `yes` inherits it and writes until the parent
     // closes its end.
-    cmd: [shellExe(), "-c", 'yes "$LINE" >&3 2>/dev/null & echo $!'],
-    env: { ...bunEnv, LINE: line },
+    cmd: [shellExe(), "-c", 'yes "$LINE" >&3 2>/dev/null & echo $!; : > "$SENTINEL"'],
+    env: { ...bunEnv, LINE: line, SENTINEL: sentinel },
     stdio: ["ignore", "pipe", "inherit"],
     serialization: "json",
     ipc(message) {
@@ -339,15 +336,20 @@ it.skipIf(isWindows)("a grandchild still writing to the channel after the child 
       disconnected.resolve();
     },
   });
-  // Stay off the event loop until the writer has filled the channel and the child has exited,
-  // so the exit-time drain meets a full buffer.
-  Bun.sleepSync(200);
+  // Stay off the event loop until the shell has started the writer and is about to exit.
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(sentinel)) {
+    if (Date.now() > deadline) throw new Error("child did not start the writer");
+    Bun.sleepSync(1);
+  }
+  // Nothing observable says the writer has filled the channel short of reading it, which is what
+  // the exit-time drain must do; give it a moment before the loop runs.
+  Bun.sleepSync(100);
   const grandchildPid = Number((await child.stdout.text()).trim());
   try {
     expect(grandchildPid).toBeGreaterThan(0);
     expect(await child.exited).toBe(0);
     await disconnected.promise;
-    expect(received.length).toBeGreaterThan(0);
     expect(received.every(message => message.fill.length === 64 * 1024)).toBe(true);
   } finally {
     if (grandchildPid > 0) {

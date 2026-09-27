@@ -729,7 +729,7 @@ void us_socket_drain_readable_then_end(struct us_socket_t *s) {
      * the outermost loop_post while this dispatch still holds `s`. */
     struct us_loop_t *loop = s->group->loop;
     loop->data.tick_depth++;
-    us_internal_dispatch_ready_poll(&s->p, 0, 1, LIBUS_SOCKET_READABLE);
+    us_internal_dispatch_ready_poll(&s->p, 0, LIBUS_POLL_DRAIN, LIBUS_SOCKET_READABLE);
     loop->data.tick_depth--;
 }
 #endif

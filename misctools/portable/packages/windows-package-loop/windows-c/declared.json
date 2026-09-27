@@ -1,0 +1,250 @@
+{
+ "functions": [
+  {
+   "library": "libuv",
+   "symbol": "uv_loop_new"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_loop_delete"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_run"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_now"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_update_time"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_ref"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_unref"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_close"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_is_closing"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_poll_init_socket"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_poll_start"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_poll_stop"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_timer_init"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_timer_start"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_timer_stop"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_prepare_init"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_prepare_start"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_prepare_stop"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_check_init"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_check_start"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_check_stop"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_async_init"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv_async_send"
+  },
+  {
+   "library": "libuv",
+   "symbol": "uv__winsock_ensure"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "WSAGetLastError"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "WSASetLastError"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "WSASocketW"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "WSADuplicateSocketW"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "WSAIoctl"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "socket"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "closesocket"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "ioctlsocket"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "bind"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "listen"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "accept"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "connect"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "shutdown"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "recv"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "send"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "recvfrom"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "sendto"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "setsockopt"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "getsockopt"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "getsockname"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "getpeername"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "getaddrinfo"
+  },
+  {
+   "library": "ws2_32",
+   "symbol": "freeaddrinfo"
+  },
+  {
+   "library": "kernel32",
+   "symbol": "SetHandleInformation"
+  },
+  {
+   "library": "kernel32",
+   "symbol": "SetLastError"
+  },
+  {
+   "library": "kernel32",
+   "symbol": "InitOnceExecuteOnce"
+  },
+  {
+   "library": "kernel32",
+   "symbol": "GetLastError"
+  },
+  {
+   "library": "ucrtbase",
+   "symbol": "_errno"
+  }
+ ],
+ "structures_of_libuv": {
+  "uv_loop_t": {
+   "size": 472,
+   "align": 8
+  },
+  "uv_handle_t": {
+   "size": 96,
+   "align": 8
+  },
+  "uv_poll_t": {
+   "size": 416,
+   "align": 8
+  },
+  "uv_timer_t": {
+   "size": 160,
+   "align": 8
+  },
+  "uv_async_t": {
+   "size": 224,
+   "align": 8
+  },
+  "uv_prepare_t": {
+   "size": 120,
+   "align": 8
+  },
+  "uv_check_t": {
+   "size": 120,
+   "align": 8
+  }
+ },
+ "callbacks": [
+  "uv_close_cb",
+  "uv_poll_cb",
+  "uv_timer_cb",
+  "uv_async_cb",
+  "uv_prepare_cb",
+  "uv_check_cb"
+ ]
+}

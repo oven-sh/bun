@@ -1,0 +1,16 @@
+{
+ "imports": 293,
+ "by_library": {
+  "*": 1,
+  "kernel32": 100,
+  "ntdll": 19,
+  "ucrtbase": 2,
+  "libuv": 142,
+  "ws2_32": 25,
+  "advapi32": 4
+ },
+ "found_for_a_declaration_without_a_library": {
+  "GetProcessIoCounters": "kernel32"
+ },
+ "not_found": []
+}

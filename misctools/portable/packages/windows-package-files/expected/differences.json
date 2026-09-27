@@ -1,0 +1,21 @@
+{
+ "about": "What a run of bun_fs_slice may print on a host that is not Linux where expected/linux.jsonl has something else. compare-run.ts reads this file. A step is named as in the output; a step with a path is \"<step> <path>\".",
+ "win32": {
+  "host": { "fields": { "os": "win32", "path_flavour": "windows" }, "why": "the host" },
+  "symlink a/link -> renamed.txt": {
+   "may_fail_with": ["EPERM"],
+   "then_absent": ["readlink", "lstat, link", "stat, through the link", "unlink, link a/link"],
+   "then_not_listed": ["link"],
+   "why": "Windows makes a symbolic link for an administrator, or for everybody when Developer Mode is on: libuv reports ERROR_PRIVILEGE_NOT_HELD as EPERM"
+  },
+  "unlink, directory a/side": {
+   "error": ["EPERM"],
+   "why": "libuv's unlink for Windows refuses a directory with ERROR_ACCESS_DENIED, which is EPERM (vendor/libuv/src/win/fs.c, fs__unlink), as Node.js does on Windows"
+  }
+ },
+ "darwin": {
+  "host": { "fields": { "os": "darwin" }, "why": "the host" },
+  "unlink, directory a/side": { "error": ["EPERM"], "why": "unlink(2) of macOS gives EPERM for a directory" }
+ },
+ "every_host": { "syscall": "the name of the system call that bun attributes an error to is compared on Linux only: bun's code for another OS reaches the same result through other calls" }
+}

@@ -1,0 +1,3476 @@
+{
+ "source": "headers",
+ "pointer_bits": 64,
+ "types": {
+  "COORD": {
+   "size": 4,
+   "align": 2,
+   "fields": {
+    "X": {
+     "offset": 0,
+     "size": 2
+    },
+    "Y": {
+     "offset": 2,
+     "size": 2
+    }
+   }
+  },
+  "SMALL_RECT": {
+   "size": 8,
+   "align": 2,
+   "fields": {
+    "Left": {
+     "offset": 0,
+     "size": 2
+    },
+    "Top": {
+     "offset": 2,
+     "size": 2
+    },
+    "Right": {
+     "offset": 4,
+     "size": 2
+    },
+    "Bottom": {
+     "offset": 6,
+     "size": 2
+    }
+   }
+  },
+  "CONSOLE_SCREEN_BUFFER_INFO": {
+   "size": 22,
+   "align": 2,
+   "fields": {
+    "dwSize": {
+     "offset": 0,
+     "size": 4
+    },
+    "dwCursorPosition": {
+     "offset": 4,
+     "size": 4
+    },
+    "wAttributes": {
+     "offset": 8,
+     "size": 2
+    },
+    "srWindow": {
+     "offset": 10,
+     "size": 8
+    },
+    "dwMaximumWindowSize": {
+     "offset": 18,
+     "size": 4
+    }
+   }
+  },
+  "FILETIME": {
+   "size": 8,
+   "align": 4,
+   "fields": {
+    "dwLowDateTime": {
+     "offset": 0,
+     "size": 4
+    },
+    "dwHighDateTime": {
+     "offset": 4,
+     "size": 4
+    }
+   }
+  },
+  "OVERLAPPED": {
+   "size": 32,
+   "align": 8,
+   "fields": {
+    "Internal": {
+     "offset": 0,
+     "size": 8
+    },
+    "InternalHigh": {
+     "offset": 8,
+     "size": 8
+    },
+    "Offset": {
+     "offset": 16,
+     "size": 4
+    },
+    "OffsetHigh": {
+     "offset": 20,
+     "size": 4
+    },
+    "hEvent": {
+     "offset": 24,
+     "size": 8
+    }
+   }
+  },
+  "CRITICAL_SECTION": {
+   "size": 40,
+   "align": 8,
+   "fields": {
+    "DebugInfo": {
+     "offset": 0,
+     "size": 8
+    },
+    "LockCount": {
+     "offset": 8,
+     "size": 4
+    },
+    "RecursionCount": {
+     "offset": 12,
+     "size": 4
+    },
+    "OwningThread": {
+     "offset": 16,
+     "size": 8
+    },
+    "LockSemaphore": {
+     "offset": 24,
+     "size": 8
+    },
+    "SpinCount": {
+     "offset": 32,
+     "size": 8
+    }
+   }
+  },
+  "WIN32_FIND_DATAW": {
+   "size": 592,
+   "align": 4,
+   "fields": {
+    "dwFileAttributes": {
+     "offset": 0,
+     "size": 4
+    },
+    "ftCreationTime": {
+     "offset": 4,
+     "size": 8
+    },
+    "ftLastAccessTime": {
+     "offset": 12,
+     "size": 8
+    },
+    "ftLastWriteTime": {
+     "offset": 20,
+     "size": 8
+    },
+    "nFileSizeHigh": {
+     "offset": 28,
+     "size": 4
+    },
+    "nFileSizeLow": {
+     "offset": 32,
+     "size": 4
+    },
+    "dwReserved0": {
+     "offset": 36,
+     "size": 4
+    },
+    "dwReserved1": {
+     "offset": 40,
+     "size": 4
+    },
+    "cFileName": {
+     "offset": 44,
+     "size": 520
+    },
+    "cAlternateFileName": {
+     "offset": 564,
+     "size": 28
+    }
+   }
+  },
+  "KEY_EVENT_RECORD": {
+   "size": 16,
+   "align": 4,
+   "fields": {
+    "bKeyDown": {
+     "offset": 0,
+     "size": 4
+    },
+    "wRepeatCount": {
+     "offset": 4,
+     "size": 2
+    },
+    "wVirtualKeyCode": {
+     "offset": 6,
+     "size": 2
+    },
+    "wVirtualScanCode": {
+     "offset": 8,
+     "size": 2
+    },
+    "uChar": {
+     "offset": 10,
+     "size": 2
+    },
+    "dwControlKeyState": {
+     "offset": 12,
+     "size": 4
+    }
+   }
+  },
+  "MOUSE_EVENT_RECORD": {
+   "size": 16,
+   "align": 4,
+   "fields": {
+    "dwMousePosition": {
+     "offset": 0,
+     "size": 4
+    },
+    "dwButtonState": {
+     "offset": 4,
+     "size": 4
+    },
+    "dwControlKeyState": {
+     "offset": 8,
+     "size": 4
+    },
+    "dwEventFlags": {
+     "offset": 12,
+     "size": 4
+    }
+   }
+  },
+  "WINDOW_BUFFER_SIZE_RECORD": {
+   "size": 4,
+   "align": 2,
+   "fields": {
+    "dwSize": {
+     "offset": 0,
+     "size": 4
+    }
+   }
+  },
+  "MENU_EVENT_RECORD": {
+   "size": 4,
+   "align": 4,
+   "fields": {
+    "dwCommandId": {
+     "offset": 0,
+     "size": 4
+    }
+   }
+  },
+  "FOCUS_EVENT_RECORD": {
+   "size": 4,
+   "align": 4,
+   "fields": {
+    "bSetFocus": {
+     "offset": 0,
+     "size": 4
+    }
+   }
+  },
+  "INPUT_RECORD": {
+   "size": 20,
+   "align": 4,
+   "fields": {
+    "EventType": {
+     "offset": 0,
+     "size": 2
+    },
+    "Event": {
+     "offset": 4,
+     "size": 16
+    }
+   }
+  },
+  "SECURITY_ATTRIBUTES": {
+   "size": 24,
+   "align": 8,
+   "fields": {
+    "nLength": {
+     "offset": 0,
+     "size": 4
+    },
+    "lpSecurityDescriptor": {
+     "offset": 8,
+     "size": 8
+    },
+    "bInheritHandle": {
+     "offset": 16,
+     "size": 4
+    }
+   }
+  },
+  "BY_HANDLE_FILE_INFORMATION": {
+   "size": 52,
+   "align": 4,
+   "fields": {
+    "dwFileAttributes": {
+     "offset": 0,
+     "size": 4
+    },
+    "ftCreationTime": {
+     "offset": 4,
+     "size": 8
+    },
+    "ftLastAccessTime": {
+     "offset": 12,
+     "size": 8
+    },
+    "ftLastWriteTime": {
+     "offset": 20,
+     "size": 8
+    },
+    "dwVolumeSerialNumber": {
+     "offset": 28,
+     "size": 4
+    },
+    "nFileSizeHigh": {
+     "offset": 32,
+     "size": 4
+    },
+    "nFileSizeLow": {
+     "offset": 36,
+     "size": 4
+    },
+    "nNumberOfLinks": {
+     "offset": 40,
+     "size": 4
+    },
+    "nFileIndexHigh": {
+     "offset": 44,
+     "size": 4
+    },
+    "nFileIndexLow": {
+     "offset": 48,
+     "size": 4
+    }
+   }
+  },
+  "WIN32_FILE_ATTRIBUTE_DATA": {
+   "size": 36,
+   "align": 4,
+   "fields": {
+    "dwFileAttributes": {
+     "offset": 0,
+     "size": 4
+    },
+    "ftCreationTime": {
+     "offset": 4,
+     "size": 8
+    },
+    "ftLastAccessTime": {
+     "offset": 12,
+     "size": 8
+    },
+    "ftLastWriteTime": {
+     "offset": 20,
+     "size": 8
+    },
+    "nFileSizeHigh": {
+     "offset": 28,
+     "size": 4
+    },
+    "nFileSizeLow": {
+     "offset": 32,
+     "size": 4
+    }
+   }
+  },
+  "UNICODE_STRING": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "Length": {
+     "offset": 0,
+     "size": 2
+    },
+    "MaximumLength": {
+     "offset": 2,
+     "size": 2
+    },
+    "Buffer": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "OBJECT_ATTRIBUTES": {
+   "size": 48,
+   "align": 8,
+   "fields": {
+    "Length": {
+     "offset": 0,
+     "size": 4
+    },
+    "RootDirectory": {
+     "offset": 8,
+     "size": 8
+    },
+    "ObjectName": {
+     "offset": 16,
+     "size": 8
+    },
+    "Attributes": {
+     "offset": 24,
+     "size": 4
+    },
+    "SecurityDescriptor": {
+     "offset": 32,
+     "size": 8
+    },
+    "SecurityQualityOfService": {
+     "offset": 40,
+     "size": 8
+    }
+   }
+  },
+  "IO_STATUS_BLOCK": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "Status": {
+     "offset": 0,
+     "size": 8
+    },
+    "Information": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "RUNTIME_FUNCTION": {
+   "size": 12,
+   "align": 4,
+   "fields": {
+    "BeginAddress": {
+     "offset": 0,
+     "size": 4
+    },
+    "EndAddress": {
+     "offset": 4,
+     "size": 4
+    },
+    "UnwindData": {
+     "offset": 8,
+     "size": 4
+    }
+   }
+  },
+  "M128A": {
+   "size": 16,
+   "align": 16,
+   "fields": {
+    "Low": {
+     "offset": 0,
+     "size": 8
+    },
+    "High": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "MEMORY_BASIC_INFORMATION": {
+   "size": 48,
+   "align": 8,
+   "fields": {
+    "BaseAddress": {
+     "offset": 0,
+     "size": 8
+    },
+    "AllocationBase": {
+     "offset": 8,
+     "size": 8
+    },
+    "AllocationProtect": {
+     "offset": 16,
+     "size": 4
+    },
+    "PartitionId": {
+     "offset": 20,
+     "size": 2
+    },
+    "RegionSize": {
+     "offset": 24,
+     "size": 8
+    },
+    "State": {
+     "offset": 32,
+     "size": 4
+    },
+    "Protect": {
+     "offset": 36,
+     "size": 4
+    },
+    "Type": {
+     "offset": 40,
+     "size": 4
+    }
+   }
+  },
+  "addrinfo": {
+   "size": 48,
+   "align": 8,
+   "fields": {
+    "ai_flags": {
+     "offset": 0,
+     "size": 4
+    },
+    "ai_family": {
+     "offset": 4,
+     "size": 4
+    },
+    "ai_socktype": {
+     "offset": 8,
+     "size": 4
+    },
+    "ai_protocol": {
+     "offset": 12,
+     "size": 4
+    },
+    "ai_addrlen": {
+     "offset": 16,
+     "size": 8
+    },
+    "ai_canonname": {
+     "offset": 24,
+     "size": 8
+    },
+    "ai_addr": {
+     "offset": 32,
+     "size": 8
+    },
+    "ai_next": {
+     "offset": 40,
+     "size": 8
+    }
+   }
+  },
+  "sockaddr_storage": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "ss_family": {
+     "offset": 0,
+     "size": 2
+    },
+    "__ss_pad1": {
+     "offset": 2,
+     "size": 6
+    },
+    "__ss_align": {
+     "offset": 8,
+     "size": 8
+    },
+    "__ss_pad2": {
+     "offset": 16,
+     "size": 112
+    }
+   }
+  },
+  "sockaddr": {
+   "size": 16,
+   "align": 2,
+   "fields": {
+    "sa_family": {
+     "offset": 0,
+     "size": 2
+    },
+    "sa_data": {
+     "offset": 2,
+     "size": 14
+    }
+   }
+  },
+  "sockaddr_in": {
+   "size": 16,
+   "align": 4,
+   "fields": {
+    "sin_family": {
+     "offset": 0,
+     "size": 2
+    },
+    "sin_port": {
+     "offset": 2,
+     "size": 2
+    },
+    "sin_addr": {
+     "offset": 4,
+     "size": 4
+    },
+    "sin_zero": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "in_addr": {
+   "size": 4,
+   "align": 4,
+   "fields": {
+    "s_addr": {
+     "offset": 0,
+     "size": 4
+    }
+   }
+  },
+  "sockaddr_in6": {
+   "size": 28,
+   "align": 4,
+   "fields": {
+    "sin6_family": {
+     "offset": 0,
+     "size": 2
+    },
+    "sin6_port": {
+     "offset": 2,
+     "size": 2
+    },
+    "sin6_flowinfo": {
+     "offset": 4,
+     "size": 4
+    },
+    "sin6_addr": {
+     "offset": 8,
+     "size": 16
+    },
+    "sin6_scope_id": {
+     "offset": 24,
+     "size": 4
+    }
+   }
+  },
+  "in6_addr": {
+   "size": 16,
+   "align": 2,
+   "fields": {
+    "s6_addr": {
+     "offset": 0,
+     "size": 16
+    }
+   }
+  },
+  "WSAPOLLFD": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "fd": {
+     "offset": 0,
+     "size": 8
+    },
+    "events": {
+     "offset": 8,
+     "size": 2
+    },
+    "revents": {
+     "offset": 10,
+     "size": 2
+    }
+   }
+  },
+  "SYSTEM_INFO": {
+   "size": 48,
+   "align": 8,
+   "fields": {
+    "wProcessorArchitecture": {
+     "offset": 0,
+     "size": 2
+    },
+    "wReserved": {
+     "offset": 2,
+     "size": 2
+    },
+    "dwPageSize": {
+     "offset": 4,
+     "size": 4
+    },
+    "lpMinimumApplicationAddress": {
+     "offset": 8,
+     "size": 8
+    },
+    "lpMaximumApplicationAddress": {
+     "offset": 16,
+     "size": 8
+    },
+    "dwActiveProcessorMask": {
+     "offset": 24,
+     "size": 8
+    },
+    "dwNumberOfProcessors": {
+     "offset": 32,
+     "size": 4
+    },
+    "dwProcessorType": {
+     "offset": 36,
+     "size": 4
+    },
+    "dwAllocationGranularity": {
+     "offset": 40,
+     "size": 4
+    },
+    "wProcessorLevel": {
+     "offset": 44,
+     "size": 2
+    },
+    "wProcessorRevision": {
+     "offset": 46,
+     "size": 2
+    }
+   }
+  },
+  "PROCESS_BASIC_INFORMATION": {
+   "size": 48,
+   "align": 8,
+   "fields": {
+    "PebBaseAddress": {
+     "offset": 8,
+     "size": 8
+    },
+    "UniqueProcessId": {
+     "offset": 32,
+     "size": 8
+    }
+   }
+  },
+  "JOBOBJECT_ASSOCIATE_COMPLETION_PORT": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "CompletionKey": {
+     "offset": 0,
+     "size": 8
+    },
+    "CompletionPort": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "JOBOBJECT_BASIC_LIMIT_INFORMATION": {
+   "size": 64,
+   "align": 8,
+   "fields": {
+    "PerProcessUserTimeLimit": {
+     "offset": 0,
+     "size": 8
+    },
+    "PerJobUserTimeLimit": {
+     "offset": 8,
+     "size": 8
+    },
+    "LimitFlags": {
+     "offset": 16,
+     "size": 4
+    },
+    "MinimumWorkingSetSize": {
+     "offset": 24,
+     "size": 8
+    },
+    "MaximumWorkingSetSize": {
+     "offset": 32,
+     "size": 8
+    },
+    "ActiveProcessLimit": {
+     "offset": 40,
+     "size": 4
+    },
+    "Affinity": {
+     "offset": 48,
+     "size": 8
+    },
+    "PriorityClass": {
+     "offset": 56,
+     "size": 4
+    },
+    "SchedulingClass": {
+     "offset": 60,
+     "size": 4
+    }
+   }
+  },
+  "IO_COUNTERS": {
+   "size": 48,
+   "align": 8,
+   "fields": {
+    "ReadOperationCount": {
+     "offset": 0,
+     "size": 8
+    },
+    "WriteOperationCount": {
+     "offset": 8,
+     "size": 8
+    },
+    "OtherOperationCount": {
+     "offset": 16,
+     "size": 8
+    },
+    "ReadTransferCount": {
+     "offset": 24,
+     "size": 8
+    },
+    "WriteTransferCount": {
+     "offset": 32,
+     "size": 8
+    },
+    "OtherTransferCount": {
+     "offset": 40,
+     "size": 8
+    }
+   }
+  },
+  "JOBOBJECT_EXTENDED_LIMIT_INFORMATION": {
+   "size": 144,
+   "align": 8,
+   "fields": {
+    "BasicLimitInformation": {
+     "offset": 0,
+     "size": 64
+    },
+    "IoInfo": {
+     "offset": 64,
+     "size": 48
+    },
+    "ProcessMemoryLimit": {
+     "offset": 112,
+     "size": 8
+    },
+    "JobMemoryLimit": {
+     "offset": 120,
+     "size": 8
+    },
+    "PeakProcessMemoryUsed": {
+     "offset": 128,
+     "size": 8
+    },
+    "PeakJobMemoryUsed": {
+     "offset": 136,
+     "size": 8
+    }
+   }
+  },
+  "STARTUPINFOW": {
+   "size": 104,
+   "align": 8,
+   "fields": {
+    "cb": {
+     "offset": 0,
+     "size": 4
+    },
+    "lpReserved": {
+     "offset": 8,
+     "size": 8
+    },
+    "lpDesktop": {
+     "offset": 16,
+     "size": 8
+    },
+    "lpTitle": {
+     "offset": 24,
+     "size": 8
+    },
+    "dwX": {
+     "offset": 32,
+     "size": 4
+    },
+    "dwY": {
+     "offset": 36,
+     "size": 4
+    },
+    "dwXSize": {
+     "offset": 40,
+     "size": 4
+    },
+    "dwYSize": {
+     "offset": 44,
+     "size": 4
+    },
+    "dwXCountChars": {
+     "offset": 48,
+     "size": 4
+    },
+    "dwYCountChars": {
+     "offset": 52,
+     "size": 4
+    },
+    "dwFillAttribute": {
+     "offset": 56,
+     "size": 4
+    },
+    "dwFlags": {
+     "offset": 60,
+     "size": 4
+    },
+    "wShowWindow": {
+     "offset": 64,
+     "size": 2
+    },
+    "cbReserved2": {
+     "offset": 66,
+     "size": 2
+    },
+    "lpReserved2": {
+     "offset": 72,
+     "size": 8
+    },
+    "hStdInput": {
+     "offset": 80,
+     "size": 8
+    },
+    "hStdOutput": {
+     "offset": 88,
+     "size": 8
+    },
+    "hStdError": {
+     "offset": 96,
+     "size": 8
+    }
+   }
+  },
+  "STARTUPINFOEXW": {
+   "size": 112,
+   "align": 8,
+   "fields": {
+    "StartupInfo": {
+     "offset": 0,
+     "size": 104
+    },
+    "lpAttributeList": {
+     "offset": 104,
+     "size": 8
+    }
+   }
+  },
+  "PROCESS_INFORMATION": {
+   "size": 24,
+   "align": 8,
+   "fields": {
+    "hProcess": {
+     "offset": 0,
+     "size": 8
+    },
+    "hThread": {
+     "offset": 8,
+     "size": 8
+    },
+    "dwProcessId": {
+     "offset": 16,
+     "size": 4
+    },
+    "dwThreadId": {
+     "offset": 20,
+     "size": 4
+    }
+   }
+  },
+  "RTL_USER_PROCESS_PARAMETERS": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "ImagePathName": {
+     "offset": 96,
+     "size": 16
+    },
+    "CommandLine": {
+     "offset": 112,
+     "size": 16
+    }
+   }
+  },
+  "PEB": {
+   "size": 712,
+   "align": 8,
+   "fields": {
+    "BeingDebugged": {
+     "offset": 2,
+     "size": 1
+    },
+    "Ldr": {
+     "offset": 24,
+     "size": 8
+    },
+    "ProcessParameters": {
+     "offset": 32,
+     "size": 8
+    }
+   }
+  },
+  "TEB": {
+   "size": 6024,
+   "align": 8,
+   "fields": {
+    "ProcessEnvironmentBlock": {
+     "offset": 96,
+     "size": 8
+    }
+   }
+  },
+  "uv__queue": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "next": {
+     "offset": 0,
+     "size": 8
+    },
+    "prev": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "uv__work": {
+   "size": 40,
+   "align": 8,
+   "fields": {
+    "work": {
+     "offset": 0,
+     "size": 8
+    },
+    "done": {
+     "offset": 8,
+     "size": 8
+    },
+    "loop": {
+     "offset": 16,
+     "size": 8
+    },
+    "wq": {
+     "offset": 24,
+     "size": 16
+    }
+   }
+  },
+  "uv_buf_t": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "len": {
+     "offset": 0,
+     "size": 4
+    },
+    "base": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "uv_req_t": {
+   "size": 112,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    }
+   }
+  },
+  "uv_handle_t": {
+   "size": 96,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    }
+   }
+  },
+  "uv_loop_t": {
+   "size": 472,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "active_handles": {
+     "offset": 8,
+     "size": 4
+    },
+    "handle_queue": {
+     "offset": 16,
+     "size": 16
+    },
+    "active_reqs": {
+     "offset": 32,
+     "size": 8
+    },
+    "internal_fields": {
+     "offset": 40,
+     "size": 8
+    },
+    "stop_flag": {
+     "offset": 48,
+     "size": 4
+    },
+    "iocp": {
+     "offset": 56,
+     "size": 8
+    },
+    "time": {
+     "offset": 64,
+     "size": 8
+    },
+    "pending_reqs_tail": {
+     "offset": 72,
+     "size": 8
+    },
+    "endgame_handles": {
+     "offset": 80,
+     "size": 8
+    },
+    "timer_heap": {
+     "offset": 88,
+     "size": 8
+    },
+    "prepare_handles": {
+     "offset": 96,
+     "size": 8
+    },
+    "check_handles": {
+     "offset": 104,
+     "size": 8
+    },
+    "idle_handles": {
+     "offset": 112,
+     "size": 8
+    },
+    "next_prepare_handle": {
+     "offset": 120,
+     "size": 8
+    },
+    "next_check_handle": {
+     "offset": 128,
+     "size": 8
+    },
+    "next_idle_handle": {
+     "offset": 136,
+     "size": 8
+    },
+    "poll_peer_sockets": {
+     "offset": 144,
+     "size": 32
+    },
+    "active_tcp_streams": {
+     "offset": 176,
+     "size": 4
+    },
+    "active_udp_streams": {
+     "offset": 180,
+     "size": 4
+    },
+    "timer_counter": {
+     "offset": 184,
+     "size": 8
+    },
+    "wq": {
+     "offset": 192,
+     "size": 16
+    },
+    "wq_mutex": {
+     "offset": 208,
+     "size": 40
+    },
+    "wq_async": {
+     "offset": 248,
+     "size": 224
+    }
+   }
+  },
+  "uv_read_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "event_handle": {
+     "offset": 112,
+     "size": 8
+    },
+    "wait_handle": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "uv_shutdown_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "handle": {
+     "offset": 112,
+     "size": 8
+    },
+    "cb": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "uv_stream_t": {
+   "size": 272,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "write_queue_size": {
+     "offset": 96,
+     "size": 8
+    },
+    "alloc_cb": {
+     "offset": 104,
+     "size": 8
+    },
+    "read_cb": {
+     "offset": 112,
+     "size": 8
+    },
+    "reqs_pending": {
+     "offset": 120,
+     "size": 4
+    },
+    "activecnt": {
+     "offset": 124,
+     "size": 4
+    },
+    "read_req": {
+     "offset": 128,
+     "size": 128
+    },
+    "stream": {
+     "offset": 256,
+     "size": 16
+    }
+   }
+  },
+  "uv_write_t": {
+   "size": 176,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "cb": {
+     "offset": 112,
+     "size": 8
+    },
+    "send_handle": {
+     "offset": 120,
+     "size": 8
+    },
+    "handle": {
+     "offset": 128,
+     "size": 8
+    },
+    "coalesced": {
+     "offset": 136,
+     "size": 4
+    },
+    "write_buffer": {
+     "offset": 144,
+     "size": 16
+    },
+    "event_handle": {
+     "offset": 160,
+     "size": 8
+    },
+    "wait_handle": {
+     "offset": 168,
+     "size": 8
+    }
+   }
+  },
+  "uv_connect_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "cb": {
+     "offset": 112,
+     "size": 8
+    },
+    "handle": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "uv_tcp_accept_t": {
+   "size": 432,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "accept_socket": {
+     "offset": 112,
+     "size": 8
+    },
+    "accept_buffer": {
+     "offset": 120,
+     "size": 288
+    },
+    "event_handle": {
+     "offset": 408,
+     "size": 8
+    },
+    "wait_handle": {
+     "offset": 416,
+     "size": 8
+    },
+    "next_pending": {
+     "offset": 424,
+     "size": 8
+    }
+   }
+  },
+  "uv_tcp_t": {
+   "size": 320,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "write_queue_size": {
+     "offset": 96,
+     "size": 8
+    },
+    "alloc_cb": {
+     "offset": 104,
+     "size": 8
+    },
+    "read_cb": {
+     "offset": 112,
+     "size": 8
+    },
+    "reqs_pending": {
+     "offset": 120,
+     "size": 4
+    },
+    "activecnt": {
+     "offset": 124,
+     "size": 4
+    },
+    "read_req": {
+     "offset": 128,
+     "size": 128
+    },
+    "stream": {
+     "offset": 256,
+     "size": 16
+    },
+    "socket": {
+     "offset": 272,
+     "size": 8
+    },
+    "delayed_error": {
+     "offset": 280,
+     "size": 4
+    },
+    "tcp": {
+     "offset": 288,
+     "size": 32
+    }
+   }
+  },
+  "uv_udp_t": {
+   "size": 424,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "send_queue_size": {
+     "offset": 96,
+     "size": 8
+    },
+    "send_queue_count": {
+     "offset": 104,
+     "size": 8
+    },
+    "socket": {
+     "offset": 112,
+     "size": 8
+    },
+    "reqs_pending": {
+     "offset": 120,
+     "size": 4
+    },
+    "activecnt": {
+     "offset": 124,
+     "size": 4
+    },
+    "recv_req": {
+     "offset": 128,
+     "size": 112
+    },
+    "recv_buffer": {
+     "offset": 240,
+     "size": 16
+    },
+    "recv_from": {
+     "offset": 256,
+     "size": 128
+    },
+    "recv_from_len": {
+     "offset": 384,
+     "size": 4
+    },
+    "recv_cb": {
+     "offset": 392,
+     "size": 8
+    },
+    "alloc_cb": {
+     "offset": 400,
+     "size": 8
+    },
+    "func_wsarecv": {
+     "offset": 408,
+     "size": 8
+    },
+    "func_wsarecvfrom": {
+     "offset": 416,
+     "size": 8
+    }
+   }
+  },
+  "uv_udp_send_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "handle": {
+     "offset": 112,
+     "size": 8
+    },
+    "cb": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "uv_pipe_accept_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "pipeHandle": {
+     "offset": 112,
+     "size": 8
+    },
+    "next_pending": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "uv_pipe_t": {
+   "size": 576,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "write_queue_size": {
+     "offset": 96,
+     "size": 8
+    },
+    "alloc_cb": {
+     "offset": 104,
+     "size": 8
+    },
+    "read_cb": {
+     "offset": 112,
+     "size": 8
+    },
+    "reqs_pending": {
+     "offset": 120,
+     "size": 4
+    },
+    "activecnt": {
+     "offset": 124,
+     "size": 4
+    },
+    "read_req": {
+     "offset": 128,
+     "size": 128
+    },
+    "stream": {
+     "offset": 256,
+     "size": 16
+    },
+    "ipc": {
+     "offset": 272,
+     "size": 4
+    },
+    "handle": {
+     "offset": 280,
+     "size": 8
+    },
+    "name": {
+     "offset": 288,
+     "size": 8
+    },
+    "pipe": {
+     "offset": 296,
+     "size": 280
+    }
+   }
+  },
+  "uv_tty_t": {
+   "size": 344,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "write_queue_size": {
+     "offset": 96,
+     "size": 8
+    },
+    "alloc_cb": {
+     "offset": 104,
+     "size": 8
+    },
+    "read_cb": {
+     "offset": 112,
+     "size": 8
+    },
+    "reqs_pending": {
+     "offset": 120,
+     "size": 4
+    },
+    "activecnt": {
+     "offset": 124,
+     "size": 4
+    },
+    "read_req": {
+     "offset": 128,
+     "size": 128
+    },
+    "stream": {
+     "offset": 256,
+     "size": 16
+    },
+    "handle": {
+     "offset": 272,
+     "size": 8
+    },
+    "tty": {
+     "offset": 280,
+     "size": 64
+    }
+   }
+  },
+  "AFD_POLL_HANDLE_INFO": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "Handle": {
+     "offset": 0,
+     "size": 8
+    },
+    "Events": {
+     "offset": 8,
+     "size": 4
+    },
+    "Status": {
+     "offset": 12,
+     "size": 4
+    }
+   }
+  },
+  "AFD_POLL_INFO": {
+   "size": 32,
+   "align": 8,
+   "fields": {
+    "Timeout": {
+     "offset": 0,
+     "size": 8
+    },
+    "NumberOfHandles": {
+     "offset": 8,
+     "size": 4
+    },
+    "Exclusive": {
+     "offset": 12,
+     "size": 4
+    },
+    "Handles": {
+     "offset": 16,
+     "size": 16
+    }
+   }
+  },
+  "uv_poll_t": {
+   "size": 416,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "poll_cb": {
+     "offset": 96,
+     "size": 8
+    },
+    "socket": {
+     "offset": 104,
+     "size": 8
+    },
+    "peer_socket": {
+     "offset": 112,
+     "size": 8
+    },
+    "afd_poll_info_1": {
+     "offset": 120,
+     "size": 32
+    },
+    "afd_poll_info_2": {
+     "offset": 152,
+     "size": 32
+    },
+    "poll_req_1": {
+     "offset": 184,
+     "size": 112
+    },
+    "poll_req_2": {
+     "offset": 296,
+     "size": 112
+    },
+    "submitted_events_1": {
+     "offset": 408,
+     "size": 1
+    },
+    "submitted_events_2": {
+     "offset": 409,
+     "size": 1
+    },
+    "mask_events_1": {
+     "offset": 410,
+     "size": 1
+    },
+    "mask_events_2": {
+     "offset": 411,
+     "size": 1
+    },
+    "events": {
+     "offset": 412,
+     "size": 1
+    }
+   }
+  },
+  "uv_timer_t": {
+   "size": 160,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "heap_node": {
+     "offset": 96,
+     "size": 24
+    },
+    "unused": {
+     "offset": 120,
+     "size": 4
+    },
+    "timeout": {
+     "offset": 128,
+     "size": 8
+    },
+    "repeat": {
+     "offset": 136,
+     "size": 8
+    },
+    "start_id": {
+     "offset": 144,
+     "size": 8
+    },
+    "timer_cb": {
+     "offset": 152,
+     "size": 8
+    }
+   }
+  },
+  "uv_prepare_t": {
+   "size": 120,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "prepare_prev": {
+     "offset": 96,
+     "size": 8
+    },
+    "prepare_next": {
+     "offset": 104,
+     "size": 8
+    },
+    "prepare_cb": {
+     "offset": 112,
+     "size": 8
+    }
+   }
+  },
+  "uv_check_t": {
+   "size": 120,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "check_prev": {
+     "offset": 96,
+     "size": 8
+    },
+    "check_next": {
+     "offset": 104,
+     "size": 8
+    },
+    "check_cb": {
+     "offset": 112,
+     "size": 8
+    }
+   }
+  },
+  "uv_idle_t": {
+   "size": 120,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "idle_prev": {
+     "offset": 96,
+     "size": 8
+    },
+    "idle_next": {
+     "offset": 104,
+     "size": 8
+    },
+    "idle_cb": {
+     "offset": 112,
+     "size": 8
+    }
+   }
+  },
+  "uv_async_t": {
+   "size": 224,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "async_req": {
+     "offset": 96,
+     "size": 112
+    },
+    "async_cb": {
+     "offset": 208,
+     "size": 8
+    },
+    "async_sent": {
+     "offset": 216,
+     "size": 1
+    }
+   }
+  },
+  "uv_process_t": {
+   "size": 264,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "exit_cb": {
+     "offset": 96,
+     "size": 8
+    },
+    "pid": {
+     "offset": 104,
+     "size": 4
+    },
+    "exit_req": {
+     "offset": 112,
+     "size": 112
+    },
+    "unused": {
+     "offset": 224,
+     "size": 8
+    },
+    "exit_signal": {
+     "offset": 232,
+     "size": 4
+    },
+    "wait_handle": {
+     "offset": 240,
+     "size": 8
+    },
+    "process_handle": {
+     "offset": 248,
+     "size": 8
+    },
+    "exit_cb_pending": {
+     "offset": 256,
+     "size": 1
+    }
+   }
+  },
+  "uv_stdio_container_t": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "flags": {
+     "offset": 0,
+     "size": 4
+    },
+    "data": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "uv_process_options_t": {
+   "size": 72,
+   "align": 8,
+   "fields": {
+    "exit_cb": {
+     "offset": 0,
+     "size": 8
+    },
+    "file": {
+     "offset": 8,
+     "size": 8
+    },
+    "args": {
+     "offset": 16,
+     "size": 8
+    },
+    "env": {
+     "offset": 24,
+     "size": 8
+    },
+    "cwd": {
+     "offset": 32,
+     "size": 8
+    },
+    "flags": {
+     "offset": 40,
+     "size": 4
+    },
+    "stdio_count": {
+     "offset": 44,
+     "size": 4
+    },
+    "stdio": {
+     "offset": 48,
+     "size": 8
+    },
+    "uid": {
+     "offset": 56,
+     "size": 1
+    },
+    "gid": {
+     "offset": 57,
+     "size": 1
+    },
+    "pseudoconsole": {
+     "offset": 64,
+     "size": 8
+    }
+   }
+  },
+  "uv_fs_event_t": {
+   "size": 272,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "path": {
+     "offset": 96,
+     "size": 8
+    },
+    "req": {
+     "offset": 104,
+     "size": 112
+    },
+    "dir_handle": {
+     "offset": 216,
+     "size": 8
+    },
+    "req_pending": {
+     "offset": 224,
+     "size": 4
+    },
+    "cb": {
+     "offset": 232,
+     "size": 8
+    },
+    "filew": {
+     "offset": 240,
+     "size": 8
+    },
+    "short_filew": {
+     "offset": 248,
+     "size": 8
+    },
+    "dirw": {
+     "offset": 256,
+     "size": 8
+    },
+    "buffer": {
+     "offset": 264,
+     "size": 8
+    }
+   }
+  },
+  "uv_fs_poll_t": {
+   "size": 104,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "poll_ctx": {
+     "offset": 96,
+     "size": 8
+    }
+   }
+  },
+  "uv_signal_t": {
+   "size": 264,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "loop": {
+     "offset": 8,
+     "size": 8
+    },
+    "type": {
+     "offset": 16,
+     "size": 4
+    },
+    "close_cb": {
+     "offset": 24,
+     "size": 8
+    },
+    "handle_queue": {
+     "offset": 32,
+     "size": 16
+    },
+    "u": {
+     "offset": 48,
+     "size": 32
+    },
+    "endgame_next": {
+     "offset": 80,
+     "size": 8
+    },
+    "flags": {
+     "offset": 88,
+     "size": 4
+    },
+    "signal_cb": {
+     "offset": 96,
+     "size": 8
+    },
+    "signum": {
+     "offset": 104,
+     "size": 4
+    },
+    "tree_entry": {
+     "offset": 112,
+     "size": 32
+    },
+    "signal_req": {
+     "offset": 144,
+     "size": 112
+    },
+    "pending_signum": {
+     "offset": 256,
+     "size": 4
+    }
+   }
+  },
+  "uv_getaddrinfo_t": {
+   "size": 216,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "loop": {
+     "offset": 112,
+     "size": 8
+    },
+    "work_req": {
+     "offset": 120,
+     "size": 40
+    },
+    "getaddrinfo_cb": {
+     "offset": 160,
+     "size": 8
+    },
+    "alloc": {
+     "offset": 168,
+     "size": 8
+    },
+    "node": {
+     "offset": 176,
+     "size": 8
+    },
+    "service": {
+     "offset": 184,
+     "size": 8
+    },
+    "addrinfow": {
+     "offset": 192,
+     "size": 8
+    },
+    "addrinfo": {
+     "offset": 200,
+     "size": 8
+    },
+    "retcode": {
+     "offset": 208,
+     "size": 4
+    }
+   }
+  },
+  "uv_work_t": {
+   "size": 176,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "loop": {
+     "offset": 112,
+     "size": 8
+    },
+    "work_cb": {
+     "offset": 120,
+     "size": 8
+    },
+    "after_work_cb": {
+     "offset": 128,
+     "size": 8
+    },
+    "work_req": {
+     "offset": 136,
+     "size": 40
+    }
+   }
+  },
+  "uv_timespec_t": {
+   "size": 8,
+   "align": 4,
+   "fields": {
+    "sec": {
+     "offset": 0,
+     "size": 4
+    },
+    "nsec": {
+     "offset": 4,
+     "size": 4
+    }
+   }
+  },
+  "uv_timeval_t": {
+   "size": 8,
+   "align": 4,
+   "fields": {
+    "sec": {
+     "offset": 0,
+     "size": 4
+    },
+    "usec": {
+     "offset": 4,
+     "size": 4
+    }
+   }
+  },
+  "uv_stat_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "st_dev": {
+     "offset": 0,
+     "size": 8
+    },
+    "st_mode": {
+     "offset": 8,
+     "size": 8
+    },
+    "st_nlink": {
+     "offset": 16,
+     "size": 8
+    },
+    "st_uid": {
+     "offset": 24,
+     "size": 8
+    },
+    "st_gid": {
+     "offset": 32,
+     "size": 8
+    },
+    "st_rdev": {
+     "offset": 40,
+     "size": 8
+    },
+    "st_ino": {
+     "offset": 48,
+     "size": 8
+    },
+    "st_size": {
+     "offset": 56,
+     "size": 8
+    },
+    "st_blksize": {
+     "offset": 64,
+     "size": 8
+    },
+    "st_blocks": {
+     "offset": 72,
+     "size": 8
+    },
+    "st_flags": {
+     "offset": 80,
+     "size": 8
+    },
+    "st_gen": {
+     "offset": 88,
+     "size": 8
+    },
+    "atim": {
+     "offset": 96,
+     "size": 8
+    },
+    "mtim": {
+     "offset": 104,
+     "size": 8
+    },
+    "ctim": {
+     "offset": 112,
+     "size": 8
+    },
+    "birthtim": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "uv_fs_t": {
+   "size": 456,
+   "align": 8,
+   "fields": {
+    "data": {
+     "offset": 0,
+     "size": 8
+    },
+    "type": {
+     "offset": 8,
+     "size": 4
+    },
+    "reserved": {
+     "offset": 16,
+     "size": 48
+    },
+    "u": {
+     "offset": 64,
+     "size": 40
+    },
+    "next_req": {
+     "offset": 104,
+     "size": 8
+    },
+    "fs_type": {
+     "offset": 112,
+     "size": 4
+    },
+    "loop": {
+     "offset": 120,
+     "size": 8
+    },
+    "cb": {
+     "offset": 128,
+     "size": 8
+    },
+    "result": {
+     "offset": 136,
+     "size": 8
+    },
+    "ptr": {
+     "offset": 144,
+     "size": 8
+    },
+    "path": {
+     "offset": 152,
+     "size": 8
+    },
+    "statbuf": {
+     "offset": 160,
+     "size": 128
+    },
+    "work_req": {
+     "offset": 288,
+     "size": 40
+    },
+    "flags": {
+     "offset": 328,
+     "size": 4
+    },
+    "sys_errno_": {
+     "offset": 332,
+     "size": 4
+    },
+    "file": {
+     "offset": 336,
+     "size": 8
+    },
+    "fs": {
+     "offset": 344,
+     "size": 112
+    }
+   }
+  },
+  "uv_cpu_times_t": {
+   "size": 40,
+   "align": 8,
+   "fields": {
+    "user": {
+     "offset": 0,
+     "size": 8
+    },
+    "nice": {
+     "offset": 8,
+     "size": 8
+    },
+    "sys": {
+     "offset": 16,
+     "size": 8
+    },
+    "idle": {
+     "offset": 24,
+     "size": 8
+    },
+    "irq": {
+     "offset": 32,
+     "size": 8
+    }
+   }
+  },
+  "uv_cpu_info_t": {
+   "size": 56,
+   "align": 8,
+   "fields": {
+    "model": {
+     "offset": 0,
+     "size": 8
+    },
+    "speed": {
+     "offset": 8,
+     "size": 4
+    },
+    "cpu_times": {
+     "offset": 16,
+     "size": 40
+    }
+   }
+  },
+  "uv_interface_address_t": {
+   "size": 80,
+   "align": 8,
+   "fields": {
+    "name": {
+     "offset": 0,
+     "size": 8
+    },
+    "phys_addr": {
+     "offset": 8,
+     "size": 6
+    },
+    "is_internal": {
+     "offset": 16,
+     "size": 4
+    },
+    "address": {
+     "offset": 20,
+     "size": 28
+    },
+    "netmask": {
+     "offset": 48,
+     "size": 28
+    }
+   }
+  },
+  "uv_utsname_t": {
+   "size": 1024,
+   "align": 1,
+   "fields": {
+    "sysname": {
+     "offset": 0,
+     "size": 256
+    },
+    "release": {
+     "offset": 256,
+     "size": 256
+    },
+    "version": {
+     "offset": 512,
+     "size": 256
+    },
+    "machine": {
+     "offset": 768,
+     "size": 256
+    }
+   }
+  },
+  "uv_statfs_t": {
+   "size": 88,
+   "align": 8,
+   "fields": {
+    "f_type": {
+     "offset": 0,
+     "size": 8
+    },
+    "f_bsize": {
+     "offset": 8,
+     "size": 8
+    },
+    "f_blocks": {
+     "offset": 16,
+     "size": 8
+    },
+    "f_bfree": {
+     "offset": 24,
+     "size": 8
+    },
+    "f_bavail": {
+     "offset": 32,
+     "size": 8
+    },
+    "f_files": {
+     "offset": 40,
+     "size": 8
+    },
+    "f_ffree": {
+     "offset": 48,
+     "size": 8
+    },
+    "f_spare": {
+     "offset": 56,
+     "size": 32
+    }
+   }
+  },
+  "uv_rusage_t": {
+   "size": 128,
+   "align": 8,
+   "fields": {
+    "ru_utime": {
+     "offset": 0,
+     "size": 8
+    },
+    "ru_stime": {
+     "offset": 8,
+     "size": 8
+    },
+    "ru_maxrss": {
+     "offset": 16,
+     "size": 8
+    },
+    "ru_ixrss": {
+     "offset": 24,
+     "size": 8
+    },
+    "ru_idrss": {
+     "offset": 32,
+     "size": 8
+    },
+    "ru_isrss": {
+     "offset": 40,
+     "size": 8
+    },
+    "ru_minflt": {
+     "offset": 48,
+     "size": 8
+    },
+    "ru_majflt": {
+     "offset": 56,
+     "size": 8
+    },
+    "ru_nswap": {
+     "offset": 64,
+     "size": 8
+    },
+    "ru_inblock": {
+     "offset": 72,
+     "size": 8
+    },
+    "ru_oublock": {
+     "offset": 80,
+     "size": 8
+    },
+    "ru_msgsnd": {
+     "offset": 88,
+     "size": 8
+    },
+    "ru_msgrcv": {
+     "offset": 96,
+     "size": 8
+    },
+    "ru_nsignals": {
+     "offset": 104,
+     "size": 8
+    },
+    "ru_nvcsw": {
+     "offset": 112,
+     "size": 8
+    },
+    "ru_nivcsw": {
+     "offset": 120,
+     "size": 8
+    }
+   }
+  },
+  "FILE_NOTIFY_INFORMATION": {
+   "size": 16,
+   "align": 4,
+   "fields": {
+    "NextEntryOffset": {
+     "offset": 0,
+     "size": 4
+    },
+    "Action": {
+     "offset": 4,
+     "size": 4
+    },
+    "FileNameLength": {
+     "offset": 8,
+     "size": 4
+    },
+    "FileName": {
+     "offset": 12,
+     "size": 2
+    }
+   }
+  },
+  "EXCEPTION_RECORD": {
+   "size": 152,
+   "align": 8,
+   "fields": {
+    "ExceptionCode": {
+     "offset": 0,
+     "size": 4
+    },
+    "ExceptionFlags": {
+     "offset": 4,
+     "size": 4
+    },
+    "ExceptionRecord": {
+     "offset": 8,
+     "size": 8
+    },
+    "ExceptionAddress": {
+     "offset": 16,
+     "size": 8
+    },
+    "NumberParameters": {
+     "offset": 24,
+     "size": 4
+    },
+    "ExceptionInformation": {
+     "offset": 32,
+     "size": 120
+    }
+   }
+  },
+  "EXCEPTION_POINTERS": {
+   "size": 16,
+   "align": 8,
+   "fields": {
+    "ExceptionRecord": {
+     "offset": 0,
+     "size": 8
+    },
+    "ContextRecord": {
+     "offset": 8,
+     "size": 8
+    }
+   }
+  },
+  "PROCESS_MEMORY_COUNTERS": {
+   "size": 72,
+   "align": 8,
+   "fields": {
+    "cb": {
+     "offset": 0,
+     "size": 4
+    },
+    "PageFaultCount": {
+     "offset": 4,
+     "size": 4
+    },
+    "PeakWorkingSetSize": {
+     "offset": 8,
+     "size": 8
+    },
+    "WorkingSetSize": {
+     "offset": 16,
+     "size": 8
+    },
+    "QuotaPeakPagedPoolUsage": {
+     "offset": 24,
+     "size": 8
+    },
+    "QuotaPagedPoolUsage": {
+     "offset": 32,
+     "size": 8
+    },
+    "QuotaPeakNonPagedPoolUsage": {
+     "offset": 40,
+     "size": 8
+    },
+    "QuotaNonPagedPoolUsage": {
+     "offset": 48,
+     "size": 8
+    },
+    "PagefileUsage": {
+     "offset": 56,
+     "size": 8
+    },
+    "PeakPagefileUsage": {
+     "offset": 64,
+     "size": 8
+    }
+   }
+  }
+ },
+ "constants": {
+  "FALSE": "0",
+  "TRUE": "1",
+  "MAX_PATH": "260",
+  "FILE_BEGIN": "0",
+  "FILE_END": "2",
+  "DUPLICATE_SAME_ACCESS": "2",
+  "FILE_SHARE_READ": "1",
+  "FILE_SHARE_WRITE": "2",
+  "FILE_SHARE_DELETE": "4",
+  "FILE_ATTRIBUTE_READONLY": "1",
+  "FILE_ATTRIBUTE_HIDDEN": "2",
+  "FILE_ATTRIBUTE_DIRECTORY": "16",
+  "FILE_ATTRIBUTE_NORMAL": "128",
+  "FILE_ATTRIBUTE_TEMPORARY": "256",
+  "FILE_ATTRIBUTE_REPARSE_POINT": "1024",
+  "FILE_OPEN": "1",
+  "FILE_CREATE": "2",
+  "FILE_OPEN_IF": "3",
+  "FILE_OVERWRITE": "4",
+  "FILE_OVERWRITE_IF": "5",
+  "FILE_DIRECTORY_FILE": "1",
+  "FILE_SYNCHRONOUS_IO_NONALERT": "32",
+  "FILE_NON_DIRECTORY_FILE": "64",
+  "FILE_OPEN_REPARSE_POINT": "2097152",
+  "OPEN_EXISTING": "3",
+  "FILE_FLAG_BACKUP_SEMANTICS": "33554432",
+  "FILE_FLAG_OVERLAPPED": "1073741824",
+  "PIPE_ACCESS_INBOUND": "1",
+  "PIPE_ACCESS_OUTBOUND": "2",
+  "PIPE_TYPE_BYTE": "0",
+  "PIPE_READMODE_BYTE": "0",
+  "PIPE_WAIT": "0",
+  "SYMBOLIC_LINK_FLAG_DIRECTORY": "1",
+  "SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE": "2",
+  "FILE_DEVICE_NAMED_PIPE": "17",
+  "FILE_DEVICE_NULL": "21",
+  "FILE_DEVICE_CONSOLE": "80",
+  "FILE_NAME_NORMALIZED": "0",
+  "VOLUME_NAME_DOS": "0",
+  "VOLUME_NAME_GUID": "1",
+  "VOLUME_NAME_NT": "2",
+  "VOLUME_NAME_NONE": "4",
+  "UNW_FLAG_NHANDLER": "0",
+  "MEM_COMMIT": "4096",
+  "PAGE_NOACCESS": "1",
+  "PAGE_READONLY": "2",
+  "PAGE_READWRITE": "4",
+  "PAGE_WRITECOPY": "8",
+  "PAGE_EXECUTE_READ": "32",
+  "PAGE_EXECUTE_READWRITE": "64",
+  "PAGE_EXECUTE_WRITECOPY": "128",
+  "PAGE_GUARD": "256",
+  "INFINITE": "4294967295",
+  "WAIT_FAILED": "4294967295",
+  "STARTF_USESTDHANDLES": "256",
+  "AF_UNSPEC": "0",
+  "AF_UNIX": "1",
+  "AF_INET": "2",
+  "AF_INET6": "23",
+  "SOCK_STREAM": "1",
+  "SOCK_DGRAM": "2",
+  "IPPROTO_TCP": "6",
+  "IPPROTO_UDP": "17",
+  "SOCKET_ERROR": "-1",
+  "POLLWRNORM": "16",
+  "TOKEN_QUERY": "8",
+  "JobObjectAssociateCompletionPortInformation": "7",
+  "JobObjectExtendedLimitInformation": "9",
+  "WT_EXECUTEONLYONCE": "8",
+  "ProcessBasicInformation": "0",
+  "CTRL_C_EVENT": "0",
+  "CTRL_BREAK_EVENT": "1",
+  "CTRL_CLOSE_EVENT": "2",
+  "UV_HANDLE_TYPE_MAX": "18",
+  "UV__EOF": "-4095",
+  "UV__UNKNOWN": "-4094",
+  "UV__ECHARSET": "-4080",
+  "UV_E2BIG": "-4093",
+  "UV_EACCES": "-4092",
+  "UV_EADDRINUSE": "-4091",
+  "UV_EADDRNOTAVAIL": "-4090",
+  "UV_EAFNOSUPPORT": "-4089",
+  "UV_EAGAIN": "-4088",
+  "UV_EAI_ADDRFAMILY": "-3000",
+  "UV_EAI_AGAIN": "-3001",
+  "UV_EAI_BADFLAGS": "-3002",
+  "UV_EAI_BADHINTS": "-3013",
+  "UV_EAI_CANCELED": "-3003",
+  "UV_EAI_FAIL": "-3004",
+  "UV_EAI_FAMILY": "-3005",
+  "UV_EAI_MEMORY": "-3006",
+  "UV_EAI_NODATA": "-3007",
+  "UV_EAI_NONAME": "-3008",
+  "UV_EAI_OVERFLOW": "-3009",
+  "UV_EAI_PROTOCOL": "-3014",
+  "UV_EAI_SERVICE": "-3010",
+  "UV_EAI_SOCKTYPE": "-3011",
+  "UV_EALREADY": "-4084",
+  "UV_EBADF": "-4083",
+  "UV_EBUSY": "-4082",
+  "UV_ECANCELED": "-4081",
+  "UV_ECHARSET": "-4080",
+  "UV_ECONNABORTED": "-4079",
+  "UV_ECONNREFUSED": "-4078",
+  "UV_ECONNRESET": "-4077",
+  "UV_EDESTADDRREQ": "-4076",
+  "UV_EEXIST": "-4075",
+  "UV_EFAULT": "-4074",
+  "UV_EFBIG": "-4036",
+  "UV_EHOSTUNREACH": "-4073",
+  "UV_EINTR": "-4072",
+  "UV_EINVAL": "-4071",
+  "UV_EIO": "-4070",
+  "UV_EISCONN": "-4069",
+  "UV_EISDIR": "-4068",
+  "UV_ELOOP": "-4067",
+  "UV_EMFILE": "-4066",
+  "UV_EMSGSIZE": "-4065",
+  "UV_ENAMETOOLONG": "-4064",
+  "UV_ENETDOWN": "-4063",
+  "UV_ENETUNREACH": "-4062",
+  "UV_ENFILE": "-4061",
+  "UV_ENOBUFS": "-4060",
+  "UV_ENODEV": "-4059",
+  "UV_ENOENT": "-4058",
+  "UV_ENOMEM": "-4057",
+  "UV_ENONET": "-4056",
+  "UV_ENOPROTOOPT": "-4035",
+  "UV_ENOSPC": "-4055",
+  "UV_ENOSYS": "-4054",
+  "UV_ENOTCONN": "-4053",
+  "UV_ENOTDIR": "-4052",
+  "UV_ENOTEMPTY": "-4051",
+  "UV_ENOTSOCK": "-4050",
+  "UV_ENOTSUP": "-4049",
+  "UV_EOVERFLOW": "-4026",
+  "UV_EPERM": "-4048",
+  "UV_EPIPE": "-4047",
+  "UV_EPROTO": "-4046",
+  "UV_EPROTONOSUPPORT": "-4045",
+  "UV_EPROTOTYPE": "-4044",
+  "UV_ERANGE": "-4034",
+  "UV_EROFS": "-4043",
+  "UV_ESHUTDOWN": "-4042",
+  "UV_ESPIPE": "-4041",
+  "UV_ESRCH": "-4040",
+  "UV_ETIMEDOUT": "-4039",
+  "UV_ETXTBSY": "-4038",
+  "UV_EXDEV": "-4037",
+  "UV_UNKNOWN": "-4094",
+  "UV_EOF": "-4095",
+  "UV_ENXIO": "-4033",
+  "UV_EMLINK": "-4032",
+  "UV_EHOSTDOWN": "-4031",
+  "UV_EREMOTEIO": "-4030",
+  "UV_ENOTTY": "-4029",
+  "UV_EFTYPE": "-4028",
+  "UV_EILSEQ": "-4027",
+  "UV_ESOCKTNOSUPPORT": "-4025",
+  "UV_ENODATA": "-4024",
+  "UV_EUNATCH": "-4023",
+  "UV_ENOEXEC": "-4022",
+  "UV_ERRNO_MAX": "-4096",
+  "UV_DIRENT_UNKNOWN": "0",
+  "UV_DIRENT_FILE": "1",
+  "UV_DIRENT_DIR": "2",
+  "UV_DIRENT_LINK": "3",
+  "UV_DIRENT_FIFO": "4",
+  "UV_DIRENT_SOCKET": "5",
+  "UV_DIRENT_CHAR": "6",
+  "UV_DIRENT_BLOCK": "7",
+  "UV_READABLE": "1",
+  "UV_WRITABLE": "2",
+  "UV_DISCONNECT": "4",
+  "UV_PRIORITIZED": "8",
+  "UV_FS_SYMLINK_DIR": "1",
+  "UV_FS_SYMLINK_JUNCTION": "2",
+  "UV_RENAME": "1",
+  "UV_CHANGE": "2",
+  "UV_FS_EVENT_WATCH_ENTRY": "1",
+  "UV_FS_EVENT_STAT": "2",
+  "UV_FS_EVENT_RECURSIVE": "4",
+  "UV_IGNORE": "0",
+  "UV_CREATE_PIPE": "1",
+  "UV_INHERIT_FD": "2",
+  "UV_INHERIT_STREAM": "4",
+  "UV_READABLE_PIPE": "16",
+  "UV_WRITABLE_PIPE": "32",
+  "UV_NONBLOCK_PIPE": "64",
+  "UV_OVERLAPPED_PIPE": "64",
+  "UV_PROCESS_SETUID": "1",
+  "UV_PROCESS_SETGID": "2",
+  "UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS": "4",
+  "UV_PROCESS_DETACHED": "8",
+  "UV_PROCESS_WINDOWS_HIDE": "16",
+  "UV_PROCESS_WINDOWS_HIDE_CONSOLE": "32",
+  "UV_PROCESS_WINDOWS_HIDE_GUI": "64",
+  "SIGHUP": "1",
+  "SIGQUIT": "3",
+  "SIGKILL": "9",
+  "SIGWINCH": "28",
+  "ENABLE_VIRTUAL_TERMINAL_PROCESSING": "4",
+  "MOVEFILE_COPY_ALLOWED": "2",
+  "MOVEFILE_REPLACE_EXISTING": "1",
+  "MOVEFILE_WRITE_THROUGH": "8",
+  "INVALID_FILE_ATTRIBUTES": "4294967295",
+  "S_OK": "0",
+  "FILE_LIST_DIRECTORY": "1",
+  "FILE_OPEN_FOR_BACKUP_INTENT": "16384",
+  "FILE_ACTION_ADDED": "1",
+  "FILE_ACTION_REMOVED": "2",
+  "FILE_ACTION_MODIFIED": "3",
+  "FILE_ACTION_RENAMED_OLD_NAME": "4",
+  "FILE_ACTION_RENAMED_NEW_NAME": "5",
+  "FILE_TYPE_CHAR": "2",
+  "FILE_TYPE_PIPE": "3",
+  "PROCESS_QUERY_LIMITED_INFORMATION": "4096",
+  "ENABLE_ECHO_INPUT": "4",
+  "ENABLE_LINE_INPUT": "2",
+  "ENABLE_PROCESSED_INPUT": "1",
+  "ENABLE_VIRTUAL_TERMINAL_INPUT": "512",
+  "ENABLE_WRAP_AT_EOL_OUTPUT": "2",
+  "ENABLE_PROCESSED_OUTPUT": "1",
+  "EXCEPTION_CONTINUE_EXECUTION": "-1",
+  "EXCEPTION_CONTINUE_SEARCH": "0",
+  "ExceptionContinueExecution": "0",
+  "ExceptionContinueSearch": "1",
+  "EXCEPTION_UNWIND": "102",
+  "EXCEPTION_ACCESS_VIOLATION": "3221225477",
+  "EXCEPTION_DATATYPE_MISALIGNMENT": "2147483650",
+  "EXCEPTION_ILLEGAL_INSTRUCTION": "3221225501",
+  "EXCEPTION_STACK_OVERFLOW": "3221225725",
+  "STATUS_CONTROL_C_EXIT": "3221225786",
+  "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE": "8192"
+ },
+ "system": "win32",
+ "architecture": "x64",
+ "target": "x86_64-pc-windows-msvc",
+ "read_from": "the table of the object file, which was not run",
+ "compiler": "Debian clang version 23.1.2 (++20260910044214+069ef0e7cb36-1~exp1~20260910044225.69)",
+ "left_out": {
+  "types": [
+   "KEY_EVENT_RECORD_uChar",
+   "INPUT_RECORD_Event",
+   "FILE_BASIC_INFORMATION",
+   "FILE_DIRECTORY_INFORMATION",
+   "FILE_STANDARD_INFORMATION",
+   "FILE_INTERNAL_INFORMATION",
+   "FILE_ALL_INFORMATION",
+   "FILE_FS_DEVICE_INFORMATION",
+   "FILE_FS_VOLUME_INFORMATION",
+   "FILE_END_OF_FILE_INFORMATION",
+   "FILE_DISPOSITION_INFORMATION",
+   "FILE_DISPOSITION_INFORMATION_EX",
+   "FILE_RENAME_INFORMATION_EX",
+   "CURDIR",
+   "req_u_io",
+   "req_u_connect",
+   "req_u",
+   "handle_u",
+   "Tty",
+   "uv_process_exit_t",
+   "uv_stdio_container_data",
+   "uv_fs_event_req_t",
+   "addr_union",
+   "netmask_union"
+  ],
+  "fields": [
+   "PROCESS_BASIC_INFORMATION_ExitStatus",
+   "PROCESS_BASIC_INFORMATION_AffinityMask",
+   "PROCESS_BASIC_INFORMATION_BasePriority",
+   "PROCESS_BASIC_INFORMATION_InheritedFromUniqueProcessId",
+   "RTL_USER_PROCESS_PARAMETERS__reserved1",
+   "RTL_USER_PROCESS_PARAMETERS__reserved2",
+   "RTL_USER_PROCESS_PARAMETERS_hStdInput",
+   "RTL_USER_PROCESS_PARAMETERS_hStdOutput",
+   "RTL_USER_PROCESS_PARAMETERS_hStdError",
+   "RTL_USER_PROCESS_PARAMETERS_CurrentDirectory",
+   "RTL_USER_PROCESS_PARAMETERS_DllPath",
+   "PEB__reserved1",
+   "PEB__reserved2",
+   "PEB__reserved3",
+   "TEB__nt_tib",
+   "TEB_EnvironmentPointer",
+   "TEB__client_id",
+   "TEB_ActiveRpcHandle",
+   "TEB_ThreadLocalStoragePointer"
+  ],
+  "constants": [
+   "PATH_MAX_WIDE",
+   "FILE_RENAME_REPLACE_IF_EXISTS",
+   "FILE_RENAME_POSIX_SEMANTICS",
+   "FILE_RENAME_IGNORE_READONLY_ATTRIBUTE",
+   "TOKEN_IS_APP_CONTAINER",
+   "CREAT",
+   "RANDOM",
+   "RDONLY",
+   "RDWR",
+   "SEQUENTIAL",
+   "SHORT_LIVED",
+   "TEMPORARY",
+   "TRUNC",
+   "WRONLY",
+   "DIRECTORY",
+   "EXLOCK",
+   "NOATIME",
+   "NOCTTY",
+   "NONBLOCK",
+   "SYMLINK",
+   "MS_VC_EXCEPTION",
+   "JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE"
+  ]
+ }
+}

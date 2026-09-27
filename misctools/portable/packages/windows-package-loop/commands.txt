@@ -1,0 +1,132 @@
+The loop slice of the portable image on Windows (x64)
+=====================================================
+
+bun_loop_slice.img   sha256 bf33539ec657f963923d1cf96427631d51d91f9da4686976c0135528b632be76
+It is ONE file for Linux, macOS and Windows. It holds bun's event loop twice: the code bun compiles for
+Linux (uSockets on epoll, bun's POSIX pipes, posix_spawn) and the code bun compiles for Windows
+(uSockets on libuv, bun's libuv pipes, uv_spawn). On Windows the host below maps it and runs it, and
+it takes the code for Windows, which calls libuv, ws2_32, kernel32 and ntdll through addresses that the
+host resolves (293 imports).
+
+WHAT HAS RUN ON WINDOWS, AND WHAT HAS NOT. This program ran on Windows x64 before the work on the event
+loop was merged with the rest of the portable image: with the image and the host of that work, every
+step passed and every import was bound (expected\differences.json, "ran"). THIS image and THIS host
+are built from the merged tree, and they have not run on Windows: the C library of the image, the
+flags it is compiled with and the host are the merged ones. host_win.diff is what the host has more
+than the host that ran the file system slice on Windows x64 (commit 6165b36e55). On Linux the image
+was made to take the code for Windows (BUN_PORTABLE_HOST_INTERFACE=win32), where it stops at its first
+call of libuv. A step that fails here and is not in expected\differences.json is a finding.
+
+What was done on the machine that built the image, without running anything (checked-on-linux\):
+  Debian clang version 23.1.2 (++20260910044214+069ef0e7cb36-1~exp1~20260910044225.69), target x86_64-pc-windows-msvc,
+  Windows SDK 10.0.26100.4654 and Visual C++ tools 14.11.25547 (Microsoft's packages of nuget.org)
+  - steps 1 to 3 below: libuv compiled (0 errors), the host compiled and linked. checked-on-linux\host.exe
+    is that host, sha256 9bfdc0c9c64bec4bf8002f3d7d53bba920f8d8d3c9dadd146a9559b77528cc5c. It has never run. If step 3 fails
+    on your machine, the steps after it can be tried with it (copy it to host.exe), and please say so.
+  - step 4: 197 constants, 87 sizes and offsets: no error. The arguments and
+    results of 50 functions and 6 callbacks against the declarations: no error.
+  - step 7, with the facts read from the object file instead of printed by the program:
+    1650 facts the same, 0 differ, 58 not compared (names the headers do not have).
+    Not compared, here and in your run: the 10 structures of the NT API that only the Windows Driver Kit
+    declares (FILE_BASIC_INFORMATION, FILE_DIRECTORY_INFORMATION, FILE_STANDARD_INFORMATION, FILE_INTERNAL_INFORMATION, FILE_ALL_INFORMATION, FILE_FS_DEVICE_INFORMATION, FILE_FS_VOLUME_INFORMATION, FILE_END_OF_FILE_INFORMATION, FILE_DISPOSITION_INFORMATION, FILE_DISPOSITION_INFORMATION_EX).
+    The Driver Kit is not used.
+  - the 293 imports: every one is in the import library of the SDK that the image names, or in the
+    host's table of libuv.
+  The same steps on your machine check your headers and your libuv, and steps 5 and 6 are the ones
+  that only Windows can do.
+
+Needed on the machine: git, clang of LLVM with the Windows SDK and the MSVC libraries (a "Developer
+PowerShell for VS" with LLVM on the PATH has all of it), and bun for the checks.
+Every command is PowerShell, run in this directory. Output is redirected by cmd so that it stays
+the bytes the program wrote (PowerShell's own ">" re-encodes them).
+
+1. libuv: bun's fork at the commit bun pins, with bun's patches
+
+    git clone https://github.com/oven-sh/libuv libuv
+    git -C libuv checkout 8023581113b276e7c1aee3f82da57ca0893faab1
+    git -C libuv apply ..\patches\win-poll-abort-with-disconnect.patch
+    git -C libuv apply ..\patches\win-poll-rearm-before-callback.patch
+
+2. libuv, compiled natively with the definitions of bun's build (scripts/build/deps/libuv.ts)
+
+    $shared = "fs-poll","idna","inet","random","strscpy","strtok","thread-common","threadpool","timer","uv-common","uv-data-getter-setters","version"
+    $win = "async","core","detect-wakeup","dl","error","fs","fs-event","getaddrinfo","getnameinfo","handle","loop-watcher","pipe","thread","poll","process","process-stdio","signal","snprintf","stream","tcp","tty","udp","util","winapi","winsock"
+    $sources = @($shared | % { "..\libuv\src\$_.c" }) + @($win | % { "..\libuv\src\win\$_.c" })
+    mkdir uv-objects; cd uv-objects
+    clang -c -O2 -fms-runtime-lib=dll -fno-strict-aliasing -Wno-int-conversion -Wno-deprecated-declarations `
+      -DWIN32_LEAN_AND_MEAN -D_CRT_DECLARE_NONSTDC_NAMES=0 -DWIN32 -D_WINDOWS -D_WIN32_WINNT=0x0A00 `
+      -I..\libuv\include -I..\libuv\src $sources
+    cd ..
+
+3. the host, with libuv inside. -fms-runtime-lib=dll: the host, libuv and the image then use one C
+   runtime (ucrtbase.dll), the one that the image's import "ucrtbase" names.
+
+    clang -O2 -fms-runtime-lib=dll -DBUN_HOST_LIBUV -o host.exe host\host_win.c host\host_win_uv.c `
+      (Get-ChildItem uv-objects\*.o | % FullName) `
+      -lsynchronization -ladvapi32 -lpsapi -luser32 -liphlpapi -luserenv -lws2_32 -ldbghelp -lole32 -lshell32
+
+   host_win_uv.c names every libuv function that the image can call: "undefined symbol uv_.." here
+   means that this libuv does not have a function that bun's bindings declare. Please send the message.
+
+4. what the C of the image was compiled against, checked against the headers of this machine: the
+   constants, sizes and offsets of Winsock are written in misctools/portable/loop/uv_header.ts, the
+   ones of libuv are the ones of bun's bindings. Every line that fails to compile names one that is
+   wrong.
+
+    cmd /c "clang -fsyntax-only -D_WIN32_WINNT=0x0A00 -Ilibuv\include windows-c\check_on_windows.c > check-windows-c.txt 2>&1"
+    echo "exit code $LASTEXITCODE"                   # 0, and check-windows-c.txt has no "error"
+    cmd /c "clang++ -fsyntax-only -std=c++17 -D_WIN32_WINNT=0x0A00 -Ilibuv\include windows-c\check_on_windows.cpp > check-windows-cpp.txt 2>&1"
+    echo "exit code $LASTEXITCODE"                   # 0: the arguments and results of the functions
+
+5. every import of the image against this Windows (it binds each one and prints the ones that fail)
+
+    cmd /c ".\host.exe bun_loop_slice.img --imports > imports-windows.jsonl"
+    Get-Content imports-windows.jsonl -Tail 1        # {"step":"imports","total":293,"missing":0,"ok":true}
+
+6. the slice. It starts itself twice as a child process (host.exe with the image).
+
+    cmd /c ".\host.exe bun_loop_slice.img > run-windows.jsonl 2> run-windows.stderr.txt"
+    echo "exit code $LASTEXITCODE"                   # 0
+    bun compare-run.ts run-windows.jsonl             # against expected\linux.jsonl and expected\differences.json
+
+   Expected: the seven lines of expected\linux.jsonl, the first one with "os":"win32","code":"windows",
+   and one line more at the end, {"step":"timer of uSockets","fired":1,"not_early":true,"ok":true}:
+   a step that the program has on Windows only (expected\differences.json).
+   The child alone, the way the slice starts it:
+    cmd /c "echo hello| .\host.exe bun_loop_slice.img child answer"      # HELLO and a line on stderr, exit code 7
+
+   With more detail from the host (every lookup, every request it refuses):
+    $env:BUN_HOST_TRACE = "2"; cmd /c ".\host.exe bun_loop_slice.img > run-trace.jsonl 2> run-trace.stderr.txt"; $env:BUN_HOST_TRACE = $null
+   If the run ends with an out of memory message: the allocator reserves 1 GiB at its start and this
+   host commits what is reserved. A smaller reservation (64 MiB):
+    $env:MIMALLOC_ARENA_RESERVE = "65536"
+
+7. the layout of the bindings against the headers of this machine
+
+    bun bindings\verify.ts --libuv libuv --out layout.headers.json
+    bun bindings\compare.ts bindings\layout.image.json layout.headers.json > layout-compare.txt
+    Get-Content layout-compare.txt -Tail 1
+
+Please send back: check-windows-c.txt, check-windows-cpp.txt, imports-windows.jsonl, run-windows.jsonl, run-windows.stderr.txt,
+the output of compare-run.ts, layout.headers.json, layout-compare.txt, and the output of
+"clang --version". If the host does not compile: the messages of the compiler.
+
+What is known to differ from bun for Windows
+--------------------------------------------
+- The C library. uSockets and bun's Rust call malloc, memcpy, snprintf and the like of the C library of
+  the image (musl and mimalloc in the image), not of ucrtbase.dll. errno of uSockets is the one of
+  ucrtbase.dll, as in bun for Windows, because bun's Rust for Windows reads that one.
+- libuv allocates with the C runtime of the host. bun for Windows gives libuv its own allocator
+  (uv_replace_allocator, in bun's runtime, which this program is built without).
+- _MSC_VER is not defined for the C of the image (clang in its GNU mode compiled it). uSockets has one
+  place that asks for it (internal/internal.h: alignas and ssize_t), and takes the other branch.
+- long has 64 bits in the C of the image. What the C passes to Windows and to libuv has fixed widths
+  (windows-c\bun_windows_c.h); its own functions keep their long, in C and in the Rust that calls them.
+- The functions of bun that the image is built without (JavaScriptCore, BoringSSL, the resolver of
+  names, the owners of sockets in bun's runtime) stop the program with their name if they are called.
+  The slice does not call them: its sockets have no TLS and its addresses are numbers.
+- A function of the image that Windows or libuv calls checks first whether its thread has a thread
+  pointer of the image, and a thread that has none (a thread that libuv or Windows made) is adopted:
+  bun's Rust callbacks through bun_windows_sys::host_thread, the callbacks of uSockets' C through a
+  call that the compiler wrote at their entry (windows-c\callbacks.list). In this program all of them
+  run on threads of the image: no thread is adopted, and the host says so if one is (BUN_HOST_TRACE).

@@ -1,0 +1,62 @@
+not compared  type KEY_EVENT_RECORD_uChar: not in the headers
+not compared  type INPUT_RECORD_Event: not in the headers
+not compared  type FILE_BASIC_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_DIRECTORY_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_STANDARD_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_INTERNAL_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_ALL_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_FS_DEVICE_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_FS_VOLUME_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_END_OF_FILE_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_DISPOSITION_INFORMATION: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_DISPOSITION_INFORMATION_EX: only the Windows Driver Kit declares it, and the Driver Kit is not used
+not compared  type FILE_RENAME_INFORMATION_EX: not in the headers
+not compared  field PROCESS_BASIC_INFORMATION.ExitStatus: not in the headers
+not compared  field PROCESS_BASIC_INFORMATION.AffinityMask: not in the headers
+not compared  field PROCESS_BASIC_INFORMATION.BasePriority: not in the headers
+not compared  field PROCESS_BASIC_INFORMATION.InheritedFromUniqueProcessId: not in the headers
+not compared  type CURDIR: not in the headers
+not compared  field RTL_USER_PROCESS_PARAMETERS.hStdInput: not in the headers
+not compared  field RTL_USER_PROCESS_PARAMETERS.hStdOutput: not in the headers
+not compared  field RTL_USER_PROCESS_PARAMETERS.hStdError: not in the headers
+not compared  field RTL_USER_PROCESS_PARAMETERS.CurrentDirectory: not in the headers
+not compared  field RTL_USER_PROCESS_PARAMETERS.DllPath: not in the headers
+not compared  field TEB.EnvironmentPointer: not in the headers
+not compared  field TEB.ActiveRpcHandle: not in the headers
+not compared  field TEB.ThreadLocalStoragePointer: not in the headers
+not compared  type req_u_io: not in the headers
+not compared  type req_u_connect: not in the headers
+not compared  type req_u: not in the headers
+not compared  type handle_u: not in the headers
+not compared  type Tty: not in the headers
+not compared  type uv_process_exit_t: not in the headers
+not compared  type uv_stdio_container_data: not in the headers
+not compared  type uv_fs_event_req_t: not in the headers
+not compared  type addr_union: not in the headers
+not compared  type netmask_union: not in the headers
+not compared  constant PATH_MAX_WIDE: not in the headers
+not compared  constant FILE_RENAME_REPLACE_IF_EXISTS: not in the headers
+not compared  constant FILE_RENAME_POSIX_SEMANTICS: not in the headers
+not compared  constant FILE_RENAME_IGNORE_READONLY_ATTRIBUTE: not in the headers
+not compared  constant TOKEN_IS_APP_CONTAINER: not in the headers
+not compared  constant CREAT: not in the headers
+not compared  constant RANDOM: not in the headers
+not compared  constant RDONLY: not in the headers
+not compared  constant RDWR: not in the headers
+not compared  constant SEQUENTIAL: not in the headers
+not compared  constant SHORT_LIVED: not in the headers
+not compared  constant TEMPORARY: not in the headers
+not compared  constant TRUNC: not in the headers
+not compared  constant WRONLY: not in the headers
+not compared  constant DIRECTORY: not in the headers
+not compared  constant EXLOCK: not in the headers
+not compared  constant NOATIME: not in the headers
+not compared  constant NOCTTY: not in the headers
+not compared  constant NONBLOCK: not in the headers
+not compared  constant SYMLINK: not in the headers
+not compared  constant MS_VC_EXCEPTION: not in the headers
+not compared  constant JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: not in the headers
+partial view  type PEB: 40 of 712 bytes
+partial view  type TEB: 104 of 6024 bytes
+not compared  10 structures that only the Windows Driver Kit declares: FILE_BASIC_INFORMATION FILE_DIRECTORY_INFORMATION FILE_STANDARD_INFORMATION FILE_INTERNAL_INFORMATION FILE_ALL_INFORMATION FILE_FS_DEVICE_INFORMATION FILE_FS_VOLUME_INFORMATION FILE_END_OF_FILE_INFORMATION FILE_DISPOSITION_INFORMATION FILE_DISPOSITION_INFORMATION_EX
+1650 facts are the same, 0 differ, 58 could not be compared

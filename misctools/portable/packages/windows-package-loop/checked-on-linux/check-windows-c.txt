@@ -1,0 +1,1 @@
++ /usr/lib/llvm-current/bin/clang --config=/tmp/portable/v2/out/x86_64/winsdk/windows-x64.cfg -fsyntax-only -D_WIN32_WINNT=0x0A00 -ferror-limit=0 -I/tmp/portable/v2/out/x86_64/loop/wincheck/libuv/include /tmp/portable/v2/out/x86_64/loop/usockets/windows-include/check_on_windows.c

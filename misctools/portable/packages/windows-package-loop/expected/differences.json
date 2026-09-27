@@ -1,0 +1,39 @@
+{
+ "about": "What a run of bun_loop_slice may print on a host that is not Linux where expected/linux.jsonl has something else. compare-run.ts reads this file. A step is named as in the output.",
+ "win32": {
+  "host": {
+   "fields": {
+    "os": "win32",
+    "code": "windows"
+   },
+   "why": "the host, and the code that the image takes for it"
+  },
+  "tcp echo, large": {
+   "fields": {
+    "several_writes": false,
+    "waited_to_write": false
+   },
+   "why": "On Windows the first write takes the whole payload, 16 MiB too: the client writes once, nothing is left for a second write, and neither side waits to be writable. On Linux a write to a socket takes what the buffer of the kernel has room for, so the same program writes several times and waits in between. It is bun's normal behaviour on each system: the code is the same (packages/bun-usockets/src/socket.c us_socket_write, bsd.c bsd_send, which is send() of Winsock on a socket that libuv polls), and what differs is how much of a buffer the system takes at once. Seen on Windows x64."
+  },
+  "timer of uSockets": {
+   "only_here": {
+    "step": "timer of uSockets",
+    "fired": 1,
+    "not_early": true,
+    "ok": true
+   },
+   "why": "bun has a timer of uSockets on Windows only (bun_uws_sys::Timer). It is the last line."
+  }
+ },
+ "darwin": {
+  "host": {
+   "fields": {
+    "os": "darwin"
+   },
+   "why": "the host"
+  }
+ },
+ "ran": {
+  "win32": "The program ran on Windows x64 as the image of the event loop work, before that work was merged: timer, tcp echo, thread pool, child with three pipes, child that is killed, and every import bound. The lines of the steps are the ones of Linux but for what this file lists: a child that uv_process_kill ended is Signaled for bun (src/spawn/process.rs, on_exit_uv). A line that differs and is not listed is a finding, not an accepted difference."
+ }
+}

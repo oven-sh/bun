@@ -1,0 +1,116 @@
+{
+ "compiler": "Debian clang version 23.1.2 (++20260910044214+069ef0e7cb36-1~exp1~20260910044225.69)",
+ "target": "x86_64-pc-windows-msvc",
+ "windows_sdk": "10.0.26100.4654",
+ "visual_cpp_tools": "14.11.25547",
+ "nothing_of_this_ran": true,
+ "libuv": {
+  "ok": true,
+  "commit": "8023581113b276e7c1aee3f82da57ca0893faab1",
+  "patches": [
+   "win-poll-abort-with-disconnect.patch",
+   "win-poll-rearm-before-callback.patch"
+  ],
+  "sources": 37,
+  "objects": 37,
+  "errors": 0,
+  "warnings": 0,
+  "log": "/tmp/portable/v2/out/x86_64/loop/wincheck/uv-compile.log"
+ },
+ "host": {
+  "ok": true,
+  "program": "/tmp/portable/v2/out/x86_64/loop/wincheck/host.exe",
+  "sha256": "9bfdc0c9c64bec4bf8002f3d7d53bba920f8d8d3c9dadd146a9559b77528cc5c",
+  "errors": 0,
+  "warnings": [],
+  "dlls": [
+   "api-ms-win-core-synch-l1-2-0.dll",
+   "ADVAPI32.dll",
+   "USER32.dll",
+   "IPHLPAPI.DLL",
+   "USERENV.dll",
+   "WS2_32.dll",
+   "dbghelp.dll",
+   "ole32.dll",
+   "SHELL32.dll",
+   "bcrypt.dll",
+   "KERNEL32.dll",
+   "VCRUNTIME140.dll",
+   "api-ms-win-crt-stdio-l1-1-0.dll",
+   "api-ms-win-crt-runtime-l1-1-0.dll",
+   "api-ms-win-crt-filesystem-l1-1-0.dll",
+   "api-ms-win-crt-string-l1-1-0.dll",
+   "api-ms-win-crt-convert-l1-1-0.dll",
+   "api-ms-win-crt-environment-l1-1-0.dll",
+   "api-ms-win-crt-heap-l1-1-0.dll",
+   "api-ms-win-crt-utility-l1-1-0.dll",
+   "api-ms-win-crt-math-l1-1-0.dll",
+   "api-ms-win-crt-locale-l1-1-0.dll"
+  ],
+  "log": "/tmp/portable/v2/out/x86_64/loop/wincheck/host-compile.log"
+ },
+ "headers of the C of the image": {
+  "ok": true,
+  "source": "/tmp/portable/v2/out/x86_64/loop/usockets/windows-include/check_on_windows.c",
+  "constants": 197,
+  "sizes_and_offsets": 87,
+  "functions_declared": 50,
+  "errors": [],
+  "log": "/tmp/portable/v2/out/x86_64/loop/wincheck/check-windows-c.txt"
+ },
+ "functions that the C of the image calls": {
+  "ok": true,
+  "source": "/tmp/portable/v2/out/x86_64/loop/usockets/windows-include/check_on_windows.cpp",
+  "functions": 50,
+  "callbacks": 6,
+  "errors": [],
+  "log": "/tmp/portable/v2/out/x86_64/loop/wincheck/check-windows-cpp.txt"
+ },
+ "layout of the bindings": {
+  "ok": true,
+  "the_same": 1650,
+  "differ": 0,
+  "not_compared": 58,
+  "different": [],
+  "not_compared_only_the_driver_kit_declares": [
+   "FILE_BASIC_INFORMATION",
+   "FILE_DIRECTORY_INFORMATION",
+   "FILE_STANDARD_INFORMATION",
+   "FILE_INTERNAL_INFORMATION",
+   "FILE_ALL_INFORMATION",
+   "FILE_FS_DEVICE_INFORMATION",
+   "FILE_FS_VOLUME_INFORMATION",
+   "FILE_END_OF_FILE_INFORMATION",
+   "FILE_DISPOSITION_INFORMATION",
+   "FILE_DISPOSITION_INFORMATION_EX"
+  ],
+  "report": "/tmp/portable/v2/out/x86_64/loop/wincheck/layout-compare.txt"
+ },
+ "imports of the loop slice": {
+  "ok": true,
+  "imports": 293,
+  "by_library": {
+   "*": 1,
+   "kernel32": 100,
+   "ntdll": 19,
+   "ucrtbase": 2,
+   "libuv": 142,
+   "ws2_32": 25,
+   "advapi32": 4
+  },
+  "not_found": []
+ },
+ "imports of the file system slice": {
+  "ok": true,
+  "imports": 246,
+  "by_library": {
+   "kernel32": 95,
+   "ntdll": 19,
+   "ucrtbase": 1,
+   "libuv": 121,
+   "ws2_32": 6,
+   "advapi32": 4
+  },
+  "not_found": []
+ }
+}

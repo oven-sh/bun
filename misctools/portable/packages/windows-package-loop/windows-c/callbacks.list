@@ -1,0 +1,12 @@
+# Written by misctools/portable/loop/windows.ts. Do not edit.
+#
+# The functions of eventing/libuv.c that libuv calls: the compiler writes the check of the thread
+# pointer at the entry of each, and of no other function.
+src:*
+fun:poll_cb
+fun:prepare_cb
+fun:check_cb
+fun:close_cb_free
+fun:close_cb_free_poll
+fun:timer_cb
+fun:async_cb

@@ -740,7 +740,7 @@ describe("bunshell", () => {
     };
 
     // Windows does not let a directory be renamed while a file in it is open.
-    describe("has closed the files it opened by the time the command is done", () => {
+    describe.skipIf(!isWindows)("has closed the files it opened by the time the command is done", () => {
       for (const command of ["cat f", "cat f f", "cat < f", "cat f > g", "cat f | cat", "cat missing f", "cat empty"]) {
         test.concurrent(command, async () => {
           using dir = tempDir("builtin-cat-closed", { "d/f": "hello\n", "d/empty": "" });

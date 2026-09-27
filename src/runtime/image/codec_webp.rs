@@ -36,26 +36,22 @@ unsafe extern "C" {
 }
 
 // ─── libwebp advanced decoding API ──────────────────────────────────────────
-// `WebPDecodeRGBA` is not usable on input that can change under it. It parses
-// the header twice: `Decode` (webp_dec.c) reports the dimensions of its own
-// `WebPGetInfo`, then `DecodeInto` parses again and allocates the output by
-// what THAT parse finds. The caller gets a pointer and two dimensions that
-// need not describe it. `WebPDecode` takes the output buffer from the caller
-// instead: libwebp refuses a picture that does not fit the `size` and
-// `stride` it was given (`CheckDecBuffer`, buffer_dec.c) and stores the
-// dimensions it decoded in `output.width`/`output.height`.
+// `WebPDecodeRGBA` reports the dimensions of its first header parse and sizes
+// the buffer it allocates from a later one (`Decode`, webp_dec.c), so the two
+// disagree for input that changes. `WebPDecode` takes the buffer from the
+// caller, checks what it decodes against it (`CheckDecBuffer`, buffer_dec.c),
+// and reports that in `output.width`/`output.height`.
 //
-// The structs below mirror `src/webp/decode.h` at the libwebp commit in
-// `scripts/build/deps/libwebp.ts` (v1.6.0). If that commit is bumped, check
-// them and `WEBP_DECODER_ABI_VERSION` against the header — the *Internal
-// entry point rejects a caller with a different major byte.
+// The structs mirror `src/webp/decode.h` at the libwebp commit in
+// `scripts/build/deps/libwebp.ts`. On a bump, check them and the ABI version
+// against the header: the *Internal entry points check the major byte.
 const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
 /// `WEBP_CSP_MODE.MODE_RGBA` — 4 bytes per pixel, straight alpha.
 const MODE_RGBA: c_int = 1;
 /// `VP8StatusCode.VP8_STATUS_OK` — the only status of a completed decode.
 const VP8_STATUS_OK: c_int = 0;
 
-/// `struct WebPRGBABuffer` — the caller's buffer, as libwebp sees it.
+/// `struct WebPRGBABuffer`
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct WebPRGBABuffer {
@@ -64,8 +60,7 @@ struct WebPRGBABuffer {
     size: usize,
 }
 
-/// `struct WebPYUVABuffer` — unused (we never ask for YUV), but it is the
-/// larger arm of the union in `WebPDecBuffer` and so sets that struct's size.
+/// `struct WebPYUVABuffer` — never filled in, and the larger arm of the union.
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct WebPYUVABuffer {
@@ -89,21 +84,20 @@ union WebPDecBufferPlanes {
     yuva: WebPYUVABuffer,
 }
 
-/// `struct WebPDecBuffer` — `width`/`height` are OUT fields: libwebp writes
-/// the dimensions it decoded, whoever owns the memory.
+/// `struct WebPDecBuffer` — libwebp writes the decoded `width`/`height` here.
 #[repr(C)]
 struct WebPDecBuffer {
     colorspace: c_int,
     width: c_int,
     height: c_int,
-    /// Non-zero: the memory is the caller's, libwebp neither allocates nor frees.
+    /// Non-zero: the caller's memory, which libwebp neither allocates nor frees.
     is_external_memory: c_int,
     u: WebPDecBufferPlanes,
     pad: [u32; 4],
     private_memory: *mut u8,
 }
 
-/// `struct WebPBitstreamFeatures` — what a header parse found.
+/// `struct WebPBitstreamFeatures`
 #[repr(C)]
 struct WebPBitstreamFeatures {
     width: c_int,
@@ -115,7 +109,7 @@ struct WebPBitstreamFeatures {
     pad: [u32; 5],
 }
 
-/// `struct WebPDecoderOptions` — left all-zero: no crop, no scale, no flip.
+/// `struct WebPDecoderOptions` — all-zero: no crop, no scale, no flip.
 #[repr(C)]
 struct WebPDecoderOptions {
     bypass_filtering: c_int,
@@ -145,8 +139,7 @@ struct WebPDecoderConfig {
 // SAFETY: integers, raw pointers and arrays of integers only; all-zero is valid.
 unsafe impl bun_core::Zeroable for WebPDecoderConfig {}
 
-// `WebPInitDecoderConfigInternal` clears `sizeof(WebPDecoderConfig)` bytes, so
-// a struct that came out smaller than libwebp's would be written past its end.
+// `WebPInitDecoderConfigInternal` clears `sizeof(WebPDecoderConfig)` bytes.
 #[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(size_of::<WebPRGBABuffer>() == 24);
@@ -161,19 +154,11 @@ const _: () = {
 };
 
 // ─── libwebpmux ─────────────────────────────────────────────────────────────
-// WebP carries colour profiles (and EXIF/XMP) in a VP8X RIFF container that
-// wraps the VP8/VP8L bitstream. `WebPEncodeRGBA` only emits the bare
-// bitstream chunk, and the decoder only reads it — neither touches the
-// surrounding chunks. To attach an ICCP chunk to an output we go through the
-// separate mux API, which operates on the whole RIFF file. Reading one out of
-// an input is `iccp_chunk` below: libwebp's demuxer re-reads the caller's
-// buffer on every lookup, which an input that changes under it turns into a
-// NULL dereference.
-//
-// The ABI version constant is pinned to the libwebp commit in
-// `scripts/build/deps/libwebp.ts` (v1.6.0). If that commit is bumped, check
-// `src/webp/mux.h` for `WEBP_MUX_ABI_VERSION` — the *Internal entry point
-// rejects a caller with a different major byte.
+// A colour profile rides in an ICCP chunk of the VP8X container that wraps the
+// bitstream. `WebPEncodeRGBA` emits the bare bitstream, so attaching one goes
+// through the mux API, which rewrites the whole RIFF file. Reading one back
+// out is `iccp_chunk` below, not the demuxer. Same ABI-version rule as above,
+// against `src/webp/mux.h`.
 const WEBP_MUX_ABI_VERSION: c_int = 0x0109;
 /// `WebPFeatureFlags` — the VP8X feature bitmask. `ICCP_FLAG` is set when the
 /// container carries an ICCP chunk.
@@ -226,10 +211,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     if unsafe { WebPInitDecoderConfigInternal(&raw mut config, WEBP_DECODER_ABI_VERSION) } == 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    // Header-only probe first so the pixel guard fires before the canvas is
-    // allocated. The probe answers with the VP8X canvas for input it cannot
-    // decode: an animation, and a file that ends before its VP8/VP8L chunk
-    // (`format` stays 0). Refuse those here, before they cost a canvas.
+    // Probe first, so the pixel guard fires before the canvas is allocated.
+    // The probe answers with the VP8X canvas even for input that cannot
+    // decode, so refuse an animation and a file that ends before its
+    // bitstream (`format` 0) here, before either costs a canvas.
     // SAFETY: bytes.ptr/len describe a valid readable slice; config.input is a valid out-param.
     let probed = unsafe {
         WebPGetFeaturesInternal(
@@ -252,12 +237,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
 
-    // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
-    // (the pin only blocks detach), so each parse libwebp makes can see a
-    // different header than the probe did. The canvas is ours and is sized by
-    // the probe: libwebp refuses a picture that does not fit it, and a smaller
-    // one is rejected below, because it leaves part of the canvas unwritten.
-    // (Same rule as the CG shim's TOCTOU guard and codec_jpeg's post-check.)
+    // `bytes` is a borrowed JS ArrayBuffer the user can still WRITE (the pin
+    // only blocks detach), so every parse libwebp makes can see a different
+    // header. The canvas is ours, sized by the probe: libwebp refuses a
+    // picture too big for it, and the check below refuses a smaller one, which
+    // would leave part of it unwritten. (As codec_jpeg.rs and the CG shim.)
     let stride: usize = (w as usize) * 4;
     let len: usize = stride * (h as usize);
     let mut out: Vec<u8> = Vec::new();
@@ -282,13 +266,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // wrote every one of `out`'s first `len` bytes.
     unsafe { bun_core::vec::commit_spare(&mut out, len) };
 
-    // The ICCP payload is duped into the global allocator to match JPEG/PNG
-    // ownership so the pipeline can free it uniformly. Propagate OutOfMemory
-    // on the dupe rather than silently dropping colour management — the pixels
-    // may be Display P3 / Adobe RGB / XYB where "no profile" reinterprets them
-    // as sRGB and visibly shifts colour, which is the exact bug #30197 is
-    // about. A container we cannot walk leaves `icc_profile = None`; the
-    // pixels decoded fine so the image is still usable.
+    // Duped into the global allocator to match JPEG/PNG ownership. An
+    // OutOfMemory here is propagated, not swallowed: the pixels may be
+    // Display P3 / Adobe RGB / XYB, where "no profile" reads as sRGB and
+    // shifts the colours, which is what #30197 is about.
     let icc: Option<Vec<u8>> = match iccp_chunk(bytes) {
         Some(profile) => {
             let mut owned: Vec<u8> = Vec::new();
@@ -310,26 +291,21 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 
 /// The colour profile a WebP container carries, or `None`.
 ///
-/// Reads every tag and length once, so an input that JS rewrites under us
-/// yields a profile, a `None`, or the bytes of whatever chunk now claims that
-/// offset, and never a read outside `bytes`. libwebp's demuxer cannot promise
-/// that: it records chunk OFFSETS and re-reads each tag from the caller's
-/// buffer on every lookup, so `WebPDemuxGetChunk` counts the matching chunks
-/// in one walk (`ChunkCount`, demux.c:905) and finds the Nth in a second
-/// (`GetChunk`, demux.c:912). A tag that changes in between leaves the count
-/// non-zero and the lookup NULL, which `SetChunk` (demux.c:938) dereferences.
+/// Reads every tag and length once, so an input rewritten under us yields a
+/// profile, a `None`, or the bytes of whatever chunk claims that offset now,
+/// and never a read outside `bytes`. libwebp's demuxer instead records chunk
+/// OFFSETS and re-reads each tag on every lookup: `WebPDemuxGetChunk` counts
+/// the matches in one walk (`ChunkCount`, demux.c:905) and finds the Nth in a
+/// second (`GetChunk`, :912), so a tag rewritten in between leaves the count
+/// non-zero and the lookup NULL, which `SetChunk` (:938) dereferences.
 ///
-/// For input that does not change, the answer is the one that demuxer gave
-/// with `allow_partial = 0`: the profile of a container it accepts, `None`
-/// for one it refuses, even where the decoder is more lenient and the pixels
-/// decode. The rules below are its rules (`ParseVP8X`, `ParseVP8XChunks`,
-/// `StoreFrame`, `IsValidExtendedFormat`), less the ones a completed decode of
-/// the same bytes already implies.
+/// For bytes that do not change the answer is that demuxer's, so a container
+/// it refused keeps no profile even where the pixels decode. Hence the rules
+/// below, which are its `ParseVP8X`, `ParseVP8XChunks`, `StoreFrame` and
+/// `IsValidExtendedFormat`, less what a completed decode already implies.
 ///
-/// RIFF layout: `"RIFF"`, the length of what follows, `"WEBP"`, then chunks of
-/// a 4-byte tag, a little-endian length, the payload, and a pad byte to an
-/// even length. A colour profile lives in a VP8X container: that chunk comes
-/// first and flags what follows it.
+/// Layout: `"RIFF"`, the length of the rest, `"WEBP"`, then chunks of a 4-byte
+/// tag, a little-endian length, the payload, and a pad byte to an even length.
 fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
     const RIFF_HEADER_SIZE: usize = 12;
     const CHUNK_HEADER_SIZE: usize = 8;
@@ -339,8 +315,8 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
     if bytes.len() < RIFF_HEADER_SIZE || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
         return None;
     }
-    // Bytes after the RIFF chunk are not part of the file. A RIFF chunk that
-    // runs past the buffer is a truncated file.
+    // Bytes past the RIFF chunk are not the file's; a RIFF chunk past the
+    // buffer means the file is truncated.
     let riff_size = u32::from_le_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
     let riff_end = (riff_size as usize).checked_add(CHUNK_HEADER_SIZE)?;
     let rest = bytes.get(RIFF_HEADER_SIZE..riff_end)?;
@@ -349,7 +325,7 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
     if tag != *b"VP8X" || vp8x.len() < VP8X_CHUNK_SIZE {
         return None;
     }
-    // One byte of flags; the three after it are reserved and not looked at.
+    // One flags byte, then three reserved ones nothing reads.
     let flags = u32::from(vp8x[0]);
     if flags & ICCP_FLAG == 0 || flags & !ALL_VALID_FLAGS != 0 || flags & ANIMATION_FLAG != 0 {
         return None;
@@ -368,9 +344,8 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
                 }
                 seen_anim = true;
             }
-            // A frame in a container whose animation flag is clear. The
-            // demuxer's answer depends on what the frame holds, so take the
-            // cautious one: the container is inconsistent, drop the profile.
+            // A frame, with the animation flag clear. The demuxer's answer
+            // depends on the frame's contents; take the cautious one.
             b"ANMF" => return None,
             // The one picture: `VP8L`, or `VP8 ` with its alpha plane before it.
             b"ALPH" | b"VP8 " | b"VP8L" => {
@@ -386,8 +361,8 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
                     after = after_picture;
                     alpha_before = true;
                 }
-                // An alpha plane AFTER the picture is dropped when the
-                // container does not flag alpha, and is an error when it does.
+                // An alpha plane after the picture: dropped when the
+                // container does not flag alpha, an error when it does.
                 if !alpha_before
                     && let Some(((next, _), after_alpha)) = split_chunk(after)
                     && next == *b"ALPH"
@@ -411,8 +386,8 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
     profile.filter(|p| !p.is_empty())
 }
 
-/// One chunk off the front: its tag and payload, and what follows it. `None`
-/// when the header, the payload or the pad byte of an odd payload does not fit.
+/// One chunk off the front: tag, payload, and the rest. `None` when the
+/// header, the payload, or an odd payload's pad byte does not fit.
 fn split_chunk(rest: &[u8]) -> Option<(([u8; 4], &[u8]), &[u8])> {
     let (header, body) = rest.split_at_checked(8)?;
     let tag: [u8; 4] = header[0..4].try_into().expect("infallible: size matches");

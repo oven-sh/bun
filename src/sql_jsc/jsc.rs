@@ -62,6 +62,31 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
     }
 }
 
+/// An instance of `MySQLError` or `PostgresError` (`src/js/internal/sql/errors.ts`) of the realm
+/// of `global`, with its `name`, `message` and `stack`, made with no call into JS.
+pub(crate) fn create_sql_error(
+    global: &JSGlobalObject,
+    is_mysql: bool,
+    message: &[u8],
+) -> JsResult<JSValue> {
+    // SAFETY: FFI call into JSC; ptr/len are from a live `&[u8]`, which C++ copies.
+    unsafe {
+        bun_jsc::cpp::Bun__SQLError__create(
+            global,
+            is_mysql,
+            message.as_ptr().cast(),
+            message.len(),
+        )
+    }
+}
+
+#[inline]
+pub(crate) fn sql_error_to_postgres(e: crate::Error) -> bun_sql::postgres::AnyPostgresError {
+    e.name()
+        .parse()
+        .unwrap_or(bun_sql::postgres::AnyPostgresError::JSError)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // host_fn helpers (mirrors bun_jsc::host_fn::from_js_host_call*; kept local
 // for the few extension-trait bodies below that call extern "C" symbols

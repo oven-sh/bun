@@ -115,7 +115,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
 
     // marker(1) is running, so the queries behind it wait in the queue. The
     // first oversized text goes out as COM_QUERY, the second one as
-    // COM_STMT_PREPARE, which reports the failure with no code (#43993).
+    // COM_STMT_PREPARE.
     expect(
       await settle(sql, [
         marker(1),
@@ -124,13 +124,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
         marker(2),
         marker(3),
       ]),
-    ).toEqual([
-      [{ marker: 1 }],
-      overflow,
-      rejectedWith({ message: expect.stringContaining("failed to prepare query") }),
-      [{ marker: 2 }],
-      [{ marker: 3 }],
-    ]);
+    ).toEqual([[{ marker: 1 }], overflow, overflow, [{ marker: 2 }], [{ marker: 3 }]]);
   });
 
   test("a failed prepare rejects every query that shares the statement", async () => {

@@ -559,6 +559,8 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_mySQLErrorStructure)                                  \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_postgresErrorStructure)                               \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsBigIntClassStructure)                                        \

@@ -2320,10 +2320,7 @@ impl PostgresSQLConnection {
         message_type: MessageType,
         mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
-        #[inline(always)]
-        fn pg_err(e: crate::Error) -> AnyPostgresError {
-            e.name().parse().unwrap_or(AnyPostgresError::JSError)
-        }
+        use crate::jsc::sql_error_to_postgres as pg_err;
         debug!("on({})", <&'static str>::from(message_type));
 
         match message_type {

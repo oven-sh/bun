@@ -1,7 +1,6 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::error::ThrowSqlError;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
@@ -587,10 +586,10 @@ impl PostgresSQLQuery {
         ) {
             Ok(s) => s,
             Err(err) => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_sql_error(err, "failed to generate signature"));
-                }
-                return Err(JsError::Thrown);
+                return Err(throw_write_error(
+                    b"failed to generate signature",
+                    crate::jsc::sql_error_to_postgres(err),
+                ));
             }
         };
 

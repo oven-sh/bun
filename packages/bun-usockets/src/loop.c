@@ -770,7 +770,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // rare case: we're reading a lot of data, there's more to be read, and either:
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
+                        /* At this many ready polls every one of them gets a single read. */
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        /* What one readable event may read before the loop turns: libuv's
+                         * budget, 32 reads of 64 KiB.
+                         * https://github.com/libuv/libuv/blob/v1.52.1/src/unix/stream.c#L1033-L1049 */
+                        #define MAX_RECV_BYTES_PER_EVENT (32 * 64 * 1024)
                         /* Hangup or error flagged on this event (kqueue rides EV_EOF on
                          * the final data's readable event): no further readable events
                          * are coming, so drain the kernel buffer now no matter how
@@ -778,7 +783,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * handling below close the socket and discard whatever is
                          * still queued (a truncated stream). recv() returning 0 or
                          * EAGAIN ends the loop, so this is bounded by the receive
-                         * buffer. This is what the comment above always described; it
+                         * buffer, and that is why the budget below does not apply. This
+                         * is what the comment above always described; it
                          * was keyed on the error flag, which kqueue does not set for
                          * a peer FIN. */
                         if (s && !us_socket_is_closed(s) && (error || (!s->flags.is_paused && eof))) {
@@ -793,14 +799,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD &&
                             !us_socket_is_closed(s) && !s->flags.is_paused
                         ) {
-                            repeat_recv_count++;
-
-                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
-                            // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
-                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                            /* A peer that sends as fast as on_data reads keeps every read
+                             * full, so only the count ends the run. The poll is
+                             * level-triggered: what stays queued is the next iteration's
+                             * readable event, after timers and the other polls had a turn.
+                             * We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT */
+                            if (++repeat_recv_count < MAX_RECV_BYTES_PER_EVENT / LIBUS_RECV_BUFFER_LENGTH) {
                                 continue;
                             }
                         }
+                        #undef MAX_RECV_BYTES_PER_EVENT
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #else
                         /* Windows eof-drain, same as the POSIX branch above:

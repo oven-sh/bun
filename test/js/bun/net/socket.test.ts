@@ -360,6 +360,95 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 
+  // A peer that sends as fast as the data handler consumes keeps every read
+  // full, so nothing but a count ends the read loop of a readable event. The
+  // loop has to turn after 4 reads of 512 KiB (libuv: 32 reads of 64 KiB), or
+  // one connection holds off every timer, immediate and other socket.
+  describe("a flooded socket reads a bounded amount per event loop turn", () => {
+    const readLength = 512 * 1024; // LIBUS_RECV_BUFFER_LENGTH
+    const nearFull = readLength - 24 * 1024; // a read this long makes the loop read again
+
+    it.each(["tcp", "tls", "net"])("%s", async mode => {
+      await using peer = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "socket-flood-peer-fixture.ts"), mode === "tls" ? "tls" : "tcp"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      let port = "";
+      for await (const part of peer.stdout) {
+        port += Buffer.from(part).toString();
+        if (port.includes("\n")) break;
+      }
+
+      // TLS hands over plaintext: 16384 bytes for each 16406-byte record.
+      const plaintext = (bytes: number) => (mode === "tls" ? Math.floor((bytes * 16384) / 16406) : bytes);
+      // Four near-full reads in one turn: the event read all that it may.
+      const budget = plaintext(4 * nearFull);
+      let turnBytes = 0;
+      let maxPerTurn = 0;
+      let turnsAtBudget = 0;
+      let total = 0;
+      let finished = false;
+      const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+      const finish = () => {
+        finished = true;
+        resolve();
+      };
+      const closed = () => {
+        if (!finished) reject(new Error("the connection closed before the run ended"));
+      };
+      const received = (data: Uint8Array) => {
+        if (finished) return;
+        // The handler costs CPU for each chunk, like one that checksums a download.
+        Bun.SHA256.hash(data);
+        total += data.length;
+        turnBytes += data.length;
+        maxPerTurn = Math.max(maxPerTurn, turnBytes);
+        // The run ends on a count of bytes, never on a timer: 16 reads in one
+        // turn (the loop did not turn), or 256 MiB in all.
+        if (turnBytes >= 16 * readLength || total >= 512 * readLength) finish();
+      };
+      // A setImmediate chain marks the loop turns.
+      setImmediate(function turn() {
+        if (finished) return;
+        if (turnBytes >= budget && ++turnsAtBudget === 8) return finish();
+        turnBytes = 0;
+        setImmediate(turn);
+      });
+
+      if (mode === "net") {
+        const socket = net.connect(Number(port), "127.0.0.1");
+        socket.on("data", received).on("close", closed).on("error", reject);
+        await done.finally(() => socket.destroy());
+      } else {
+        const socket = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: Number(port),
+          tls: mode === "tls" ? { rejectUnauthorized: false } : undefined,
+          socket: {
+            data(_socket, data) {
+              received(data);
+            },
+            close: closed,
+            error(_socket, error) {
+              reject(error);
+            },
+          },
+        });
+        await done.finally(() => socket.terminate());
+      }
+
+      // A TLS record that the turn before left incomplete counts in this one.
+      const limit = 4 * readLength + (mode === "tls" ? 16384 : 0);
+      expect({
+        maxPerTurn: maxPerTurn <= limit ? "within the limit" : maxPerTurn,
+        // The Windows read loop stops after 2 reads, so it never reads 4.
+        reachedTheLimit: isWindows || turnsAtBudget > 0,
+      }).toEqual({ maxPerTurn: "within the limit", reachedTheLimit: true });
+    });
+  });
+
   it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });

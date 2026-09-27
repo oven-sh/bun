@@ -6344,35 +6344,18 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
     expected: Outcome;
   };
 
-  // Splits what the client received into responses. A body has Content-Length bytes and a 204 has
-  // none. Any other body has no length of its own: it ends where the next response starts.
-  // `complete` is false while a head or a body is cut short.
+  // Splits what the client received at each status line, so every byte is in a response. A body
+  // is all that follows its head, and bytes with no head are a body too. `complete` is false
+  // while the last response lacks the end of its head or a part of its Content-Length.
   function splitResponses(wire: string) {
     const responses: WireResponse[] = [];
     let complete = true;
-    while (complete && wire.length > 0) {
-      const headEnd = wire.indexOf("\r\n\r\n");
-      if (headEnd === -1) {
-        complete = false;
-        break;
-      }
-      const head = wire.slice(0, headEnd);
-      const rest = wire.slice(headEnd + 4);
-      const contentLength = /^content-length: (\d+)$/im.exec(head)?.[1];
-      const nextResponse = rest.search(/HTTP\/1\.1 \d{3} /);
-      const length = head.startsWith("HTTP/1.1 204 ")
-        ? 0
-        : contentLength !== undefined
-          ? Number(contentLength)
-          : nextResponse !== -1
-            ? nextResponse
-            : rest.length;
-      complete = rest.length >= length;
-      responses.push({
-        connection: Array.from(head.matchAll(/^connection: (.*)$/gim), match => match[1]),
-        body: rest.slice(0, length),
-      });
-      wire = rest.slice(length);
+    for (const piece of wire === "" ? [] : wire.split(/(?=HTTP\/1\.1 \d{3} )/)) {
+      const headEnd = piece.indexOf("\r\n\r\n");
+      const head = headEnd === -1 ? "" : piece.slice(0, headEnd);
+      const body = headEnd === -1 ? piece : piece.slice(headEnd + 4);
+      complete = headEnd !== -1 && body.length >= Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+      responses.push({ connection: Array.from(head.matchAll(/^connection: (.*)$/gim), match => match[1]), body });
     }
     return { responses, complete };
   }

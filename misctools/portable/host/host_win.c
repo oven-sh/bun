@@ -125,7 +125,7 @@ struct host_thread {
   void *volatile waiting_on;
 };
 
-static DWORD tp_slot, thread_slot;
+static DWORD tp_slot, thread_slot, adopted_slot, main_thread_id;
 static int trace, main_tid;
 static volatile LONG next_tid;
 static LARGE_INTEGER qpc_freq;
@@ -145,6 +145,12 @@ static void host_log(const char *format, ...) {
 static struct host_thread *this_thread(void) {
   struct host_thread *t = TlsGetValue(thread_slot);
   return t ? t : &main_thread;
+}
+/* 0 for a thread that the image did not create and has not adopted yet. */
+static struct host_thread *known_thread(void) {
+  struct host_thread *t = TlsGetValue(thread_slot);
+  if (t) return t;
+  return GetCurrentThreadId() == main_thread_id ? &main_thread : 0;
 }
 /* Signals that the thread can take now. The functions that wait ask, and hand over to take_signals(). */
 static l_sigset signals_ready(struct host_thread *t) { return (l_sigset)t->pending & ~t->mask; }
@@ -286,7 +292,11 @@ struct host_fd { HANDLE handle; int kind; long long flags; int cloexec; };
 static struct host_fd fds[FD_COUNT];
 static SRWLOCK fd_lock = SRWLOCK_INIT;
 
-static struct host_fd *fd_at(long long fd) { return fd >= 0 && fd < FD_COUNT && fds[fd].kind ? &fds[fd] : 0; }
+/* A file descriptor is an int: the upper half of the register it arrives in is not part of it. */
+static struct host_fd *fd_at(long long wide) {
+  int fd = (int)wide;
+  return fd >= 0 && fd < FD_COUNT && fds[fd].kind ? &fds[fd] : 0;
+}
 static long long fd_put(HANDLE h, int kind, long long flags, long long from) {
   AcquireSRWLockExclusive(&fd_lock);
   for (long long i = from; i < FD_COUNT; i++)
@@ -355,7 +365,7 @@ static long long host_close(long long fd) {
   struct host_fd *f = fd_at(fd);
   if (!f) { ReleaseSRWLockExclusive(&fd_lock); return -L_EBADF; }
   /* 0, 1 and 2 stay what they are for the host itself. */
-  if (fd > 2) {
+  if ((int)fd > 2) {
     if (f->kind == FD_FILE) CloseHandle(f->handle);
     f->kind = 0;
     f->handle = 0;
@@ -363,7 +373,9 @@ static long long host_close(long long fd) {
   ReleaseSRWLockExclusive(&fd_lock);
   return 0;
 }
-static long long host_dup(long long fd, long long to, long long from, int cloexec) {
+static long long host_dup(long long fd, long long wide_to, long long from, int cloexec) {
+  /* -1 where the request names no number, an int where it does. */
+  long long to = wide_to < 0 ? -1 : (int)wide_to;
   struct host_fd *f = fd_at(fd);
   if (!f) return -L_EBADF;
   HANDLE copy = 0;
@@ -970,6 +982,97 @@ static SYSV long long create_thread(ImageThreadFn fn, void *stack, long long fla
 }
 static SYSV void host_thread_exit(void *base, unsigned long long size) { leave_thread(base, size); }
 
+/* ---- threads that the image did not create ----
+   A thread of libuv's pool, of the pool of Windows, the thread of a console control handler: it
+   runs a callback of the image. The image gives it a thread pointer when it enters
+   (N_adopt_thread) and takes it back when the thread ends. From the request on the thread is a
+   thread of the table, with a number and a handle, as the threads are that the image created:
+   a signal can be sent to it. Its stack is the one that Windows gave it.
+   Windows tells the end of a thread to the callback of a fiber local storage slot that has a
+   value, on the thread that ends, while its TEB and the slot of the thread pointer are still
+   there. */
+struct adopted_thread {
+  void *tp;
+  SYSV void (*leave)(void *);
+  struct host_thread *state;
+};
+static VOID WINAPI adopted_thread_ends(PVOID p) {
+  struct adopted_thread *a = p;
+  if (!a) return;
+  struct host_thread *t = a->state;
+  if (trace) host_log("[host] an adopted thread ends, thread %d, thread pointer %p\n", t->tid, a->tp);
+  /* The image asks for things while it takes the thread apart: the thread is known until it has. */
+  TlsSetValue(thread_slot, t);
+  TlsSetValue(tp_slot, a->tp);
+  t->in_host = 0;
+  a->leave(a->tp);
+  t->in_host = 1;
+  TlsSetValue(tp_slot, 0);
+  TlsSetValue(thread_slot, 0);
+  AcquireSRWLockExclusive(&threads_lock);
+  for (int i = 0; i < thread_count; i++)
+    if (threads[i] == t) {
+      threads[i] = threads[--thread_count];
+      break;
+    }
+  ReleaseSRWLockExclusive(&threads_lock);
+  CloseHandle(t->handle);
+  CloseHandle(t->wake);
+  HeapFree(GetProcessHeap(), 0, t);
+  HeapFree(GetProcessHeap(), 0, a);
+}
+static long long host_adopt_thread(void *tp, void *leave, unsigned long long *stack) {
+  if (known_thread()) return -L_EINVAL;
+  struct adopted_thread *a = HeapAlloc(GetProcessHeap(), 0, sizeof *a);
+  struct host_thread *t = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *t);
+  if (t) t->wake = CreateEventW(0, FALSE, FALSE, 0);
+  if (!a || !t || !t->wake || !DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &t->handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+    if (t && t->wake) CloseHandle(t->wake);
+    if (t) HeapFree(GetProcessHeap(), 0, t);
+    if (a) HeapFree(GetProcessHeap(), 0, a);
+    return -L_ENOMEM;
+  }
+  t->tls = tp;
+  t->altstack.flags = L_SS_DISABLE;
+  t->tid = (int)(InterlockedIncrement(&next_tid) & 0x3fffffff);
+  t->in_host = 1;
+  a->tp = tp;
+  a->leave = (SYSV void (*)(void *))leave;
+  a->state = t;
+  AcquireSRWLockExclusive(&threads_lock);
+  int full = thread_count == (int)(sizeof threads / sizeof *threads);
+  if (!full) threads[thread_count++] = t;
+  ReleaseSRWLockExclusive(&threads_lock);
+  if (full || !FlsSetValue(adopted_slot, a)) {
+    if (!full) {
+      AcquireSRWLockExclusive(&threads_lock);
+      for (int i = 0; i < thread_count; i++)
+        if (threads[i] == t) {
+          threads[i] = threads[--thread_count];
+          break;
+        }
+      ReleaseSRWLockExclusive(&threads_lock);
+    }
+    CloseHandle(t->handle);
+    CloseHandle(t->wake);
+    HeapFree(GetProcessHeap(), 0, t);
+    HeapFree(GetProcessHeap(), 0, a);
+    return full ? -L_EAGAIN : -L_ENOMEM;
+  }
+  TlsSetValue(thread_slot, t);
+  TlsSetValue(tp_slot, tp);
+  if (stack) {
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    stack[0] = low;
+    stack[1] = high - low;
+  }
+  if (trace) host_log("[host] thread %lu of Windows is adopted, thread %d, thread pointer %p\n", GetCurrentThreadId(), t->tid, tp);
+  /* The thread goes back into the image from here, and takes its signals there. */
+  t->in_host = 0;
+  return 0;
+}
+
 /* ---- signals ---- */
 static struct l_k_sigaction image_actions[L_NSIG];
 static SRWLOCK actions_lock = SRWLOCK_INIT;
@@ -1561,6 +1664,7 @@ static long long dispatch(long long n, long long a, long long b, long long c, lo
       TlsSetValue(tp_slot, (void *)b);
       return 0;
     case N_set_tp: TlsSetValue(tp_slot, (void *)a); return 0;
+    case N_adopt_thread: return host_adopt_thread((void *)a, (void *)b, (unsigned long long *)c);
     /* Code was written to [a, b). */
     case N_clear_cache:
       if ((uintptr_t)b < (uintptr_t)a) return -L_EINVAL;
@@ -1596,7 +1700,15 @@ static long long dispatch(long long n, long long a, long long b, long long c, lo
   return -L_ENOSYS;
 }
 static SYSV long long host_syscall(long long n, long long a, long long b, long long c, long long d, long long e, long long f) {
-  struct host_thread *t = this_thread();
+  struct host_thread *t = known_thread();
+  /* A thread that the image has not adopted yet asks for the memory of its thread structure
+     and to be adopted. Nobody sends it a signal: it has no number. */
+  if (!t) {
+    count(counts, n);
+    long long r = dispatch(n, a, b, c, d, e, f);
+    if (trace > 1 || (trace && r == -L_ENOSYS)) host_log("[host] %lld %s(%#llx, %#llx, %#llx, %#llx) = %lld, thread %lu of Windows\n", n, l_request_name(n), a, b, c, d, r, GetCurrentThreadId());
+    return r;
+  }
   /* A request inside of a handler that runs inside of a request: the outer one is not over. */
   LONG outer = InterlockedExchange(&t->in_host, 1);
   count(counts, n);
@@ -1619,6 +1731,9 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
    "ntdll", "ws2_32"), and is loaded from the system directory only.
    "libuv" is the libuv that is linked into this host (BUN_HOST_LIBUV, see
    host_win_uv.c): libuv has no DLL.
+   "*" is a function whose declaration in bun names no library, because the
+   linker of a build for Windows finds it in one of the libraries it always
+   searches: the DLLs of those are asked here, in this order.
    The thread is not inside of a request here: a signal that is sent to it
    meanwhile waits until it is back in the image (send_to_thread() tries again).
    What the image hands to such a function is not known here, so nothing calls
@@ -1634,6 +1749,13 @@ static SYSV void *host_lookup(const char *library, const char *symbol) {
   void *address = 0;
   if (!strcmp(library, "libuv")) {
     address = bun_host_uv_lookup(symbol);
+  } else if (!strcmp(library, "*")) {
+    static const wchar_t *const always[] = {L"kernel32", L"ntdll", L"advapi32", L"ws2_32", L"userenv", L"user32", L"ucrtbase"};
+    for (size_t i = 0; !address && i < sizeof always / sizeof *always; i++) {
+      HMODULE module = GetModuleHandleW(always[i]);
+      if (!module) module = LoadLibraryExW(always[i], 0, LOAD_LIBRARY_SEARCH_SYSTEM32);
+      if (module) address = (void *)GetProcAddress(module, symbol);
+    }
   } else {
     wchar_t name[260];
     if (MultiByteToWideChar(CP_UTF8, 0, library, -1, name, 260) > 1) {
@@ -1753,6 +1875,7 @@ int wmain(int argc, wchar_t **wide) {
     if (host_path(getenv("BUN_HOST_PATHS"), w, 4096) == PATH_FILE) paths_file = CreateFileW(w, FILE_APPEND_DATA, FILE_SHARE_READ, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
   }
   main_tid = (int)(GetCurrentProcessId() & 0x3fffffff);
+  main_thread_id = GetCurrentThreadId();
   next_tid = main_tid;
   main_thread.tid = main_tid;
   main_thread.altstack.flags = L_SS_DISABLE;
@@ -1865,7 +1988,9 @@ int wmain(int argc, wchar_t **wide) {
 
   tp_slot = TlsAlloc();
   thread_slot = TlsAlloc();
+  adopted_slot = FlsAlloc(adopted_thread_ends);
   if (tp_slot >= 64) { fprintf(stderr, "host: no low TLS slot\n"); return 2; }
+  if (adopted_slot == FLS_OUT_OF_INDEXES) { fprintf(stderr, "host: no fiber local storage slot\n"); return 2; }
   static struct bun_host host;
   host.os = BUN_OS_WINDOWS;
   host.tcb_offset = TEB_TLS_SLOTS + 8ull * tp_slot;

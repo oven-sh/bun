@@ -9,7 +9,7 @@
 import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
@@ -735,6 +735,88 @@ export function findSystemTool(name: string, opts?: { required?: boolean; hint?:
   };
   if (opts?.hint !== undefined) spec.hint = opts.hint;
   return findTool(spec)?.path;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Programs run by name, and the PATH they are found on
+// ───────────────────────────────────────────────────────────────────────────
+
+/** What decides whether a build runs a program at all. */
+export interface NamedProgramNeeds {
+  /** The target is macOS: the dsymutil rule asks how many CPUs there are. */
+  darwinTarget: boolean;
+  /** WebKit is built from source, by cmake. */
+  localWebKit: boolean;
+}
+
+/**
+ * A program the build runs by name instead of by a path configure resolved: a rule's shell command names it, a
+ * script that has no Config spawns it, or another tool looks for it.
+ */
+interface NamedProgram {
+  name: string;
+  /** For the error when it is missing. */
+  runBy: string;
+  /** The hosts it is run on. Absent: all. */
+  hosts?: OS[];
+  /** Whether the build fails without it. Absent: it does. */
+  required?: (needs: NamedProgramNeeds) => boolean;
+}
+
+const posix: OS[] = ["linux", "darwin", "freebsd"];
+const optional = () => false;
+
+const namedPrograms: NamedProgram[] = [
+  { name: "sh", runBy: "rule commands", hosts: posix },
+  { name: "mkdir", runBy: "rule commands", hosts: posix },
+  { name: "touch", runBy: "rule commands", hosts: posix },
+  { name: "git", runBy: "fetch-cli.ts, to apply a dependency's patches" },
+  // On Windows download.ts runs System32's by path.
+  { name: "tar", runBy: "download.ts", hosts: posix },
+  { name: "gzip", runBy: "GNU tar", hosts: ["linux"] },
+  { name: "unzip", runBy: "download.ts, which falls back to tar", required: optional },
+  { name: "perl", runBy: "create-hash-table.ts" },
+  { name: "ld", runBy: "clang, to link build scripts and proc macros for the host", hosts: posix },
+  {
+    name: "setarch",
+    runBy: "the ASan smoke test, which falls back to running without",
+    hosts: ["linux"],
+    required: optional,
+  },
+  { name: "nproc", runBy: "the dsymutil rule", hosts: ["linux"], required: needs => needs.darwinTarget },
+  { name: "sysctl", runBy: "the dsymutil rule", hosts: ["darwin", "freebsd"], required: needs => needs.darwinTarget },
+  { name: "xcrun", runBy: "configure, to find the SDK", hosts: ["darwin"] },
+  { name: "xcode-select", runBy: "configure, to find the developer directory", hosts: ["darwin"] },
+  { name: "brew", runBy: "configure, to find LLVM", hosts: ["darwin"], required: optional },
+  // Also what build.ts runs where the pinned ninja cannot be (ninja-release.ts).
+  { name: "ninja", runBy: "WebKit's cmake", required: needs => needs.localWebKit },
+  { name: "ruby", runBy: "WebKit's cmake", required: needs => needs.localWebKit },
+  { name: "python3", runBy: "WebKit's cmake", required: needs => needs.localWebKit },
+  { name: "node", runBy: "`#!/usr/bin/env node` in node_modules/.bin", required: optional },
+];
+
+/** Where each of `namedPrograms` this host runs is. A missing one fails here, not in the middle of an edge. */
+export function findNamedPrograms(host: OS, needs: NamedProgramNeeds): string[] {
+  const found: string[] = [];
+  for (const { name, runBy, hosts, required } of namedPrograms) {
+    if (hosts !== undefined && !hosts.includes(host)) continue;
+    const path = findSystemTool(name, { required: required?.(needs) ?? true, hint: `Run by ${runBy}.` });
+    if (path !== undefined) found.push(path);
+  }
+  return found;
+}
+
+/**
+ * The PATH of an edge: the caller's, cut down to the directories `tools` were found in. What is left is in the
+ * caller's order, so the `regen` edge, which looks for the tools again on this, finds the same ones.
+ */
+export function edgeSearchPath(tools: readonly (string | undefined)[]): string {
+  const key = (dir: string) => (process.platform === "win32" ? resolve(dir).toLowerCase() : resolve(dir));
+  const used = new Set(tools.filter(tool => tool !== undefined).map(tool => key(dirname(tool))));
+  return (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter(dir => dir.length > 0 && used.has(key(dir)))
+    .join(delimiter);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

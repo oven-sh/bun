@@ -29,6 +29,7 @@ import {
   resolveCodegenConfig,
   resolveConfig,
 } from "./config.ts";
+import type { EdgeAdditions } from "./env.ts";
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
@@ -42,9 +43,11 @@ import { quote } from "./shell.ts";
 import {
   checkImageTools,
   findBun,
+  edgeSearchPath,
   findCargo,
   findMsvcLinker,
   findNpm,
+  findNamedPrograms,
   findSystemTool,
   resolveLlvmToolchain,
   writeToolIdentities,
@@ -138,6 +141,13 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   };
 }
 
+/** The fields of a Toolchain that are programs. */
+// prettier-ignore
+const executables = [
+  "bun", "npm", "cc", "cxx", "hostCc", "hostCxx", "ar", "ranlib", "ld", "ld64Lld", "strip", "llvmStrip", "nm", "readobj",
+  "objdump", "cxxfilt", "dsymutil", "ccache", "cmake", "cargo", "msvcLinker", "rc", "mt", "nasm",
+] as const satisfies readonly (keyof Toolchain)[];
+
 export interface ConfigureResult {
   cfg: Config;
   output: BunOutput;
@@ -145,8 +155,8 @@ export interface ConfigureResult {
   ninjaFile: string;
   /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
   ninja: string;
-  /** Env vars the caller should set before spawning ninja. */
-  env: Record<string, string>;
+  /** What ninja is started with, besides what env.ts lets it inherit. */
+  env: EdgeAdditions;
   /** Wall-clock ms for the configure pass. */
   elapsed: number;
   /** True if build.ninja actually changed (vs an idempotent re-run). */
@@ -364,6 +374,8 @@ export interface CodegenConfigureResult<N extends string | undefined = string> {
   cfg: CodegenConfig;
   /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
   ninja: N;
+  /** What ninja is started with, besides what env.ts lets it inherit. */
+  env: EdgeAdditions;
   /** Wall-clock ms for the configure pass. */
   elapsed: number;
 }
@@ -399,7 +411,7 @@ async function generateCodegen<N extends string | undefined>(
   const ninja = await resolveNinja(cfg);
   mark("ensureNinja");
 
-  requirePerl();
+  const programs = findNamedPrograms(cfg.host.os, { darwinTarget: false, localWebKit: false });
 
   const sources = globAllSources();
   mark("globAllSources");
@@ -414,16 +426,8 @@ async function generateCodegen<N extends string | undefined>(
   n.default(["codegen"]);
 
   await writeManifest(n, cfg, ninja, mark);
-  return { cfg, ninja, elapsed: Math.round(performance.now() - start) };
-}
-
-/** LUT codegen (create-hash-table.ts) shells out to a perl script; without perl it fails cryptically. */
-function requirePerl(): void {
-  if (findSystemTool("perl") === undefined) {
-    throw new BuildError("perl not found in PATH", {
-      hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
-    });
-  }
+  const env = { PATH: edgeSearchPath([process.execPath, cfg.bun, cfg.npm, ...programs]) };
+  return { cfg, ninja, env, elapsed: Math.round(performance.now() - start) };
 }
 
 /** build.ts configuring before it spawns ninja: resolves the ninja to spawn (ninja-release.ts). */
@@ -499,7 +503,7 @@ async function generate<N extends string | undefined>(
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.
-  requirePerl();
+  const programs = findNamedPrograms(cfg.host.os, { darwinTarget: cfg.darwin, localWebKit: cfg.webkit === "local" });
   mark("validate+perl");
 
   // Glob all source lists — one pass, consistent filesystem snapshot.
@@ -553,5 +557,9 @@ async function generate<N extends string | undefined>(
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, ninja, env: ccacheEnv(cfg), elapsed, changed, exe };
+  const env = {
+    ...ccacheEnv(cfg),
+    PATH: edgeSearchPath([process.execPath, ...executables.map(tool => toolchain[tool]), ...programs]),
+  };
+  return { cfg, output, ninjaFile, ninja, env, elapsed, changed, exe };
 }

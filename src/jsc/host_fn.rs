@@ -536,58 +536,51 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
 /// hand itself to a dispatch path that may). The generated thunk is generic
 /// over this, so the method's own signature picks.
 pub trait HostReceiver<'a, T: 'a>: Sized {
-    /// # Safety
-    /// `this` is the live, non-null `m_ctx` of a JS wrapper that stays rooted
-    /// for `'a`.
-    unsafe fn from_m_ctx(this: *mut T) -> Self;
+    /// `this` is the `m_ctx` of a JS wrapper that stays rooted for `'a`: the
+    /// C++ caller of the generated thunk vouches for it, as it does for the
+    /// `&JSGlobalObject` and the `&CallFrame` beside it.
+    fn from_m_ctx(this: bun_ptr::ThisPtr<T>) -> Self;
 }
 impl<'a, T: 'a> HostReceiver<'a, T> for &'a T {
     #[inline(always)]
-    unsafe fn from_m_ctx(this: *mut T) -> Self {
-        // SAFETY: trait contract.
-        unsafe { &*this }
+    fn from_m_ctx(this: bun_ptr::ThisPtr<T>) -> Self {
+        // SAFETY: `ThisPtr` contract: a live `T` with no `&mut` to it. The
+        // wrapper is the `this` of the call, so it roots the `T` for `'a`.
+        unsafe { &*this.as_ptr() }
     }
 }
 impl<'a, T: 'a> HostReceiver<'a, T> for bun_ptr::ThisPtr<T> {
     #[inline(always)]
-    unsafe fn from_m_ctx(this: *mut T) -> Self {
-        // SAFETY: trait contract.
-        unsafe { bun_ptr::ThisPtr::new(this) }
+    fn from_m_ctx(this: bun_ptr::ThisPtr<T>) -> Self {
+        this
     }
 }
 
 /// Prototype method (`sharedThis`) taking `&self` or `this: ThisPtr<Self>`.
-///
-/// # Safety
-/// `this` is the live `m_ctx` of the JS wrapper the call was dispatched on.
+/// `this` is the `m_ctx` of the JS wrapper the call was dispatched on.
 #[track_caller]
 #[inline]
-pub unsafe fn host_fn_this_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
-    this: *mut T,
+pub fn host_fn_this_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
+    this: bun_ptr::ThisPtr<T>,
     global: &'a JSGlobalObject,
     callframe: &'a CallFrame,
     f: impl FnOnce(Rcv, &'a JSGlobalObject, &'a CallFrame) -> R,
 ) -> JSValue {
-    // SAFETY: fn contract.
-    let this = unsafe { Rcv::from_m_ctx(this) };
+    let this = Rcv::from_m_ctx(this);
     host_fn_result(global, || f(this, global, callframe))
 }
 
 /// [`host_fn_this_ptr`] with `passThis`.
-///
-/// # Safety
-/// As [`host_fn_this_ptr`].
 #[track_caller]
 #[inline]
-pub unsafe fn host_fn_this_value_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
-    this: *mut T,
+pub fn host_fn_this_value_ptr<'a, T: 'a, Rcv: HostReceiver<'a, T>, R: IntoHostFnReturn>(
+    this: bun_ptr::ThisPtr<T>,
     global: &'a JSGlobalObject,
     callframe: &'a CallFrame,
     js_this: JSValue,
     f: impl FnOnce(Rcv, &'a JSGlobalObject, &'a CallFrame, JSValue) -> R,
 ) -> JSValue {
-    // SAFETY: fn contract.
-    let this = unsafe { Rcv::from_m_ctx(this) };
+    let this = Rcv::from_m_ctx(this);
     host_fn_result(global, || f(this, global, callframe, js_this))
 }
 

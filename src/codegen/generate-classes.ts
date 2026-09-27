@@ -1879,15 +1879,15 @@ function generateRust(
       if (names.fn) {
         const id = rustSnakeIdent(fn);
         if (sharedThis) {
-          // `*mut T` + receiver-generic helper: the method takes `&self` or
-          // `this: ThisPtr<Self>` and inference picks (see `HostReceiver`).
+          // `ThisPtr<T>` (the wrapper's `m_ctx`) + receiver-generic helper: the
+          // method takes `&self` or `this: ThisPtr<Self>` and inference picks
+          // (see `HostReceiver`).
           thunk(
             names.fn,
-            `(this: *mut ${T}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
-            `    // SAFETY: C++ passes the wrapper's live \`m_ctx\`.\n    ` +
-              (passThis
-                ? `    unsafe { host_fn::host_fn_this_value_ptr(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v)) }`
-                : `    unsafe { host_fn::host_fn_this_ptr(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c)) }`),
+            `(this: bun_ptr::ThisPtr<${T}>, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+            passThis
+              ? `    host_fn::host_fn_this_value_ptr(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
+              : `    host_fn::host_fn_this_ptr(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
           );
         } else {
           thunk(

@@ -6,6 +6,9 @@
  *   <out>/requests.img      one request after the other, with the answers of Linux (test/requests.c)
  *   <out>/raw_syscall.img   x86_64: an image that issues a syscall itself. The tests show that the host ends
  *                           it and that the static checks report it (test/raw_syscall.c)
+ *   <out>/adopt.img         threads that the image did not create (test/adopt.c, test/adopt_cpp.cpp, and
+ *                           test/adopt.list: the functions whose check of the thread pointer the compiler
+ *                           writes)
  *   <out>/memory_model      test of host/memory.h by itself, a program of this machine (test/memory_model.c)
  *   <out>/host-linux        the POSIX host in hosted mode, for testing the host path on linux
  *
@@ -13,7 +16,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { IMAGE_LINK_FLAGS, TREE, abiFlags, hostArch, targetOf } from "../flags.ts";
 import { sign } from "../tools/apple_sign.ts";
 import { type Context, type Step, inOut, runStep } from "./context.ts";
@@ -21,8 +24,18 @@ import { run, sha256File } from "./run.ts";
 
 /** The images of an architecture, by the name of their source in test/. */
 export function testImages(ctx: Context): string[] {
-  return ["threads", "linux_paths", "requests", ...(ctx.arch === "x86_64" ? ["raw_syscall"] : [])];
+  return ["threads", "linux_paths", "requests", "adopt", ...(ctx.arch === "x86_64" ? ["raw_syscall"] : [])];
 }
+
+/** What an image is made of next to test/<name>.c: other sources of test/, and flags of its own. */
+const MORE: Record<string, { sources: string[]; flags: string[] }> = {
+  // The compiler writes the call of the check at the entry of the functions of the list, which is how C
+  // and C++ that the host OS calls get it.
+  adopt: {
+    sources: ["adopt_cpp.cpp"],
+    flags: ["-fsanitize-coverage=func,trace-pc", `-fsanitize-coverage-allowlist=${join(TREE, "test", "adopt.list")}`],
+  },
+};
 
 /** The C compiler of this machine, for the programs that run on it: $CC, or cc. */
 function machineCompiler(): string {
@@ -54,17 +67,26 @@ function libraries(ctx: Context): string[] {
 }
 
 function image(ctx: Context, name: string, before: string): Step {
-  const source = join(TREE, "test", `${name}.c`);
+  const more = MORE[name] ?? { sources: [], flags: [] };
+  const sources = [`${name}.c`, ...more.sources].map(source => join(TREE, "test", source));
   const file = inOut(ctx, `${name}.img`);
+  const flags = [...abiFlags(ctx.arch), ...more.flags];
   const link = ["-static", "-pie", "--no-dynamic-linker", "-z", "noexecstack", ...IMAGE_LINK_FLAGS];
+  const lists = more.flags
+    .filter(flag => flag.startsWith("-fsanitize-coverage-allowlist="))
+    .map(flag => sha256File(flag.slice(flag.indexOf("=") + 1)));
   return {
     name: `image-${name}`,
-    inputs: [before, sha256File(source), abiFlags(ctx.arch), link],
+    inputs: [before, sources.map(sha256File), flags, lists, link],
     outputs: [file],
     make() {
-      const object = inOut(ctx, "build", "images", `${name}.o`);
       mkdirSync(inOut(ctx, "build", "images"), { recursive: true });
-      compileForImage(ctx, source, object, abiFlags(ctx.arch));
+      const objects = sources.map(source => {
+        const object = inOut(ctx, "build", "images", `${basename(source)}.o`);
+        const cxx = source.endsWith(".cpp") ? ["-x", "c++", "-nostdinc++", "-fno-exceptions", "-fno-rtti"] : [];
+        compileForImage(ctx, source, object, [...cxx, ...flags]);
+        return object;
+      });
       const crt = (part: string) => join(ctx.sysroot.lib, part);
       run([
         join(ctx.llvm, "ld.lld"),
@@ -73,7 +95,7 @@ function image(ctx: Context, name: string, before: string): Step {
         file,
         crt("rcrt1.o"),
         crt("crti.o"),
-        object,
+        ...objects,
         ...libraries(ctx),
         crt("crtn.o"),
       ]);

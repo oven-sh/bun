@@ -15,6 +15,11 @@
  * 3. tpidr_el0 is written in __set_thread_area only, and a function that reads
  *    it reads tpidrro_el0 and x18 as often (the three ways of __get_tp), except
  *    __tlsdesc_dynamic (dynamic linker, not in a static image).
+ *    The check of a function that the host OS enters, on a thread that may be its own, is
+ *    __bun_thread_enter of the libc (bun_adopt.c; __sanitizer_cov_trace_pc is its other name, the
+ *    one that the compiler calls): it reads the host table, and x18 and tpidrro_el0 as often, the
+ *    thread registers of Windows and of macOS. On Linux no thread is of another maker, and the
+ *    function does not read tpidr_el0.
  * 4. The Linux halves are referenced by their dispatchers only.
  * 5. Every image, whatever was linked into it: no TLS segment (the compiler
  *    would read tpidr_el0 for it), and rules 2 and 3 for every function, where
@@ -36,6 +41,14 @@ const LINUX_HALVES: Record<string, string[]> = {
   __restore_rt: ["__libc_sigaction"],
   __restore: ["__libc_sigaction"],
 };
+
+/** The names of the check of the slot of the thread pointer at an entry of the image (rule 3). */
+const ENTRY_CHECK = new Set(["__bun_thread_enter", "__sanitizer_cov_trace_pc"]);
+
+/** Rule 3 for the check at an entry: the thread registers of Windows and of macOS, and not the one of Linux. */
+function isEntryCheck(fn: Fn, readsHost: boolean): boolean {
+  return ENTRY_CHECK.has(fn.name) && readsHost && fn.tpidr === 0 && fn.x18 > 0 && fn.x18 === fn.tpidrro;
+}
 
 /** What the rules ask about one function: the instructions of every piece of code under its name. */
 interface Fn {
@@ -224,7 +237,7 @@ export async function checkAarch64(args: Arguments): Promise<Result> {
     if (fn.tpidr > 0 || fn.tpidrro > 0 || fn.x18 > 0) {
       readers++;
       const threeWays = fn.tpidr === fn.tpidrro && fn.tpidrro === fn.x18 && fn.namesHost;
-      if (!threeWays && fn.name !== "__tlsdesc_dynamic") {
+      if (!threeWays && fn.name !== "__tlsdesc_dynamic" && !isEntryCheck(fn, fn.namesHost)) {
         errors.push(
           `libc.a: ${fn.member} ${fn.name} reads tpidr_el0 ${fn.tpidr}, tpidrro_el0 ${fn.tpidrro}, x18 ${fn.x18} times`,
         );
@@ -289,7 +302,7 @@ export async function checkAarch64(args: Arguments): Promise<Result> {
       }
       if (fn.tpidr > 0 || fn.tpidrro > 0 || fn.x18 > 0) {
         imageReaders++;
-        if (!(fn.tpidr === fn.tpidrro && fn.tpidrro === fn.x18 && readsHost)) {
+        if (!(fn.tpidr === fn.tpidrro && fn.tpidrro === fn.x18 && readsHost) && !isEntryCheck(fn, readsHost)) {
           errors.push(
             `${image}: ${fn.name} reads tpidr_el0 ${fn.tpidr}, tpidrro_el0 ${fn.tpidrro}, x18 ${fn.x18} times`,
           );

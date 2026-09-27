@@ -39,6 +39,12 @@ export function abiFlags(arch: Arch): string[] {
     // x86_64: Windows x64 has no red zone, it may write below the stack pointer at any time.
     // aarch64: x18 is reserved on Windows (the TEB) and on macOS. The image never writes it.
     arch === "x86_64" ? "-mno-red-zone" : "-ffixed-x18",
+    // x86_64: a stack that Windows made grows through a guard page, one page at a time. A frame that is
+    // larger than a page touches each of its pages in order, as code that is compiled for Windows does.
+    // The image runs on such a stack when a thread of Windows enters it.
+    // aarch64: atomics are calls of compiler-rt's helpers, which take LSE or LL/SC by AT_HWCAP when the
+    // image starts. clang does that by itself only where it knows the runtime library as it compiles.
+    arch === "x86_64" ? "-fstack-clash-protection" : "-moutline-atomics",
     // The canary of the stack protector is a thread local of the libc, read through fs or tpidr_el0.
     "-fno-stack-protector",
     // The host maps the image wherever it finds room.

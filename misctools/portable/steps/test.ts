@@ -31,6 +31,27 @@ const PATHS = "vfork=1 signal=1 cancel=1 main_tls=7 stack=1 mask=1 thread_signal
 const linuxPaths = (mode: string) => new RegExp(`^linux_paths: mode=${mode} ${PATHS}`, "m");
 const requests = (mode: string) => new RegExp(`^requests: mode=${mode} checks=[0-9]* failures=0`, "m");
 const RAW_SYSCALL = /^raw_syscall: the kernel answered/m;
+/**
+ * test/adopt.c. Who wrote the check of the callback: its source, or the compiler for a function of
+ * test/adopt.list. Hosted, 8 threads of the host call into the image, 50 times each.
+ */
+const ADOPT: [string, string][] = [
+  ["source", "the check is in the source"],
+  ["listed", "C, the compiler wrote the check"],
+  ["listed-cpp", "C++, the compiler wrote the check"],
+];
+const ADOPT_MUST_FAIL: [string, string][] = [
+  ["no-check", "the source does not check"],
+  ["unlisted", "C that the list does not name"],
+  ["unlisted-cpp", "C++ that the list does not name"],
+];
+const adoptDirect = (who: string) =>
+  new RegExp(`^adopt: mode=direct check=${who} calls=50 sum=1225 adopted_now=0 adopted_ever=0$`, "m");
+const adoptHosted = (who: string) =>
+  new RegExp(
+    `^adopt: mode=hosted check=${who} threads=8 calls=400 sum=149800 expected=149800 adopted_now=0 adopted_ever=8 destructors=8 image_threads_ok=4/4 main_tls=unset$`,
+    "m",
+  );
 
 /** A run that no test needs longer than. One that hangs is a failure, not the end of the tests. */
 const TIME_LIMIT_MS = 600_000;
@@ -117,6 +138,20 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
     "direct",
     requestsFile,
   ]);
+
+  for (const [who, what] of ADOPT) {
+    await expect(42, adoptDirect(who), `${arch} adopt direct (${what})`, [...emulator, image("adopt"), who]);
+    await expect(
+      42,
+      adoptHosted(who),
+      `${arch} adopt hosted: 8 threads of the host call into the image (${what})`,
+      [...emulator, host, image("adopt"), who],
+    );
+  }
+  // 139 is SIGSEGV: without the check the first use of the thread pointer is an address near 0.
+  for (const [who, what] of ADOPT_MUST_FAIL) {
+    await expect(139, /(?:)/, `${arch} adopt hosted, must fail: ${what}`, [...emulator, host, image("adopt"), who]);
+  }
 
   let checked = await check(ctx, false);
 

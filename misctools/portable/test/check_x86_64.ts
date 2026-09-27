@@ -18,6 +18,10 @@
  *    compiler or a thread pointer read of other code has a constant in place
  *    of the register ("%fs:0x0"). Except the TLS descriptor functions of the
  *    dynamic linker (not in a static image).
+ *    A third way is the check of a function that the host OS enters, on a thread
+ *    that may be its own: "mov %gs:(%reg),%reg" with __bun_tp_offset in the
+ *    register, in a function that refers to __bun_tp_offset and has no fs
+ *    (bun_adopt.c of the libc, and what is compiled with its check inline).
  * 4. The Linux halves are referenced by their dispatchers only.
  * 5. Every image, whatever was linked into it: no TLS segment, no "sysenter"
  *    and no "int $0x80", and rules 1 to 3 for every function. Data that sits
@@ -90,6 +94,8 @@ type Fn = {
   fs: number;
   gs: number;
   host: boolean;
+  /** The function refers to __bun_tp_offset, where the slot of the thread pointer is from gs. */
+  slot: boolean;
   redZone: string[];
   legacy: string[];
   segment: string[];
@@ -135,6 +141,7 @@ async function functions(llvm: string, path: string, relocs: boolean, each: (f: 
         fs: 0,
         gs: 0,
         host: false,
+        slot: false,
         redZone: [],
         legacy: [],
         segment: [],
@@ -148,6 +155,7 @@ async function functions(llvm: string, path: string, relocs: boolean, each: (f: 
       const name = symbol.replace(/[-+]0x[0-9a-f]+$/, "");
       current.refs.add(name);
       if (name === "__bun_host") current.host = true;
+      if (name === "__bun_tp_offset") current.slot = true;
       return;
     }
     m = insn.exec(line);
@@ -162,6 +170,7 @@ async function functions(llvm: string, path: string, relocs: boolean, each: (f: 
       else current.gs++;
     }
     if (text.includes("<__bun_host>") || text.includes("<__bun_host+")) current.host = true;
+    if (text.includes("<__bun_tp_offset>")) current.slot = true;
     if (redZone.test(text) && !/^lea[lq]?\s/.test(text)) current.redZone.push(line.trim());
   };
   for await (const chunk of proc.stdout) {
@@ -173,6 +182,11 @@ async function functions(llvm: string, path: string, relocs: boolean, each: (f: 
   if (rest) handle(rest);
   if (current) each(current);
   await proc.exited;
+}
+
+/** The third way of rule 3: the slot of the thread pointer, read through gs at the offset that __bun_tp_offset holds. */
+function checksSlot(f: Fn): boolean {
+  return f.slot && f.gs > 0 && f.fs === 0;
 }
 
 export async function checkX86_64(args: Arguments): Promise<Result> {
@@ -202,6 +216,7 @@ export async function checkX86_64(args: Arguments): Promise<Result> {
     let withSyscall = 0,
       guarded = 0,
       readers = 0,
+      entries = 0,
       below = 0;
     const callers: Record<string, Set<string>> = {};
     for (const half of Object.keys(LINUX_HALVES)) callers[half] = new Set();
@@ -218,7 +233,8 @@ export async function checkX86_64(args: Arguments): Promise<Result> {
       }
       if (f.fs || f.gs) {
         readers++;
-        if (!f.host) errors.push(`${where} reads the thread pointer and does not refer to __bun_host`);
+        if (checksSlot(f)) entries++;
+        else if (!f.host) errors.push(`${where} reads the thread pointer and does not refer to __bun_host`);
       }
       if (!DYNAMIC_LINKER_ONLY.has(f.name))
         for (const line of f.segment) errors.push(`${where}: fs or gs in another way than __get_tp: ${line}`);
@@ -229,7 +245,7 @@ export async function checkX86_64(args: Arguments): Promise<Result> {
       `syscall: ${withSyscall} functions of libc.a, ${guarded} refer to __bun_host, ${withSyscall - guarded} do not (Linux halves, or errors below)`,
     );
     lines.push(
-      `thread pointer: ${readers} functions of libc.a read it, all of them in the two ways of __get_tp (or errors below)`,
+      `thread pointer: ${readers} functions of libc.a read it, ${readers - entries} in the two ways of __get_tp and ${entries} as the check of the slot at an entry (or errors below)`,
     );
     let halvesOk = true;
     for (const [half, allowed] of Object.entries(LINUX_HALVES)) {
@@ -283,7 +299,7 @@ export async function checkX86_64(args: Arguments): Promise<Result> {
       }
       if (f.fs || f.gs) {
         readers++;
-        if (!f.host) problems.push(`reads the thread pointer and does not read __bun_host`);
+        if (!checksSlot(f) && !f.host) problems.push(`reads the thread pointer and does not read __bun_host`);
       }
       for (const line of f.segment) problems.push(`fs or gs in another way than __get_tp: ${line}`);
       if (problems.length === 0) return;

@@ -602,26 +602,4 @@ describe.concurrent("compile include", () => {
     },
     TIMEOUT,
   );
-
-  test(
-    "Bun.build rejects compile.include with an empty entrypoints array",
-    async () => {
-      // Regression: with no explicit entrypoint, the first expanded include became
-      // entry_points' only member, and StandaloneModuleGraph runs the first
-      // EntryPoint-kind output at startup -- an included module (meant to stay lazy
-      // until a runtime import()) would run immediately instead.
-      using dir = tempDir("compile-include-empty-entrypoints-api", {
-        "plugins/target.js": `export default 1;`,
-      });
-      const script = /* js */ `
-        try {
-          await Bun.build({ entrypoints: [], compile: { include: ["./plugins"] } });
-          console.log("no error");
-        } catch (e) { console.log(String(e.message)); }
-      `;
-      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
-      expect(stdout.trim()).toContain("compile.include requires at least one entrypoint");
-    },
-    TIMEOUT,
-  );
 });

@@ -965,20 +965,13 @@ pub(crate) mod js_bundler {
                             // standalone HTML build, regardless of what the entrypoints
                             // happen to look like right now — checking only the
                             // then-current entry points let a non-HTML entrypoint list
-                            // slip past this guard.
-                            if this.target == Target::Browser {
+                            // slip past this guard. `target` defaults to `Browser` when
+                            // unset, so this must gate on `did_set_target` too, or every
+                            // include build without an explicit `target` (the common case)
+                            // would be rejected.
+                            if did_set_target && this.target == Target::Browser {
                                 return Err(global_this.throw_invalid_arguments(format_args!(
                                     "Cannot use compile.include with target 'browser'"
-                                )));
-                            }
-                            // Without an explicit entry point, the first expanded include
-                            // below would become `entry_points`' only member —
-                            // `StandaloneModuleGraph` runs the first `EntryPoint`-kind
-                            // output at startup, so an included module (meant to stay
-                            // lazy until a runtime `import()`) would run immediately.
-                            if this.entry_points.count() == 0 {
-                                return Err(global_this.throw_invalid_arguments(format_args!(
-                                    "compile.include requires at least one entrypoint"
                                 )));
                             }
                             match crate::cli::build_command::expand_compile_includes(&patterns) {

@@ -614,16 +614,15 @@ pub(crate) enum Style {
     NextjsPages,
     NextjsAppUi,
     NextjsAppRoutes,
-    /// A user's style function (`CustomFileSystemRouterFunction` in bake.d.ts). Not implemented:
-    /// nothing calls the function, so it is not kept.
+    /// A `CustomFileSystemRouterFunction` (bake.d.ts). Not implemented, so the function is not kept.
     JavascriptDefined,
 }
 
 bun_core::comptime_string_map! {
-    pub(crate) static STYLE_MAP: fn() -> Style = {
-        b"nextjs-pages" => || Style::NextjsPages,
-        b"nextjs-app-ui" => || Style::NextjsAppUi,
-        b"nextjs-app-routes" => || Style::NextjsAppRoutes,
+    pub(crate) static STYLE_MAP: Style = {
+        b"nextjs-pages" => Style::NextjsPages,
+        b"nextjs-app-ui" => Style::NextjsAppUi,
+        b"nextjs-app-routes" => Style::NextjsAppRoutes,
     };
 }
 
@@ -635,7 +634,7 @@ impl Style {
             let bun_string = value.to_bun_string(global)?;
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
-                return Ok(style());
+                return Ok(*style);
             }
         } else if value.is_callable() {
             return Ok(Style::JavascriptDefined);

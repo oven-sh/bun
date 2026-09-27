@@ -229,11 +229,8 @@ macro_rules! __mal_column_impl {
         $crate::__mal_paste! {
             #[inline]
             fn [<items_ $field>](&self) -> &[$ty] {
-                // The column is found by the field's name, which `dead_code` cannot follow. This is the read of
-                // `$field` it can: the field counts as read exactly when its accessor is used.
-                let _ = |elem: &$elem| {
-                    let _ = &elem.$field;
-                };
+                // `dead_code` cannot follow a column found by name; this use of `$field` it can.
+                let _ = ::core::mem::offset_of!($elem, $field);
                 self.items::<{ ::core::stringify!($field) }, $ty>()
             }
             #[inline]

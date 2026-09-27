@@ -417,8 +417,6 @@ macro_rules! validation_scope {
 pub struct ExceptionValidationScope {
     #[cfg(any(debug_assertions, bun_asan))]
     scope: TopExceptionScope,
-    #[cfg(not(any(debug_assertions, bun_asan)))]
-    _scope: (),
 }
 
 /// RAII guard for an [`ExceptionValidationScope`]. See [`TopExceptionScopeGuard`].
@@ -484,7 +482,7 @@ impl ExceptionValidationScope {
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
             let _ = (global, src);
-            storage.write(Self { _scope: () })
+            storage.write(Self {})
         }
     }
 

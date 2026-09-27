@@ -115,7 +115,7 @@ pub mod ffi {
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
 // `PosixSpawnResult::pifd_from_pid` can flip it without depending on
-// `bun_threading`. `bun_spawn::WaiterThread` reads/writes through these.
+// `bun_threading`. `bun_spawn::process::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
     use core::sync::atomic::{AtomicBool, Ordering};

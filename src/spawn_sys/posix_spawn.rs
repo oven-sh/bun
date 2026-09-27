@@ -6,8 +6,7 @@ use core::ffi::{c_char, c_int};
 use core::ptr;
 use std::ffi::{CStr, CString};
 
-use bun_sys as sys;
-use bun_sys::Fd;
+use bun_sys::{self as sys, Fd};
 
 // `bun_sys::c` only re-exports a thin slice of libc
 // (no `posix_spawn*`/`waitpid`/`wait4`). Use the `libc` crate directly here;
@@ -39,11 +38,10 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
-use self::posix_compat::pid_t;
-use self::posix_compat::{Errno, errno};
+use self::posix_compat::{Errno, errno, to_posix_path};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t};
-use self::posix_compat::{fd_t, to_posix_path};
+use libc::pid_t;
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
@@ -51,14 +49,6 @@ mod posix_compat {
     use core::ffi::c_int;
     use std::ffi::CString;
 
-    /// Native fd backing int.
-    // posix_spawn file actions use libc `int` fds on the C side
-    // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
-    // `FdNative` is HANDLE, but this code path is unreachable there — keep
-    // the C-ABI type so the struct compiles unchanged.
-    pub(super) type fd_t = core::ffi::c_int;
-    /// Native process id type.
-    pub(super) type pid_t = libc::pid_t;
     #[cfg(target_os = "macos")]
     pub(super) use bun_sys::posix::mode_t;
 
@@ -114,14 +104,6 @@ pub mod bun_spawn {
     // lives in `Actions.paths` below.
     pub use bun_core::spawn_ffi::{Action, FileActionType};
 
-    // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
-    // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
-    // spawn there), so trap instead of inventing a HANDLE→int cast.
-    #[inline(always)]
-    fn fd_int(fd: Fd) -> fd_t {
-        fd.native()
-    }
-
     #[derive(Default)]
     pub struct Actions {
         pub(crate) chdir_buf: Option<CString>,
@@ -168,7 +150,7 @@ pub mod bun_spawn {
                 path: path_ptr,
                 flags: i32::try_from(flags).expect("int cast"),
                 mode,
-                fds: [fd_int(fd), 0],
+                fds: [fd.native(), 0],
             });
             Ok(())
         }
@@ -176,7 +158,7 @@ pub mod bun_spawn {
         pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Close,
-                fds: [fd_int(fd), 0],
+                fds: [fd.native(), 0],
                 ..Default::default()
             });
             Ok(())
@@ -185,7 +167,7 @@ pub mod bun_spawn {
         pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Dup2,
-                fds: [fd_int(fd), fd_int(newfd)],
+                fds: [fd.native(), newfd.native()],
                 ..Default::default()
             });
             Ok(())
@@ -302,8 +284,7 @@ pub mod posix_spawn {
     // On Linux/FreeBSD the runtime path goes through `bun_spawn` (vfork-based
     // `posix_spawn_bun`), so these are only **used** on macOS-non-PTY. Gate
     // them on `target_os = "macos"` to avoid the Darwin-only `_np` extensions
-    // (`addinherit_np`) breaking the Linux build; the `not(unix)` Windows path
-    // never reaches them either.
+    // (`addinherit_np`) breaking the Linux build.
     #[cfg(target_os = "macos")]
     pub struct PosixSpawnAttr {
         pub(crate) attr: system::posix_spawnattr_t,
@@ -436,12 +417,9 @@ pub mod posix_spawn {
         }
     }
 
-    // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
-    // Windows uses different spawn mechanisms.
+    // BunSpawn types on both Linux and macOS, for PTY support via posix_spawn_bun.
     pub(crate) type Actions = bun_spawn::Actions;
     pub(crate) type Attr = bun_spawn::Attr;
-    // No not(unix) Actions/Attr aliases: Windows goes through
-    // `process.rs::spawn_process_windows` (libuv) and never reaches these.
 
     // The #[repr(C)] request mirrors + extern decl live in `bun_core::spawn_ffi`
     // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
@@ -451,17 +429,14 @@ pub mod posix_spawn {
 
     fn spawn_bun(
         path: &CStr,
-        req_: BunSpawnRequest,
+        req: &BunSpawnRequest,
         argv: *const *const c_char,
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
-        let mut req = req_;
         let mut pid: c_int = 0;
 
         // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-        let rc =
-            unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
-        let _ = &mut req; // keep req alive across the call
+        let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, argv, envp) };
 
         if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)
@@ -603,7 +578,7 @@ pub mod posix_spawn {
         if use_bun_spawn {
             return spawn_bun(
                 path,
-                BunSpawnRequest {
+                &BunSpawnRequest {
                     actions: match actions {
                         Some(act) => ActionsList {
                             ptr: act.actions.as_ptr(),
@@ -680,14 +655,10 @@ pub mod posix_spawn {
         // Linux/FreeBSD: `use_bun_spawn` is statically true above, so the
         // early return always fires; rustc can't prove that from the runtime
         // bool. macOS falls through to the system-posix_spawn block above.
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(not(target_os = "macos"))]
         {
             unreachable!("posix_spawn_bun handles all unix-non-darwin spawns");
         }
-
-        // Windows path (uses different mechanism)
-        // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
-        // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
     }
 
     /// Same as waitpid, but also returns resource usage information.
@@ -728,11 +699,6 @@ pub mod posix_spawn {
             }
         }
     }
-
-    // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
-    // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
-    // this module — they need event-loop types this `-sys` crate cannot name.
-    pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }
 
 use crate::spawn_process as process;

@@ -30,15 +30,13 @@ use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
-use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, ReturnCodeExt as _};
 use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
-use crate::timer::EventLoopTimerTag;
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
@@ -299,8 +297,6 @@ impl WindowsNamedPipe {
     fn on_read_error(&self, err: bun_sys::E) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
         let _keep_alive = self.keep_alive();
-        // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
-        // this type is Windows-only at runtime so the comparison is gated.
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
             (self.handlers.on_end)(self.handlers.ctx);
@@ -526,8 +522,6 @@ impl WindowsNamedPipe {
         handlers: Handlers,
         vm: &'static VirtualMachine,
     ) -> WindowsNamedPipe {
-        // The whole fn is `#[cfg(windows)]`-gated so POSIX builds never see
-        // `uv::Pipe`.
         WindowsNamedPipe {
             vm,
             // Leak the `Box` and keep only a non-owning `NonNull` alias.
@@ -632,30 +626,28 @@ impl WindowsNamedPipe {
                 }
             }
         }
-        {
-            let uv_loop = self.vm.uv_loop();
-            let pipe = self.uv_pipe().unwrap();
-            // SAFETY: live libuv handle alias; see `pipe`.
-            if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
-                self.discard_unadopted_pipe();
-                return Err(e);
-            }
-            // Until the writer adopts it (start_with_pipe), a thread teardown closes
-            // this pipe through us; afterwards the writer re-records itself as owner.
-            uv::open_handles::set_owner(
-                pipe.cast(),
-                self.root_ptr().cast(),
-                Some(Self::stop_for_vm_teardown),
-            );
+        let uv_loop = self.vm.uv_loop();
+        let pipe = self.uv_pipe().unwrap();
+        // SAFETY: live libuv handle alias; see `pipe`.
+        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
+            self.discard_unadopted_pipe();
+            return Err(e);
+        }
+        // Until the writer adopts it (start_with_pipe), a thread teardown closes
+        // this pipe through us; afterwards the writer re-records itself as owner.
+        uv::open_handles::set_owner(
+            pipe.cast(),
+            self.root_ptr().cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
 
-            // SAFETY: as above.
-            if let Err(e) = server
-                .accept(unsafe { &mut *pipe })
-                .to_result(bun_sys::Tag::accept)
-            {
-                self.discard_unadopted_pipe();
-                return Err(e);
-            }
+        // SAFETY: as above.
+        if let Err(e) = server
+            .accept(unsafe { &mut *pipe })
+            .to_result(bun_sys::Tag::accept)
+        {
+            self.discard_unadopted_pipe();
+            return Err(e);
         }
 
         self.update_flags(|f| f.set(Flags::DISCONNECTED, false));
@@ -1022,15 +1014,13 @@ impl WindowsNamedPipe {
         // `on_close_source()` from re-entering `Parent::on_close` (we're already
         // inside it). `current_payload` may still back an in-flight `uv_write`
         // (cancelled async by `uv_close`) so it is left to the writer's own Drop.
-        {
-            if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
-                // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
-                // always succeeds and is a no-op if not reading.
-                unsafe { (*stream).read_stop() };
-            }
-            self.writer.with_mut(|w| w.close_without_reporting());
-            self.writer.with_mut(|w| w.outgoing = Default::default());
+        if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
+            // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
+            // always succeeds and is a no-op if not reading.
+            unsafe { (*stream).read_stop() };
         }
+        self.writer.with_mut(|w| w.close_without_reporting());
+        self.writer.with_mut(|w| w.outgoing = Default::default());
         if !self.flags.get().contains(Flags::WRAPPER_BUSY) {
             self.wrapper.set(None);
         }
@@ -1094,16 +1084,46 @@ pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut bori
     }
 }
 
-bun_io::impl_streaming_writer_parent! {
-    windows_only WindowsNamedPipe;
-    borrow     = shared,
-    on_write   = on_write,
-    on_error   = on_error,
-    on_ready   = on_writable,
-    on_close   = on_close,
-    uv_loop    = |this| (*this).vm.uv_loop(),
-    ref_       = |this| (&*this).r#ref(),
-    deref      = |this| (&*this).deref(),
+impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
+    #[inline]
+    unsafe fn loop_(this: *mut Self) -> *mut uv::Loop {
+        // SAFETY: BACKREF set via `set_parent`; shared-only read.
+        unsafe { (*this).vm.uv_loop() }
+    }
+    #[inline]
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see loop_. Intrusive refcount bump.
+        unsafe { (*this).r#ref() };
+    }
+    #[inline]
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see loop_. May free `this`.
+        unsafe { (*this).deref() };
+    }
+}
+
+impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
+    const HAS_ON_WRITABLE: bool = true;
+    #[inline]
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: BACKREF set via `set_parent`; the callbacks take `&self`.
+        unsafe { (*this).on_write(amount, status) }
+    }
+    #[inline]
+    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_error(err) }
+    }
+    #[inline]
+    unsafe fn on_writable(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_writable() }
+    }
+    #[inline]
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_close() }
+    }
 }
 
 /// The three `stream.readStart` callbacks (alloc/error/read) baked into a

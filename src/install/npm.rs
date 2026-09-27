@@ -1221,10 +1221,7 @@ pub mod package_manifest {
                                 tmp_path,
                                 cache_dir,
                                 outpath,
-                                bun_sys::Renameat2Flags {
-                                    mode: bun_sys::RenameMode::Exchange,
-                                    ..Default::default()
-                                },
+                                bun_sys::RenameMode::Exchange,
                             )?;
 
                             // Success.

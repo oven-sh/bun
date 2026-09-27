@@ -1,8 +1,7 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 // `File` here IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_methods)]
-// The tests serialize on std's Mutex: bun_threading depends on bun_sys, so
-// using its Mutex here would be a dependency cycle.
+// Tests lock std's Mutex: bun_threading depends on this crate.
 #![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
@@ -1070,10 +1069,9 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+/// What [`renameat2`] does when the destination exists.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenameMode {
-    #[default]
     Normal,
     /// Linux `RENAME_EXCHANGE` / macOS `RENAME_SWAP`.
     Exchange,
@@ -1081,45 +1079,20 @@ pub enum RenameMode {
     NoReplace,
 }
 
-/// Flags for [`renameat2`].
-/// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
-/// `RENAME_SWAP`/`RENAME_EXCL`.
-#[derive(Clone, Copy, Default)]
-pub struct Renameat2Flags {
-    pub mode: RenameMode,
-}
-
-impl Renameat2Flags {
+impl RenameMode {
+    /// The `renameat2(2)` / `renameatx_np` flag.
     #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn int(self) -> u32 {
-        let mut flags: u32 = 0;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    fn int(self) -> u32 {
         #[cfg(target_os = "macos")]
-        {
-            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 2,
-                RenameMode::NoReplace => flags |= 4,
-            }
+        let (exchange, no_replace) = (2, 4); // <sys/stdio.h>: RENAME_SWAP, RENAME_EXCL
+        #[cfg(not(target_os = "macos"))]
+        let (exchange, no_replace) = (libc::RENAME_EXCHANGE as u32, libc::RENAME_NOREPLACE as u32);
+        match self {
+            RenameMode::Normal => 0,
+            RenameMode::Exchange => exchange,
+            RenameMode::NoReplace => no_replace,
         }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
-                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 1,
-                RenameMode::NoReplace => flags |= 2,
-            }
-        }
-        flags
     }
 }
 
@@ -1290,7 +1263,6 @@ impl Tag {
     pub const chmod: Tag = Tag(4);
     pub(crate) const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
-    // 7: clonefileat (nothing reports it)
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
     pub const copyfile: Tag = Tag(10);
@@ -1361,7 +1333,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const pwritev: Tag = Tag(75);
     pub const readv: Tag = Tag(76);
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(crate) const preadv: Tag = Tag(77);
     pub const ioctl_ficlone: Tag = Tag(78);
     pub const accept: Tag = Tag(79);
@@ -2483,13 +2455,13 @@ mod posix_impl {
         Ok(())
     }
     /// `renameat2(2)` (Linux) / `renameatx_np` (macOS). FreeBSD and any other
-    /// unix without an atomic-exchange rename get `ENOSYS` when flags are set.
+    /// unix without an atomic-exchange rename get `ENOSYS` for any other mode than `Normal`.
     pub fn renameat2(
         from_dir: Fd,
         from: &ZStr,
         to_dir: Fd,
         to: &ZStr,
-        flags: Renameat2Flags,
+        mode: RenameMode,
     ) -> Maybe<()> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -2503,7 +2475,7 @@ mod posix_impl {
                         from.as_ptr(),
                         to_dir.native() as libc::c_long,
                         to.as_ptr(),
-                        flags.int() as libc::c_long,
+                        mode.int() as libc::c_long,
                     )
                 },
                 Tag::rename,
@@ -2530,7 +2502,7 @@ mod posix_impl {
                         from.as_ptr(),
                         to_dir.native(),
                         to.as_ptr(),
-                        flags.int(),
+                        mode.int(),
                     )
                 },
                 Tag::rename,
@@ -2540,7 +2512,7 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            if flags.int() != 0 {
+            if mode != RenameMode::Normal {
                 return Err(
                     Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes())
                 );
@@ -3417,9 +3389,8 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false when
-    /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
-    /// returned ENOSYS/EPERM/EACCES.
+    /// `bun.sys.canUseMemfd()` — false when `BUN_FEATURE_FLAG_DISABLE_MEMFD` is
+    /// set or once `memfd_create` has returned ENOSYS/EPERM/EACCES.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
@@ -3963,11 +3934,11 @@ mod windows_impl {
         from: &ZStr,
         to_dir: Fd,
         to: &ZStr,
-        flags: Renameat2Flags,
+        mode: RenameMode,
     ) -> Maybe<()> {
         // `renameat2` collapses to `renameat` on windows; the
-        // `noreplace`/`exchange` flags are not honored by NTFS rename.
-        let _ = flags;
+        // `noreplace`/`exchange` modes are not honored by NTFS rename.
+        let _ = mode;
         renameat(from_dir, from, to_dir, to)
     }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
@@ -4759,7 +4730,7 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
         #[link_name = "statfs64"]
         fn _statfs(path: *const core::ffi::c_char, buf: *mut libc::statfs) -> core::ffi::c_int;
     }
-    #[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     use libc::statfs as _statfs;
     loop {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
@@ -8991,16 +8962,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
             // just rename it. We don't need to delete anything.
-            let err = match renameat2(
-                from_dir_fd,
-                from,
-                to_dir_fd,
-                to,
-                Renameat2Flags {
-                    mode: RenameMode::NoReplace,
-                    ..Default::default()
-                },
-            ) {
+            let err = match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::NoReplace) {
                 // if ENOENT don't retry
                 Err(err) => {
                     if err.get_errno() == E::ENOENT {
@@ -9017,16 +8979,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 // Fallback path: the folder exists in the cache dir, it might be in a strange state
                 // let's attempt to atomically replace it with the temporary folder's version
                 if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY | E::EOPNOTSUPP) {
-                    match renameat2(
-                        from_dir_fd,
-                        from,
-                        to_dir_fd,
-                        to,
-                        Renameat2Flags {
-                            mode: RenameMode::Exchange,
-                            ..Default::default()
-                        },
-                    ) {
+                    match renameat2(from_dir_fd, from, to_dir_fd, to, RenameMode::Exchange) {
                         Err(_) => {}
                         Ok(()) => break 'attempt,
                     }

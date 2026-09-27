@@ -1037,7 +1037,6 @@ pub(crate) enum TryWith {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl TryWith {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) const fn tag(self) -> bun_sys::Tag {
         match self {
             TryWith::Sendfile => bun_sys::Tag::sendfile,

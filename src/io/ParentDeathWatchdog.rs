@@ -404,25 +404,19 @@ fn kill_descendants() {
     }
 }
 
-/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
+/// Enumerate our direct children into `out`. Used by `spawnPosix`
 /// to snapshot pre-existing siblings before arming subreaper, so the post-wait
 /// `kill_subreaper_adoptees` can tell adopted orphans apart from `Bun.spawn`
 /// siblings (both have ppid==us). Returns the slice written; empty on
-/// non-Linux or enumeration failure.
+/// enumeration failure.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        return &out[..0];
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let self_pid = getpid();
-        let n = list_child_pids(self_pid, out).unwrap_or(0);
-        &out[..n]
-    }
+    let self_pid = getpid();
+    let n = list_child_pids(self_pid, out).unwrap_or(0);
+    &out[..n]
 }
 
-/// Linux-only: SIGKILL every direct child of ours that isn't in `siblings`,
+/// SIGKILL every direct child of ours that isn't in `siblings`,
 /// plus its entire subtree. Called from `spawnPosix`'s defer *before*
 /// disarming subreaper, so subreaper-adopted setsid daemons (ppid==us) are
 /// killed while we can still find them — closing the window where the
@@ -434,48 +428,42 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
 /// spawnSync. A `Bun.spawn` from a Worker thread *during* spawnSync would
 /// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
 /// and would kill it at process-exit via `kill_descendants()` anyway.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        let _ = siblings;
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let self_pid = getpid();
-        let mut buf: [libc::pid_t; 4096] = [0; 4096];
+    let self_pid = getpid();
+    let mut buf: [libc::pid_t; 4096] = [0; 4096];
 
-        // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
-        // After we kill an adoptee's subtree, anything that raced (forked between
-        // enumerate and STOP) reparents to us and shows up next pass. Bounded by
-        // tree depth; 64 is far past any sane chain.
-        let mut rounds: u8 = 64;
-        while rounds > 0 {
-            let Some(n) = list_child_pids(self_pid, &mut buf) else {
-                return;
-            };
-            let mut killed_any = false;
-            for &child in &buf[..n] {
-                if child <= 1 || child == self_pid {
-                    continue;
-                }
-                if siblings.contains(&child) {
-                    continue;
-                }
-                kill_tree_rooted_at(child, self_pid);
-                killed_any = true;
+    // Iterate: kill non-sibling direct children's subtrees, reap, re-read.
+    // After we kill an adoptee's subtree, anything that raced (forked between
+    // enumerate and STOP) reparents to us and shows up next pass. Bounded by
+    // tree depth; 64 is far past any sane chain.
+    let mut rounds: u8 = 64;
+    while rounds > 0 {
+        let Some(n) = list_child_pids(self_pid, &mut buf) else {
+            return;
+        };
+        let mut killed_any = false;
+        for &child in &buf[..n] {
+            if child <= 1 || child == self_pid {
+                continue;
             }
-            // Reap what we just killed so their children (if any raced) reparent.
-            loop {
-                let mut st: c_int = 0;
-                if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
-                    break;
-                }
+            if siblings.contains(&child) {
+                continue;
             }
-            if !killed_any {
-                return;
-            }
-            rounds -= 1;
+            kill_tree_rooted_at(child, self_pid);
+            killed_any = true;
         }
+        // Reap what we just killed so their children (if any raced) reparent.
+        loop {
+            let mut st: c_int = 0;
+            if waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
+                break;
+            }
+        }
+        if !killed_any {
+            return;
+        }
+        rounds -= 1;
     }
 }
 

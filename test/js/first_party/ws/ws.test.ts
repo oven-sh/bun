@@ -1405,9 +1405,9 @@ describe.each([
   });
 });
 
-// Under --hot one native server serves every generation of the file. Handlers that node:http
-// gave get what npm ws emits. Handlers that Bun.serve gave get a string and two arguments,
-// also when the server was a node:http server before the edit.
+// Under --hot one native server serves every generation of the file, and a socket stays open over
+// an edit. Handlers that node:http gave get what npm ws emits. Handlers that Bun.serve gave get a
+// string and two arguments, also for a socket that a generation of node:http opened.
 it("--hot reload from node:http to Bun.serve gives each message handler its own arguments", async () => {
   using dir = tempDir("hot-ws-to-serve", {
     "server.mjs": `
@@ -1418,9 +1418,10 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
 
       globalThis.generation ??= 0;
       const generation = globalThis.generation++;
-      const received = Promise.withResolvers();
       const shapeOf = data =>
         typeof data === "string" ? "string" : Buffer.isBuffer(data) ? "Buffer" : Object.prototype.toString.call(data);
+      // A socket that stays open calls the listener of the generation that opened it.
+      const nextMessage = () => (globalThis.message = Promise.withResolvers()).promise;
       let port;
 
       // Under --hot an error leaves the process alive, in wait for the next edit.
@@ -1438,7 +1439,9 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
         const wss = new WebSocketServer({ server });
         wss.on("connection", ws => {
           ws.binaryType = "arraybuffer";
-          ws.on("message", (data, isBinary) => received.resolve({ handler: "ws", data: shapeOf(data), isBinary }));
+          ws.on("message", (data, isBinary) =>
+            globalThis.message.resolve({ handler: "ws, generation " + generation, data: shapeOf(data), isBinary }),
+          );
         });
         await once(server.listen(0, "127.0.0.1"), "listening");
         port = server.address().port;
@@ -1451,7 +1454,7 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
           },
           websocket: {
             message(ws, data) {
-              received.resolve({ handler: "Bun.serve", data: shapeOf(data), arguments: arguments.length });
+              globalThis.message.resolve({ handler: "Bun.serve", data: shapeOf(data), arguments: arguments.length });
             },
           },
         });
@@ -1459,12 +1462,21 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
       }
 
       globalThis.firstPort ??= port;
-      const client = new WebSocket("ws://127.0.0.1:" + port);
+      const openSocket = globalThis.client;
+      const client = (globalThis.client = new WebSocket("ws://127.0.0.1:" + port));
+      client.onerror = () => globalThis.message.reject(new Error("the client of generation " + generation + " failed"));
+      client.onclose = event => globalThis.message.reject(new Error("the client closed with " + event.code));
+      let message = nextMessage();
       client.onopen = () => client.send("text");
-      client.onerror = () => received.reject(new Error("the client of generation " + generation + " failed"));
-      client.onclose = event => received.reject(new Error("the client closed with " + event.code));
-      console.log(JSON.stringify({ generation, samePort: port === globalThis.firstPort, ...(await received.promise) }));
-      client.close();
+      const result = { generation, samePort: port === globalThis.firstPort, newSocket: await message };
+      if (openSocket) {
+        message = nextMessage();
+        openSocket.send("text");
+        result.openSocket = await message;
+        openSocket.onclose = null;
+        openSocket.close();
+      }
+      console.log(JSON.stringify(result));
 
       if (generation < 2) {
         const self = new URL(import.meta.url);
@@ -1491,9 +1503,23 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
     stderr: stderr.replaceAll(/^DEBUG:.*\r?\n/gm, ""),
   }).toEqual({
     generations: [
-      { generation: 0, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
-      { generation: 1, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
-      { generation: 2, samePort: true, handler: "Bun.serve", data: "string", arguments: 2 },
+      {
+        generation: 0,
+        samePort: true,
+        newSocket: { handler: "ws, generation 0", data: "Buffer", isBinary: false },
+      },
+      {
+        generation: 1,
+        samePort: true,
+        newSocket: { handler: "ws, generation 1", data: "Buffer", isBinary: false },
+        openSocket: { handler: "ws, generation 0", data: "Buffer", isBinary: false },
+      },
+      {
+        generation: 2,
+        samePort: true,
+        newSocket: { handler: "Bun.serve", data: "string", arguments: 2 },
+        openSocket: { handler: "Bun.serve", data: "string", arguments: 2 },
+      },
     ],
     stderr: "",
   });

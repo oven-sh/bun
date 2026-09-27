@@ -2513,7 +2513,10 @@ export default class {
 
       it.failing("a name that the module cannot bind", async () => {
         const result = await run();
-        expect(result.stdout.split("\n")[1]).toBe(JSON.stringify(rowsThatCannotBind.map(([, , names]) => names)));
+        const [, names] = result.stdout.split("\n");
+        // A subprocess that did not print the names is not the failure that this test expects.
+        if (result.exitCode !== 0 || names === undefined) return;
+        expect(names).toBe(JSON.stringify(rowsThatCannotBind.map(([, , names]) => names)));
       });
     });
 

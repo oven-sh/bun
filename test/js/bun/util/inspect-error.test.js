@@ -510,3 +510,150 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The printer renders an error once and prints `[Circular]` where the error
+// comes back, under the key that holds it. Each entry of the printer must do
+// the same: the uncaught entries, the console, `Bun.inspect` and `bun test`.
+describe.concurrent("an error that reaches itself", () => {
+  const shapes = {
+    "through an own property": {
+      source: 'const e = new Error("x"); e.self = e;',
+      lines: ["error: x", " self: [Circular],"],
+    },
+    "through cause and through errors": {
+      source: 'const e = new Error("cyc"); e.cause = e; e.errors = [e];',
+      lines: ["error: cyc", "  cause: [Circular],", " errors: [", "  [Circular]", "],"],
+    },
+    "through an error inside an array property": {
+      source: 'const e = new Error("a"), b = new Error("b"); e.x = [b]; b.y = b;',
+      lines: ["error: a", " x: [", "error: b", " y: [Circular],", "],"],
+    },
+    "through the cause of its cause": {
+      source: 'const e = new Error("a"), b = new Error("b"); e.cause = b; b.cause = e;',
+      lines: ["error: a", "error: b", " cause: [Circular],"],
+    },
+    // The constructor makes `cause` a property that is not enumerable.
+    "through a cause from the constructor": {
+      source: 'const e = new Error("x", { cause: 0 }); e.cause = e;',
+      lines: ["error: x", " cause: [Circular],"],
+    },
+    "through the cause of a cause from the constructor": {
+      source: 'const e = new Error("a", { cause: 0 }), b = new Error("b", { cause: e }); e.cause = b;',
+      lines: ["error: a", "error: b", " cause: [Circular],"],
+    },
+  };
+  const expected = Object.fromEntries(Object.entries(shapes).map(([name, { lines }]) => [name, lines]));
+
+  // Drops the source preview, the frames and the version banner of an
+  // uncaught error: what is left is one line per rendered error, its
+  // properties and the markers.
+  function rendered(text) {
+    return text
+      .split("\n")
+      .filter(line => !/^\s*\d+ \| /.test(line) && !/^\s*\^\s*$/.test(line) && !/^\s+at /.test(line))
+      .filter(line => line.trim() !== "" && !line.startsWith("Bun v"));
+  }
+
+  async function run(cmd, { files, env } = {}) {
+    using dir = tempDir("inspect-error-cycle", files ?? {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // These entries return, so one process prints every shape.
+  const entries = {
+    "console.log": { log: "console.log", print: "console.log(e)", stream: "stdout", exitCode: 0 },
+    "console.error": { log: "console.error", print: "console.error(e)", stream: "stderr", exitCode: 0 },
+    "Bun.inspect": { log: "console.log", print: "console.log(Bun.inspect(e))", stream: "stdout", exitCode: 0 },
+    "reportError": { log: "console.error", print: "reportError(e)", stream: "stderr", exitCode: 1 },
+  };
+  for (const [entry, { log, print, stream, exitCode }] of Object.entries(entries)) {
+    test(entry, async () => {
+      const source = Object.entries(shapes)
+        .map(([name, shape]) => `{ ${log}(${JSON.stringify("shape: " + name)}); ${shape.source} ${print}; }`)
+        .join("\n");
+      const result = await run(["-e", source]);
+      const seen = {};
+      let lines;
+      for (const line of rendered(result[stream])) {
+        if (line.startsWith("shape: ")) seen[line.slice("shape: ".length)] = lines = [];
+        else lines.push(line);
+      }
+      expect({ seen, exitCode: result.exitCode }).toEqual({ seen: expected, exitCode });
+    });
+  }
+
+  // These entries end the process.
+  for (const [name, { source, lines }] of Object.entries(shapes)) {
+    test(`throw: ${name}`, async () => {
+      const { stderr, exitCode } = await run(["-e", `${source} throw e;`]);
+      expect({ lines: rendered(stderr), exitCode }).toEqual({ lines, exitCode: 1 });
+    });
+  }
+
+  test("Promise.reject", async () => {
+    const { source, lines } = shapes["through cause and through errors"];
+    const { stderr, exitCode } = await run(["-e", `${source} Promise.reject(e);`]);
+    expect({ lines: rendered(stderr), exitCode }).toEqual({ lines, exitCode: 1 });
+  });
+
+  test("bun test: a test that rejects with it is printed once and the next test runs", async () => {
+    const { stderr, exitCode } = await run(["test", "./cycle.test.js"], {
+      files: {
+        "cycle.test.js": `
+          import { test } from "bun:test";
+          test("rejects", async () => {
+            ${shapes["through cause and through errors"].source}
+            throw e;
+          });
+          test("next", () => {});
+        `,
+      },
+    });
+    expect(rendered(stderr).filter(line => /^\s*(error: |cause: |errors: |\[Circular\]|\],)/.test(line))).toEqual(
+      shapes["through cause and through errors"].lines,
+    );
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("throw: as a member of an AggregateError that it holds", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      'const e = new Error("x"); e.list = [new AggregateError([e, new Error("y")], "agg")]; throw e;',
+    ]);
+    expect({ lines: rendered(stderr), exitCode }).toEqual({
+      lines: ["error: x", " list: [", "  [Circular]", "error: y", "],"],
+      exitCode: 1,
+    });
+  });
+
+  test("throw: one GitHub annotation", async () => {
+    const { stderr, exitCode } = await run(["-e", `${shapes["through cause and through errors"].source} throw e;`], {
+      env: { GITHUB_ACTIONS: "true" },
+    });
+    expect(stderr.split("\n").filter(line => line.startsWith("::error")).length).toBe(1);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an error that is printed twice without a cycle is rendered in full each time", async () => {
+    const { stdout, exitCode } = await run([
+      "-e",
+      'const e = new Error("twice"); e.meta = {}; console.log([e, e]); console.log(e, e); console.log({ a: e, b: { c: e } });',
+    ]);
+    const lines = rendered(stdout);
+    expect({
+      renders: lines.filter(line => line.trim() === "error: twice").length,
+      circular: lines.filter(line => line.includes("[Circular]")),
+      exitCode,
+    }).toEqual({ renders: 6, circular: [], exitCode: 0 });
+  });
+});

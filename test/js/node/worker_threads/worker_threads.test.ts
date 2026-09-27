@@ -715,6 +715,34 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  // The worker renders its uncaught error to text before it reports the error.
+  test("is fired with an error that reaches itself", async () => {
+    using dir = tempDir("worker-error-cycle", {
+      "parent.cjs": `
+        const { Worker } = require("node:worker_threads");
+        const seen = [];
+        const worker = new Worker("const e = new Error('cyc'); e.cause = e; e.errors = [e]; throw e;", { eval: true });
+        worker.on("error", error => seen.push(error === null ? "null" : error.name + ": " + error.message));
+        worker.on("exit", code => {
+          seen.push("exit " + code);
+          console.log(JSON.stringify(seen));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify(["Error: cyc", "exit 1"]),
+      exitCode: 0,
+    });
+  });
 });
 
 describe("getHeapSnapshot", () => {

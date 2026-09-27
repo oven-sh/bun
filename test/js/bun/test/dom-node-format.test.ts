@@ -84,6 +84,41 @@ describe("snapshots", () => {
     `);
   });
 
+  test("happy-dom form and select, which are Proxy objects", () => {
+    const form = document.createElement("form");
+    form.innerHTML = '<select name="s"><option>a</option></select>';
+
+    expect(form).toMatchInlineSnapshot(`
+      <form>
+        <select
+          name="s"
+        >
+          <option>
+            a
+          </option>
+        </select>
+      </form>
+    `);
+    expect(failureMessage(() => expect(form).toBe(null))).toContain("Received: <form>");
+    expect(new Proxy({ a: 1 }, {})).toMatchInlineSnapshot(`{"a":1}`);
+  });
+
+  test("a length past the last index ends the list", () => {
+    class HTMLDivElement {
+      nodeType = 1;
+      tagName = "DIV";
+      attributes = { length: 2147483647, 0: { name: "id", value: "x" } };
+      childNodes = { length: 2147483647, 0: document.createTextNode("t") };
+    }
+    expect(new HTMLDivElement()).toMatchInlineSnapshot(`
+      <div
+        id="x"
+      >
+        t
+      </div>
+    `);
+  });
+
   test("nodes inside objects and arrays", () => {
     expect({ el: document.createElement("br"), text: document.createTextNode("x") }).toMatchInlineSnapshot(`
       {

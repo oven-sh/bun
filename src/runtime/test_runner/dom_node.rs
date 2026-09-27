@@ -302,9 +302,13 @@ where
     printer.children_push();
     let result: JsResult<()> = (|| {
         for i in 0..child_count {
+            let child = children.get_index(global, i)?;
+            // A `length` past the last index ends the list.
+            if child.is_undefined() {
+                break;
+            }
             let _ = writer.write_all(b"\n");
             printer.write_indent(writer);
-            let child = children.get_index(global, i)?;
             printer.print_value(writer, child)?;
         }
         Ok(())
@@ -336,9 +340,12 @@ fn attribute_names(
         return Ok(None);
     };
     let count = index_length(global, attributes)?;
-    let mut names: Vec<(Utf8Bytes<'static>, u32)> = Vec::with_capacity(count as usize);
+    let mut names: Vec<(Utf8Bytes<'static>, u32)> = Vec::new();
     for i in 0..count {
         let attribute = attributes.get_index(global, i)?;
+        if attribute.is_undefined() {
+            break;
+        }
         if !attribute.is_object() {
             continue;
         }

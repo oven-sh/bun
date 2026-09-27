@@ -518,6 +518,16 @@ impl Tag {
             JSType::DerivedArray | JSType::Array => Tag::Array,
             JSType::DerivedStringObject | JSType::String | JSType::StringObject => Tag::String,
             JSType::RegExpObject => Tag::String,
+            // happy-dom wraps `<form>` and `<select>` in a Proxy.
+            JSType::ProxyObject => {
+                let target = value.get_proxy_target();
+                let class_name = target.get_class_name(global_this)?;
+                if dom_node::node_kind(global_this, target, &class_name)?.is_some() {
+                    Tag::Object
+                } else {
+                    Tag::JSON
+                }
+            }
             JSType::Symbol => Tag::Symbol,
             JSType::BooleanObject => Tag::Boolean,
             JSType::JSFunction => Tag::Function,
@@ -2331,6 +2341,8 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b" />");
                 }
                 Tag::Object => {
+                    // Only a DOM node Proxy reaches this arm (`Tag::get`); print its target.
+                    let value = if js_type == JSType::ProxyObject { value.get_proxy_target() } else { value };
                     let class_name = value.get_class_name(self.global_this)?;
                     let node_kind = dom_node::node_kind(self.global_this, value, &class_name)?;
 

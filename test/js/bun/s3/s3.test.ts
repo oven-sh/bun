@@ -1,17 +1,12 @@
 import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { afterAll, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, getSecret, isCI, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 import { spawnServer } from "s3-server";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
-
-// The local server needs no container, so each test of this file runs under `bun bd test`. A debug build
-// runs them many times slower than a release build: some tests that move no data took more than 5 seconds.
-// CI does not run debug builds, and it gives each test its time with `--timeout`.
-if (isDebug) setDefaultTimeout(60_000);
 
 type S3Credentials = S3Options & {
   service: string;

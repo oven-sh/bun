@@ -128,38 +128,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
   }
 
-  async #runAsync() {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
-
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
-      return;
-    }
-
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      this.reject(this[_adapter].notTaggedCallError());
-      return;
-    }
-
-    this[_queryStatus] |= SQLQueryStatus.executed;
-    const handle = this.#getQueryHandle();
-
-    if (!handle) {
-      return this;
-    }
-
-    await Promise.$resolve();
-
-    try {
-      return handler(this, handle);
-    } catch (err) {
-      this[_queryStatus] |= SQLQueryStatus.error;
-      this.reject(err as Error);
-    }
-  }
-
   get active() {
     return (this[_queryStatus] & SQLQueryStatus.active) != 0;
   }
@@ -240,7 +208,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    await this.#runAsync();
+    this.#run();
     return this;
   }
 
@@ -271,23 +239,12 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
-  #runAsyncAndCatch() {
-    const runPromise = this.#runAsync();
-
-    if ($isPromise(runPromise) && runPromise !== this) {
-      runPromise.catch(() => {
-        // Error is already handled via this.reject() in #runAsync
-        // This catch is just to prevent unhandled rejection warnings
-      });
-    }
-  }
-
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2>;
   then() {
-    this.#runAsyncAndCatch();
+    this.#run();
 
     const result = super.$then.$apply(this, arguments);
 
@@ -305,7 +262,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    this.#runAsyncAndCatch();
+    this.#run();
 
     const result = super.catch.$apply(this, arguments);
     $pokePromiseAsHandled(result);
@@ -318,7 +275,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    this.#runAsyncAndCatch();
+    this.#run();
 
     return super.finally.$apply(this, arguments);
   }

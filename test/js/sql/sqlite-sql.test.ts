@@ -2311,7 +2311,7 @@ describe("Connection management", () => {
             .map(symbol => query[symbol]),
         );
         expect({ links: links.length, inUse: links.filter(link => link !== undefined).length }).toEqual({
-          links: 6,
+          links: 3,
           inUse: 0,
         });
       } finally {
@@ -2479,6 +2479,38 @@ describe("Connection management", () => {
         rows: rowsIn(filename),
         closes: onclose.mock.calls.length,
       }).toEqual({ queries: ["no bind", "done"], rows: [2], closes: 1 });
+    });
+
+    // close() reads `timeout` before it looks at its own state, so the close() of the getter is the first one.
+    test("a close() from the getter of `timeout` runs a started query once and calls onclose once", async () => {
+      using dir = tempDir("sqlite-close", {});
+      const onclose = mock();
+      const { sql, filename } = await openTable(dir, { onclose });
+      const inner: Promise<void>[] = [];
+      const inserted = settle(sql`INSERT INTO t VALUES (1)`.then(() => "done"));
+      await sql.close({
+        get timeout() {
+          if (inner.length === 0) inner.push(sql.close());
+          return 5;
+        },
+      });
+      await Promise.all(inner);
+      expect({ query: await inserted, rows: rowsIn(filename), closes: onclose.mock.calls.length }).toEqual({
+        query: { rows: "done" },
+        rows: [1],
+        closes: 1,
+      });
+    });
+
+    test("close() rejects a started query with the error of the open when the database did not open", async () => {
+      using dir = tempDir("sqlite-close", {});
+      const sql = new SQL({ adapter: "sqlite", filename: join(String(dir), "missing", "t.db") });
+      const started = settle(sql`SELECT 1`.then(rows => rows));
+      await sql.close();
+      expect({ started: await started, late: await settle(sql`SELECT 1`.execute()) }).toEqual({
+        started: { code: "SQLITE_CANTOPEN" },
+        late: { code: "ERR_SQLITE_CONNECTION_CLOSED" },
+      });
     });
 
     // dispose() closes the database under the client. close() has nothing to run then, and must not ask the database.

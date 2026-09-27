@@ -139,11 +139,11 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
-    // create() without the dial. Keeps the URL only, so start() takes the options again.
+    // create() without the dial. Keeps the options for start().
     static ExceptionOr<Ref<WebSocket>> prepare(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
-    // Dials once. Options that no longer pass the checks fail the connection, with no throw.
-    void start(WebSocketOptions&&);
-    // For a start() whose options could not be read.
+    // Dials once, with the options of prepare() and these headers. A failure fails the connection, with no throw.
+    void start(std::optional<FetchHeaders::Init>&& headers);
+    // Fails a prepared socket like a refused connection: error event, then close 1006.
     void failToStart(String&& reason);
     ~WebSocket();
 
@@ -322,7 +322,7 @@ private:
     // cycle early or late, as upstream tolerates.
     void stop() final;
     // A prepared socket has nothing that can call back, so only script keeps it alive until start().
-    bool virtualHasPendingActivity() const final { return m_state == CONNECTING ? !m_isPrepared : m_state != CLOSED; }
+    bool virtualHasPendingActivity() const final { return m_state == CONNECTING ? !m_prepared : m_state != CLOSED; }
 
     explicit WebSocket(ScriptExecutionContext&);
 
@@ -335,6 +335,7 @@ private:
         bool isUnix;
         bool isSecure;
     };
+    struct Prepared;
     // Sets m_url, then checks it and the subprotocols. Dials nothing. A rejected socket is CLOSED.
     ExceptionOr<Transport> validate(const String& url, const Vector<String>& protocols);
     // Takes the options, then connects.
@@ -373,10 +374,11 @@ private:
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };
-    // Between prepare() and start(). Also read from the GC thread, like m_state.
-    bool m_isPrepared { false };
-    AnyWebSocket m_connectedWebSocket { nullptr };
+    // Before the union, in the padding after the flags, so that m_prepared adds no bytes.
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
+    AnyWebSocket m_connectedWebSocket { nullptr };
+    // The options from prepare() to start(). Also read from the GC thread, like m_state.
+    std::unique_ptr<Prepared> m_prepared;
     // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or
     // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

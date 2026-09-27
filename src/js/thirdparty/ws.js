@@ -157,7 +157,7 @@ function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 // `new WebSocket()` in two steps, for `finishRequest`: the socket exists before `request.end()` dials it.
-let prepareWebSocket, startWebSocket;
+let prepareWebSocket, startWebSocket, failWebSocket;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -243,7 +243,11 @@ class BunWebSocket extends EventEmitter {
         };
       }
       if (!prepareWebSocket) {
-        ({ 0: prepareWebSocket, 1: startWebSocket } = $cpp("JSWebSocket.cpp", "createWebSocketPrepareBinding"));
+        ({
+          0: prepareWebSocket,
+          1: startWebSocket,
+          2: failWebSocket,
+        } = $cpp("JSWebSocket.cpp", "createWebSocketPrepareBinding"));
       }
       // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L1020-L1024
       const ws = (this.#ws = prepareWebSocket(
@@ -284,7 +288,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            startWebSocket(ws, nativeOptions(protocols, headers, method, proxy, tlsOptions, disableDeflate));
+            startWebSocket(ws, headers);
           }
           return nodeHttpClientRequestSimulated;
         },
@@ -314,9 +318,9 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated, this);
       if (!didCallEnd && EventEmitter.prototype.listenerCount.$call(nodeHttpClientRequestSimulated, "socket") > 0) {
-        emitWarning(
-          "finishRequest-socket",
-          "ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun. If request.end() runs only from a 'socket' listener, it never runs and the WebSocket stays CONNECTING. Call request.end() without waiting for 'socket'.",
+        failWebSocket(
+          ws,
+          "finishRequest added a 'socket' listener to the request and did not call request.end(). Bun does not emit 'socket'. Remove the listener and call request.end() without it.",
         );
       }
       return;

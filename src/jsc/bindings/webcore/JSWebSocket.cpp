@@ -1103,7 +1103,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrepare, (JSGlobalObject * lexicalGlobalObje
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object))));
 }
 
-// start(socket, options): the dial that prepare() left out, with the options as they are now.
+// start(socket, headers): the dial that prepare() left out, with the headers as they are now.
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketStart, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1112,15 +1112,34 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketStart, (JSGlobalObject * lexicalGlobalObject
     if (!socket) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
 
-    WebSocketOptions options;
-    options.parse(lexicalGlobalObject, callFrame->argument(1));
-    if (throwScope.exception()) [[unlikely]] {
-        // The caller gets the exception. Nothing else can end this socket, so it fails here.
-        socket->wrapped().failToStart("Invalid options"_s);
-        return {};
+    std::optional<FetchHeaders::Init> headersInit;
+    JSValue headersValue = callFrame->argument(1);
+    if (!headersValue.isUndefinedOrNull()) {
+        headersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, headersValue);
+        if (throwScope.exception()) [[unlikely]] {
+            // The caller gets the exception. Nothing else can end this socket, so it fails here.
+            socket->wrapped().failToStart("Invalid headers"_s);
+            return {};
+        }
     }
 
-    socket->wrapped().start(WTF::move(options));
+    socket->wrapped().start(WTF::move(headersInit));
+    return JSValue::encode(jsUndefined());
+}
+
+// fail(socket, reason): ends a socket that start() cannot dial.
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketFail, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* socket = dynamicDowncast<JSWebSocket>(callFrame->argument(0));
+    if (!socket) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+
+    auto reason = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    socket->wrapped().failToStart(WTF::move(reason));
     return JSValue::encode(jsUndefined());
 }
 
@@ -1128,11 +1147,13 @@ JSC::JSValue createWebSocketPrepareBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* binding = constructEmptyArray(globalObject, nullptr, 2);
+    auto* binding = constructEmptyArray(globalObject, nullptr, 3);
     RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(globalObject, 0, JSFunction::create(vm, globalObject, 2, "prepare"_s, jsWebSocketPrepare, ImplementationVisibility::Public));
     RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(globalObject, 1, JSFunction::create(vm, globalObject, 2, "start"_s, jsWebSocketStart, ImplementationVisibility::Public));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 2, "fail"_s, jsWebSocketFail, ImplementationVisibility::Public));
     RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }

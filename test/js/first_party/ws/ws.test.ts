@@ -788,14 +788,58 @@ describe("WebSocket finishRequest", () => {
     expect({ returned, upgrades }).toEqual({ returned: [true, true, true], upgrades: ["token", null] });
   });
 
-  // The constructor accepted the input, so what is wrong with it at req.end() is a failed connection.
-  it("fails the client when the subprotocols are not valid any more at req.end()", async () => {
+  // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L655-L673
+  it("reads the options in the constructor, and not again at req.end()", async () => {
     const { server, upgrades, url } = serve();
     using _ = server;
 
     const protocols = ["a"];
+    let reads = 0;
+    const tlsOptions = {
+      get rejectUnauthorized() {
+        reads++;
+        return false;
+      },
+    };
     let request: any;
-    const ws = new WebSocket(url, protocols, { finishRequest: req => void (request = req) });
+    const ws = new WebSocket(url, protocols, { tls: tlsOptions, finishRequest: req => void (request = req) });
+    const readsInConstructor = reads;
+    // A second read finds a duplicate, which is not a valid list.
+    protocols.push("a");
+    const message = firstMessage(ws);
+    authorize(request);
+
+    expect({
+      message: await message,
+      readsInConstructor: readsInConstructor > 0,
+      readsAtEnd: reads - readsInConstructor,
+      protocol: ws.protocol,
+      upgrades,
+    }).toEqual({
+      message: "authorization=token",
+      readsInConstructor: true,
+      readsAtEnd: 0,
+      protocol: "a",
+      upgrades: ["token"],
+    });
+    ws.terminate();
+  });
+
+  // setHeader() accepted the value, so what is wrong with it at req.end() is a failed connection.
+  it("fails the client when a header throws at req.end(), and req.end() throws the same error", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    const error = new Error("from the header");
+    let throws = false;
+    const value = {
+      toString() {
+        if (throws) throw error;
+        return "token";
+      },
+    };
+    let request: any;
+    const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     ws.on("open", () => events.push("open"));
@@ -804,54 +848,73 @@ describe("WebSocket finishRequest", () => {
       events.push("close " + code);
       closed.resolve();
     });
-    protocols.push("a");
-    const returned = request.end() === request;
-    await closed.promise;
-    await laterClient(url);
-
-    expect({ returned, events, readyState: ws.readyState, upgrades }).toEqual({
-      returned: true,
-      events: [
-        `error: WebSocket connection to '${url}' failed: WebSocket protocols contain duplicates:a'`,
-        "close 1006",
-      ],
-      readyState: WebSocket.CLOSED,
-      upgrades: [null],
-    });
-  });
-
-  it("fails the client when an option throws at req.end(), and req.end() throws the same error", async () => {
-    const { server, upgrades, url } = serve();
-    using _ = server;
-
-    const error = new Error("from the getter");
-    let throws = false;
-    const tlsOptions = {
-      get rejectUnauthorized() {
-        if (throws) throw error;
-        return false;
-      },
-    };
-    let request: any;
-    const ws = new WebSocket(url, { tls: tlsOptions, finishRequest: req => void (request = req) });
-    const events: string[] = [];
-    const closed = Promise.withResolvers<void>();
-    ws.on("open", () => events.push("open"));
-    ws.on("error", () => events.push("error"));
-    ws.on("close", code => {
-      events.push("close " + code);
-      closed.resolve();
-    });
+    request.setHeader("authorization", value);
     throws = true;
     expect(() => request.end()).toThrow(error);
     await closed.promise;
     await laterClient(url);
 
     expect({ events, readyState: ws.readyState, upgrades }).toEqual({
-      events: ["error", "close 1006"],
+      events: [`error: WebSocket connection to '${url}' failed: Invalid headers`, "close 1006"],
       readyState: WebSocket.CLOSED,
       upgrades: [null],
     });
+  });
+
+  // The request has no socket to give, so a listener that waits for one cannot call req.end().
+  it("fails the client when finishRequest adds a 'socket' listener and does not call req.end()", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    let request: any;
+    const ws = new WebSocket(url, {
+      finishRequest(req) {
+        request = req;
+        req.on("socket", () => authorize(req));
+      },
+    });
+    const events: string[] = [];
+    const settled = Promise.withResolvers<void>();
+    ws.on("open", () => {
+      events.push("open");
+      settled.resolve();
+    });
+    ws.on("error", error => events.push("error: " + error.message));
+    ws.on("close", code => {
+      events.push("close " + code);
+      settled.resolve();
+    });
+    await settled.promise;
+    const returned = authorize(request) === request;
+    await laterClient(url);
+
+    expect({ events, readyState: ws.readyState, returned, upgrades }).toEqual({
+      events: [
+        `error: WebSocket connection to '${url}' failed: finishRequest added a 'socket' listener to the request ` +
+          "and did not call request.end(). Bun does not emit 'socket'. " +
+          "Remove the listener and call request.end() without it.",
+        "close 1006",
+      ],
+      readyState: WebSocket.CLOSED,
+      returned: true,
+      upgrades: [null],
+    });
+  });
+
+  it("connects when finishRequest adds a 'socket' listener and calls req.end()", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    const ws = new WebSocket(url, {
+      finishRequest(req) {
+        req.on("socket", () => {});
+        authorize(req);
+      },
+    });
+    const message = await firstMessage(ws);
+    ws.terminate();
+
+    expect({ upgrades, message }).toEqual({ upgrades: ["token"], message: "authorization=token" });
   });
 
   it("passes the WebSocket as the second argument", () => {
@@ -1036,35 +1099,6 @@ describe("WebSocket finishRequest", () => {
 
     expect(stderr).toBe("");
     expect(stdout).toBe('{"opened":20}\n');
-    expect(exitCode).toBe(0);
-  });
-
-  it.concurrent("warns once when the request waits for 'socket', which it does not emit", async () => {
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        /* js */ `
-          const { WebSocket } = require("ws");
-          for (let i = 0; i < 2; i++) {
-            new WebSocket("ws://127.0.0.1:1/", { finishRequest: req => req.on("socket", () => req.end()) });
-          }
-          new WebSocket("ws://127.0.0.1:1/", { finishRequest() {} });
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout, stderr }).toEqual({
-      stdout: "",
-      stderr:
-        "[bun] Warning: ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun. " +
-        "If request.end() runs only from a 'socket' listener, it never runs and the WebSocket stays CONNECTING. " +
-        "Call request.end() without waiting for 'socket'.\n",
-    });
     expect(exitCode).toBe(0);
   });
 });

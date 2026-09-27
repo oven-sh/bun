@@ -319,6 +319,22 @@ it("should not leak memory", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("a TLS socket that waits in the low-priority queue times out", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tls-parked-timeout-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ opened: 20, timedOut: 20 }),
+    stderr: "",
+    exitCode: 0,
+  });
+}, // The fixture blocks for the 4 s between two timeout sweeps.
+30_000);
+
 describe("a listener accepts one connection per event loop iteration", () => {
   const count = 12;
   const request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";

@@ -646,11 +646,40 @@ describe("bundler", () => {
         "/dep.mjs": [`Top-level await is currently not supported with the "${format}" output format`],
       },
     });
+
+    // The package is imported and required, so both get its "main" build. Its
+    // "module" build is parsed and is not linked.
+    itBundled(`${format}/TopLevelAwaitInUnlinkedFileBuilds`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { value } from "pkg";
+          const required = require("pkg");
+          console.log(value, required.value);
+        `,
+        "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "./main.js", "module": "./module.js" }`,
+        "/node_modules/pkg/main.js": `exports.value = "main";`,
+        "/node_modules/pkg/module.js": `export const value = await Promise.resolve("module");`,
+      },
+      format,
+      run: { stdout: "main main" },
+    });
+
+    // `await` is a keyword at the top level of each file, as with esm output.
+    itBundled(`${format}/TopLevelAwaitAsIdentifierIsRejected`, {
+      files: {
+        "/entry.js": `var await = 1;`,
+      },
+      format,
+      bundleErrors: {
+        "/entry.js": ['Cannot use "yield" or "await" here.'],
+      },
+    });
   });
 
   // The note names the switch that fits the caller: a flag for `bun build`, a
   // config key for `Bun.build()`. ESM bytecode needs a compiled executable, so
-  // the note for a bytecode build names that switch too.
+  // the note for a bytecode build names that switch too. With source maps the
+  // build must stop before the linker queues the source map tasks.
   describe.each([
     {
       name: "--format=cjs",
@@ -680,6 +709,22 @@ describe("bundler", () => {
       name: "--compile --bytecode",
       flags: ["--compile", "--bytecode", "--outfile=app"],
       config: { compile: true, bytecode: true },
+      format: "cjs",
+      cliNote: "Use --format=esm to allow top-level await",
+      apiNote: 'Use format: "esm" to allow top-level await',
+    },
+    {
+      name: "--sourcemap=linked",
+      flags: ["--format=cjs", "--sourcemap=linked", "--outdir=out"],
+      config: { format: "cjs", sourcemap: "linked", outdir: "out" },
+      format: "cjs",
+      cliNote: "Use --format=esm to allow top-level await",
+      apiNote: 'Use format: "esm" to allow top-level await',
+    },
+    {
+      name: "--compile --minify --sourcemap --bytecode",
+      flags: ["--compile", "--minify", "--sourcemap", "--bytecode", "--outfile=app"],
+      config: { compile: true, minify: true, sourcemap: "linked", bytecode: true },
       format: "cjs",
       cliNote: "Use --format=esm to allow top-level await",
       apiNote: 'Use format: "esm" to allow top-level await',

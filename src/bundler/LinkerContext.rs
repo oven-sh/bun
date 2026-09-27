@@ -861,6 +861,23 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
+        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
+        let has_top_level_await = unsafe { (*bundle).has_any_top_level_await_modules };
+        let format_without_top_level_await = match self.options.output_format {
+            Format::Cjs => Some("cjs"),
+            Format::Iife => Some("iife"),
+            Format::Esm | Format::InternalBakeDev => None,
+        };
+        // Before any task is queued: `bun build` does not join them when `link` fails.
+        if has_top_level_await && let Some(format_name) = format_without_top_level_await {
+            // Only `Bun.build()` installs a completion; the CLI never does.
+            // SAFETY: discriminant read of a field disjoint from `self`.
+            let from_js_api = unsafe { (*bundle).completion.is_some() };
+            if self.reject_top_level_await(format_name, from_js_api) {
+                return Err(LinkError::BuildFailed);
+            }
+        }
+
         if self.options.source_maps != SourceMapOption::None {
             self.compute_data_for_source_map(reachable);
         }
@@ -869,22 +886,6 @@ impl<'a> LinkerContext<'a> {
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
-        }
-
-        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
-        let has_top_level_await = unsafe { (*bundle).has_any_top_level_await_modules };
-        let format_without_top_level_await = match self.options.output_format {
-            Format::Cjs => Some("cjs"),
-            Format::Iife => Some("iife"),
-            Format::Esm | Format::InternalBakeDev => None,
-        };
-        if has_top_level_await && let Some(format_name) = format_without_top_level_await {
-            // Only `Bun.build()` installs a completion; the CLI never does.
-            // SAFETY: discriminant read of a field disjoint from `self`.
-            let from_js_api = unsafe { (*bundle).completion.is_some() };
-            if self.reject_top_level_await(format_name, from_js_api) {
-                return Err(LinkError::BuildFailed);
-            }
         }
 
         // Validate top-level await for all files first.

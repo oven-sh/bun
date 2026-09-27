@@ -5167,8 +5167,7 @@ pub(crate) mod testing_apis {
     #[cfg(socket_fault_injection)]
     const FAULT_SYSCALL_NAMES: &str = "recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer";
 
-    /// socket/close/shutdown have enum slots but no bsd.c hooks; accepting them
-    /// would arm rules that can never fire.
+    /// socket/close/shutdown are absent: no bsd.c hook, so their rules would never fire.
     #[cfg(socket_fault_injection)]
     fn parse_fault_syscall(name: &bun_core::String) -> Option<c_int> {
         use bun_uws_sys::fault_inject as fi;

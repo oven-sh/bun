@@ -1108,6 +1108,56 @@ describe("fs.watch", () => {
       }
     });
 
+    // A loop on `once` puts its listener back in a continuation. The continuation
+    // runs between two events of one batch, so the loop gets the second one.
+    test("a once loop hears of a write that merged into the second event of a batch", async () => {
+      using dir = tempDir("fs-watch-once-merge", {
+        "root": { "f.txt": "x", "other.txt": "x" },
+        "busy": {},
+        "spare": {},
+      });
+      const root = path.join(String(dir), "root");
+      const busy = path.join(String(dir), "busy");
+      const large = path.join(String(dir), "spare", "large");
+      for (let i = 0; i < 200; i++) fs.mkdirSync(path.join(large, String(i)), { recursive: true });
+      const busyWatcher = fs.watch(busy, { recursive: true }, () => {});
+      const watcher = fs.watch(root, { recursive: true });
+      const last = Promise.withResolvers<void>();
+      watcher.on("change", (_eventType, filename) => {
+        if (filename === "last") last.resolve();
+      });
+      watcher.on("error", last.reject);
+      watcher.on("close", () => last.reject(new Error("the watcher closed")));
+      const stop = new AbortController();
+      const heard: string[] = [];
+      const consumer = (async () => {
+        for (;;) {
+          const [, filename] = await once(watcher, "change", { signal: stop.signal });
+          heard.push(filename);
+        }
+      })();
+      // Stays handled when the test fails before it gets to await the consumer.
+      consumer.catch(() => {});
+      try {
+        // The watcher thread walks the 200 directories first, so it reads the two
+        // records of the appends in one batch.
+        fs.renameSync(large, path.join(busy, "large"));
+        fs.appendFileSync(path.join(root, "other.txt"), "y");
+        fs.appendFileSync(path.join(root, "f.txt"), "y");
+        holdUntilWatched(path.join(busy, "handled"));
+        // This record merges into the event of f.txt.
+        fs.appendFileSync(path.join(root, "f.txt"), "y");
+        holdUntilWatched(path.join(root, "last"));
+        await last.promise;
+      } finally {
+        watcher.close();
+        busyWatcher.close();
+        stop.abort();
+      }
+      await expect(consumer).rejects.toMatchObject({ name: "AbortError" });
+      expect(heard.filter(filename => filename !== "last")).toEqual(["other.txt", "f.txt"]);
+    });
+
     // The second script of https://github.com/oven-sh/bun/issues/44005.
     test("a write made by the listener, 100 times", async () => {
       using dir = tempDir("fs-watch-listener-writes", { "f.txt": "x" });
@@ -1184,6 +1234,12 @@ describe("fs.watch", () => {
             stdout: "pipe",
             stderr: "pipe",
           });
+          const output = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // The writer ends before the last round only when it failed.
+          output.then(
+            ([, stderr, exitCode]) => failed.reject(new Error(`the writer ended with code ${exitCode}: ${stderr}`)),
+            failed.reject,
+          );
           const sizes: number[] = [];
           for (round = 0; round < rounds; round++) {
             ended = Promise.withResolvers<void>();
@@ -1193,7 +1249,7 @@ describe("fs.watch", () => {
             sizes.push(size);
           }
           await proc.stdin.end();
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const [stdout, stderr, exitCode] = await output;
           return { sizes, stdout, stderr, exitCode };
         } finally {
           watcher.close();

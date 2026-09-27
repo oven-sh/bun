@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isIPv6 } from "harness";
+import { join } from "node:path";
 import { Registry } from "../index.ts";
 import { urlHost } from "../src/registry.ts";
 import { abbreviatedAccept, jsonHeaders, md5, request, sha1, sha512, storage } from "./helpers.ts";
@@ -764,5 +765,41 @@ describe("hooks", () => {
       headers: { authorization: `Basic ${btoa("keeper:secret")}` },
     });
     expect(reply.json).toEqual({ username: "keeper" });
+  });
+});
+
+describe("storage", () => {
+  test("must be a directory", () => {
+    const missing = join(fixtures.path, "not-there");
+    const file = join(fixtures.path, "plain", "package.json");
+    expect(() => new Registry({ storage: missing })).toThrow(`The storage is not a directory: ${missing}`);
+    expect(() => new Registry({ storage: file })).toThrow(`The storage is not a directory: ${file}`);
+  });
+
+  test("a file is not a package and not a scope", async () => {
+    const files = await storage([{ manifests: [{ name: "real", version: "1.0.0" }] }]);
+    using _ = files.directory;
+    await Promise.all([Bun.write(join(files.path, "a-file"), ""), Bun.write(join(files.path, "@a-file"), "")]);
+    using own = new Registry({ storage: files.path }).start();
+    expect({
+      package: (await request(`${own.url}a-file`)).status,
+      scope: (await request(`${own.url}@a-file%2fpackage`)).status,
+      real: (await request(`${own.url}real`)).status,
+    }).toEqual({ package: 404, scope: 404, real: 200 });
+  });
+
+  test("a read that failed is not the state of the package", async () => {
+    const files = await storage([{ manifests: [{ name: "mended", version: "1.0.0" }] }]);
+    using _ = files.directory;
+    const packument = join(files.path, "mended", "package.json");
+    const valid = await Bun.file(packument).text();
+    await Bun.write(packument, "{");
+
+    using own = new Registry({ storage: files.path }).start();
+    expect((await request(`${own.url}mended`)).status).toBe(500);
+    await Bun.write(packument, valid);
+    expect((await request(`${own.url}mended`)).status).toBe(200);
+    // The read that failed is an error of the registry, so stop() reports it.
+    expect(() => own.stop()).toThrow(`${packument} is not a packument`);
   });
 });

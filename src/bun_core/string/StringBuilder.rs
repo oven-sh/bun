@@ -200,7 +200,6 @@ impl StringBuilder {
 
     pub fn allocated_slice(&mut self) -> &mut [u8] {
         let Some(ptr) = self.ptr else { return &mut [] };
-        debug_assert!(self.cap > 0);
         // SAFETY: ptr was allocated with self.cap bytes.
         unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.cap) }
     }
@@ -220,7 +219,7 @@ impl StringBuilder {
 
     pub fn writable(&mut self) -> &mut [u8] {
         let Some(ptr) = self.ptr else { return &mut [] };
-        debug_assert!(self.cap > 0);
+        debug_assert!(self.len <= self.cap);
         // SAFETY: ptr was allocated with self.cap bytes; len <= cap.
         unsafe { slice::from_raw_parts_mut(ptr.as_ptr().add(self.len), self.cap - self.len) }
     }

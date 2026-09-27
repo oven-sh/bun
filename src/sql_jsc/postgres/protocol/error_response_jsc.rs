@@ -120,11 +120,7 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
 
     // Capture `b.len` first: `b.allocated_slice()` borrows `b` mutably.
     let len = b.len;
-    let error_message: &[u8] = if len > 0 {
-        &b.allocated_slice()[..len]
-    } else {
-        b""
-    };
+    let error_message: &[u8] = &b.allocated_slice()[..len];
 
     create_postgres_error(
         global_object,

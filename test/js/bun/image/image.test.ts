@@ -1723,15 +1723,23 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
         expect(await new Bun.Image(bytes, { raw: { brightness } }).resize(64).bytes()).toEqual(out);
       }
 
-      // And one that survives it develops a different frame. Asking for
-      // any multiplier turns the automatic stretch off, so even `1` — the
-      // exposure as shot — differs from the frame above; `2` differs from
-      // `1` in turn, which is the multiplier itself arriving rather than
-      // just the flag that switches the stretch.
+      // And one that survives it develops a different frame — as long as
+      // the frame has something to develop. Scaling moves nothing in a
+      // pixel already at 0 or already clipped at 255, and the sample is
+      // whatever the environment variable was pointed at: a dark frame
+      // shot with the cap on is entirely those, and would say nothing
+      // either way. Any ordinary photograph has pixels in between.
       const asShot = await new Bun.Image(bytes, { raw: { brightness: 1 } }).resize(64).bytes();
-      const doubled = await new Bun.Image(bytes, { raw: { brightness: 2 } }).resize(64).bytes();
-      expect(asShot).not.toEqual(out);
-      expect(doubled).not.toEqual(asShot);
+      const scalable = decodePngRaw(asShot).data.some((v, i) => i % 4 !== 3 && v > 0 && v < 255);
+      if (scalable) {
+        // Asking for any multiplier turns the automatic stretch off, so
+        // even `1` — the exposure as shot — differs from the frame above.
+        // `2` differs from `1` in turn, which is the multiplier itself
+        // arriving rather than just the flag that switches the stretch.
+        const doubled = await new Bun.Image(bytes, { raw: { brightness: 2 } }).resize(64).bytes();
+        expect(asShot).not.toEqual(out);
+        expect(doubled).not.toEqual(asShot);
+      }
 
       // Truncated: the header still identifies, the sensor data runs out.
       // LibRaw's default data-error callback prints to stderr here, so the

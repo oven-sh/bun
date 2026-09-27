@@ -100,3 +100,46 @@ test("Bun.serve rejects a new binary frame during fragmented text", async () => 
   });
   expect(messages).toBe(0);
 });
+
+test("Bun.serve rejects a new text frame after a ping in fragmented text", async () => {
+  let messages = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("upgrade failed", { status: 400 });
+    },
+    websocket: {
+      message() {
+        messages++;
+      },
+    },
+  });
+
+  const malformed = Buffer.concat([
+    maskedClientFrame(1, "first", false),
+    maskedClientFrame(9, "ping"),
+    maskedClientFrame(1, "second"),
+    maskedClientFrame(8, Buffer.from([0x03, 0xe8])),
+  ]);
+  const socket = net.connect(server.port, "127.0.0.1");
+  let response = Buffer.alloc(0);
+  let sent = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.on("data", chunk => {
+        response = Buffer.concat([response, chunk]);
+        if (sent || !response.includes("\r\n\r\n")) return;
+        sent = true;
+        socket.write(malformed);
+      });
+      socket.once("close", resolve);
+      socket.once("error", reject);
+      socket.write(rawUpgrade);
+    });
+  } finally {
+    socket.destroy();
+  }
+  expect(response.toString("latin1")).toStartWith("HTTP/1.1 101");
+  expect(messages).toBe(0);
+});

@@ -140,21 +140,31 @@ afterAll(async () => {
 });
 
 describe.concurrent("Bun.serve http2 protocol", () => {
-  test("SETTINGS_ENABLE_CONNECT_PROTOCOL cannot be disabled after being enabled", async () => {
-    const raw = await RawH2.connect(fx.port, secure);
-    raw.write(Buffer.concat([frame(T.SETTINGS, 0, 0, setting(8, 1)), frame(T.SETTINGS, 0, 0, setting(8, 0))]));
-    expect((await raw.goaway()).code).toBe(1); // PROTOCOL_ERROR
-    raw.close();
-  });
-
-  for (const [name, id] of [
-    ["known", 8],
-    ["unknown", 0xf00d],
+  for (const [name, frames] of [
+    ["separate frames", [frame(T.SETTINGS, 0, 0, setting(8, 1)), frame(T.SETTINGS, 0, 0, setting(8, 0))]],
+    ["one frame", [frame(T.SETTINGS, 0, 0, Buffer.concat([setting(8, 1), setting(8, 0)]))]],
   ] as const) {
-    test(`duplicate ${name} SETTINGS identifier → GOAWAY PROTOCOL_ERROR`, async () => {
+    test(`SETTINGS_ENABLE_CONNECT_PROTOCOL cannot be disabled after being enabled in ${name}`, async () => {
       const raw = await RawH2.connect(fx.port, secure);
-      raw.write(frame(T.SETTINGS, 0, 0, Buffer.concat([setting(id, 1), setting(id, 1)])));
-      expect((await raw.goaway()).code).toBe(1);
+      raw.write(Buffer.concat(frames));
+      expect((await raw.goaway()).code).toBe(1); // PROTOCOL_ERROR
+      raw.close();
+    });
+  }
+
+  for (const [name, settings] of [
+    ["known", [setting(8, 1), setting(8, 1)]],
+    ["ENABLE_CONNECT_PROTOCOL from 0 to 1", [setting(8, 0), setting(8, 1)]],
+    ["unknown", [setting(0xf00d, 1), setting(0xf00d, 2)]],
+    ["initial window, last value wins", [setting(4, 0), setting(4, 65_535)]],
+  ] as const) {
+    test(`duplicate ${name} SETTINGS identifiers are processed in order`, async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      raw.write(frame(T.SETTINGS, 0, 0, Buffer.concat(settings)));
+      await barrier(raw, "settings");
+      raw.headers(1, baseHeaders("/hello"));
+      expect((await raw.body(1)).toString()).toBe("hello");
+      expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(false);
       raw.close();
     });
   }
@@ -3167,6 +3177,15 @@ for (const [name, malformedFrame] of [
     "new binary frame during a fragmented text message",
     Buffer.concat([wsClientFrame(1, "first", false), wsClientFrame(2, "second")]),
   ],
+  [
+    "new text frame after a ping in a fragmented message",
+    Buffer.concat([
+      wsClientFrame(1, "first", false),
+      wsClientFrame(9, "ping"),
+      wsClientFrame(1, "second"),
+      wsClientFrame(8, Buffer.from([0x03, 0xe8])),
+    ]),
+  ],
 ] as const) {
   test(`RFC 6455 protocol error (${name}) closes only the tunnel stream`, async () => {
     const raw = await RawH2.connect(fx.port, secure);
@@ -3184,6 +3203,27 @@ for (const [name, malformedFrame] of [
     raw.close();
   });
 }
+
+test("RFC 6455 rejects a new text frame after a split ping in a fragmented message", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+
+  const ping = wsClientFrame(9, "ping");
+  raw.write(frame(T.DATA, 0, 1, Buffer.concat([wsClientFrame(1, "first", false), ping.subarray(0, 8)])));
+  raw.write(
+    frame(
+      T.DATA,
+      0,
+      1,
+      Buffer.concat([ping.subarray(8), wsClientFrame(1, "second"), wsClientFrame(8, Buffer.from([0x03, 0xe8]))]),
+    ),
+  );
+  const close = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x88);
+  expect(wsServerFrame(close.payload).payload.readUInt16BE(0)).toBe(1002);
+  expect(raw.frames.some(f => f.type === T.DATA && f.streamId === 1 && f.payload[0] === 0x81)).toBe(false);
+  raw.close();
+});
 
 for (const [name, malformedFrame] of [
   ["invalid text payload", wsClientFrame(1, Buffer.from([0xc3, 0x28]))],

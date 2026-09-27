@@ -74,14 +74,18 @@ BUN_BASELINE=/path/to/baseline \
 node ./protocol-run.mjs
 ```
 
+Set `BENCH_HTTP2=0 CASES=h1` to measure HTTP/1.1 WebSockets on a server without
+HTTP/2. The default server enables HTTP/2 for the H1 and H2 transport comparison.
+
 The default `WORKLOAD=echo` calls `ws.send()` for every message. Set
 `WORKLOAD=pubsub-self` to benchmark `ws.publish()` instead: every WebSocket
 subscribes to a unique topic and publishes back to itself, keeping one receiver
 per message without cross-process topic collisions or fan-out.
 
 Candidate and baseline repetitions run in alternating AB/BA order to reduce
-system-temperature and background-load drift. Use an odd `RUNS` value so each
-binary has comparable exposure to both positions. The runner reports both
+system-temperature and background-load drift. Use an even `RUNS` value for
+balanced first and second positions. The default `RUNS=3` gives the candidate
+one extra first-position run. The runner reports both
 independent medians and the median candidate delta across matched repetitions;
 inspect the paired min/max range before treating that delta as stable.
 

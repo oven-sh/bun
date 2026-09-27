@@ -224,6 +224,7 @@ impl WebSocketServerContext {
         self.handler.on_error = replacement.handler.on_error;
         self.handler.on_ping = replacement.handler.on_ping;
         self.handler.on_pong = replacement.handler.on_pong;
+        self.handler.context = replacement.handler.context;
         self.handler.flags = replacement.handler.flags;
 
         self.max_payload_length = replacement.max_payload_length;

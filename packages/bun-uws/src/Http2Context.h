@@ -1656,13 +1656,6 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
     if (length / 6 > http2::MAX_SETTINGS_PER_FRAME) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
     for (uint32_t off = 0; off < length; off += 6) {
         uint16_t id = (uint16_t)((payload[off] << 8) | payload[off + 1]);
-        /* RFC 9113 section 6.5: an identifier may occur at most once in one
-         * SETTINGS frame. The frame is capped at 32 entries, so this tiny
-         * allocation-free scan is cheaper than maintaining a 64K-bit set. */
-        for (uint32_t previous = 0; previous < off; previous += 6) {
-            uint16_t previousId = (uint16_t)((payload[previous] << 8) | payload[previous + 1]);
-            if (previousId == id) return connectionError(http2::ERR_PROTOCOL_ERROR);
-        }
         uint32_t value = http2::readU32BE(payload + off + 2);
         switch (id) {
         case http2::SETTINGS_HEADER_TABLE_SIZE: {

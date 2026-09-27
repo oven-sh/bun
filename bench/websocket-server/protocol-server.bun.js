@@ -15,7 +15,7 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   port: Number(process.env.PORT ?? 0),
   http1: true,
-  http2: true,
+  http2: process.env.BENCH_HTTP2 !== "0",
   websocket: {
     perMessageDeflate: false,
     sendPings: false,

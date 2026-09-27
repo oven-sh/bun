@@ -38,7 +38,17 @@
 // it), PORTABLE_BUILD (the build directory of a portable build of bun: the headers of WebKit that
 // bun's C++ includes, and the configuration of c-ares that bun's build wrote), and what
 // ../slice/build.ts reads.
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { REPOSITORY, TREE, llvmBin, tripleOf } from "../flags.ts";
@@ -55,7 +65,10 @@ const triple = tripleOf(ARCH);
 const out = work;
 const seeds = "bun_threading,bun_uws_sys,bun_io,bun_spawn_sys";
 
-function run(cmd: string[], options: { cwd?: string; env?: Record<string, string>; log?: string; allowFailure?: boolean } = {}) {
+function run(
+  cmd: string[],
+  options: { cwd?: string; env?: Record<string, string>; log?: string; allowFailure?: boolean } = {},
+) {
   console.log(`+ ${cmd.join(" ").slice(0, 400)}${options.cwd ? `   (in ${options.cwd})` : ""}`);
   const result = Bun.spawnSync(cmd, {
     cwd: options.cwd,
@@ -75,39 +88,111 @@ function run(cmd: string[], options: { cwd?: string; env?: Record<string, string
 /** The flags of bun's C for the image (scripts/build/flags.ts, release), without link-time optimisation. */
 const cFlags = [
   `--config=${join(sysroot, "portable.cfg")}`,
-  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden",
-  "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-std=gnu17",
-  "-Wno-c23-extensions", "-Wno-nullability-completeness",
-  `-I${join(repo, "packages")}`, `-I${join(repo, "packages/bun-usockets")}`, `-I${join(repo, "packages/bun-usockets/src")}`,
-  `-I${join(repo, "src/jsc/bindings")}`, `-I${join(repo, "src/uws_sys")}`,
-  `-I${join(vendor, "boringssl/include")}`, `-I${join(vendor, "mimalloc/include")}`,
-  "-DLIBUS_USE_OPENSSL=1", "-DUSE_BUN_MIMALLOC=1", "-DBUN_PORTABLE=1",
+  "-march=nehalem",
+  "-DNDEBUG",
+  "-O2",
+  "-fno-exceptions",
+  "-fno-omit-frame-pointer",
+  "-fno-stack-protector",
+  "-fstack-clash-protection",
+  "-fvisibility=hidden",
+  "-fno-unwind-tables",
+  "-fno-asynchronous-unwind-tables",
+  "-ffunction-sections",
+  "-fdata-sections",
+  "-std=gnu17",
+  "-Wno-c23-extensions",
+  "-Wno-nullability-completeness",
+  `-I${join(repo, "packages")}`,
+  `-I${join(repo, "packages/bun-usockets")}`,
+  `-I${join(repo, "packages/bun-usockets/src")}`,
+  `-I${join(repo, "src/jsc/bindings")}`,
+  `-I${join(repo, "src/uws_sys")}`,
+  `-I${join(vendor, "boringssl/include")}`,
+  `-I${join(vendor, "mimalloc/include")}`,
+  "-DLIBUS_USE_OPENSSL=1",
+  "-DUSE_BUN_MIMALLOC=1",
+  "-DBUN_PORTABLE=1",
 ];
 /** The flags of bun's C++ for the image (the same source), with the headers of WebKit. */
 const cxxFlags = [
   `--config=${join(sysroot, "portable.cfg")}`,
-  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-c++-static-destructors", "-fno-rtti", "-fno-omit-frame-pointer",
-  "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
-  "-ffunction-sections", "-fdata-sections", "-std=gnu++23", "-fconstexpr-steps=6000000", "-fconstexpr-depth=54",
-  "-Wno-c23-extensions", "-Wno-c++23-lambda-attributes", "-Wno-nullability-completeness", "-Wno-character-conversion",
-  `-I${join(repo, "packages")}`, `-I${join(repo, "packages/bun-usockets")}`, `-I${join(repo, "packages/bun-usockets/src")}`,
-  `-I${join(repo, "src/jsc/bindings")}`, `-I${join(repo, "src/uws_sys")}`, `-I${join(portableBuild, "codegen")}`,
-  `-I${join(vendor, "mimalloc/include")}`, `-I${join(vendor, "lshpack")}`, `-I${join(vendor, "lshpack/compat/queue")}`,
+  "-march=nehalem",
+  "-DNDEBUG",
+  "-O2",
+  "-fno-exceptions",
+  "-fno-c++-static-destructors",
+  "-fno-rtti",
+  "-fno-omit-frame-pointer",
+  "-fno-stack-protector",
+  "-fstack-clash-protection",
+  "-fvisibility=hidden",
+  "-fvisibility-inlines-hidden",
+  "-fno-unwind-tables",
+  "-fno-asynchronous-unwind-tables",
+  "-ffunction-sections",
+  "-fdata-sections",
+  "-std=gnu++23",
+  "-fconstexpr-steps=6000000",
+  "-fconstexpr-depth=54",
+  "-Wno-c23-extensions",
+  "-Wno-c++23-lambda-attributes",
+  "-Wno-nullability-completeness",
+  "-Wno-character-conversion",
+  `-I${join(repo, "packages")}`,
+  `-I${join(repo, "packages/bun-usockets")}`,
+  `-I${join(repo, "packages/bun-usockets/src")}`,
+  `-I${join(repo, "src/jsc/bindings")}`,
+  `-I${join(repo, "src/uws_sys")}`,
+  `-I${join(portableBuild, "codegen")}`,
+  `-I${join(vendor, "mimalloc/include")}`,
+  `-I${join(vendor, "lshpack")}`,
+  `-I${join(vendor, "lshpack/compat/queue")}`,
   `-I${join(vendor, "boringssl/include")}`,
-  ...["", "JavaScriptCore/Headers", "JavaScriptCore/Headers/JavaScriptCore", "JavaScriptCore/PrivateHeaders", "bmalloc/Headers", "WTF/Headers", "JavaScriptCore/PrivateHeaders/JavaScriptCore"].map(
-    directory => `-I${join(portableBuild, "deps/WebKit", directory)}`,
-  ),
-  "-D_HAS_EXCEPTIONS=0", "-DLIBUS_USE_OPENSSL=1", "-DSTATICALLY_LINKED_WITH_JavaScriptCore=1", "-DBUILDING_WITH_CMAKE=1",
-  "-DJSC_OBJC_API_ENABLED=0", "-DNOMINMAX", "-DBUILDING_JSCONLY__", "-DUSE_BUN_MIMALLOC=1", "-DBUN_PORTABLE=1",
+  ...[
+    "",
+    "JavaScriptCore/Headers",
+    "JavaScriptCore/Headers/JavaScriptCore",
+    "JavaScriptCore/PrivateHeaders",
+    "bmalloc/Headers",
+    "WTF/Headers",
+    "JavaScriptCore/PrivateHeaders/JavaScriptCore",
+  ].map(directory => `-I${join(portableBuild, "deps/WebKit", directory)}`),
+  "-D_HAS_EXCEPTIONS=0",
+  "-DLIBUS_USE_OPENSSL=1",
+  "-DSTATICALLY_LINKED_WITH_JavaScriptCore=1",
+  "-DBUILDING_WITH_CMAKE=1",
+  "-DJSC_OBJC_API_ENABLED=0",
+  "-DNOMINMAX",
+  "-DBUILDING_JSCONLY__",
+  "-DUSE_BUN_MIMALLOC=1",
+  "-DBUN_PORTABLE=1",
 ];
 /** The flags of c-ares in bun's build (scripts/build/deps/cares.ts), for the image. */
 const caresFlags = [
   `--config=${join(sysroot, "portable.cfg")}`,
-  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden",
-  "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-Wno-c23-extensions",
-  `-I${join(vendor, "cares/include")}`, `-I${join(vendor, "cares/src/lib")}`, `-I${join(vendor, "cares/src/lib/include")}`,
+  "-march=nehalem",
+  "-DNDEBUG",
+  "-O2",
+  "-fno-exceptions",
+  "-fno-omit-frame-pointer",
+  "-fno-stack-protector",
+  "-fstack-clash-protection",
+  "-fvisibility=hidden",
+  "-fno-unwind-tables",
+  "-fno-asynchronous-unwind-tables",
+  "-ffunction-sections",
+  "-fdata-sections",
+  "-Wno-c23-extensions",
+  `-I${join(vendor, "cares/include")}`,
+  `-I${join(vendor, "cares/src/lib")}`,
+  `-I${join(vendor, "cares/src/lib/include")}`,
   `-I${join(portableBuild, "deps/cares")}`,
-  "-DHAVE_CONFIG_H=1", "-DCARES_BUILDING_LIBRARY", "-D_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809", "-D_XOPEN_SOURCE=700",
+  "-DHAVE_CONFIG_H=1",
+  "-DCARES_BUILDING_LIBRARY",
+  "-D_GNU_SOURCE",
+  "-D_POSIX_C_SOURCE=200809",
+  "-D_XOPEN_SOURCE=700",
 ];
 // crypto/openssl is the layer for TLS, which a socket without TLS passes through when it closes. What
 // it calls of BoringSSL is not in the image.
@@ -123,10 +208,28 @@ function objectsIn(directory: string) {
 }
 
 const flavorArguments = (os: string) => [
-  process.execPath, join(here, "flavor.ts"), "--os", os, "--out", join(work, "flavors"), "--nm", `${llvm}/llvm-nm`,
-  "--roots", join(here, "program"), "--seeds", seeds,
-  "--defined-in", [join(sysroot, "usr/lib/libc.a"), join(slice, "cdeps/libcdeps.a"), join(slice, "cdeps/libslice_shim.a"), join(work, "loop-c/libloop_c.a")].join(","),
-  ...(os === "windows" && objectsIn(join(work, "usockets/windows-plain")).length ? ["--flavoured-c", objectsIn(join(work, "usockets/windows-plain")).join(",")] : []),
+  process.execPath,
+  join(here, "flavor.ts"),
+  "--os",
+  os,
+  "--out",
+  join(work, "flavors"),
+  "--nm",
+  `${llvm}/llvm-nm`,
+  "--roots",
+  join(here, "program"),
+  "--seeds",
+  seeds,
+  "--defined-in",
+  [
+    join(sysroot, "usr/lib/libc.a"),
+    join(slice, "cdeps/libcdeps.a"),
+    join(slice, "cdeps/libslice_shim.a"),
+    join(work, "loop-c/libloop_c.a"),
+  ].join(","),
+  ...(os === "windows" && objectsIn(join(work, "usockets/windows-plain")).length
+    ? ["--flavoured-c", objectsIn(join(work, "usockets/windows-plain")).join(",")]
+    : []),
 ];
 
 const steps: Record<string, { done: () => boolean; make: () => void }> = {
@@ -154,7 +257,14 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       rmSync(directory, { recursive: true, force: true });
       mkdirSync(directory, { recursive: true });
       for (const name of [...usocketsShared, "eventing/epoll_kqueue"])
-        run([`${llvm}/clang`, ...cFlags, "-c", join(repo, "packages/bun-usockets/src", `${name}.c`), "-o", join(directory, `${name.split("/").pop()}.o`)]);
+        run([
+          `${llvm}/clang`,
+          ...cFlags,
+          "-c",
+          join(repo, "packages/bun-usockets/src", `${name}.c`),
+          "-o",
+          join(directory, `${name.split("/").pop()}.o`),
+        ]);
       run([process.execPath, join(here, "windows.ts"), "compile", "--out", output]);
     },
   },
@@ -166,14 +276,48 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       rmSync(directory, { recursive: true, force: true });
       mkdirSync(directory, { recursive: true });
       const object = (name: string) => join(directory, `${name}.o`);
-      run([`${llvm}/clang++`, ...cxxFlags, "-c", join(repo, "src/jsc/bindings/bun-spawn.cpp"), "-o", object("bun-spawn")]);
+      run([
+        `${llvm}/clang++`,
+        ...cxxFlags,
+        "-c",
+        join(repo, "src/jsc/bindings/bun-spawn.cpp"),
+        "-o",
+        object("bun-spawn"),
+      ]);
       // Of c-bindings.cpp the image takes two functions. The rest of the file is what bun's C++ does
       // for a process of one OS, where this image has the shim of the file system slice and bun_core.
-      run([`${llvm}/clang++`, ...cxxFlags, "-c", join(repo, "src/jsc/bindings/c-bindings.cpp"), "-o", object("c-bindings.whole")]);
-      run([`${llvm}/llvm-objcopy`, "--keep-global-symbol=sys_preadv2", "--keep-global-symbol=sys_pwritev2", object("c-bindings.whole"), object("c-bindings")]);
+      run([
+        `${llvm}/clang++`,
+        ...cxxFlags,
+        "-c",
+        join(repo, "src/jsc/bindings/c-bindings.cpp"),
+        "-o",
+        object("c-bindings.whole"),
+      ]);
+      run([
+        `${llvm}/llvm-objcopy`,
+        "--keep-global-symbol=sys_preadv2",
+        "--keep-global-symbol=sys_pwritev2",
+        object("c-bindings.whole"),
+        object("c-bindings"),
+      ]);
       rmSync(object("c-bindings.whole"));
-      run([`${llvm}/clang`, ...caresFlags, "-c", join(vendor, "cares/src/lib/inet_net_pton.c"), "-o", object("inet_net_pton")]);
-      run([`${llvm}/clang`, ...caresFlags, "-c", join(vendor, "cares/src/lib/str/ares_str.c"), "-o", object("ares_str")]);
+      run([
+        `${llvm}/clang`,
+        ...caresFlags,
+        "-c",
+        join(vendor, "cares/src/lib/inet_net_pton.c"),
+        "-o",
+        object("inet_net_pton"),
+      ]);
+      run([
+        `${llvm}/clang`,
+        ...caresFlags,
+        "-c",
+        join(vendor, "cares/src/lib/str/ares_str.c"),
+        "-o",
+        object("ares_str"),
+      ]);
       run([`${llvm}/clang`, ...cFlags, "-c", join(here, "src/shim.c"), "-o", object("shim")]);
       run([`${llvm}/llvm-ar`, "rcs", join(directory, "libloop_c.a"), ...objectsIn(directory)]);
     },
@@ -194,7 +338,8 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       const directory = join(work, "image-loop");
       mkdirSync(directory, { recursive: true });
       copyFileSync(join(repo, "Cargo.lock"), join(directory, "Cargo.lock"));
-      const flavor = (os: string) => `{ package = "loop_program__${os}", path = "${join(work, "flavors", os, "loop_program")}" }`;
+      const flavor = (os: string) =>
+        `{ package = "loop_program__${os}", path = "${join(work, "flavors", os, "loop_program")}" }`;
       writeFileSync(
         join(directory, "Cargo.toml"),
         `# Written by misctools/portable/loop/build.ts: the loop slice of the portable image.
@@ -245,7 +390,13 @@ panic = "abort"
           '\t.section .rodata.bun_missing,"a",@progbits',
           ...missing.map((name, index) => `.Lname${index}:\n\t.asciz "${name}"`),
           "\t.text",
-          ...missing.flatMap((name, index) => [`\t.globl ${name}`, `\t.type ${name},@function`, `${name}:`, `\tleaq .Lname${index}(%rip), %rdi`, "\tjmp bun_slice_missing_symbol"]),
+          ...missing.flatMap((name, index) => [
+            `\t.globl ${name}`,
+            `\t.type ${name},@function`,
+            `${name}:`,
+            `\tleaq .Lname${index}(%rip), %rdi`,
+            "\tjmp bun_slice_missing_symbol",
+          ]),
           '\t.section .note.GNU-stack,"",@progbits',
         ];
         writeFileSync(missingSource, lines.join("\n") + "\n");
@@ -255,19 +406,37 @@ panic = "abort"
         // scripts/build/rust.ts (release, linux), with what --portable adds. No linker-plugin-lto: the
         // rlibs hold machine code, and the link is the linker's alone.
         const rustflags = [
-          "-Cforce-frame-pointers=yes", "-Cllvm-args=-addrsig", "-Zshare-generics=y", "-Ctarget-cpu=nehalem",
-          "--check-cfg=cfg(bun_asan)", "--check-cfg=cfg(bun_debug)", "--check-cfg=cfg(bun_codegen_embed)", "--cfg=bun_codegen_embed",
-          "--check-cfg=cfg(socket_fault_injection)", "--check-cfg=cfg(bun_portable)", "--check-cfg=cfg(rustix_use_libc)",
-          "--cfg=rustix_use_libc", "--cfg=bun_portable",
-          "-Zlocation-detail=none", "-Alinker_messages", "-Cforce-unwind-tables=no", "--cap-lints=warn",
-          "-Ctarget-feature=+crt-static", "-Crelocation-model=pie", "-Cno-redzone=yes", "-Ztls-model=emulated", "-Clink-self-contained=no",
+          "-Cforce-frame-pointers=yes",
+          "-Cllvm-args=-addrsig",
+          "-Zshare-generics=y",
+          "-Ctarget-cpu=nehalem",
+          "--check-cfg=cfg(bun_asan)",
+          "--check-cfg=cfg(bun_debug)",
+          "--check-cfg=cfg(bun_codegen_embed)",
+          "--cfg=bun_codegen_embed",
+          "--check-cfg=cfg(socket_fault_injection)",
+          "--check-cfg=cfg(bun_portable)",
+          "--check-cfg=cfg(rustix_use_libc)",
+          "--cfg=rustix_use_libc",
+          "--cfg=bun_portable",
+          "-Zlocation-detail=none",
+          "-Alinker_messages",
+          "-Cforce-unwind-tables=no",
+          "--cap-lints=warn",
+          "-Ctarget-feature=+crt-static",
+          "-Crelocation-model=pie",
+          "-Cno-redzone=yes",
+          "-Ztls-model=emulated",
+          "-Clink-self-contained=no",
           `-Clinker=${llvm}/clang++`,
           `-Clink-arg=--config=${join(sysroot, "portable.cfg")}`,
           "-Clink-arg=-Qunused-arguments",
           `-Clink-arg=-Wl,--Map=${map}`,
           "-Clink-arg=-Wl,--gc-sections",
           "-Clink-arg=-Wl,--error-limit=0",
-          "-Clink-arg=-Wl,-z,max-page-size=65536", "-Clink-arg=-Wl,-z,separate-loadable-segments", "-Clink-arg=-Wl,-z,noexecstack",
+          "-Clink-arg=-Wl,-z,max-page-size=65536",
+          "-Clink-arg=-Wl,-z,separate-loadable-segments",
+          "-Clink-arg=-Wl,-z,noexecstack",
           "-Clink-arg=-Wl,--start-group",
           `-Clink-arg=${posix}`,
           ...windows.map(path => `-Clink-arg=${path}`),
@@ -276,7 +445,8 @@ panic = "abort"
           `-Clink-arg=${join(slice, "cdeps/libcdeps.a")}`,
           `-Clink-arg=${missingArchive}`,
           "-Clink-arg=-Wl,--end-group",
-          "-Clink-arg=-lc++", "-Clink-arg=-lclang_rt.builtins",
+          "-Clink-arg=-lc++",
+          "-Clink-arg=-lclang_rt.builtins",
         ];
         // cargo does not know the archives of the link: what it made of the program before goes, so
         // that it links again.
@@ -284,20 +454,31 @@ panic = "abort"
         rmSync(join(made, "bun-loop-slice"), { force: true });
         rmSync(join(made, "build/bun-loop-slice"), { recursive: true, force: true });
         const log = join(work, "logs", `loop-image-link-${missing.length}.log`);
-        const ok = run(["cargo", "build", "--release", "--target", triple, "-Zbuild-std=std,core,alloc,panic_abort", "-Zbuild-std-features=panic-unwind,default"], {
-          cwd: directory,
-          env: {
-            CARGO_TARGET_DIR: join(work, "target"),
-            CARGO_BUILD_JOBS: jobs,
-            BUN_CODEGEN_DIR: join(slice, "codegen"),
-            CC: `${llvm}/clang`,
-            CXX: `${llvm}/clang++`,
-            AR: `${llvm}/llvm-ar`,
-            CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f"),
+        const ok = run(
+          [
+            "cargo",
+            "build",
+            "--release",
+            "--target",
+            triple,
+            "-Zbuild-std=std,core,alloc,panic_abort",
+            "-Zbuild-std-features=panic-unwind,default",
+          ],
+          {
+            cwd: directory,
+            env: {
+              CARGO_TARGET_DIR: join(work, "target"),
+              CARGO_BUILD_JOBS: jobs,
+              BUN_CODEGEN_DIR: join(slice, "codegen"),
+              CC: `${llvm}/clang`,
+              CXX: `${llvm}/clang++`,
+              AR: `${llvm}/llvm-ar`,
+              CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f"),
+            },
+            log,
+            allowFailure: true,
           },
-          log,
-          allowFailure: true,
-        });
+        );
         return { ok, log, rustflags };
       };
       const known = join(out, "bun_loop_slice.missing.txt");
@@ -306,13 +487,18 @@ panic = "abort"
       let result = link(missing);
       for (let round = 0; !result.ok && round < 6; round++) {
         const text = readFileSync(result.log, "utf8");
-        const named = (what: string) => new Set([...text.matchAll(new RegExp(`${what} symbol: ([A-Za-z_$][A-Za-z_0-9$.]*)`, "g"))].map(match => match[1]));
+        const named = (what: string) =>
+          new Set(
+            [...text.matchAll(new RegExp(`${what} symbol: ([A-Za-z_$][A-Za-z_0-9$.]*)`, "g"))].map(match => match[1]),
+          );
         const added = [...named("undefined")].filter(name => !missing.includes(name));
         // A name of the list that something defines since the list was written.
         const defined = [...named("duplicate")].filter(name => missing.includes(name));
         if (!added.length && !defined.length) break;
         missing = [...missing.filter(name => !defined.includes(name)), ...added].sort();
-        console.log(`${added.length} functions that nothing defines, ${defined.length} that something defines now, ${missing.length} in all`);
+        console.log(
+          `${added.length} functions that nothing defines, ${defined.length} that something defines now, ${missing.length} in all`,
+        );
         result = link(missing);
       }
       if (!result.ok) {
@@ -332,13 +518,16 @@ panic = "abort"
         rustflags: result.rustflags,
       };
       writeFileSync(join(out, "bun_loop_slice.json"), JSON.stringify(facts, null, 1) + "\n");
-      console.log(`${image}: ${facts.size} bytes, sha256 ${facts.sha256}, ${missing.length} functions of bun are not in it`);
+      console.log(
+        `${image}: ${facts.size} bytes, sha256 ${facts.sha256}, ${missing.length} functions of bun are not in it`,
+      );
     },
   },
 };
 
 const named = args;
-for (const name of named) if (!(name in steps)) throw new Error(`unknown step ${name}: ${Object.keys(steps).join(" ")}`);
+for (const name of named)
+  if (!(name in steps)) throw new Error(`unknown step ${name}: ${Object.keys(steps).join(" ")}`);
 for (const [name, step] of Object.entries(steps)) {
   if (named.length ? !named.includes(name) : step.done()) continue;
   console.log(`== ${name}`);

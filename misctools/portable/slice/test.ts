@@ -132,19 +132,39 @@ check("imports", () => {
 
 {
   // Compiled once: what the compiler says does not change from one run to the next.
-  const cases: [string, boolean][] = [["good", true], ["argument", false], ["field", false], ["result", false]];
+  const cases: [string, boolean][] = [
+    ["good", true],
+    ["argument", false],
+    ["field", false],
+    ["result", false],
+  ];
   const wrong: string[] = [];
   for (const [name, compiles] of cases) {
     const checked = Bun.spawnSync(["cargo", "check", "--target", "x86_64-unknown-linux-musl"], {
       cwd: join(TREE, "test/convention"),
-      env: { ...process.env, RUSTFLAGS: `--cfg=bun_portable --cfg=case="${name}"`, CARGO_TARGET_DIR: join(slice, "target-convention"), CARGO_BUILD_JOBS: process.env.JOBS ?? "8" },
+      env: {
+        ...process.env,
+        RUSTFLAGS: `--cfg=bun_portable --cfg=case="${name}"`,
+        CARGO_TARGET_DIR: join(slice, "target-convention"),
+        CARGO_BUILD_JOBS: process.env.JOBS ?? "8",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const refused = /the trait `OfTheHost` is not implemented for `unsafe extern "C" fn\(u32\) -> i32`/.test(checked.stderr.toString());
-    if (compiles ? checked.exitCode !== 0 : checked.exitCode === 0 || !refused) wrong.push(`${name}: exit code ${checked.exitCode}${compiles ? "" : refused ? "" : ", and not for the callback"}`);
+    const refused = /the trait `OfTheHost` is not implemented for `unsafe extern "C" fn\(u32\) -> i32`/.test(
+      checked.stderr.toString(),
+    );
+    if (compiles ? checked.exitCode !== 0 : checked.exitCode === 0 || !refused)
+      wrong.push(
+        `${name}: exit code ${checked.exitCode}${compiles ? "" : refused ? "" : ", and not for the callback"}`,
+      );
   }
-  results.push({ test: "convention: a callback of the image is not given to the host OS", passes: wrong.length ? 0 : 1, runs: 1, note: wrong.join("; ") || undefined });
+  results.push({
+    test: "convention: a callback of the image is not given to the host OS",
+    passes: wrong.length ? 0 : 1,
+    runs: 1,
+    note: wrong.join("; ") || undefined,
+  });
 }
 for (const r of results)
   console.log(`${r.test}: ${r.passes} of ${r.runs}${r.note ? `   (${r.note.slice(0, 300)})` : ""}`);

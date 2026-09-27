@@ -121,7 +121,10 @@ export async function check(ctx: Context, wholeSysroot: boolean): Promise<boolea
 
   const everyUse = join(TREE, "test", "check_aarch64_jsc.ts");
   const read = (args: string[]) => {
-    const ran = Bun.spawnSync([process.execPath, everyUse, "--llvm", ctx.llvm, ...args], { stdout: "pipe", stderr: "pipe" });
+    const ran = Bun.spawnSync([process.execPath, everyUse, "--llvm", ctx.llvm, ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     return { code: ran.exitCode, lines: (ran.stdout.toString() + ran.stderr.toString()).trimEnd().split("\n") };
   };
   if (small.length > 0) {
@@ -130,7 +133,13 @@ export async function check(ctx: Context, wholeSysroot: boolean): Promise<boolea
     passed = report(name, all.code === 0, all.lines) && passed;
   }
   for (const path of ofJavaScriptCore) {
-    const one = read(["--image", path, "--out", `${path}.check.json`, ...(wholeSysroot ? ["--sysroot", ctx.sysroot.root] : [])]);
+    const one = read([
+      "--image",
+      path,
+      "--out",
+      `${path}.check.json`,
+      ...(wholeSysroot ? ["--sysroot", ctx.sysroot.root] : []),
+    ]);
     const name = `aarch64 static checks of ${path.slice(ctx.out.length + 1)}${wholeSysroot ? " and of every archive of the sysroot" : ""}, every instruction that names x18`;
     passed = report(name, one.code === 0, one.lines) && passed;
   }
@@ -138,7 +147,9 @@ export async function check(ctx: Context, wholeSysroot: boolean): Promise<boolea
   if (existsSync(clobber)) {
     const control = read(["--image", clobber, "--expect-x18-writes"]);
     const reported = control.code === 0 && control.lines.some(line => /WRITE .* in clobber/.test(line));
-    console.log(`aarch64 must fail: static check of an image that writes x18: ${reported ? "reported" : "NOT REPORTED"}`);
+    console.log(
+      `aarch64 must fail: static check of an image that writes x18: ${reported ? "reported" : "NOT REPORTED"}`,
+    );
     if (!reported) for (const line of control.lines) console.log(`    ${line}`);
     passed = reported && passed;
   }

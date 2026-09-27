@@ -166,7 +166,13 @@ export class Reader {
       if (m === "jmp" || m === "jmpq") {
         if (i.operands.startsWith("*")) {
           const table = this.table(instructions, at, start, end, inside);
-          ways.push(table === undefined ? { kind: "away" } : table === null ? { kind: "unreadable" } : { kind: "table", to: table });
+          ways.push(
+            table === undefined
+              ? { kind: "away" }
+              : table === null
+                ? { kind: "unreadable" }
+                : { kind: "table", to: table },
+          );
         } else if (target !== null) {
           const to = parseInt(target[1]!, 16);
           ways.push(inside(to) ? { kind: "jump", to } : { kind: "away" });
@@ -179,7 +185,8 @@ export class Reader {
           ways.push(inside(to) ? { kind: "branch", to } : { kind: "on" });
         }
       } else if (/^(ret|retq|ud2|hlt|int3|iretq)$/.test(m)) ways.push({ kind: "away" });
-      else if (m.startsWith("call") && target !== null && this.neverReturns(parseInt(target[1]!, 16))) ways.push({ kind: "away" });
+      else if (m.startsWith("call") && target !== null && this.neverReturns(parseInt(target[1]!, 16)))
+        ways.push({ kind: "away" });
       else ways.push({ kind: "on" });
     }
     if (ways.some(way => way.kind === "unreadable")) return { readable: false, branches: 0, windowsOnly: [] };
@@ -303,7 +310,8 @@ export class Reader {
     if (m.startsWith("test") && operands.length === 2 && operands[0] === operands[1]) {
       const name = registerOf(operands[0]!);
       const holds = name === undefined ? undefined : state.registers.get(name);
-      state.flags = holds === "windows" ? "not-equal-is-windows" : holds === "not-windows" ? "equal-is-windows" : undefined;
+      state.flags =
+        holds === "windows" ? "not-equal-is-windows" : holds === "not-windows" ? "equal-is-windows" : undefined;
       return;
     }
     if (/^set(e|z|ne|nz)$/.test(m) && written !== undefined) {
@@ -434,7 +442,9 @@ export function byName(name: string, input: string): { kind: "flavour" | "bindin
     if (!["bun_core", "bun_errno", "bun_sys"].includes(segments[0]!)) continue;
     const module = segments
       .slice(1, -1)
-      .find(segment => /^(windows|windows_impl|windows_stdio|windows_sys|windows_errno|sys_uv|sys_uv_windows)$/.test(segment));
+      .find(segment =>
+        /^(windows|windows_impl|windows_stdio|windows_sys|windows_errno|sys_uv|sys_uv_windows)$/.test(segment),
+      );
     if (module !== undefined) {
       return { kind: "bindings", reason: `bindings of Windows: the module ${segments[0]}::${module}` };
     }

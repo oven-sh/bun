@@ -48,23 +48,69 @@ function step(name: string, what: string, cmd: string[], result: string) {
   const started = Date.now();
   const log = join(out, `${name}.log`);
   const r = Bun.spawnSync(cmd, { stdout: Bun.file(log), stderr: Bun.file(`${log}.err`) });
-  const line = { step: name, passed: r.exitCode === 0, seconds: Math.round((Date.now() - started) / 1000), what, result };
+  const line = {
+    step: name,
+    passed: r.exitCode === 0,
+    seconds: Math.round((Date.now() - started) / 1000),
+    what,
+    result,
+  };
   summary.push(line);
   console.log(`${name.padEnd(12)} ${line.passed ? "passed" : "FAILED"}   ${line.seconds} s   ${what}`);
   if (!line.passed) console.log(readFileSync(log, "utf8").split("\n").slice(-15).join("\n"));
   writeFileSync(join(out, "summary.json"), JSON.stringify(summary, null, 1) + "\n");
 }
 const scenarios = (image: string, dir: string, modes: string, more: string[] = []) => [
-  process.execPath, join(tree, "test/jsc_scenarios.ts"), "--runs", runs, "--image", join(images, image), "--host", host, "--out", join(out, dir, "scenarios.json"), "--modes", modes, ...more,
+  process.execPath,
+  join(tree, "test/jsc_scenarios.ts"),
+  "--runs",
+  runs,
+  "--image",
+  join(images, image),
+  "--host",
+  host,
+  "--out",
+  join(out, dir, "scenarios.json"),
+  "--modes",
+  modes,
+  ...more,
 ];
 
-step("static", "no instruction of the image writes x18", [process.execPath, join(tree, "test/check_aarch64_jsc.ts"), "--image", join(images, "jsc.img"), "--out", join(out, "static.json")], join(out, "static.json"));
-step("scenarios", `direct and hosted, ${runs} runs`, scenarios("jsc.img", "scenarios", "direct,hosted"), join(out, "scenarios/scenarios.json"));
+step(
+  "static",
+  "no instruction of the image writes x18",
+  [
+    process.execPath,
+    join(tree, "test/check_aarch64_jsc.ts"),
+    "--image",
+    join(images, "jsc.img"),
+    "--out",
+    join(out, "static.json"),
+  ],
+  join(out, "static.json"),
+);
+step(
+  "scenarios",
+  `direct and hosted, ${runs} runs`,
+  scenarios("jsc.img", "scenarios", "direct,hosted"),
+  join(out, "scenarios/scenarios.json"),
+);
 if (existsSync(join(images, "jsc.x18-allocatable.img"))) {
-  step("control", `must fail: the JIT may hand out x18, hosted, ${runs} runs`, scenarios("jsc.x18-allocatable.img", "control", "direct,hosted", ["--must-end-with", "96"]), join(out, "control/scenarios.json"));
+  step(
+    "control",
+    `must fail: the JIT may hand out x18, hosted, ${runs} runs`,
+    scenarios("jsc.x18-allocatable.img", "control", "direct,hosted", ["--must-end-with", "96"]),
+    join(out, "control/scenarios.json"),
+  );
 }
-for (const mode of ["hwcap0", "winmem", "overlay", "page16", "jitwx"]) step(mode, `hosted, ${mode}, ${runs} runs`, scenarios("jsc.img", mode, mode), join(out, mode, "scenarios.json"));
+for (const mode of ["hwcap0", "winmem", "overlay", "page16", "jitwx"])
+  step(mode, `hosted, ${mode}, ${runs} runs`, scenarios("jsc.img", mode, mode), join(out, mode, "scenarios.json"));
 if (existsSync(join(images, "jsc.jit-permissions.img"))) {
-  step("permissions", `the image that says when it writes code: hosted and jitwx, ${runs} runs`, scenarios("jsc.jit-permissions.img", "permissions", "direct,hosted,jitwx"), join(out, "permissions/scenarios.json"));
+  step(
+    "permissions",
+    `the image that says when it writes code: hosted and jitwx, ${runs} runs`,
+    scenarios("jsc.jit-permissions.img", "permissions", "direct,hosted,jitwx"),
+    join(out, "permissions/scenarios.json"),
+  );
 }
 process.exit(summary.every(l => l.passed) ? 0 : 1);

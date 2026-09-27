@@ -44,19 +44,38 @@ if (!existsSync(summaryPath)) throw new Error(`${summaryPath} is not there: chec
 const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
 
 rmSync(out, { recursive: true, force: true });
-for (const dir of ["host", "patches", "bindings", "expected", "windows-c", "checked-on-linux"]) mkdirSync(join(out, dir), { recursive: true });
+for (const dir of ["host", "patches", "bindings", "expected", "windows-c", "checked-on-linux"])
+  mkdirSync(join(out, dir), { recursive: true });
 const image = at.image;
 copyFileSync(image, join(out, "bun_loop_slice.img"));
-for (const name of [...hostBuild.sources, ...hostBuild.headers]) copyFileSync(join(tree, "host", name), join(out, "host", name));
+for (const name of [...hostBuild.sources, ...hostBuild.headers])
+  copyFileSync(join(tree, "host", name), join(out, "host", name));
 for (const name of libuv.patches) copyFileSync(join(libuv.patchDirectory, name), join(out, "patches", name));
-for (const name of ["windows_layout.c", "verify.ts", "compare.ts"]) copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
+for (const name of ["windows_layout.c", "verify.ts", "compare.ts"])
+  copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
 cpSync(join(here, "expected"), join(out, "expected"), { recursive: true });
 copyFileSync(join(here, "compare-run.ts"), join(out, "compare-run.ts"));
 const include = join(work, "usockets/windows-include");
-for (const name of ["bun_windows_c.h", "callbacks.h", "callbacks.list", "imports.s", "check_on_windows.c", "check_on_windows.cpp", "declared.json"]) copyFileSync(join(include, name), join(out, "windows-c", name));
+for (const name of [
+  "bun_windows_c.h",
+  "callbacks.h",
+  "callbacks.list",
+  "imports.s",
+  "check_on_windows.c",
+  "check_on_windows.cpp",
+  "declared.json",
+])
+  copyFileSync(join(include, name), join(out, "windows-c", name));
 copyFileSync(join(checked, "layout.image.json"), join(out, "bindings/layout.image.json"));
 for (const name of [
-  "summary.json", "host.exe", "host-compile.log", "uv-compile.log", "check-windows-c.txt", "check-windows-cpp.txt", "layout.headers.json", "layout-compare.txt",
+  "summary.json",
+  "host.exe",
+  "host-compile.log",
+  "uv-compile.log",
+  "check-windows-c.txt",
+  "check-windows-cpp.txt",
+  "layout.headers.json",
+  "layout-compare.txt",
   "bun_loop_slice.img.imports-libraries.json",
 ])
   copyFileSync(join(checked, name), join(out, "checked-on-linux", name));
@@ -68,7 +87,14 @@ writeFileSync(join(out, "imports-linux.jsonl"), imports.stdout);
 const total = JSON.parse(imports.stdout.toString().trim().split("\n").pop()!).total;
 
 const diff = Bun.spawnSync(
-  ["git", "--no-pager", "diff", base, "--", ...[...hostBuild.sources, ...hostBuild.headers].map(name => `misctools/portable/host/${name}`)],
+  [
+    "git",
+    "--no-pager",
+    "diff",
+    base,
+    "--",
+    ...[...hostBuild.sources, ...hostBuild.headers].map(name => `misctools/portable/host/${name}`),
+  ],
   { cwd: repo, stdout: "pipe" },
 );
 writeFileSync(join(out, "host_win.diff"), diff.stdout);

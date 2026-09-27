@@ -28,8 +28,16 @@ export const libuv = {
   patchDirectory: join(repo, "patches/libuv"),
   /** The definitions and flags of bun's build, as the driver `clang` takes them. */
   flags: [
-    "-O2", "-fms-runtime-lib=dll", "-fno-strict-aliasing", "-Wno-int-conversion", "-Wno-deprecated-declarations",
-    "-DWIN32_LEAN_AND_MEAN", "-D_CRT_DECLARE_NONSTDC_NAMES=0", "-DWIN32", "-D_WINDOWS", "-D_WIN32_WINNT=0x0A00",
+    "-O2",
+    "-fms-runtime-lib=dll",
+    "-fno-strict-aliasing",
+    "-Wno-int-conversion",
+    "-Wno-deprecated-declarations",
+    "-DWIN32_LEAN_AND_MEAN",
+    "-D_CRT_DECLARE_NONSTDC_NAMES=0",
+    "-DWIN32",
+    "-D_WINDOWS",
+    "-D_WIN32_WINNT=0x0A00",
   ],
 };
 
@@ -40,7 +48,18 @@ export const host = {
   headers: ["linux_abi.h", "memory.h"],
   // One C runtime for the host, libuv and the image: the DLL that the import "ucrtbase" of the image names.
   flags: ["-O2", "-fms-runtime-lib=dll", "-DBUN_HOST_LIBUV"],
-  libraries: ["synchronization", "advapi32", "psapi", "user32", "iphlpapi", "userenv", "ws2_32", "dbghelp", "ole32", "shell32"],
+  libraries: [
+    "synchronization",
+    "advapi32",
+    "psapi",
+    "user32",
+    "iphlpapi",
+    "userenv",
+    "ws2_32",
+    "dbghelp",
+    "ole32",
+    "shell32",
+  ],
 };
 
 /** What check_on_windows.c is compiled with, and check_on_windows.cpp by clang++. */

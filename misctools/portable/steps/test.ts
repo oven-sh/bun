@@ -146,12 +146,12 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
 
   for (const [who, what] of ADOPT) {
     await expect(42, adoptDirect(who), `${arch} adopt direct (${what})`, [...emulator, image("adopt"), who]);
-    await expect(
-      42,
-      adoptHosted(who),
-      `${arch} adopt hosted: 8 threads of the host call into the image (${what})`,
-      [...emulator, host, image("adopt"), who],
-    );
+    await expect(42, adoptHosted(who), `${arch} adopt hosted: 8 threads of the host call into the image (${what})`, [
+      ...emulator,
+      host,
+      image("adopt"),
+      who,
+    ]);
   }
   // 139 is SIGSEGV: without the check the first use of the thread pointer is an address near 0.
   for (const [who, what] of ADOPT_MUST_FAIL) {
@@ -276,12 +276,7 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
       96,
       /^host: the image changed x18: it is 0xdead/m,
       "aarch64 must fail: hosted, host does not reload x18",
-      [
-        ...emulator,
-        hostNoReload,
-        image("threads"),
-        probe,
-      ],
+      [...emulator, hostNoReload, image("threads"), probe],
     );
     await expect(132, /Illegal instruction/, "aarch64 must fail: direct, image with traps on svc", [
       ...emulator,
@@ -313,12 +308,11 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
       image("linux_paths"),
       "hosted-signals",
     ]);
-    await expect(
-      42,
-      signals,
-      "aarch64 linux_paths hosted with signals (x18), traps on svc, tpidr_el0, tpidrro_el0",
-      [...hosted, pathsX18Only, "hosted-signals"],
-    );
+    await expect(42, signals, "aarch64 linux_paths hosted with signals (x18), traps on svc, tpidr_el0, tpidrro_el0", [
+      ...hosted,
+      pathsX18Only,
+      "hosted-signals",
+    ]);
     await expect(42, requests("hosted"), "aarch64 requests hosted with signals (x18)", [
       ...hosted,
       image("requests"),

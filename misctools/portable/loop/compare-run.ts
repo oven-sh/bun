@@ -12,10 +12,15 @@ const here = dirname(import.meta.path);
 const args = process.argv.slice(2);
 const outputPath = args.find(a => !a.startsWith("--"));
 if (!outputPath) throw new Error("usage: bun compare-run.ts <output.jsonl> [--expected file]");
-const expectedPath = args.includes("--expected") ? args[args.indexOf("--expected") + 1] : join(here, "expected/linux.jsonl");
+const expectedPath = args.includes("--expected")
+  ? args[args.indexOf("--expected") + 1]
+  : join(here, "expected/linux.jsonl");
 type Line = Record<string, unknown> & { step: string; path?: string; ok: boolean; error?: string };
 const parse = (path: string): Line[] =>
-  readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  readFileSync(path, "utf8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line));
 const output = parse(outputPath);
 const expected = parse(expectedPath);
 const rules = JSON.parse(readFileSync(join(here, "expected/differences.json"), "utf8"));
@@ -25,7 +30,8 @@ const key = (line: Line) => (line.path ? `${line.step} ${line.path}` : line.step
 
 const absent = new Set<string>();
 const notListed = new Set<string>();
-let accepted = 0, same = 0;
+let accepted = 0,
+  same = 0;
 const unexpected: string[] = [];
 let at = 0;
 for (const want of expected) {
@@ -65,7 +71,8 @@ for (const want of expected) {
         continue;
       }
     }
-    if (JSON.stringify(wanted) !== JSON.stringify(got[field])) problems.push(`${field}: ${JSON.stringify(got[field])}, expected ${JSON.stringify(wanted)}`);
+    if (JSON.stringify(wanted) !== JSON.stringify(got[field]))
+      problems.push(`${field}: ${JSON.stringify(got[field])}, expected ${JSON.stringify(wanted)}`);
   }
   if (problems.length) unexpected.push(`${k}: ${problems.join("; ")}`);
   else if (usedRule) {
@@ -78,11 +85,15 @@ for (const extra of output.slice(at)) {
   if (rule?.only_here && JSON.stringify(rule.only_here) === JSON.stringify(extra)) {
     accepted++;
     console.log(`accepted   ${key(extra)}: ${rule.why}`);
-  } else if (rule?.only_here) unexpected.push(`${key(extra)}: ${JSON.stringify(extra)}, expected ${JSON.stringify(rule.only_here)}`);
+  } else if (rule?.only_here)
+    unexpected.push(`${key(extra)}: ${JSON.stringify(extra)}, expected ${JSON.stringify(rule.only_here)}`);
   else unexpected.push(`${key(extra)}: not expected`);
 }
 for (const [name, rule] of Object.entries(forHost) as [string, any][])
-  if (rule.only_here && !output.some(line => key(line) === name)) unexpected.push(`${name}: missing, this host has the step`);
+  if (rule.only_here && !output.some(line => key(line) === name))
+    unexpected.push(`${name}: missing, this host has the step`);
 for (const line of unexpected) console.log(`UNEXPECTED ${line}`);
-console.log(`host ${host}: ${same} steps as on Linux, ${accepted} accepted differences, ${unexpected.length} unexpected`);
+console.log(
+  `host ${host}: ${same} steps as on Linux, ${accepted} accepted differences, ${unexpected.length} unexpected`,
+);
 process.exit(unexpected.length ? 1 : 0);

@@ -38,8 +38,34 @@ import { llvmBin } from "../flags.ts";
 
 // ---- rule 1: does an instruction write x18 ----
 const READS_ALL = new Set([
-  "cmp", "cmn", "tst", "ccmp", "ccmn", "cbz", "cbnz", "tbz", "tbnz", "br", "blr", "ret", "msr", "prfm", "prfum",
-  "braa", "brab", "blraa", "blrab", "braaz", "brabz", "blraaz", "blrabz", "sys", "dc", "ic", "at", "tlbi",
+  "cmp",
+  "cmn",
+  "tst",
+  "ccmp",
+  "ccmn",
+  "cbz",
+  "cbnz",
+  "tbz",
+  "tbnz",
+  "br",
+  "blr",
+  "ret",
+  "msr",
+  "prfm",
+  "prfum",
+  "braa",
+  "brab",
+  "blraa",
+  "blrab",
+  "braaz",
+  "brabz",
+  "blraaz",
+  "blrabz",
+  "sys",
+  "dc",
+  "ic",
+  "at",
+  "tlbi",
 ]);
 const STORE = /^(st[ul]?r[bh]?|stlur[bh]?|sttr[bh]?|stn?p|st64b)$/;
 const STORE_EXCLUSIVE = /^stl?x[rp][bh]?$/;
@@ -50,7 +76,8 @@ const ATOMIC_IN_MEMORY = /^(swp|ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldu
 
 function operandsOf(text: string): string[] {
   const out: string[] = [];
-  let depth = 0, current = "";
+  let depth = 0,
+    current = "";
   for (const c of text) {
     if (c === "[" || c === "{") depth++;
     if (c === "]" || c === "}") depth--;
@@ -86,22 +113,63 @@ export function classify(mnemonic: string, operandText: string): "none" | "read"
 }
 
 const SELF_TEST: [string, string, "none" | "read" | "write"][] = [
-  ["mov", "x8, x18", "read"], ["mov", "x18, x8", "write"], ["mov", "w18, #0x1", "write"], ["movz", "x18, #0xbad", "write"],
-  ["ldr", "x18, [x0]", "write"], ["ldr", "x0, [x18, #0x10]", "read"], ["ldr", "x0, [x18], #8", "write"], ["ldr", "x0, [x18, #8]!", "write"],
-  ["ldr", "x0, [x1, x18, lsl #3]", "read"], ["ldp", "x18, x19, [x0, #0x90]", "write"], ["ldp", "x17, x18, [x0]", "write"],
-  ["ldp", "x19, x20, [x18]", "read"], ["ldp", "q0, q1, [x18], #32", "write"], ["stp", "x18, x19, [sp, #0x90]", "read"],
-  ["stp", "x18, x19, [sp, #-16]!", "read"], ["stp", "x29, x30, [x18, #-16]!", "write"], ["str", "x18, [sp, #16]", "read"],
-  ["str", "x0, [x18], #8", "write"], ["stxr", "w18, x0, [x1]", "write"], ["stxr", "w0, x18, [x1]", "read"], ["stlxr", "w9, x10, [x18]", "read"],
-  ["add", "x18, x18, #0x1", "write"], ["add", "x0, x18, #0x1", "read"], ["adrp", "x18, 0x1000", "write"], ["cmp", "x18, x0", "read"],
-  ["cbz", "x18, 0x40", "read"], ["tbnz", "w18, #0x3, 0x40", "read"], ["blr", "x18", "read"], ["msr", "TPIDR_EL0, x18", "read"],
-  ["mrs", "x18, TPIDR_EL0", "write"], ["fmov", "x18, d0", "write"], ["fmov", "d0, x18", "read"], ["fcvtzs", "w18, d1", "write"],
-  ["umov", "w18, v0.b[0]", "write"], ["csel", "x0, x18, x1, eq", "read"], ["csel", "x18, x0, x1, eq", "write"],
-  ["cas", "x18, x0, [x1]", "write"], ["cas", "x0, x18, [x1]", "read"], ["casp", "x18, x19, x2, x3, [x0]", "write"],
-  ["casal", "w18, w0, [x1]", "write"], ["swpal", "x18, x0, [x1]", "read"], ["swpal", "x0, x18, [x1]", "write"],
-  ["ldaddal", "x0, x18, [x1]", "write"], ["ldaddal", "x18, x0, [x1]", "read"], ["ld64b", "x12, [x0]", "write"], ["ld64b", "x0, [x1]", "none"],
-  ["dc", "zva, x18", "read"], ["prfm", "pldl1keep, [x18]", "read"], ["ldr", "x0, [x17, #0x18]", "none"], ["mov", "x0, #0x18", "none"],
-  ["ld1", "{ v0.16b }, [x18], #16", "write"], ["st1", "{ v0.16b }, [x18]", "read"], ["b.eq", "0x18", "none"], ["ldxr", "x18, [x0]", "write"],
-  ["ldaxp", "x0, x18, [x1]", "write"], ["sxtw", "x18, w0", "write"], ["bl", "0x1234 <x18_helper>", "none"],
+  ["mov", "x8, x18", "read"],
+  ["mov", "x18, x8", "write"],
+  ["mov", "w18, #0x1", "write"],
+  ["movz", "x18, #0xbad", "write"],
+  ["ldr", "x18, [x0]", "write"],
+  ["ldr", "x0, [x18, #0x10]", "read"],
+  ["ldr", "x0, [x18], #8", "write"],
+  ["ldr", "x0, [x18, #8]!", "write"],
+  ["ldr", "x0, [x1, x18, lsl #3]", "read"],
+  ["ldp", "x18, x19, [x0, #0x90]", "write"],
+  ["ldp", "x17, x18, [x0]", "write"],
+  ["ldp", "x19, x20, [x18]", "read"],
+  ["ldp", "q0, q1, [x18], #32", "write"],
+  ["stp", "x18, x19, [sp, #0x90]", "read"],
+  ["stp", "x18, x19, [sp, #-16]!", "read"],
+  ["stp", "x29, x30, [x18, #-16]!", "write"],
+  ["str", "x18, [sp, #16]", "read"],
+  ["str", "x0, [x18], #8", "write"],
+  ["stxr", "w18, x0, [x1]", "write"],
+  ["stxr", "w0, x18, [x1]", "read"],
+  ["stlxr", "w9, x10, [x18]", "read"],
+  ["add", "x18, x18, #0x1", "write"],
+  ["add", "x0, x18, #0x1", "read"],
+  ["adrp", "x18, 0x1000", "write"],
+  ["cmp", "x18, x0", "read"],
+  ["cbz", "x18, 0x40", "read"],
+  ["tbnz", "w18, #0x3, 0x40", "read"],
+  ["blr", "x18", "read"],
+  ["msr", "TPIDR_EL0, x18", "read"],
+  ["mrs", "x18, TPIDR_EL0", "write"],
+  ["fmov", "x18, d0", "write"],
+  ["fmov", "d0, x18", "read"],
+  ["fcvtzs", "w18, d1", "write"],
+  ["umov", "w18, v0.b[0]", "write"],
+  ["csel", "x0, x18, x1, eq", "read"],
+  ["csel", "x18, x0, x1, eq", "write"],
+  ["cas", "x18, x0, [x1]", "write"],
+  ["cas", "x0, x18, [x1]", "read"],
+  ["casp", "x18, x19, x2, x3, [x0]", "write"],
+  ["casal", "w18, w0, [x1]", "write"],
+  ["swpal", "x18, x0, [x1]", "read"],
+  ["swpal", "x0, x18, [x1]", "write"],
+  ["ldaddal", "x0, x18, [x1]", "write"],
+  ["ldaddal", "x18, x0, [x1]", "read"],
+  ["ld64b", "x12, [x0]", "write"],
+  ["ld64b", "x0, [x1]", "none"],
+  ["dc", "zva, x18", "read"],
+  ["prfm", "pldl1keep, [x18]", "read"],
+  ["ldr", "x0, [x17, #0x18]", "none"],
+  ["mov", "x0, #0x18", "none"],
+  ["ld1", "{ v0.16b }, [x18], #16", "write"],
+  ["st1", "{ v0.16b }, [x18]", "read"],
+  ["b.eq", "0x18", "none"],
+  ["ldxr", "x18, [x0]", "write"],
+  ["ldaxp", "x0, x18, [x1]", "write"],
+  ["sxtw", "x18, w0", "write"],
+  ["bl", "0x1234 <x18_helper>", "none"],
 ];
 function selfTest(): number {
   let failed = 0;
@@ -117,15 +185,34 @@ function selfTest(): number {
 }
 
 // ---- the other rules ----
-const LINUX_HALVES = new Set(["__clone_linux", "__unmapself_linux", "__vfork_linux", "__syscall_cp_asm", "__restore_rt", "__restore"]);
+const LINUX_HALVES = new Set([
+  "__clone_linux",
+  "__unmapself_linux",
+  "__vfork_linux",
+  "__syscall_cp_asm",
+  "__restore_rt",
+  "__restore",
+]);
 const ENTRY_CHECK = new Set(["__bun_thread_enter", "__sanitizer_cov_trace_pc"]);
 // Registers that code outside of a kernel reads on every system. CTR_EL0: the libc reads
 // it on Linux only (__clear_cache), so it is asked for by name below.
 const REGISTERS_OF_EVERYWHERE = new Set(["TPIDR_EL0", "TPIDRRO_EL0", "FPCR", "FPSR", "NZCV", "DCZID_EL0"]);
 // Registers that are used in one place, which runs under a condition that is written down here.
 const REGISTERS_UNDER_A_CONDITION = new Map([
-  ["CTR_EL0", { functions: new Set(["__clear_cache"]), when: "the host is Linux (__bun_host.os), other hosts get the request clear_cache" }],
-  ["TPIDR2_EL0", { functions: new Set(["__libunwind_Registers_arm64_za_disable"]), when: "AT_HWCAP2 has SME (libunwind, checkHasSME), which no host of another system sets" }],
+  [
+    "CTR_EL0",
+    {
+      functions: new Set(["__clear_cache"]),
+      when: "the host is Linux (__bun_host.os), other hosts get the request clear_cache",
+    },
+  ],
+  [
+    "TPIDR2_EL0",
+    {
+      functions: new Set(["__libunwind_Registers_arm64_za_disable"]),
+      when: "AT_HWCAP2 has SME (libunwind, checkHasSME), which no host of another system sets",
+    },
+  ],
 ]);
 
 type Origin = { start: number; end: number; file: string };
@@ -140,7 +227,8 @@ function readMap(path: string): Origin[] {
   return origins.sort((a, b) => a.start - b.start);
 }
 function originOf(origins: Origin[], address: number): string {
-  let low = 0, high = origins.length - 1;
+  let low = 0,
+    high = origins.length - 1;
   while (low <= high) {
     const mid = (low + high) >> 1;
     if (origins[mid].end <= address) low = mid + 1;
@@ -168,18 +256,33 @@ type Result = {
   tls_segment?: boolean;
   functions_with_svc?: number;
   functions_that_read_the_thread_register?: number;
-  system_registers?: Record<string, { reads: number; writes: number; functions: string[]; origins: string[]; only_when?: string }>;
+  system_registers?: Record<
+    string,
+    { reads: number; writes: number; functions: string[]; origins: string[]; only_when?: string }
+  >;
   cache_instructions?: Record<string, { count: number; functions: string[]; origins: string[] }>;
   errors: string[];
 };
 
 async function check(file: string, llvm: string, isImage: boolean, mapPath: string | undefined): Promise<Result> {
   const origins = mapPath && existsSync(mapPath) ? readMap(mapPath) : [];
-  const result: Result = { file, instructions: 0, x18_reads: 0, x18_reads_by_kind: {}, x18_reads_by_origin: {}, x18_writes: [], data_words: 0, data_words_that_could_run: [], errors: [] };
-  let before = "", beforeOperands = "";
+  const result: Result = {
+    file,
+    instructions: 0,
+    x18_reads: 0,
+    x18_reads_by_kind: {},
+    x18_reads_by_origin: {},
+    x18_writes: [],
+    data_words: 0,
+    data_words_that_could_run: [],
+    errors: [],
+  };
+  let before = "",
+    beforeOperands = "";
   const registers = new Map<string, { reads: number; writes: number; functions: Set<string>; origins: Set<string> }>();
   const caches = new Map<string, { count: number; functions: Set<string>; origins: Set<string> }>();
-  let hostPage = "", hostLow = "";
+  let hostPage = "",
+    hostLow = "";
   if (isImage) {
     const headers = Bun.spawnSync([`${llvm}/llvm-readelf`, "-lW", file]).stdout.toString();
     result.tls_segment = /^\s*TLS\s/m.test(headers);
@@ -196,26 +299,41 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
     result.functions_that_read_the_thread_register = 0;
   }
 
-  let member = "", name = "", start = 0;
-  let svc = 0, tp = 0, ro = 0, x18tp = 0, tpWrites = 0, sawPage = false, sawLoad = false;
+  let member = "",
+    name = "",
+    start = 0;
+  let svc = 0,
+    tp = 0,
+    ro = 0,
+    x18tp = 0,
+    tpWrites = 0,
+    sawPage = false,
+    sawLoad = false;
   const endFunction = () => {
     if (!isImage || !name) return;
     const readsHost = sawPage && sawLoad;
     if (tpWrites && name !== "__set_thread_area") result.errors.push(`${name} writes a thread register`);
     if (svc) {
       result.functions_with_svc!++;
-      if (!LINUX_HALVES.has(name) && !readsHost) result.errors.push(`${name} (${originOf(origins, start)}) has svc and does not read __bun_host.os`);
+      if (!LINUX_HALVES.has(name) && !readsHost)
+        result.errors.push(`${name} (${originOf(origins, start)}) has svc and does not read __bun_host.os`);
     }
     if (tp || ro) {
       result.functions_that_read_the_thread_register!++;
       const entryCheck = ENTRY_CHECK.has(name) && readsHost && tp === 0 && ro === x18tp;
-      if (!(tp === ro && ro === x18tp && readsHost) && !entryCheck) result.errors.push(`${name} (${originOf(origins, start)}) reads tpidr_el0 ${tp}, tpidrro_el0 ${ro}, x18 ${x18tp} times`);
+      if (!(tp === ro && ro === x18tp && readsHost) && !entryCheck)
+        result.errors.push(
+          `${name} (${originOf(origins, start)}) reads tpidr_el0 ${tp}, tpidrro_el0 ${ro}, x18 ${x18tp} times`,
+        );
     }
   };
   const pageLoad = new RegExp(`^x\\d+, ${hostPage}\\b`);
   const lowLoad = new RegExp(`^x\\d+, \\[x\\d+, #${hostLow}\\]`);
 
-  const proc = Bun.spawn([`${llvm}/llvm-objdump`, "-d", "--no-show-raw-insn", "--print-imm-hex", file], { stdout: "pipe", stderr: "ignore" });
+  const proc = Bun.spawn([`${llvm}/llvm-objdump`, "-d", "--no-show-raw-insn", "--print-imm-hex", file], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
   const decoder = new TextDecoder();
   let rest = "";
   const onLine = (line: string) => {
@@ -230,7 +348,8 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
         return;
       }
       const archive = /^(\S.*):\s+file format/.exec(line);
-      if (archive) member = archive[1].includes("(") ? archive[1].slice(archive[1].lastIndexOf("(") + 1).replace(/\)$/, "") : "";
+      if (archive)
+        member = archive[1].includes("(") ? archive[1].slice(archive[1].lastIndexOf("(") + 1).replace(/\)$/, "") : "";
       return;
     }
     // "  address: [bytes] <tab> mnemonic <tab> operands". The bytes are there for data only.
@@ -238,14 +357,23 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
     const head = /^\s*([0-9a-f]+):/.exec(fields[0]);
     if (!head || fields.length < 2) return;
     const ins = [line, head[1], fields[1].trim(), fields.slice(2).join("\t").trim()];
-    const mnemonic = ins[2], operands = ins[3];
+    const mnemonic = ins[2],
+      operands = ins[3];
     const address = parseInt(ins[1], 16);
     const origin = () => (isImage ? originOf(origins, address) : member);
     if (mnemonic.startsWith(".") || mnemonic === "<unknown>") {
       result.data_words++;
       const value = mnemonic === ".word" ? parseInt(operands, 16) : NaN;
-      const goesOn = !/^(b|br|ret|udf|brk|\.word|braa|brab|retaa|retab)$/.test(before) && !(before === "bl" && /llint_crash|abort|_exit|crash/i.test(beforeOperands));
-      if (!(value < 0x10000) || (isImage && goesOn)) result.data_words_that_could_run.push({ at: ins[1], function: name, origin: origin(), instruction: `${mnemonic} ${operands} after "${before} ${beforeOperands}"` });
+      const goesOn =
+        !/^(b|br|ret|udf|brk|\.word|braa|brab|retaa|retab)$/.test(before) &&
+        !(before === "bl" && /llint_crash|abort|_exit|crash/i.test(beforeOperands));
+      if (!(value < 0x10000) || (isImage && goesOn))
+        result.data_words_that_could_run.push({
+          at: ins[1],
+          function: name,
+          origin: origin(),
+          instruction: `${mnemonic} ${operands} after "${before} ${beforeOperands}"`,
+        });
       before = mnemonic;
       return;
     }
@@ -253,10 +381,14 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
     beforeOperands = operands;
     result.instructions++;
     const kind = classify(mnemonic, operands);
-    if (kind === "write") result.x18_writes.push({ at: ins[1], function: name, origin: origin(), instruction: `${mnemonic} ${operands}` });
+    if (kind === "write")
+      result.x18_writes.push({ at: ins[1], function: name, origin: origin(), instruction: `${mnemonic} ${operands}` });
     else if (kind === "read") {
       result.x18_reads++;
-      const shape = `${mnemonic} ${operands.replace(/\s*\/\/.*$/, "").replace(/\b[xw](?!18\b)\d+\b/g, "xN").replace(/#-?(0x)?[0-9a-f]+/g, "#n")}`;
+      const shape = `${mnemonic} ${operands
+        .replace(/\s*\/\/.*$/, "")
+        .replace(/\b[xw](?!18\b)\d+\b/g, "xN")
+        .replace(/#-?(0x)?[0-9a-f]+/g, "#n")}`;
       result.x18_reads_by_kind[shape] = (result.x18_reads_by_kind[shape] ?? 0) + 1;
       const from = archiveOf(origin());
       result.x18_reads_by_origin[from] = (result.x18_reads_by_origin[from] ?? 0) + 1;
@@ -271,7 +403,12 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
       const register = (mnemonic === "mrs" ? parts[1] : parts[0]).toUpperCase();
       if (register === "TPIDR_EL0") mnemonic === "mrs" ? tp++ : tpWrites++;
       if (register === "TPIDRRO_EL0") mnemonic === "mrs" ? ro++ : tpWrites++;
-      const entry = registers.get(register) ?? { reads: 0, writes: 0, functions: new Set<string>(), origins: new Set<string>() };
+      const entry = registers.get(register) ?? {
+        reads: 0,
+        writes: 0,
+        functions: new Set<string>(),
+        origins: new Set<string>(),
+      };
       mnemonic === "mrs" ? entry.reads++ : entry.writes++;
       if (entry.functions.size < 40) entry.functions.add(name);
       entry.origins.add(archiveOf(origin()));
@@ -300,13 +437,30 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
     result.system_registers = {};
     for (const [register, entry] of [...registers].sort()) {
       const known = REGISTERS_UNDER_A_CONDITION.get(register);
-      result.system_registers[register] = { reads: entry.reads, writes: entry.writes, functions: [...entry.functions].sort(), origins: [...entry.origins].sort(), ...(known ? { only_when: known.when } : {}) };
+      result.system_registers[register] = {
+        reads: entry.reads,
+        writes: entry.writes,
+        functions: [...entry.functions].sort(),
+        origins: [...entry.origins].sort(),
+        ...(known ? { only_when: known.when } : {}),
+      };
       if (REGISTERS_OF_EVERYWHERE.has(register)) continue;
-      if (!known) result.errors.push(`register ${register} is used by ${[...entry.functions].join(", ")}: a system that is not Linux may not answer for it`);
-      else for (const f of entry.functions) if (!known.functions.has(f)) result.errors.push(`register ${register} is used by ${f}, which is not the place that is known for it`);
+      if (!known)
+        result.errors.push(
+          `register ${register} is used by ${[...entry.functions].join(", ")}: a system that is not Linux may not answer for it`,
+        );
+      else
+        for (const f of entry.functions)
+          if (!known.functions.has(f))
+            result.errors.push(`register ${register} is used by ${f}, which is not the place that is known for it`);
     }
     result.cache_instructions = {};
-    for (const [what, entry] of [...caches].sort()) result.cache_instructions[what] = { count: entry.count, functions: [...entry.functions].sort(), origins: [...entry.origins].sort() };
+    for (const [what, entry] of [...caches].sort())
+      result.cache_instructions[what] = {
+        count: entry.count,
+        functions: [...entry.functions].sort(),
+        origins: [...entry.origins].sort(),
+      };
   }
   return result;
 }
@@ -327,7 +481,8 @@ function archivesOf(sysroot: string): string[] {
 }
 
 if (import.meta.main) {
-  const all = (name: string) => process.argv.flatMap((a, i) => (a === `--${name}` && process.argv[i + 1] ? [process.argv[i + 1]] : []));
+  const all = (name: string) =>
+    process.argv.flatMap((a, i) => (a === `--${name}` && process.argv[i + 1] ? [process.argv[i + 1]] : []));
   const one = (name: string, fallback?: string) => all(name)[0] ?? fallback;
   const has = (name: string) => process.argv.includes(`--${name}`);
   const llvm = one("llvm") ?? llvmBin();
@@ -336,28 +491,53 @@ if (import.meta.main) {
   const images = all("image");
   const archives = [...all("archive"), ...(one("sysroot") ? archivesOf(one("sysroot")!) : [])];
   const results: Result[] = [];
-  for (const [i, image] of images.entries()) results.push(await check(image, llvm, true, i === 0 ? one("map", `${image}.map`) : `${image}.map`));
+  for (const [i, image] of images.entries())
+    results.push(await check(image, llvm, true, i === 0 ? one("map", `${image}.map`) : `${image}.map`));
   for (const archive of archives) results.push(await check(archive, llvm, false, undefined));
   for (const r of results) {
     const writes = r.x18_writes.length;
-    console.log(`${r.file}: ${r.instructions} instructions, x18 is read by ${r.x18_reads} and WRITTEN by ${writes}${r.data_words ? `, ${r.data_words} words of data in code` : ""}`);
-    for (const w of r.data_words_that_could_run.slice(0, 30)) console.log(`    DATA   ${w.at}  ${w.instruction}   in ${w.function} (${w.origin})`);
-    if (r.data_words_that_could_run.length) r.errors.push(`${r.data_words_that_could_run.length} words of data in code that could be run as instructions`);
-    for (const [kind, count] of Object.entries(r.x18_reads_by_kind).sort((a, b) => b[1] - a[1])) console.log(`    read   ${String(count).padStart(6)} x  ${kind}`);
-    for (const w of r.x18_writes.slice(0, 30)) console.log(`    WRITE  ${w.at}  ${w.instruction}   in ${w.function} (${w.origin})`);
+    console.log(
+      `${r.file}: ${r.instructions} instructions, x18 is read by ${r.x18_reads} and WRITTEN by ${writes}${r.data_words ? `, ${r.data_words} words of data in code` : ""}`,
+    );
+    for (const w of r.data_words_that_could_run.slice(0, 30))
+      console.log(`    DATA   ${w.at}  ${w.instruction}   in ${w.function} (${w.origin})`);
+    if (r.data_words_that_could_run.length)
+      r.errors.push(`${r.data_words_that_could_run.length} words of data in code that could be run as instructions`);
+    for (const [kind, count] of Object.entries(r.x18_reads_by_kind).sort((a, b) => b[1] - a[1]))
+      console.log(`    read   ${String(count).padStart(6)} x  ${kind}`);
+    for (const w of r.x18_writes.slice(0, 30))
+      console.log(`    WRITE  ${w.at}  ${w.instruction}   in ${w.function} (${w.origin})`);
     if (writes > 30) console.log(`    ... and ${writes - 30} more`);
-    if (r.system_registers) for (const [register, e] of Object.entries(r.system_registers)) console.log(`    register ${register}: read ${e.reads}, written ${e.writes}, from ${e.origins.join(" ")}${e.only_when ? `, only when ${e.only_when}` : ""}`);
-    if (r.cache_instructions) for (const [what, e] of Object.entries(r.cache_instructions)) console.log(`    ${what}: ${e.count}, in ${e.functions.join(" ")} (${e.origins.join(" ")})`);
-    if (r.functions_with_svc !== undefined) console.log(`    ${r.tls_segment ? "TLS segment" : "no TLS segment"}, ${r.functions_with_svc} functions with svc, ${r.functions_that_read_the_thread_register} that read the thread register`);
+    if (r.system_registers)
+      for (const [register, e] of Object.entries(r.system_registers))
+        console.log(
+          `    register ${register}: read ${e.reads}, written ${e.writes}, from ${e.origins.join(" ")}${e.only_when ? `, only when ${e.only_when}` : ""}`,
+        );
+    if (r.cache_instructions)
+      for (const [what, e] of Object.entries(r.cache_instructions))
+        console.log(`    ${what}: ${e.count}, in ${e.functions.join(" ")} (${e.origins.join(" ")})`);
+    if (r.functions_with_svc !== undefined)
+      console.log(
+        `    ${r.tls_segment ? "TLS segment" : "no TLS segment"}, ${r.functions_with_svc} functions with svc, ${r.functions_that_read_the_thread_register} that read the thread register`,
+      );
     for (const e of r.errors) console.log(`    ERROR ${e}`);
     if (has("expect-x18-writes")) {
       if (!writes) failed++;
     } else if (writes) failed++;
     if (r.errors.length) failed++;
   }
-  if (has("expect-x18-writes")) console.log(failed ? "FAILED: a negative control, and no write of x18 was found (or another rule failed)" : "negative control: writes of x18 were found, as expected");
+  if (has("expect-x18-writes"))
+    console.log(
+      failed
+        ? "FAILED: a negative control, and no write of x18 was found (or another rule failed)"
+        : "negative control: writes of x18 were found, as expected",
+    );
   else console.log(failed ? "FAILED" : "passed: no instruction writes x18, and the other rules hold");
   const out = one("out");
-  if (out) writeFileSync(out, JSON.stringify({ passed: !failed, expect_x18_writes: has("expect-x18-writes"), results }, null, 1) + "\n");
+  if (out)
+    writeFileSync(
+      out,
+      JSON.stringify({ passed: !failed, expect_x18_writes: has("expect-x18-writes"), results }, null, 1) + "\n",
+    );
   process.exit(failed ? 1 : 0);
 }

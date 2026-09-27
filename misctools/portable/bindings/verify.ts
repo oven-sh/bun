@@ -33,7 +33,10 @@ const out = option("--out", join(here, "windows_layout.headers.json"))!;
 const source = join(here, "windows_layout.c");
 const lines = readFileSync(source, "utf8").split("\n");
 const work = mkdtempSync(join(tmpdir(), "bun-layout-"));
-const exe = join(work, table ? "windows_layout.obj" : process.platform === "win32" ? "windows_layout.exe" : "windows_layout");
+const exe = join(
+  work,
+  table ? "windows_layout.obj" : process.platform === "win32" ? "windows_layout.exe" : "windows_layout",
+);
 
 /** The macro that leaves out the fact on this line (1-based): the innermost open `#ifndef SKIP_`. */
 function macroOf(line: number): string | undefined {
@@ -51,7 +54,16 @@ function compile(flags: string[], output: string, what: string) {
   const skipped = new Set<string>();
   let lastErrors = "";
   for (let round = 0; round < 40; round++) {
-    const command = [...cc, "-ferror-limit=0", "-w", ...flags, ...[...skipped].map(m => `-D${m}`), "-o", output, source];
+    const command = [
+      ...cc,
+      "-ferror-limit=0",
+      "-w",
+      ...flags,
+      ...[...skipped].map(m => `-D${m}`),
+      "-o",
+      output,
+      source,
+    ];
     const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe", maxBuffer: 1 << 28 });
     if (result.exitCode === 0) return skipped;
     lastErrors = result.stderr.toString();
@@ -66,7 +78,11 @@ function compile(flags: string[], output: string, what: string) {
   console.error(lastErrors.split("\n").slice(0, 40).join("\n"));
   throw new Error(`windows_layout.c does not compile (${what}), and no line that can be left out is the reason`);
 }
-const skipped = compile([`-I${join(libuv, "include")}`, ...(table ? ["-DBUN_LAYOUT_TABLE", "-c"] : [])], exe, "the headers of the SDK and of libuv");
+const skipped = compile(
+  [`-I${join(libuv, "include")}`, ...(table ? ["-DBUN_LAYOUT_TABLE", "-c"] : [])],
+  exe,
+  "the headers of the SDK and of libuv",
+);
 /** The table `bun_layout_facts` of an object file for Windows (COFF), as the program would have printed it. */
 function factsOfTable(path: string) {
   const file = readFileSync(path);
@@ -80,7 +96,11 @@ function factsOfTable(path: string) {
     const at = symbolTable + 18 * i;
     const name =
       file.readUInt32LE(at) === 0
-        ? file.toString("latin1", strings + file.readUInt32LE(at + 4), file.indexOf(0, strings + file.readUInt32LE(at + 4)))
+        ? file.toString(
+            "latin1",
+            strings + file.readUInt32LE(at + 4),
+            file.indexOf(0, strings + file.readUInt32LE(at + 4)),
+          )
         : file.toString("latin1", at, at + 8).replace(/\0+$/, "");
     const section = file.readInt16LE(at + 12);
     if (name === "bun_layout_facts" && section > 0 && section <= sectionCount) {
@@ -94,7 +114,11 @@ function factsOfTable(path: string) {
   const typeLength = length("BUN_LAYOUT_TYPE_LENGTH");
   const fieldLength = length("BUN_LAYOUT_FIELD_LENGTH");
   const text = (at: number, size: number) => file.toString("latin1", at, at + size).replace(/\0.*$/s, "");
-  const facts: { pointer_bits: number; types: Record<string, any>; constants: Record<string, string> } = { pointer_bits: 0, types: {}, constants: {} };
+  const facts: { pointer_bits: number; types: Record<string, any>; constants: Record<string, string> } = {
+    pointer_bits: 0,
+    types: {},
+    constants: {},
+  };
   for (let at = data; ; at += 1 + typeLength + fieldLength + 16) {
     const kind = String.fromCharCode(file.readUInt8(at));
     const type = text(at + 1, typeLength);
@@ -122,16 +146,24 @@ else {
 }
 const types = [...skipped].filter(m => m.startsWith("SKIP_TYPE_")).map(m => m.slice("SKIP_TYPE_".length));
 // The system whose headers these are: the one the compiler compiled for.
-const target = Bun.spawnSync([...cc, "-dumpmachine"], { stdout: "pipe" }).stdout.toString().trim();
+const target = Bun.spawnSync([...cc, "-dumpmachine"], { stdout: "pipe" })
+  .stdout.toString()
+  .trim();
 facts.system = /windows/.test(target) ? "win32" : process.platform;
 facts.architecture = /^(aarch64|arm64)/.test(target) ? "arm64" : /^x86_64/.test(target) ? "x64" : process.arch;
 facts.target = target;
 facts.read_from = table ? "the table of the object file, which was not run" : "the output of the program";
-facts.compiler = Bun.spawnSync([...cc, "--version"], { stdout: "pipe" }).stdout.toString().split("\n")[0];
+facts.compiler = Bun.spawnSync([...cc, "--version"], { stdout: "pipe" })
+  .stdout.toString()
+  .split("\n")[0];
 facts.left_out = {
   types,
-  fields: [...skipped].filter(m => m.startsWith("SKIP_FIELD_") && !types.some(t => m.startsWith(`SKIP_FIELD_${t}_`))).map(m => m.slice("SKIP_FIELD_".length)),
+  fields: [...skipped]
+    .filter(m => m.startsWith("SKIP_FIELD_") && !types.some(t => m.startsWith(`SKIP_FIELD_${t}_`)))
+    .map(m => m.slice("SKIP_FIELD_".length)),
   constants: [...skipped].filter(m => m.startsWith("SKIP_CONSTANT_")).map(m => m.slice("SKIP_CONSTANT_".length)),
 };
 writeFileSync(out, JSON.stringify(facts, null, 1) + "\n");
-console.log(`${out}: ${Object.keys(facts.types).length} types, ${Object.keys(facts.constants).length} constants; left out: ${facts.left_out.types.length} types, ${facts.left_out.fields.length} fields, ${facts.left_out.constants.length} constants`);
+console.log(
+  `${out}: ${Object.keys(facts.types).length} types, ${Object.keys(facts.constants).length} constants; left out: ${facts.left_out.types.length} types, ${facts.left_out.fields.length} fields, ${facts.left_out.constants.length} constants`,
+);

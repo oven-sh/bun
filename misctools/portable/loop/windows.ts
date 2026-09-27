@@ -56,13 +56,16 @@ function run(cmd: string[], log?: string) {
 
 function compile() {
   const facts = join(work, "layout.image.json");
-  if (!existsSync(facts)) throw new Error(`${facts} is not there: it is what bun_fs_slice.img --layout prints (build.ts, step base)`);
+  if (!existsSync(facts))
+    throw new Error(`${facts} is not there: it is what bun_fs_slice.img --layout prints (build.ts, step base)`);
   rmSync(include, { recursive: true, force: true });
   run([process.execPath, join(here, "uv_header.ts"), "--facts", facts, "--out", include]);
 
   // The callbacks of libuv in eventing/libuv.c.
   const libuv = readFileSync(join(repo, "packages/bun-usockets/src/eventing/libuv.c"), "utf8");
-  const callbacks = [...libuv.matchAll(/^(static )?void ([a-z_0-9]+)\((uv_[a-z]+_t \*[a-z_]+(?:, int [a-z_]+)*)\) \{/gm)];
+  const callbacks = [
+    ...libuv.matchAll(/^(static )?void ([a-z_0-9]+)\((uv_[a-z]+_t \*[a-z_]+(?:, int [a-z_]+)*)\) \{/gm),
+  ];
   if (callbacks.length === 0) throw new Error("eventing/libuv.c has no callback of libuv that windows.ts finds");
   writeFileSync(
     join(include, "callbacks.h"),
@@ -93,29 +96,85 @@ function compile() {
   mkdirSync(join(work, "logs"), { recursive: true });
   const flags = [
     `--config=${join(sysroot, "portable.cfg")}`,
-    "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden",
-    "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-std=gnu17",
-    "-Wno-c23-extensions", "-Wno-nullability-completeness", "-Wno-pointer-sign", "-Wno-unknown-pragmas", "-Wno-incompatible-pointer-types",
+    "-march=nehalem",
+    "-DNDEBUG",
+    "-O2",
+    "-fno-exceptions",
+    "-fno-omit-frame-pointer",
+    "-fno-stack-protector",
+    "-fstack-clash-protection",
+    "-fvisibility=hidden",
+    "-fno-unwind-tables",
+    "-fno-asynchronous-unwind-tables",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-std=gnu17",
+    "-Wno-c23-extensions",
+    "-Wno-nullability-completeness",
+    "-Wno-pointer-sign",
+    "-Wno-unknown-pragmas",
+    "-Wno-incompatible-pointer-types",
     "-Werror=implicit-function-declaration",
-    "-Werror=incompatible-function-pointer-types", "-Werror=int-conversion",
+    "-Werror=incompatible-function-pointer-types",
+    "-Werror=int-conversion",
     // The compiler's target is Linux. The code is bun's for Windows.
-    "-U__linux__", "-U__linux", "-Ulinux", "-U__gnu_linux__", "-U__unix__", "-U__unix", "-Uunix",
-    "-D_WIN32=1", "-D_WIN64=1", "-DWIN32=1",
-    "-isystem", include,
-    `-I${join(repo, "packages")}`, `-I${join(repo, "packages/bun-usockets")}`, `-I${join(repo, "packages/bun-usockets/src")}`,
-    `-I${join(repo, "src/jsc/bindings")}`, `-I${join(repo, "src/uws_sys")}`,
-    `-I${join(vendor, "boringssl/include")}`, `-I${join(vendor, "mimalloc/include")}`,
-    "-DLIBUS_USE_OPENSSL=1", "-DLIBUS_USE_LIBUV=1", "-DUSE_BUN_MIMALLOC=1", "-DBUN_PORTABLE=1",
+    "-U__linux__",
+    "-U__linux",
+    "-Ulinux",
+    "-U__gnu_linux__",
+    "-U__unix__",
+    "-U__unix",
+    "-Uunix",
+    "-D_WIN32=1",
+    "-D_WIN64=1",
+    "-DWIN32=1",
+    "-isystem",
+    include,
+    `-I${join(repo, "packages")}`,
+    `-I${join(repo, "packages/bun-usockets")}`,
+    `-I${join(repo, "packages/bun-usockets/src")}`,
+    `-I${join(repo, "src/jsc/bindings")}`,
+    `-I${join(repo, "src/uws_sys")}`,
+    `-I${join(vendor, "boringssl/include")}`,
+    `-I${join(vendor, "mimalloc/include")}`,
+    "-DLIBUS_USE_OPENSSL=1",
+    "-DLIBUS_USE_LIBUV=1",
+    "-DUSE_BUN_MIMALLOC=1",
+    "-DBUN_PORTABLE=1",
   ];
   for (const name of sources) {
     const base = name.split("/").pop()!;
     run(
-      [`${llvm}/clang`, ...flags, ...(base === "libuv" ? ["-include", join(include, "callbacks.h"), "-fsanitize-coverage=func,trace-pc", `-fsanitize-coverage-allowlist=${join(include, "callbacks.list")}`] : []), "-c", join(repo, "packages/bun-usockets/src", `${name}.c`), "-o", join(plain, `${base}.o`)],
+      [
+        `${llvm}/clang`,
+        ...flags,
+        ...(base === "libuv"
+          ? [
+              "-include",
+              join(include, "callbacks.h"),
+              "-fsanitize-coverage=func,trace-pc",
+              `-fsanitize-coverage-allowlist=${join(include, "callbacks.list")}`,
+            ]
+          : []),
+        "-c",
+        join(repo, "packages/bun-usockets/src", `${name}.c`),
+        "-o",
+        join(plain, `${base}.o`),
+      ],
       join(work, "logs", `usockets-windows-${base}.log`),
     );
   }
-  run([`${llvm}/clang`, `--config=${join(sysroot, "portable.cfg")}`, "-c", join(include, "imports.s"), "-o", join(plain, "imports.o")]);
-  console.log(`${plain}: ${sources.length} sources of uSockets for Windows, ${callbacks.length} callbacks of libuv (${callbacks.map(found => found[2]).join(" ")})`);
+  run([
+    `${llvm}/clang`,
+    `--config=${join(sysroot, "portable.cfg")}`,
+    "-c",
+    join(include, "imports.s"),
+    "-o",
+    join(plain, "imports.o"),
+  ]);
+  console.log(
+    `${plain}: ${sources.length} sources of uSockets for Windows, ${callbacks.length} callbacks of libuv (${callbacks.map(found => found[2]).join(" ")})`,
+  );
 }
 
 function rename() {
@@ -123,11 +182,15 @@ function rename() {
   const ofImage = new Set<string>(flavor.symbols_of_the_image);
   const objects = readdirSync(plain).filter(name => name.endsWith(".o"));
   const symbols = (object: string, which: string) =>
-    run([`${llvm}/llvm-nm`, which, "--extern-only", "--format=just-symbols", join(plain, object)]).split("\n").filter(Boolean);
+    run([`${llvm}/llvm-nm`, which, "--extern-only", "--format=just-symbols", join(plain, object)])
+      .split("\n")
+      .filter(Boolean);
   const defined = new Set(objects.flatMap(object => symbols(object, "--defined-only")));
   const wanted = new Set(objects.flatMap(object => symbols(object, "--undefined-only")));
   // The entries of the import table are the table's: it is one for the image.
-  const names = [...new Set([...defined, ...[...wanted].filter(name => !ofImage.has(name))])].filter(name => !name.startsWith("bun_import__")).sort();
+  const names = [...new Set([...defined, ...[...wanted].filter(name => !ofImage.has(name))])]
+    .filter(name => !name.startsWith("bun_import__"))
+    .sort();
   const map = join(work, "usockets/windows-names.txt");
   writeFileSync(map, names.map(name => `${name} ${name}${suffix}`).join("\n") + "\n");
   rmSync(renamed, { recursive: true, force: true });
@@ -135,9 +198,18 @@ function rename() {
   // .deplibs is where `#pragma comment(lib, "ws2_32.lib")` of the sources went: a request to the linker
   // of Windows. The image reaches ws2_32 through its import table.
   for (const object of objects)
-    run([`${llvm}/llvm-objcopy`, `--redefine-syms=${map}`, "--remove-section=.deplibs", join(plain, object), join(renamed, object)]);
+    run([
+      `${llvm}/llvm-objcopy`,
+      `--redefine-syms=${map}`,
+      "--remove-section=.deplibs",
+      join(plain, object),
+      join(renamed, object),
+    ]);
   const kept = [...wanted].filter(name => ofImage.has(name) && !defined.has(name)).sort();
-  writeFileSync(join(work, "usockets/windows-names.json"), JSON.stringify({ renamed: names, of_the_image: kept }, null, 1) + "\n");
+  writeFileSync(
+    join(work, "usockets/windows-names.json"),
+    JSON.stringify({ renamed: names, of_the_image: kept }, null, 1) + "\n",
+  );
   console.log(`${renamed}: ${names.length} names with ${suffix}, ${kept.length} names of the image kept`);
 }
 

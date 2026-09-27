@@ -26,13 +26,28 @@ const runs = Number(args.includes("--runs") ? args[args.indexOf("--runs") + 1] :
 const directory = join(loop, "run");
 mkdirSync(directory, { recursive: true });
 
-const built = Bun.spawnSync([process.execPath, join(tree, "build.ts"), "host", "--arch", ARCH, "--out", out], { stdout: "inherit", stderr: "inherit" });
-if (built.exitCode !== 0 || !existsSync(image)) throw new Error("the host does not build, or build.ts of the loop slice has not made the image");
+const built = Bun.spawnSync([process.execPath, join(tree, "build.ts"), "host", "--arch", ARCH, "--out", out], {
+  stdout: "inherit",
+  stderr: "inherit",
+});
+if (built.exitCode !== 0 || !existsSync(image))
+  throw new Error("the host does not build, or build.ts of the loop slice has not made the image");
 
 const expected = readFileSync(join(here, "expected/linux.jsonl"), "utf8");
 function run(command: string[], env: Record<string, string> = {}) {
-  const result = Bun.spawnSync(command, { cwd: directory, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe", timeout: 120_000 });
-  return { code: result.exitCode, signal: result.signalCode, out: result.stdout.toString(), err: result.stderr.toString() };
+  const result = Bun.spawnSync(command, {
+    cwd: directory,
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 120_000,
+  });
+  return {
+    code: result.exitCode,
+    signal: result.signalCode,
+    out: result.stdout.toString(),
+    err: result.stderr.toString(),
+  };
 }
 const results: { test: string; passes: number; runs: number; note?: string }[] = [];
 function check(test: string, once: () => string | undefined) {
@@ -45,10 +60,16 @@ function check(test: string, once: () => string | undefined) {
   }
   results.push({ test, passes, runs, note });
 }
-const steps = (out: string) => out.split("\n").filter(Boolean).map(line => JSON.parse(line));
+const steps = (out: string) =>
+  out
+    .split("\n")
+    .filter(Boolean)
+    .map(line => JSON.parse(line));
 const asExpected = (r: ReturnType<typeof run>) => {
   if (r.code === 0 && r.out === expected) return undefined;
-  const failed = steps(r.out).filter(step => step.ok !== true).map(step => step.step);
+  const failed = steps(r.out)
+    .filter(step => step.ok !== true)
+    .map(step => step.step);
   return `exit code ${r.code}, signal ${r.signal}, ${steps(r.out).length} lines, not ok: ${JSON.stringify(failed)}, stderr: ${r.err.slice(0, 300)}`;
 };
 
@@ -58,7 +79,8 @@ check("as win32: takes the code for Windows and stops at its first call of Windo
   const r = run([image], { BUN_PORTABLE_HOST_INTERFACE: "win32" });
   const lines = steps(r.out);
   // bun_core takes the standard streams the way it does on Windows before the program prints anything.
-  const tookWindows = lines.length === 0 || (lines.length === 1 && lines[0].os === "win32" && lines[0].code === "windows");
+  const tookWindows =
+    lines.length === 0 || (lines.length === 1 && lines[0].os === "win32" && lines[0].code === "windows");
   return r.code !== 0 && tookWindows && / is a function of Windows, and this host is Linux/.test(r.err)
     ? undefined
     : `exit code ${r.code}: ${r.out} ${r.err.slice(0, 300)}`;
@@ -67,20 +89,44 @@ check("imports", () => {
   const r = run([host, image, "--imports"]);
   const lines = steps(r.out);
   const summary = lines.pop();
-  const has = (library: string, symbol: string) => lines.some(line => line.library === library && line.symbol === symbol);
+  const has = (library: string, symbol: string) =>
+    lines.some(line => line.library === library && line.symbol === symbol);
   const needed: [string, string][] = [
-    ["libuv", "uv_run"], ["libuv", "uv_loop_new"], ["libuv", "uv_poll_init_socket"], ["libuv", "uv_poll_start"], ["libuv", "uv_timer_start"],
-    ["libuv", "uv_async_send"], ["libuv", "uv_prepare_start"], ["libuv", "uv_check_start"], ["libuv", "uv_close"],
-    ["libuv", "uv_spawn"], ["libuv", "uv_process_kill"], ["libuv", "uv_pipe_init"], ["libuv", "uv_read_start"], ["libuv", "uv_write"],
-    ["ws2_32", "WSASocketW"], ["ws2_32", "bind"], ["ws2_32", "listen"], ["ws2_32", "accept"], ["ws2_32", "connect"], ["ws2_32", "recv"],
-    ["ws2_32", "send"], ["ws2_32", "closesocket"], ["ws2_32", "WSAGetLastError"],
+    ["libuv", "uv_run"],
+    ["libuv", "uv_loop_new"],
+    ["libuv", "uv_poll_init_socket"],
+    ["libuv", "uv_poll_start"],
+    ["libuv", "uv_timer_start"],
+    ["libuv", "uv_async_send"],
+    ["libuv", "uv_prepare_start"],
+    ["libuv", "uv_check_start"],
+    ["libuv", "uv_close"],
+    ["libuv", "uv_spawn"],
+    ["libuv", "uv_process_kill"],
+    ["libuv", "uv_pipe_init"],
+    ["libuv", "uv_read_start"],
+    ["libuv", "uv_write"],
+    ["ws2_32", "WSASocketW"],
+    ["ws2_32", "bind"],
+    ["ws2_32", "listen"],
+    ["ws2_32", "accept"],
+    ["ws2_32", "connect"],
+    ["ws2_32", "recv"],
+    ["ws2_32", "send"],
+    ["ws2_32", "closesocket"],
+    ["ws2_32", "WSAGetLastError"],
   ];
   const absent = needed.filter(([library, symbol]) => !has(library, symbol));
-  return r.code === 1 && summary?.total === summary?.missing && summary.total > 100 && absent.length === 0 ? undefined : `exit code ${r.code}, ${JSON.stringify(summary)}, not in the table: ${JSON.stringify(absent)}`;
+  return r.code === 1 && summary?.total === summary?.missing && summary.total > 100 && absent.length === 0
+    ? undefined
+    : `exit code ${r.code}, ${JSON.stringify(summary)}, not in the table: ${JSON.stringify(absent)}`;
 });
 
 {
-  const analysed = Bun.spawnSync([process.execPath, join(tree, "image/entries.ts"), image], { stdout: "pipe", stderr: "pipe" });
+  const analysed = Bun.spawnSync([process.execPath, join(tree, "image/entries.ts"), image], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const report = analysed.stdout.toString().startsWith("{") ? JSON.parse(analysed.stdout.toString()) : {};
   const ok = analysed.exitCode === 0 && report.functions_that_check > 0 && report.check_written_by_the_compiler > 0;
   results.push({

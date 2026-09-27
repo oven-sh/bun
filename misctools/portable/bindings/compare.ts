@@ -108,6 +108,8 @@ for (const line of notCompared) console.log(`not compared  ${line}`);
 for (const line of partial) console.log(`partial view  ${line}`);
 for (const line of differences) console.log(`DIFFERENT     ${line}`);
 if (driverKit.length)
-  console.log(`not compared  ${driverKit.length} structures that only the Windows Driver Kit declares: ${driverKit.join(" ")}`);
+  console.log(
+    `not compared  ${driverKit.length} structures that only the Windows Driver Kit declares: ${driverKit.join(" ")}`,
+  );
 console.log(`${same} facts are the same, ${differences.length} differ, ${notCompared.length} could not be compared`);
 process.exit(differences.length ? 1 : 0);

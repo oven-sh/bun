@@ -70,18 +70,30 @@ const checkout = join(out, "libuv");
 const head = existsSync(join(checkout, ".git")) ? run(["git", "-C", checkout, "rev-parse", "HEAD"]).stdout.trim() : "";
 if (head !== libuv.commit) {
   rmSync(checkout, { recursive: true, force: true });
-  const cloned = run(["git", "clone", "-q", process.env.LIBUV_GIT ?? libuv.repository, checkout], join(out, "libuv-clone.log"));
+  const cloned = run(
+    ["git", "clone", "-q", process.env.LIBUV_GIT ?? libuv.repository, checkout],
+    join(out, "libuv-clone.log"),
+  );
   if (!cloned.ok) throw new Error(`libuv could not be cloned: ${join(out, "libuv-clone.log")}`);
-  if (!run(["git", "-C", checkout, "-c", "advice.detachedHead=false", "checkout", "-q", libuv.commit]).ok) throw new Error(`libuv has no commit ${libuv.commit}`);
+  if (!run(["git", "-C", checkout, "-c", "advice.detachedHead=false", "checkout", "-q", libuv.commit]).ok)
+    throw new Error(`libuv has no commit ${libuv.commit}`);
   for (const patch of libuv.patches)
-    if (!run(["git", "-C", checkout, "apply", join(libuv.patchDirectory, patch)]).ok) throw new Error(`${patch} does not apply`);
+    if (!run(["git", "-C", checkout, "apply", join(libuv.patchDirectory, patch)]).ok)
+      throw new Error(`${patch} does not apply`);
 }
 const objects = join(out, "uv-objects");
 rmSync(objects, { recursive: true, force: true });
 mkdirSync(objects, { recursive: true });
 {
   const compiled = run(
-    [...clang, "-c", ...libuv.flags, `-I${join(checkout, "include")}`, `-I${join(checkout, "src")}`, ...libuv.sources.map(source => join(checkout, source))],
+    [
+      ...clang,
+      "-c",
+      ...libuv.flags,
+      `-I${join(checkout, "include")}`,
+      `-I${join(checkout, "src")}`,
+      ...libuv.sources.map(source => join(checkout, source)),
+    ],
     join(out, "uv-compile.log"),
     objects,
   );
@@ -102,9 +114,16 @@ mkdirSync(objects, { recursive: true });
   rmSync(program, { force: true });
   const linked = run(
     [
-      ...clang, ...host.flags, "-Wall", "-Wextra", "-o", program,
+      ...clang,
+      ...host.flags,
+      "-Wall",
+      "-Wextra",
+      "-o",
+      program,
       ...host.sources.map(source => join(tree, "host", source)),
-      ...readdirSync(objects).sort().map(name => join(objects, name)),
+      ...readdirSync(objects)
+        .sort()
+        .map(name => join(objects, name)),
       ...host.libraries.map(name => `-l${name}`),
     ],
     join(out, "host-compile.log"),
@@ -123,7 +142,10 @@ mkdirSync(objects, { recursive: true });
 // ---- what the C of the image was compiled against ----
 {
   const source = join(work, "usockets/windows-include/check_on_windows.c");
-  const compiled = run([...clang, ...headerCheckFlags, "-ferror-limit=0", `-I${join(checkout, "include")}`, source], join(out, "check-windows-c.txt"));
+  const compiled = run(
+    [...clang, ...headerCheckFlags, "-ferror-limit=0", `-I${join(checkout, "include")}`, source],
+    join(out, "check-windows-c.txt"),
+  );
   const text = readFileSync(source, "utf8");
   check("headers of the C of the image", compiled.ok, {
     source,
@@ -136,7 +158,17 @@ mkdirSync(objects, { recursive: true });
 }
 {
   const source = join(work, "usockets/windows-include/check_on_windows.cpp");
-  const compiled = run([`${llvm}/clang++`, ...clang.slice(1), ...signatureCheckFlags, "-ferror-limit=0", `-I${join(checkout, "include")}`, source], join(out, "check-windows-cpp.txt"));
+  const compiled = run(
+    [
+      `${llvm}/clang++`,
+      ...clang.slice(1),
+      ...signatureCheckFlags,
+      "-ferror-limit=0",
+      `-I${join(checkout, "include")}`,
+      source,
+    ],
+    join(out, "check-windows-cpp.txt"),
+  );
   const text = readFileSync(source, "utf8");
   check("functions that the C of the image calls", compiled.ok, {
     source,
@@ -152,10 +184,27 @@ mkdirSync(objects, { recursive: true });
   const ours = run([at.fileSystemImage, "--layout"]);
   writeFileSync(join(out, "layout.image.json"), ours.stdout);
   const verified = run(
-    [process.execPath, join(tree, "bindings/verify.ts"), "--libuv", checkout, "--table", "--cc", clang.join(" "), "--out", join(out, "layout.headers.json")],
+    [
+      process.execPath,
+      join(tree, "bindings/verify.ts"),
+      "--libuv",
+      checkout,
+      "--table",
+      "--cc",
+      clang.join(" "),
+      "--out",
+      join(out, "layout.headers.json"),
+    ],
     join(out, "layout-verify.log"),
   );
-  const compared = verified.ok ? run([process.execPath, join(tree, "bindings/compare.ts"), join(out, "layout.image.json"), join(out, "layout.headers.json")]) : undefined;
+  const compared = verified.ok
+    ? run([
+        process.execPath,
+        join(tree, "bindings/compare.ts"),
+        join(out, "layout.image.json"),
+        join(out, "layout.headers.json"),
+      ])
+    : undefined;
   if (compared) writeFileSync(join(out, "layout-compare.txt"), compared.text);
   const last = /(\d+) facts are the same, (\d+) differ, (\d+) could not be compared/.exec(compared?.text ?? "");
   check("layout of the bindings", ours.ok && verified.ok && compared?.ok === true, {
@@ -163,7 +212,10 @@ mkdirSync(objects, { recursive: true });
     differ: last ? Number(last[2]) : null,
     not_compared: Number(last?.[3] ?? 0),
     different: [...(compared?.text ?? "").matchAll(/^DIFFERENT\s+(.*)$/gm)].map(match => match[1]),
-    not_compared_only_the_driver_kit_declares: /^not compared  \d+ structures that only the Windows Driver Kit declares: (.*)$/m.exec(compared?.text ?? "")?.[1].split(" ") ?? [],
+    not_compared_only_the_driver_kit_declares:
+      /^not compared  \d+ structures that only the Windows Driver Kit declares: (.*)$/m
+        .exec(compared?.text ?? "")?.[1]
+        .split(" ") ?? [],
     report: join(out, "layout-compare.txt"),
   });
 }
@@ -176,12 +228,28 @@ for (const [name, image, path] of [
   const listed = run([at.host, path, "--imports"]);
   const list = join(out, `${image}.imports.jsonl`);
   writeFileSync(list, listed.stdout);
-  const checked = run([process.execPath, join(tree, "bindings/imports-libraries.ts"), list, "--sdk", sdk, "--nm", `${llvm}/llvm-nm`]);
+  const checked = run([
+    process.execPath,
+    join(tree, "bindings/imports-libraries.ts"),
+    list,
+    "--sdk",
+    sdk,
+    "--nm",
+    `${llvm}/llvm-nm`,
+  ]);
   writeFileSync(join(out, `${image}.imports-libraries.json`), checked.stdout);
-  const report = checked.stdout.startsWith("{") ? JSON.parse(checked.stdout) : { imports: 0, not_found: [{ why: checked.text.slice(0, 300) }] };
-  check(name, checked.ok && report.imports > 0, { imports: report.imports, by_library: report.by_library, not_found: report.not_found });
+  const report = checked.stdout.startsWith("{")
+    ? JSON.parse(checked.stdout)
+    : { imports: 0, not_found: [{ why: checked.text.slice(0, 300) }] };
+  check(name, checked.ok && report.imports > 0, {
+    imports: report.imports,
+    by_library: report.by_library,
+    not_found: report.not_found,
+  });
 }
 
 writeFileSync(join(out, "summary.json"), JSON.stringify(summary, null, 1) + "\n");
-console.log(`${join(out, "summary.json")}: ${failed ? "a check FAILED" : "every check passed"}. Nothing of this ran: it was compiled and linked.`);
+console.log(
+  `${join(out, "summary.json")}: ${failed ? "a check FAILED" : "every check passed"}. Nothing of this ran: it was compiled and linked.`,
+);
 process.exit(failed ? 1 : 0);

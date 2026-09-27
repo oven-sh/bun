@@ -31,17 +31,30 @@ function output(cmd: string[]) {
 
 const symbols = output([`${llvm}/llvm-nm`, "--defined-only", resolve(image)]);
 const offsetSymbol = /^([0-9a-f]+) . __bun_tp_offset$/m.exec(symbols);
-if (!offsetSymbol) throw new Error(`${image} has no __bun_tp_offset: it is not an image whose C library adopts threads`);
+if (!offsetSymbol)
+  throw new Error(`${image} has no __bun_tp_offset: it is not an image whose C library adopts threads`);
 const offsetAddress = parseInt(offsetSymbol[1], 16);
 
-type Found = { function: string; at: string; check: "inline" | "call"; instructions_before: number; before_the_check: string[] };
+type Found = {
+  function: string;
+  at: string;
+  check: "inline" | "call";
+  instructions_before: number;
+  before_the_check: string[];
+};
 const found: Found[] = [];
 let name = "";
 let body: { address: string; text: string }[] = [];
 let previous: { address: string; text: string } | undefined;
 const needsTheThreadPointer = /^(call|syscall|sysenter|int\s)|%fs:|%gs:/;
 let address = "";
-for (const line of output([`${llvm}/llvm-objdump`, "-d", "--no-show-raw-insn", "--print-imm-hex", resolve(image)]).split("\n")) {
+for (const line of output([
+  `${llvm}/llvm-objdump`,
+  "-d",
+  "--no-show-raw-insn",
+  "--print-imm-hex",
+  resolve(image),
+]).split("\n")) {
   const label = /^[0-9a-f]+ <(.+)>:$/.exec(line);
   if (label) {
     name = label[1];
@@ -54,7 +67,10 @@ for (const line of output([`${llvm}/llvm-objdump`, "-d", "--no-show-raw-insn", "
   address = instruction[1];
   const text = instruction[2].replace(/\s+/g, " ").trim();
   // movq 0x1234(%rip), %rax   # 0x30c00 <__bun_tp_offset>      and then      movq %gs:(%rax), %rax
-  if (/^callq? .*<(__sanitizer_cov_trace_pc|__bun_thread_enter)>$/.test(text) && !/^(__sanitizer_cov_trace_pc|__bun_thread_enter)$/.test(name)) {
+  if (
+    /^callq? .*<(__sanitizer_cov_trace_pc|__bun_thread_enter)>$/.test(text) &&
+    !/^(__sanitizer_cov_trace_pc|__bun_thread_enter)$/.test(name)
+  ) {
     found.push({
       function: name,
       at: address,
@@ -66,7 +82,11 @@ for (const line of output([`${llvm}/llvm-objdump`, "-d", "--no-show-raw-insn", "
   const slot = /^movq? %gs:\(%(r[a-z0-9]+)\), /.exec(text);
   if (slot && previous) {
     const load = new RegExp(`^movq? .*\\(%rip\\), %${slot[1]}\\b.*# 0x([0-9a-f]+)`).exec(previous.text);
-    if (load && parseInt(load[1], 16) === offsetAddress && !/^(__sanitizer_cov_trace_pc|__bun_thread_enter)$/.test(name)) {
+    if (
+      load &&
+      parseInt(load[1], 16) === offsetAddress &&
+      !/^(__sanitizer_cov_trace_pc|__bun_thread_enter)$/.test(name)
+    ) {
       const before = body.slice(0, -1);
       found.push({
         function: name,
@@ -90,7 +110,15 @@ console.log(
       check_written_by_the_compiler: found.filter(f => f.check === "call").length,
       most_instructions_before_a_check: found.reduce((most, f) => Math.max(most, f.instructions_before), 0),
       functions_that_need_the_thread_pointer_before_their_check: late,
-      ...(args.includes("--list") ? { functions: found.map(f => ({ function: f.function, check: f.check, instructions_before: f.instructions_before })) } : {}),
+      ...(args.includes("--list")
+        ? {
+            functions: found.map(f => ({
+              function: f.function,
+              check: f.check,
+              instructions_before: f.instructions_before,
+            })),
+          }
+        : {}),
     },
     null,
     1,

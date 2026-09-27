@@ -41,7 +41,11 @@ const warnings = ["-Wall", "-Wextra", "-Wno-unused-parameter"];
 
 function run(cmd: string[]) {
   const result = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe", maxBuffer: 1 << 28 });
-  return { ok: result.exitCode === 0, text: result.stdout.toString() + result.stderr.toString(), stdout: result.stdout.toString() };
+  return {
+    ok: result.exitCode === 0,
+    text: result.stdout.toString() + result.stderr.toString(),
+    stdout: result.stdout.toString(),
+  };
 }
 let failed = false;
 function report(name: string, ok: boolean, facts: Record<string, unknown>) {
@@ -60,7 +64,17 @@ function usesOfX18(object: string, allowed?: RegExp) {
   const configuration = join(sdk, "windows-x64.cfg");
   if (!existsSync(configuration)) throw new Error(`${configuration} is not there: ../tools/windows-sdk.ts makes it`);
   const object = join(out, "host_win.arm64.obj");
-  const compiled = run([`${llvm}/clang`, `--config=${configuration}`, "--target=aarch64-pc-windows-msvc", "-O2", ...warnings, "-c", "-o", object, join(here, "host_win.c")]);
+  const compiled = run([
+    `${llvm}/clang`,
+    `--config=${configuration}`,
+    "--target=aarch64-pc-windows-msvc",
+    "-O2",
+    ...warnings,
+    "-c",
+    "-o",
+    object,
+    join(here, "host_win.c"),
+  ]);
   const other = compiled.ok ? usesOfX18(object, /\tmov\tx[0-9]+, x18$/) : [];
   report("host_win.c for Windows on arm64, compiled and not linked", compiled.ok && other.length === 0, {
     errors: [...compiled.text.matchAll(/error: (.*)$/gm)].map(match => match[1].slice(0, 160)),
@@ -76,15 +90,32 @@ for (const [apple, arch, sysroot] of [
   const resource = run([`${llvm}/clang`, "-print-resource-dir"]).stdout.trim();
   const object = join(out, `host_posix.${apple}.o`);
   const compiled = run([
-    `${llvm}/clang`, `--target=${apple}-apple-macos11`, "-O2", ...warnings, "-Wno-missing-field-initializers", "-nostdinc",
-    "-isystem", join(sysroot, "include"), "-isystem", join(resource, "include"), "-include", join(here, "mac_declarations.h"),
-    "-c", "-o", object, join(here, "host_posix.c"),
+    `${llvm}/clang`,
+    `--target=${apple}-apple-macos11`,
+    "-O2",
+    ...warnings,
+    "-Wno-missing-field-initializers",
+    "-nostdinc",
+    "-isystem",
+    join(sysroot, "include"),
+    "-isystem",
+    join(resource, "include"),
+    "-include",
+    join(here, "mac_declarations.h"),
+    "-c",
+    "-o",
+    object,
+    join(here, "host_posix.c"),
   ]);
   const uses = compiled.ok && apple === "arm64" ? usesOfX18(object) : [];
-  report(`host_posix.c, the branches for macOS, for ${apple}: syntax and types, with the headers of musl`, compiled.ok && uses.length === 0, {
-    errors: [...compiled.text.matchAll(/error: (.*)$/gm)].map(match => match[1].slice(0, 160)),
-    warnings: [...compiled.text.matchAll(/warning: (.*)$/gm)].map(match => match[1].slice(0, 120)),
-    ...(apple === "arm64" ? { uses_of_x18: uses } : {}),
-  });
+  report(
+    `host_posix.c, the branches for macOS, for ${apple}: syntax and types, with the headers of musl`,
+    compiled.ok && uses.length === 0,
+    {
+      errors: [...compiled.text.matchAll(/error: (.*)$/gm)].map(match => match[1].slice(0, 160)),
+      warnings: [...compiled.text.matchAll(/warning: (.*)$/gm)].map(match => match[1].slice(0, 120)),
+      ...(apple === "arm64" ? { uses_of_x18: uses } : {}),
+    },
+  );
 }
 process.exit(failed ? 1 : 0);

@@ -83,11 +83,14 @@ const traps: Record<string, Record<string, number>> = {};
 function withTraps(name: string, rules: string[]): string {
   const data = Buffer.from(readFileSync(image));
   const counts: Record<string, number> = Object.fromEntries(rules.map(r => [r, 0]));
-  const phoff = Number(data.readBigUInt64LE(32)), phentsize = data.readUInt16LE(54), phnum = data.readUInt16LE(56);
+  const phoff = Number(data.readBigUInt64LE(32)),
+    phentsize = data.readUInt16LE(54),
+    phnum = data.readUInt16LE(56);
   for (let i = 0; i < phnum; i++) {
     const at = phoff + i * phentsize;
     if (data.readUInt32LE(at) !== 1 || !(data.readUInt32LE(at + 4) & 1)) continue;
-    const start = Number(data.readBigUInt64LE(at + 8)), end = start + Number(data.readBigUInt64LE(at + 32));
+    const start = Number(data.readBigUInt64LE(at + 8)),
+      end = start + Number(data.readBigUInt64LE(at + 32));
     for (let word = start; word + 4 <= end; word += 4) {
       const value = data.readUInt32LE(word);
       for (const rule of rules) {
@@ -110,8 +113,20 @@ const imageDirect = linuxAarch64 ? withTraps("image.linux-only.img", ["no-x18", 
 const imageHosted = linuxAarch64 ? withTraps("image.x18-only.img", ["no-svc", "no-tpidr", "no-tpidrro"]) : image;
 
 type Check = (out: string) => string | null;
-type Scenario = { name: string; args: string[]; expect: Check; sameAsNative?: boolean; env?: Record<string, string>; codes?: number[] };
-const jitStress = ["--useDollarVM=1", "--jitPolicyScale=0.05", "--thresholdForOMGOptimizeAfterWarmUp=2000", "--thresholdForOMGOptimizeSoon=100"];
+type Scenario = {
+  name: string;
+  args: string[];
+  expect: Check;
+  sameAsNative?: boolean;
+  env?: Record<string, string>;
+  codes?: number[];
+};
+const jitStress = [
+  "--useDollarVM=1",
+  "--jitPolicyScale=0.05",
+  "--thresholdForOMGOptimizeAfterWarmUp=2000",
+  "--thresholdForOMGOptimizeSoon=100",
+];
 const exactly = (want: string) => (out: string) => (out === want ? null : `output is not the expected one`);
 const scenarios: Scenario[] = [
   { name: "1-print", args: ["-e", "print(1+1)"], expect: exactly("2\n") },
@@ -197,10 +212,18 @@ const scenarios: Scenario[] = [
         "jitstress wasm functions 22 checksum 34e285b8\njitstress wasm seen in bbq 22 omg 22\n",
     ),
   },
-].filter(s => (only.length ? only.some(o => s.name.includes(o)) : true) && (s.args.every(a => !a.endsWith(".js") || existsSync(a))));
+].filter(
+  s =>
+    (only.length ? only.some(o => s.name.includes(o)) : true) && s.args.every(a => !a.endsWith(".js") || existsSync(a)),
+);
 
 type Tally = { runs: number; passes: number; failures: string[]; seconds: number[]; ended_by_the_host?: number };
-const sums = { request: new Map<string, number>(), refused: new Map<string, number>(), forwarded: new Map<string, number>(), detail: new Map<string, number>() };
+const sums = {
+  request: new Map<string, number>(),
+  refused: new Map<string, number>(),
+  forwarded: new Map<string, number>(),
+  detail: new Map<string, number>(),
+};
 const perScenario = new Map<string, Map<string, number>>();
 const detailsPerScenario = new Map<string, Map<string, number>>();
 const paths = new Map<string, number>();
@@ -231,14 +254,22 @@ async function once(s: Scenario, mode: string, index: number): Promise<string | 
     late = true;
     proc.kill(9);
   }, timeout);
-  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
   clearTimeout(timer);
   writeFileSync(join(scratch, `${tag}.out`), stdout + (stderr ? `--- stderr\n${stderr}` : ""));
   if (mustEndWith !== undefined && mode !== "direct" && mode !== "native" && code === mustEndWith) {
     endedByHost++;
     return `${tag}: the host ended the run with exit code ${code}: ${stderr.trim().split("\n")[0]}`;
   }
-  let problem = late ? `no end after ${timeout / 1000} s` : (s.codes ?? [0]).includes(code) ? expect(stdout) : `exit code ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}`;
+  let problem = late
+    ? `no end after ${timeout / 1000} s`
+    : (s.codes ?? [0]).includes(code)
+      ? expect(stdout)
+      : `exit code ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}`;
   if (!problem && stderr.trim()) problem = `output on stderr: ${stderr.trim().split("\n")[0]}`;
   if (mode !== "direct" && mode !== "native" && existsSync(counts)) {
     for (const line of readFileSync(counts, "utf8").split("\n")) {
@@ -284,8 +315,11 @@ for (const s of scenarios) {
       else tally.passes++;
     }
     row[mode] = tally;
-    const control = mustEndWith === undefined ? "" : `, ${tally.ended_by_the_host} ended by the host with ${mustEndWith}`;
-    console.log(`${s.name.padEnd(20)} ${mode.padEnd(8)} ${tally.passes} of ${tally.runs}${control}   ${tally.seconds.join(" ")} s${tally.failures.length ? "   " + tally.failures[0] : ""}`);
+    const control =
+      mustEndWith === undefined ? "" : `, ${tally.ended_by_the_host} ended by the host with ${mustEndWith}`;
+    console.log(
+      `${s.name.padEnd(20)} ${mode.padEnd(8)} ${tally.passes} of ${tally.runs}${control}   ${tally.seconds.join(" ")} s${tally.failures.length ? "   " + tally.failures[0] : ""}`,
+    );
   }
   results.push(row);
 }
@@ -326,15 +360,21 @@ const report = {
     .sort((a, b) => a.path.localeCompare(b.path)),
 };
 writeFileSync(outFile, JSON.stringify(report, null, 1) + "\n");
-console.log(`requests: ${report.requests.length} numbers, refused: ${report.refused.length}, forwarded: ${report.forwarded.length}. Written: ${outFile}`);
-const tallies = results.flatMap(r => Object.values(r).filter(v => typeof v === "object" && v !== null && "failures" in v) as Tally[]);
+console.log(
+  `requests: ${report.requests.length} numbers, refused: ${report.refused.length}, forwarded: ${report.forwarded.length}. Written: ${outFile}`,
+);
+const tallies = results.flatMap(
+  r => Object.values(r).filter(v => typeof v === "object" && v !== null && "failures" in v) as Tally[],
+);
 if (mustEndWith !== undefined) {
   // A negative control: it did its work when the host ended at least one run, and when
   // the image is not broken in another way: by itself it passes.
   const ended = tallies.reduce((n, t) => n + (t.ended_by_the_host ?? 0), 0);
   const direct = results.map(r => r.direct as Tally | undefined).filter(Boolean) as Tally[];
   const directFailed = direct.reduce((n, t) => n + t.failures.length, 0);
-  console.log(`negative control: the host ended ${ended} of ${tallies.reduce((n, t) => n + t.runs, 0) - direct.reduce((n, t) => n + t.runs, 0)} hosted runs with exit code ${mustEndWith}, ${directFailed} direct runs failed`);
+  console.log(
+    `negative control: the host ended ${ended} of ${tallies.reduce((n, t) => n + t.runs, 0) - direct.reduce((n, t) => n + t.runs, 0)} hosted runs with exit code ${mustEndWith}, ${directFailed} direct runs failed`,
+  );
   process.exit(ended && !directFailed ? 0 : 1);
 }
 process.exit(tallies.some(t => t.failures.length) ? 1 : 0);

@@ -30,7 +30,9 @@ const option = (name: string, fallback?: string) => {
 const list = args.find((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1].startsWith("--")));
 const sdk = option("--sdk");
 if (!list || !sdk)
-  throw new Error("usage: bun imports-libraries.ts <imports.jsonl> --sdk <directory> [--host-table host_win_uv.c] [--nm <llvm-nm>]");
+  throw new Error(
+    "usage: bun imports-libraries.ts <imports.jsonl> --sdk <directory> [--host-table host_win_uv.c] [--nm <llvm-nm>]",
+  );
 const libraries = join(resolve(sdk), "lib-x64");
 const hostTable = readFileSync(option("--host-table", join(here, "../host/host_win_uv.c"))!, "utf8");
 const hostSource = readFileSync(join(here, "../host/host_win.c"), "utf8");
@@ -73,7 +75,15 @@ const byLibrary: Record<string, number> = {};
 const unnamed: Record<string, string> = {};
 // Where else a function is: the libraries of the image, and the ones that hold what a DLL of Windows
 // passes on to another.
-const others = [...new Set([...imports.map(i => i.library).filter(l => l !== "libuv" && l !== "*"), ...always, "kernelbase", "synchronization", "onecore"])];
+const others = [
+  ...new Set([
+    ...imports.map(i => i.library).filter(l => l !== "libuv" && l !== "*"),
+    ...always,
+    "kernelbase",
+    "synchronization",
+    "onecore",
+  ]),
+];
 for (const { library, symbol } of imports) {
   byLibrary[library] = (byLibrary[library] ?? 0) + 1;
   let why: string | undefined;
@@ -88,11 +98,22 @@ for (const { library, symbol } of imports) {
     if (!found) why = `the SDK has no ${fileOf(library)}.lib`;
     else if (!found.has(symbol)) why = `${fileOf(library)}.lib does not have it`;
   }
-  if (why) notFound.push({ library, symbol, why, the_sdk_has_it_in: others.filter(name => name !== library && exportsOf(name)?.has(symbol)) });
+  if (why)
+    notFound.push({
+      library,
+      symbol,
+      why,
+      the_sdk_has_it_in: others.filter(name => name !== library && exportsOf(name)?.has(symbol)),
+    });
 }
 console.log(
   JSON.stringify(
-    { imports: imports.length, by_library: byLibrary, found_for_a_declaration_without_a_library: unnamed, not_found: notFound },
+    {
+      imports: imports.length,
+      by_library: byLibrary,
+      found_for_a_declaration_without_a_library: unnamed,
+      not_found: notFound,
+    },
     null,
     1,
   ),

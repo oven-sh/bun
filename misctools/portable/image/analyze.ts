@@ -54,7 +54,12 @@ const cxxfilt = process.env.CXXFILT ?? join(llvmBin(), "llvm-cxxfilt");
 
 /** What a tool prints. */
 function output(command: string[], input?: string): string {
-  const r = Bun.spawnSync(command, { stdout: "pipe", stderr: "inherit", stdin: input === undefined ? "ignore" : Buffer.from(input), maxBuffer: 1 << 30 });
+  const r = Bun.spawnSync(command, {
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: input === undefined ? "ignore" : Buffer.from(input),
+    maxBuffer: 1 << 30,
+  });
   if (r.exitCode !== 0) {
     console.error(`${command[0]} exited with ${r.exitCode}`);
     process.exit(1);
@@ -65,7 +70,9 @@ function output(command: string[], input?: string): string {
 // ─── the image: its symbols, its memory, the addresses that its data holds ───
 const file = readFileSync(binary);
 const programHeaderLines = output([readelf, "-lW", binary]);
-const segments = [...programHeaderLines.matchAll(/^\s*LOAD\s+0x([0-9a-f]+)\s+0x([0-9a-f]+)\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s/gm)].map(m => ({
+const segments = [
+  ...programHeaderLines.matchAll(/^\s*LOAD\s+0x([0-9a-f]+)\s+0x([0-9a-f]+)\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s/gm),
+].map(m => ({
   offset: parseInt(m[1]!, 16),
   address: parseInt(m[2]!, 16),
   size: parseInt(m[3]!, 16),
@@ -78,7 +85,10 @@ function bytesAt(address: number, length: number): Buffer | undefined {
   }
   return undefined;
 }
-const entryPoint = parseInt(/Entry point (?:address:\s*)?0x([0-9a-f]+)/.exec(programHeaderLines + output([readelf, "-hW", binary]))?.[1] ?? "0", 16);
+const entryPoint = parseInt(
+  /Entry point (?:address:\s*)?0x([0-9a-f]+)/.exec(programHeaderLines + output([readelf, "-hW", binary]))?.[1] ?? "0",
+  16,
+);
 const symbolLines = output([nm, binary]).split("\n");
 const addressOfSymbol = (pattern: RegExp) => {
   const line = symbolLines.find(l => pattern.test(l));
@@ -92,10 +102,13 @@ const reader =
   nativeByte === undefined
     ? undefined
     : new Reader(nativeByte, readsNativeByte ?? -1, bytesAt, address => neverReturns.has(address));
-if (reader === undefined) console.error("the image has no symbol of the byte of the host: no code is taken as code for Windows");
+if (reader === undefined)
+  console.error("the image has no symbol of the byte of the host: no code is taken as code for Windows");
 /** Addresses that data of the image holds: a function that is among them is called from anywhere. */
 const inData = new Set<number>();
-for (const m of output([readelf, "-rW", binary]).matchAll(/R_X86_64_(?:RELATIVE|64)\s+(?:[0-9a-f]+\s+)?([0-9a-f]+)\s*$/gm)) {
+for (const m of output([readelf, "-rW", binary]).matchAll(
+  /R_X86_64_(?:RELATIVE|64)\s+(?:[0-9a-f]+\s+)?([0-9a-f]+)\s*$/gm,
+)) {
   inData.add(parseInt(m[1]!, 16));
 }
 
@@ -295,7 +308,13 @@ function refer(from: number, to: number) {
   references++;
 }
 /** The functions that ask for the host: they are judged when it is known which functions do not return. */
-const asking: { start: number; end: number; symbol: string; instructions: Instruction[]; sites: { site: Site; at: number }[] }[] = [];
+const asking: {
+  start: number;
+  end: number;
+  symbol: string;
+  instructions: Instruction[];
+  sites: { site: Site; at: number }[];
+}[] = [];
 /** For each function: the functions that its jumps leave it for; undefined when it returns, or may. */
 const leavesFor = new Map<number, number[]>();
 function endInstructions(nextStart: number) {
@@ -323,7 +342,14 @@ function endInstructions(nextStart: number) {
   currentSites = [];
   currentStart = nextStart;
 }
-function judgeAndRefer(start: number, nextStart: number, name: string, instructions: Instruction[], itsSites: { site: Site; at: number }[], asks: boolean) {
+function judgeAndRefer(
+  start: number,
+  nextStart: number,
+  name: string,
+  instructions: Instruction[],
+  itsSites: { site: Site; at: number }[],
+  asks: boolean,
+) {
   {
     const current = instructions;
     const currentStart = start;
@@ -341,7 +367,12 @@ function judgeAndRefer(start: number, nextStart: number, name: string, instructi
     for (let at = 0; at < current.length; at++) {
       const i = current[at]!;
       const direct = /^(call|j)/.test(i.mnemonic) ? /^0x([0-9a-f]+)\b/.exec(i.operands) : null;
-      const to = direct !== null ? parseInt(direct[1]!, 16) : i.mnemonic.startsWith("lea") || i.mnemonic.startsWith("mov") ? i.named : undefined;
+      const to =
+        direct !== null
+          ? parseInt(direct[1]!, 16)
+          : i.mnemonic.startsWith("lea") || i.mnemonic.startsWith("mov")
+            ? i.named
+            : undefined;
       if (to === undefined || (to >= currentStart && to < nextStart)) continue;
       if (inWindows(at)) windowsReferences.add(to);
       else refer(currentStart, to);
@@ -627,7 +658,8 @@ const reachedWithoutWindows = new Set<number>();
   for (const start of functionStarts) if (inData.has(start)) root(start);
   // A function that no instruction of the image refers to, in any code: how it is reached is not known.
   const referredToAtAll = new Set<number>();
-  for (let i = 0; i < references; i++) referredToAtAll.add(isStart.has(referencesTo[i]!) ? referencesTo[i]! : (functionOf(referencesTo[i]!) ?? -1));
+  for (let i = 0; i < references; i++)
+    referredToAtAll.add(isStart.has(referencesTo[i]!) ? referencesTo[i]! : (functionOf(referencesTo[i]!) ?? -1));
   for (const start of functionStarts) if (!referredToAtAll.has(start) && !windowsReferences.has(start)) root(start);
   while (stack.length > 0) {
     const from = stack.pop()!;
@@ -668,15 +700,30 @@ for (const site of sites.fs_gs) {
     continue;
   }
   if (!readsGs) {
-    errors.push({ kind: "fs_gs", function: name, address: site.address, instruction: site.instruction, input: site.input, why: "not a read through gs" });
+    errors.push({
+      kind: "fs_gs",
+      function: name,
+      address: site.address,
+      instruction: site.instruction,
+      input: site.input,
+      why: "not a read through gs",
+    });
     continue;
   }
   if (site.behind_a_branch_for_windows === true) {
-    allow(site, "an arm of a dispatch", "an arm of a dispatch: every way to the instruction passes a branch that is taken when the host is Windows");
+    allow(
+      site,
+      "an arm of a dispatch",
+      "an arm of a dispatch: every way to the instruction passes a branch that is taken when the host is Windows",
+    );
     continue;
   }
   if (site.function_at !== undefined && reader !== undefined && !reachedWithoutWindows.has(site.function_at)) {
-    allow(site, "an arm of a dispatch", "an arm of a dispatch: every call of the function, and every place that takes its address, is behind a branch that is taken when the host is Windows");
+    allow(
+      site,
+      "an arm of a dispatch",
+      "an arm of a dispatch: every call of the function, and every place that takes its address, is behind a branch that is taken when the host is Windows",
+    );
     continue;
   }
   const named = byName(name, site.input);
@@ -706,10 +753,18 @@ for (const kind of ["syscall", "red_zone", "red_zone_rbp"] as const) {
   }
 }
 const kept = (kind: Kind) => sites[kind].length;
-const outsideOfTheLibc = (kind: Kind) => [...counts[kind].entries()].filter(([origin]) => !origin.startsWith("musl")).reduce((a, [, n]) => a + n, 0);
+const outsideOfTheLibc = (kind: Kind) =>
+  [...counts[kind].entries()].filter(([origin]) => !origin.startsWith("musl")).reduce((a, [, n]) => a + n, 0);
 for (const kind of ["fs_gs", "syscall", "red_zone", "red_zone_rbp"] as const) {
   if (outsideOfTheLibc(kind) > kept(kind)) {
-    errors.push({ kind, function: "", address: "", instruction: "", input: "", why: `${outsideOfTheLibc(kind) - kept(kind)} more instructions outside of the libc than the ${kept(kind)} that were kept to be judged` });
+    errors.push({
+      kind,
+      function: "",
+      address: "",
+      instruction: "",
+      input: "",
+      why: `${outsideOfTheLibc(kind) - kept(kind)} more instructions outside of the libc than the ${kept(kind)} that were kept to be judged`,
+    });
   }
 }
 
@@ -738,7 +793,12 @@ const result = {
     functions_that_only_such_branches_lead_to: functionStarts.length - reachedWithoutWindows.size,
   },
   allowed_in_windows_code: [...allowed.values()].sort((a, b) => a.function.localeCompare(b.function)),
-  data_of_the_interpreter: dataOfTheInterpreter.map(site => ({ function: site.symbol, address: site.address, bytes: site.bytes, read_as: site.instruction })),
+  data_of_the_interpreter: dataOfTheInterpreter.map(site => ({
+    function: site.symbol,
+    address: site.address,
+    bytes: site.bytes,
+    read_as: site.instruction,
+  })),
   errors,
   frame_pointer_check: {
     functions_that_set_rbp_from_rsp: functionsWithFramePointer,
@@ -779,7 +839,10 @@ console.log(
       totals: result.totals,
       by_origin: result.by_origin,
       code_for_windows: result.code_for_windows,
-      allowed_in_windows_code: { functions: allowed.size, instructions: [...allowed.values()].reduce((n, a) => n + a.instructions, 0) },
+      allowed_in_windows_code: {
+        functions: allowed.size,
+        instructions: [...allowed.values()].reduce((n, a) => n + a.instructions, 0),
+      },
       data_of_the_interpreter: dataOfTheInterpreter.length,
       errors,
     },

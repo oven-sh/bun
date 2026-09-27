@@ -338,7 +338,11 @@ function exportsOf(all: Token[], edits: Edits | undefined, suffix: string, done:
       // In the body of a macro the name is one of its variables.
       if (name?.text === "$" && all[all.indexOf(name) + 1]?.kind === "ident") {
         const variable = all[all.indexOf(name) + 1].text;
-        edits?.replace(all[i].start, all[close].end, `[unsafe(export_name = concat!(stringify!($${variable}), "${suffix}"))]`);
+        edits?.replace(
+          all[i].start,
+          all[close].end,
+          `[unsafe(export_name = concat!(stringify!($${variable}), "${suffix}"))]`,
+        );
         continue;
       }
       if (name?.kind !== "ident") continue;
@@ -476,7 +480,8 @@ function everyExternBlock(all: Token[], source: string, edits: Edits, rules: Rul
     // The image is not linked against a library of Windows: the host has them.
     if (rules.os === "windows")
       for (const [from, to] of attributes)
-        if (isLinkAttribute(source.slice(all[from].start, all[to].end))) edits.replace(all[from].start, all[to].end, "");
+        if (isLinkAttribute(source.slice(all[from].start, all[to].end)))
+          edits.replace(all[from].start, all[to].end, "");
     if (!imported.length) continue;
     const keptAttributes = attributeText.filter(text => !isLinkAttribute(text));
     let block = `\n${keptAttributes.join("\n")}\n#[bun_portable_macros::imports(library = "${library}")]\nunsafe extern ${abi} {\n`;
@@ -526,7 +531,13 @@ function everyCallback(all: Token[], edits: Edits, rules: Rules, done: Done) {
       const attributes = attributesBefore(all, head);
       if (attributes.some(([from, to]) => all.slice(from, to).some(token => token.text === "win_abi"))) continue;
       // A function with a name for the linker is one that the C and C++ of the image call.
-      if (attributes.some(([from, to]) => all.slice(from, to).some(token => token.text === "export_name" || token.text === "no_mangle")) && !abiName.startsWith("system")) continue;
+      if (
+        attributes.some(([from, to]) =>
+          all.slice(from, to).some(token => token.text === "export_name" || token.text === "no_mangle"),
+        ) &&
+        !abiName.startsWith("system")
+      )
+        continue;
       edits.insert(all[head].start, "#[bun_portable_macros::win_abi] ");
       done.callbacks.push(all[at + 1].text);
     } else if (rules.arch === "x86_64") {

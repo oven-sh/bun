@@ -6725,7 +6725,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{Tag, TagPayload};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7203,17 +7203,7 @@ impl VirtualMachine {
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
             // Circular-ref guard for cause chains.
-            if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
-                formatter.map_node = Some(node);
-            }
-
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
+            if !formatter.visited_insert(err) {
                 writer.write_all(b"\n")?;
                 pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
                 continue;
@@ -7236,7 +7226,7 @@ impl VirtualMachine {
                 )
             };
             formatter.depth = prev_depth;
-            let _ = formatter.map.remove(&err);
+            formatter.visited_remove(err);
             result?;
         }
 

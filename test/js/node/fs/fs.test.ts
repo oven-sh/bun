@@ -4292,6 +4292,8 @@ describe.skipIf(!canCreateVolumes()).each(["FAT32", "exFAT"] as const)(
       fs.chmodSync(dir, 0o444);
       expect(() => rmdirSync(dir)).toThrow(expect.objectContaining({ code: "ENOTEMPTY" }));
       expect(readdirSync(dir)).toEqual(["file"]);
+      // Still read-only.
+      expect(statSync(dir).mode & 0o222).toBe(0);
     });
   },
 );

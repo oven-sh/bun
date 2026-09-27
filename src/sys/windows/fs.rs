@@ -1700,33 +1700,37 @@ pub(crate) fn delete_by_handle(handle: HANDLE) -> core::result::Result<(), win32
     if !win32::NT_SUCCESS(queried) || basic.FileAttributes & win32::FILE_ATTRIBUTE_READONLY == 0 {
         return Err(status);
     }
-    let attributes = basic.FileAttributes & !win32::FILE_ATTRIBUTE_READONLY;
-    // Zeroed times are left as they are; zeroed attributes would be too.
-    basic = bun_core::ffi::zeroed();
-    basic.FileAttributes = if attributes == 0 {
-        win32::FILE_ATTRIBUTE_NORMAL
-    } else {
-        attributes
+    let found = basic.FileAttributes;
+    let mut set_attributes = |attributes: u32| {
+        // Zeroed times are left as they are; zeroed attributes would be too.
+        let mut basic: win32::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+        basic.FileAttributes = if attributes == 0 {
+            win32::FILE_ATTRIBUTE_NORMAL
+        } else {
+            attributes
+        };
+        // SAFETY: `attributes_handle` is live; the info struct matches the class.
+        unsafe {
+            win32::ntdll::NtSetInformationFile(
+                attributes_handle.0,
+                &mut io,
+                ptr::from_mut(&mut basic).cast(),
+                core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
+                win32::FILE_INFORMATION_CLASS::FileBasicInformation,
+            )
+        }
     };
-    // SAFETY: `attributes_handle` is live; the info struct matches the class.
-    let cleared = unsafe {
-        win32::ntdll::NtSetInformationFile(
-            attributes_handle.0,
-            &mut io,
-            ptr::from_mut(&mut basic).cast(),
-            core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
-            win32::FILE_INFORMATION_CLASS::FileBasicInformation,
-        )
-    };
+    let cleared = set_attributes(found & !win32::FILE_ATTRIBUTE_READONLY);
     if !win32::NT_SUCCESS(cleared) {
         return Err(cleared);
     }
     let status = classic_delete();
     if win32::NT_SUCCESS(status) {
-        Ok(())
-    } else {
-        Err(status)
+        return Ok(());
     }
+    // It stays (a directory that is not empty), so it stays as it was found.
+    let _ = set_attributes(found);
+    Err(status)
 }
 
 fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {

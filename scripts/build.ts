@@ -47,6 +47,7 @@ import {
   type ConfigureInput,
 } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
+import { loadMsvcEnv } from "./build/msvc.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { chartHtml, formatReport, loadBuild } from "./build/timings.ts";
@@ -59,27 +60,6 @@ import { isBuildkite, isCI, printEnvironment, startGroup } from "./buildkite.ts"
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-
-  // Windows: re-exec inside the VS dev shell if not already there.
-  // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
-  // WindowsSdkDir — things clang-cl can mostly self-detect but nested
-  // cmake projects can't. Cheap: VSINSTALLDIR check short-circuits on
-  // subsequent runs in the same terminal.
-  if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
-    const vsShell = join(import.meta.dirname, "vs-shell.ps1");
-    const result = spawnSync(
-      "pwsh",
-      ["-NoProfile", "-NoLogo", "-File", vsShell, process.argv0, import.meta.filename, ...process.argv.slice(2)],
-      { stdio: "inherit" },
-    );
-    if (result.error) {
-      throw new BuildError(`Failed to spawn pwsh`, {
-        cause: result.error,
-        hint: "Is PowerShell 7+ (pwsh) installed?",
-      });
-    }
-    process.exit(result.status ?? 1);
-  }
 
   // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
   // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
@@ -121,7 +101,7 @@ async function main(): Promise<void> {
   // (a machine set up for a gcc toolchain does), which hijacks <vector> & co. away from the MSVC
   // STL when cross-compiling for Windows ("'bits/c++config.h' file not
   // found"). Scrub them for Windows cross builds — they are host-targeted by
-  // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
+  // definition. Native Windows builds (INCLUDE/LIB from msvc.ts) and
   // every other target keep the environment as provisioned.
   const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
@@ -156,6 +136,9 @@ async function main(): Promise<void> {
     if (ninja.error) throw new BuildError("Failed to run ninja", { cause: ninja.error });
     process.exit(ninja.status ?? 1);
   }
+
+  // Where ninja's children, and the built binary's, find the CRT, the STL and the Windows SDK.
+  if (process.platform === "win32") loadMsvcEnv();
 
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.

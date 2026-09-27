@@ -25,9 +25,13 @@ $ProgressPreference = "SilentlyContinue"
 $ArtifactList = $Artifacts -split ","
 $BuildStepList = $BuildSteps -split ","
 
-# smctl shells out to signtool.exe which is only in PATH when the VS dev
-# environment is loaded. Dot-source the existing helper to set it up.
-. $PSScriptRoot\..\..\scripts\vs-shell.ps1
+# smctl shells out to signtool.exe, which the Windows SDK installs but does not put in PATH.
+$sdkBin = Join-Path (Get-ItemPropertyValue "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" KitsRoot10) "bin"
+$signtool = Get-Item "$sdkBin\10.*\x64\signtool.exe" | Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+if (!$signtool) {
+    throw "signtool.exe not found in $sdkBin"
+}
+$env:PATH = "$($signtool.DirectoryName);$env:PATH"
 
 function Log-Info {
     param([string]$Message)

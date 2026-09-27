@@ -98,8 +98,8 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
-    // Windows cross-compile: clang-cl can't read the VS dev shell's INCLUDE
-    // env on a non-Windows host. /winsysroot points it at an xwin-style
+    // Windows cross-compile: a non-Windows host has no installed toolset for
+    // INCLUDE to name (msvc.ts). /winsysroot points clang-cl at an xwin-style
     // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
     // covering the MSVC CRT/STL and Windows SDK headers + import libs.
     // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
@@ -1001,7 +1001,7 @@ export const linkerFlags: Flag[] = [
     // lld-link, which doesn't see the compile-side `/winsysroot` from
     // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
     // and Windows SDK import libraries (libcmt, kernel32, ...) are found
-    // without a VS dev shell's LIB env.
+    // without the LIB env of a Windows host (msvc.ts).
     flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",

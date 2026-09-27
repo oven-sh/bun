@@ -146,9 +146,9 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 ### Phase 0 — Entry (`scripts/build.ts`)
 
-1. Windows: re-exec inside VS dev shell if `VSINSTALLDIR` unset (provides PATH/INCLUDE/LIB for nested cmake).
-2. Parse CLI: `--profile=<name>`, `--<field>=<value>` overrides, `--target=<ninja-target>`, `-j`/`-v`/`-k` passthrough, bare positionals = exec args for built binary.
-3. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
+1. Parse CLI: `--profile=<name>`, `--<field>=<value>` overrides, `--target=<ninja-target>`, `-j`/`-v`/`-k` passthrough, bare positionals = exec args for built binary.
+2. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
+3. Windows host: `loadMsvcEnv()` (`msvc.ts`) sets INCLUDE/LIB/PATH for the installed MSVC toolset and Windows SDK in this process, which ninja and everything under it inherit. No developer shell is involved, and one the caller is in is ignored.
 
 ### Phase 1 — Configure (`configure.ts::configure`)
 
@@ -241,6 +241,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                                                                           |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                                                                           |
+| `msvc.ts`                      | The installed MSVC toolset + Windows SDK of a Windows host — `findMsvc()`, and `loadMsvcEnv()` in place of a Visual Studio developer shell                              |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |

@@ -81,6 +81,7 @@ import {
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadMsvcEnv } from "../build/msvc.ts";
 import { selfSignedCertificate } from "./self-signed.ts";
 import { readWindowsTextSymbols } from "./windows-symbols.ts";
 
@@ -508,10 +509,11 @@ function buildUnixTracer(scratch: string): Tracer {
 /**
  * functrace-windows.c is a debugger, so it runs the workload itself, and puts
  * it on a pseudo console when asked to. Built with clang-cl when there is one
- * (LLVM is on every bun dev machine and CI image), else with cl, which needs a
- * Visual Studio developer shell; $CC names one explicitly.
+ * (LLVM is on every bun dev machine and CI image), else with cl; $CC names one
+ * explicitly.
  */
 function buildWindowsTracer(scratch: string): Tracer {
+  loadMsvcEnv();
   const tracer = join(scratch, "functrace.exe");
   const failures: string[] = [];
   for (const cc of process.env.CC ? [process.env.CC] : ["clang-cl", "cl"]) {
@@ -531,7 +533,7 @@ function buildWindowsTracer(scratch: string): Tracer {
     failures.push(`${cc} exited ${build.status}:\n${build.stdout}${build.stderr}`); // cl reports errors on stdout
   }
   if (!existsSync(tracer)) {
-    throw new Error(`failed to build the tracer — needs clang-cl, or cl in a developer shell:\n${failures.join("\n")}`);
+    throw new Error(`failed to build the tracer — needs clang-cl or cl:\n${failures.join("\n")}`);
   }
   return {
     linker: "lld-link /order",

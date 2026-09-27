@@ -51,6 +51,7 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
+import { loadMsvcEnv } from "./build/msvc.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -3440,6 +3441,11 @@ function escapeXml(str: string): string {
 async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
+  }
+
+  // Tests compile native addons (node-gyp) and C.
+  if (isWindows) {
+    loadMsvcEnv();
   }
 
   if (!isQuiet) {

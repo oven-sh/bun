@@ -162,8 +162,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // windows). Not in the console pool: that pool has depth 1; lld's only
   // output is diagnostics, which ninja shows when the edge finishes.
   //
-  // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
-  // first in PATH, clang-cl would default to it). /link separator —
+  // Windows: -fuse-ld=lld forces lld-link (clang-cl defaults to the
+  // link.exe msvc.ts puts first in PATH). /link separator —
   // everything after passes verbatim to lld-link. Our ldflags are all
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.

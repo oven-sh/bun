@@ -331,8 +331,8 @@ export interface Config {
    * CRT/STL + Windows SDK laid out like a Visual Studio install
    * (`VC/Tools/MSVC/<ver>`, `Windows Kits/10`). Passed to clang-cl as
    * `/winsysroot` and to lld-link as `/winsysroot:` — the cross equivalent
-   * of the INCLUDE/LIB env a VS dev shell provides on a Windows host.
-   * undefined on native Windows builds (VS dev shell supplies the SDK).
+   * of the INCLUDE/LIB env msvc.ts sets on a Windows host, where this is
+   * undefined.
    */
   winsysroot: string | undefined;
   /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
@@ -1229,8 +1229,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // clang-cl/lld-link/llvm-lib/llvm-rc are used (tools.ts picks them by
   // target), and the "sysroot" is an xwin splat of the MSVC CRT/STL +
   // Windows SDK in Visual Studio layout, passed via /winsysroot instead of
-  // --sysroot. Building ON Windows needs none of this — the VS dev shell
-  // provides INCLUDE/LIB.
+  // --sysroot. Building ON Windows needs none of this — msvc.ts points
+  // INCLUDE/LIB at the installed ones.
   let winsysroot: string | undefined;
   if (windows && host.os !== "windows") {
     winsysroot =

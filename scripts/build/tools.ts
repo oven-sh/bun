@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { pins } from "./ci-images/spec.ts";
@@ -915,56 +915,4 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
   if (cargo === undefined) return undefined;
 
   return { cargo, cargoHome, rustupHome };
-}
-
-/**
- * Find MSVC's link.exe. Windows only.
- *
- * Needed because on CI, Git Bash's `/usr/bin/link` (the GNU coreutils
- * hard-link utility) can appear in PATH before MSVC's link.exe. Cargo
- * invokes `link.exe` to link, and the wrong one silently fails.
- *
- * We probe the standard VS2022 install layout rather than trusting PATH.
- * If VS is installed somewhere non-standard, set the CARGO_TARGET_*_LINKER
- * env var yourself.
- */
-export function findMsvcLinker(arch: Arch): string | undefined {
-  // VS2022 standard layout:
-  //   C:/Program Files/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
-  // Edition is Community|Professional|Enterprise|BuildTools.
-  const vsBase = "C:/Program Files/Microsoft Visual Studio/2022";
-  if (!existsSync(vsBase)) return undefined;
-
-  // Pick the latest MSVC toolset version across all editions. Usually
-  // there's only one edition installed, but BuildTools + Community can
-  // coexist on CI.
-  let latestVer: string | undefined;
-  let latestToolset: string | undefined;
-  for (const edition of readdirSync(vsBase)) {
-    const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
-    if (!existsSync(msvcDir)) continue;
-    for (const ver of readdirSync(msvcDir)) {
-      // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
-      if (latestVer === undefined || ver > latestVer) {
-        latestVer = ver;
-        latestToolset = join(msvcDir, ver);
-      }
-    }
-  }
-  if (latestToolset === undefined) return undefined;
-
-  // For arm64 targets, prefer the native arm64 host linker if available
-  // (faster), else cross from x64. For x64 targets, use the x64 host.
-  const candidates: string[] = [];
-  if (arch === "aarch64") {
-    candidates.push(join(latestToolset, "bin/HostARM64/arm64/link.exe"));
-    candidates.push(join(latestToolset, "bin/Hostx64/arm64/link.exe"));
-  } else {
-    candidates.push(join(latestToolset, "bin/Hostx64/x64/link.exe"));
-  }
-
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-  return undefined;
 }

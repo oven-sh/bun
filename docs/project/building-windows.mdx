@@ -74,22 +74,7 @@ scoop install make cygwin python
 
 <Note>ARM64 builds do not need Cygwin because WebKit is provided as a pre-built binary.</Note>
 
-From here on out, **use a PowerShell terminal with `.\scripts\vs-shell.ps1` sourced**. Load the script by running it:
-
-```ps1
-.\scripts\vs-shell.ps1
-```
-
-To verify, check for an MSVC-only command such as `mt.exe`:
-
-```ps1
-Get-Command mt
-```
-
-<Note>
-  Avoid installing `ninja` / `cmake` into your global path: you may end up building Bun without `.\scripts\vs-shell.ps1`
-  sourced.
-</Note>
+Any terminal works. The build finds the newest installed MSVC toolset and Windows SDK itself, so you do not need a Visual Studio developer shell.
 
 ## Building
 
@@ -124,10 +109,6 @@ bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
 ```
 
 ## Troubleshooting
-
-### .rc file fails to build
-
-`llvm-rc.exe` is odd; don't use it. Use `rc.exe` instead: make sure you are in a Visual Studio dev terminal, and check `rc /?` to confirm it is `Microsoft Resource Compiler`.
 
 ### failed to write output 'bun-debug.exe': permission denied
 

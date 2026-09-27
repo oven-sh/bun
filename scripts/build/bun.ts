@@ -894,9 +894,9 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
 
   // ─── Compile .rc → .res (ninja time) ───
   // llvm-rc: /FO sets output. `#include "windows.h"` in the .rc resolves
-  // via the INCLUDE env var set by the VS dev shell (vs-shell.ps1) on a
-  // Windows host; when cross-compiling there is no dev shell, so the SDK
-  // and MSVC include dirs from the winsysroot are passed explicitly.
+  // via the INCLUDE env var (msvc.ts) on a Windows host; when
+  // cross-compiling, the SDK and MSVC include dirs from the winsysroot are
+  // passed explicitly.
   const hostWin = cfg.host.os === "windows";
   const rcFlags: string[] = [];
   if (cfg.winsysroot !== undefined) {

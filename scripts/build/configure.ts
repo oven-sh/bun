@@ -33,6 +33,7 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
+import { findMsvc } from "./msvc.ts";
 import { ensureNinja } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
@@ -43,7 +44,6 @@ import {
   checkImageTools,
   findBun,
   findCargo,
-  findMsvcLinker,
   findNpm,
   findSystemTool,
   resolveLlvmToolchain,
@@ -123,9 +123,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // someone might be testing a subset that doesn't need lolhtml.
   const rust = findCargo(host.os);
 
-  // Windows: MSVC link.exe path (to prevent Git Bash's /usr/bin/link
-  // shadowing). Only needed when cargo builds with the msvc target.
-  const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
+  const msvcLinker = host.os === "windows" ? findMsvc().linker : undefined;
 
   return {
     ...llvm,

@@ -1898,7 +1898,6 @@ impl ReactRefresh<'_> {
     /// `visit/mod.rs` stay safe; callers must not hold two results live at
     /// once (same uniqueness contract as `P::log()`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
         // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
         // higher on the stack has installed `&mut react_hook_data` (a stack

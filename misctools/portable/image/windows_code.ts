@@ -24,7 +24,10 @@
  * reads it; the flags say "equal means Windows" after a compare of such a register with 2. A conditional
  * jump on those flags has one way for Windows. The blocks that the entry reaches WITHOUT such a way are
  * the ones another host runs. A jump through a table goes to every entry of the table, which is read from
- * the image; a function with a jump that cannot be read that way is not judged.
+ * the image; a function with a jump that cannot be read that way is not judged. A call of a function that
+ * does not return ends a block: a function does not return when it has no instruction that returns and
+ * every jump that leaves it goes to a function that does not return (what the compiler puts behind a
+ * failed allocation or a panic).
  *
  * The roots of the image, for the second half of the first proof: the entry point, every function whose
  * address is in data (a relocation), and every function that nothing refers to.
@@ -131,6 +134,8 @@ export class Reader {
     readonly readsNative: number,
     /** The bytes of the image at an address of its memory, for the tables of jumps. */
     readonly bytesAt: (address: number, length: number) => Buffer | undefined,
+    /** Whether the function at an address never returns to who called it. */
+    readonly neverReturns: (address: number) => boolean = () => false,
   ) {}
 
   /** Cheap: does the function ask for the byte at all. */
@@ -174,6 +179,7 @@ export class Reader {
           ways.push(inside(to) ? { kind: "branch", to } : { kind: "on" });
         }
       } else if (/^(ret|retq|ud2|hlt|int3|iretq)$/.test(m)) ways.push({ kind: "away" });
+      else if (m.startsWith("call") && target !== null && this.neverReturns(parseInt(target[1]!, 16))) ways.push({ kind: "away" });
       else ways.push({ kind: "on" });
     }
     if (ways.some(way => way.kind === "unreadable")) return { readable: false, branches: 0, windowsOnly: [] };

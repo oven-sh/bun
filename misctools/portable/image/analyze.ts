@@ -86,7 +86,12 @@ const addressOfSymbol = (pattern: RegExp) => {
 };
 const nativeByte = addressOfSymbol(/9bun_alloc4host3imp6NATIVE\b/);
 const readsNativeByte = addressOfSymbol(/9bun_alloc4host3imp20read_and_keep_native\b/);
-const reader = nativeByte === undefined ? undefined : new Reader(nativeByte, readsNativeByte ?? -1, bytesAt);
+/** Functions that do not return, by their start: filled when every function was read. */
+const neverReturns = new Set<number>();
+const reader =
+  nativeByte === undefined
+    ? undefined
+    : new Reader(nativeByte, readsNativeByte ?? -1, bytesAt, address => neverReturns.has(address));
 if (reader === undefined) console.error("the image has no symbol of the byte of the host: no code is taken as code for Windows");
 /** Addresses that data of the image holds: a function that is among them is called from anywhere. */
 const inData = new Set<number>();
@@ -289,16 +294,48 @@ function refer(from: number, to: number) {
   referencesTo[references] = to;
   references++;
 }
+/** The functions that ask for the host: they are judged when it is known which functions do not return. */
+const asking: { start: number; end: number; symbol: string; instructions: Instruction[]; sites: { site: Site; at: number }[] }[] = [];
+/** For each function: the functions that its jumps leave it for; undefined when it returns, or may. */
+const leavesFor = new Map<number, number[]>();
 function endInstructions(nextStart: number) {
   if (currentStart >= 0 && current.length > 0) {
-    let judged: Judged | undefined;
+    let returns = false;
+    const leaves: number[] = [];
+    for (const i of current) {
+      if (/^(ret|retq|iretq|sysret)/.test(i.mnemonic)) returns = true;
+      else if (/^j/.test(i.mnemonic)) {
+        const direct = /^0x([0-9a-f]+)\b/.exec(i.operands);
+        if (direct === null) returns = true;
+        else {
+          const to = parseInt(direct[1]!, 16);
+          if (to < currentStart || to >= nextStart) leaves.push(to);
+        }
+      }
+      if (returns) break;
+    }
+    if (!returns) leavesFor.set(currentStart, leaves);
     if (reader !== undefined && reader.asks(current)) {
+      asking.push({ start: currentStart, end: nextStart, symbol, instructions: current, sites: currentSites });
+    } else judgeAndRefer(currentStart, nextStart, symbol, current, currentSites, false);
+  }
+  current = [];
+  currentSites = [];
+  currentStart = nextStart;
+}
+function judgeAndRefer(start: number, nextStart: number, name: string, instructions: Instruction[], itsSites: { site: Site; at: number }[], asks: boolean) {
+  {
+    const current = instructions;
+    const currentStart = start;
+    const currentSites = itsSites;
+    let judged: Judged | undefined;
+    if (reader !== undefined && asks) {
       judgedFunctions.asked++;
       judged = reader.judge(currentStart, nextStart, current);
       if (judged.readable) {
         judgedFunctions.read++;
         judgedFunctions.branches += judged.branches;
-      } else if (judgedFunctions.not_readable.length < 200) judgedFunctions.not_readable.push(symbol);
+      } else if (judgedFunctions.not_readable.length < 200) judgedFunctions.not_readable.push(name);
     }
     const inWindows = (at: number) => judged !== undefined && judged.readable && judged.windowsOnly[at] === true;
     for (let at = 0; at < current.length; at++) {
@@ -314,9 +351,6 @@ function endInstructions(nextStart: number) {
       site.behind_a_branch_for_windows = inWindows(at);
     }
   }
-  current = [];
-  currentSites = [];
-  currentStart = nextStart;
 }
 
 function endFunction() {
@@ -454,7 +488,7 @@ const child = spawn(objdump, ["-d", "--print-imm-hex", binary], {
 const exited: Promise<number> = new Promise(resolve => child.on("close", resolve));
 const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 // "  201000: 48 89 e5                     	movq	%rsp, %rbp"
-const insn = /^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2} )+)\s*\t(.*)$/;
+const insn = /^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2} ?)+)\s*\t(.*)$/;
 const label = /^[0-9a-f]+ <(.*)>:$/;
 
 let endedBefore = false;
@@ -537,6 +571,17 @@ if (code !== 0) {
   console.error(`llvm-objdump exited with ${code}`);
   process.exit(1);
 }
+
+// ─── the functions that do not return, and then the functions that ask for the host ───
+for (let changed = true; changed; ) {
+  changed = false;
+  for (const [start, leaves] of leavesFor) {
+    if (neverReturns.has(start) || !leaves.every(to => neverReturns.has(to))) continue;
+    neverReturns.add(start);
+    changed = true;
+  }
+}
+for (const f of asking) judgeAndRefer(f.start, f.end, f.symbol, f.instructions, f.sites, true);
 
 // ─── what the roots of the image reach without a way for Windows ───
 functionStarts.sort((a, b) => a - b);
@@ -684,6 +729,7 @@ const result = {
   code_for_windows: {
     byte_of_the_host_at: nativeByte === undefined ? null : "0x" + nativeByte.toString(16),
     functions: functionStarts.length,
+    functions_that_do_not_return: neverReturns.size,
     functions_that_ask_for_the_host: judgedFunctions.asked,
     of_those_read: judgedFunctions.read,
     not_readable: judgedFunctions.not_readable,

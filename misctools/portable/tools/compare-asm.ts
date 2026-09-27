@@ -3,6 +3,10 @@
 //
 //   bun compare-asm.ts --base <tree> --target <triple> [options]
 //       --branch <tree>     the tree that is compared with the base (default: the tree of this file)
+//       --portable          the two trees as the portable image compiles them (--cfg=bun_portable), for
+//                           a change of the source that must not change the image either. The target
+//                           is the one of the image, <arch>-unknown-linux-musl, and the generated
+//                           sources are the ones of the profile "portable"
 //       --mode asm          (default) release machine code and data, `rustc --emit=asm`
 //       --mode expanded     the source after `cfg` and macro expansion, `rustc -Zunpretty=expanded`,
 //                           with debug assertions and without. Needs no code generation, so it runs
@@ -355,8 +359,8 @@ function git(tree: string, args: string[]) {
 }
 
 /** bun's release build for the target (scripts/build/rust.ts), without the flags of link-time optimisation. */
-function releaseFlags(target: string) {
-  const flags: string[] = [];
+function releaseFlags(target: string, portable = false) {
+  const flags: string[] = portable ? ["--cfg=bun_portable", "--cfg=rustix_use_libc", "--check-cfg=cfg(rustix_use_libc)"] : [];
   const linux = target.includes("linux") && !target.includes("android");
   if (linux || target.includes("freebsd")) flags.push("-Crelocation-model=static");
   flags.push(
@@ -617,7 +621,7 @@ async function compareTrees(options: Record<string, string>) {
   let buildFailed = false;
 
   if (mode === "asm") {
-    const rustflags = [...releaseFlags(target), "-Cdebuginfo=0", "--emit=asm"];
+    const rustflags = [...releaseFlags(target, options.portable !== undefined), "-Cdebuginfo=0", "--emit=asm"];
     const directories: Record<string, string> = {};
     for (const [side, tree] of [
       ["base", base],
@@ -707,7 +711,7 @@ async function compareTrees(options: Record<string, string>) {
               CARGO_BUILD_JOBS: jobs,
               BUN_CODEGEN_DIR: codegen,
               CARGO_PROFILE_DEV_DEBUG_ASSERTIONS: assertions,
-              CARGO_ENCODED_RUSTFLAGS: [...releaseFlags(target)].join("\x1f"),
+              CARGO_ENCODED_RUSTFLAGS: [...releaseFlags(target, options.portable !== undefined)].join("\x1f"),
             },
             log,
           );
@@ -781,6 +785,7 @@ const positional: string[] = [];
 for (let i = 0; i < argv.length; i++) {
   if (!argv[i].startsWith("--")) positional.push(argv[i]);
   else if (argv[i] === "--dependents") options.dependents = "";
+  else if (argv[i] === "--portable") options.portable = "";
   else options[argv[i].slice(2)] = argv[++i] ?? "";
 }
 if (options.base && options.mode === "all") {

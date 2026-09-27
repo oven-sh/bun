@@ -1864,7 +1864,7 @@ describe("row-shape structure caching", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a, b, c, d, e); INSERT INTO t VALUES (1,2,3,4,5),(6,7,8,9,10)");
     // `LIMIT ?` and `LIKE ?` make SQLite re-prepare the statement on
-    // every call once the parameter is re-bound. The names do not
+    // most calls once the parameter is re-bound. The names do not
     // change, so the Structure must still be reused.
     for (const sql of [
       "SELECT ? AS a, 2 AS b, 3 AS c",

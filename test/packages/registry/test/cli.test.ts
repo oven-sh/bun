@@ -322,18 +322,51 @@ describe("cli.ts", () => {
     expect(authorized.status).toBe(200);
   });
 
-  test("refuses a storage that is not a directory", async () => {
-    using dir = tempDir("registry-cli-", {});
-    const missing = join(String(dir), "pakcages");
+  /** What the program prints and how it exits, for arguments that it refuses. */
+  async function refused(...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "..", "cli.ts"), "--port=0", `--storage=${missing}`],
+      cmd: [bunExe(), join(import.meta.dir, "..", "cli.ts"), ...args],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toStartWith(`The storage is not a directory: ${missing}\n\nUsage: bun cli.ts [options]`);
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
+    // The message, an empty line, and the usage.
+    const [message, empty, usage] = stderr.split("\n");
+    return { stdout, message, empty, usage, exitCode };
+  }
+  const refusal = (message: string) => ({
+    stdout: "",
+    message,
+    empty: "",
+    usage: "Usage: bun cli.ts [options]",
+    exitCode: 1,
+  });
+
+  test.concurrent("refuses a storage that is not a directory", async () => {
+    using dir = tempDir("registry-cli-", {});
+    const missing = join(String(dir), "pakcages");
+    expect(await refused("--port=0", `--storage=${missing}`)).toEqual(
+      refusal(`The storage is not a directory: ${missing}`),
+    );
+  });
+
+  test.concurrent("refuses a port that has a registry", async () => {
+    using registry = new TestRegistry().start();
+    expect(await refused(`--port=${registry.port}`)).toEqual(
+      refusal(`Failed to start server. Is port ${registry.port} in use?`),
+    );
+  });
+
+  test.concurrent.each([
+    [["--port=70000"], `--port must be a number from 0 to 65535, got "70000"`],
+    [["--port=0", "--user=someone"], `--user must be name:password, got "someone"`],
+    [["--port=0", "--user=someone:"], "A password is required"],
+    [["--port=0", "--user=some/one:secret"], "Name may not contain non-url-safe chars"],
+    // No token is printed for the first user when the program refuses the second one.
+    [["--port=0", "--user=someone:secret", "--user=someone:other"], "user someone already exists"],
+    [["--port=0", "--storag=packages"], "Unknown option '--storag'"],
+  ])("refuses %j", async (args, message) => {
+    expect(await refused(...args)).toEqual(refusal(message));
   });
 });

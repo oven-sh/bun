@@ -53,8 +53,7 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
-    /// The 26000/0A000 that triggered a re-prepare. Surfaced if the session
-    /// is no longer idle when the retry would be written.
+    /// The 26000/0A000 behind a re-prepare, surfaced if the session leaves idle first.
     pub(crate) retry_error: JsCell<Option<protocol::ErrorResponse>>,
 }
 

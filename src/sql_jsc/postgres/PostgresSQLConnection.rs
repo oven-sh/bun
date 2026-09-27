@@ -1948,8 +1948,7 @@ impl PostgresSQLConnection {
                         && self.tx_status.get() != protocol::TransactionStatusIndicator::I
                         && let Some(err) = req.retry_error.take()
                     {
-                        // A request on the wire ahead of the retry opened a
-                        // transaction block. Surface the original error instead.
+                        // A request ahead of the retry opened a transaction block.
                         let ev = crate::postgres::protocol::error_response_jsc::to_js(
                             &err,
                             self.global(),

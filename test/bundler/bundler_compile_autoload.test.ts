@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import path from "node:path";
 import { itBundled } from "./expectBundled";
 
 // Not describe.concurrent: the backend:"cli" cases each spawn a full
@@ -608,4 +610,43 @@ console.log("PRELOAD");
       setCwd: true,
     },
   });
+
+  // tsconfig paths come from the cwd, not from the executable's directory,
+  // when the executable lives outside the project tree.
+  test("compile/AutoloadTsconfigPathsFromCwdWithExecutableOutsideProject", async () => {
+    using project = tempDir("compile-autoload-tsconfig-project", {
+      "entry.ts": `
+        const modulePath = "@lib/" + "mymodule";
+        const m = await import(modulePath);
+        console.log(m.default);
+      `,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["./lib/*"] } },
+      }),
+      "lib/mymodule.ts": `export default "mymodule-from-cwd-tsconfig";`,
+    });
+    using outside = tempDir("compile-autoload-tsconfig-outside", {});
+    const exe = path.join(String(outside), isWindows ? "app.exe" : "app");
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--compile-autoload-tsconfig", "./entry.ts", "--outfile", exe],
+      env: bunEnv,
+      cwd: String(project),
+      stderr: "pipe",
+    });
+    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExitCode).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [exe],
+      env: bunEnv,
+      cwd: String(project),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("mymodule-from-cwd-tsconfig\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });

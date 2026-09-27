@@ -690,15 +690,13 @@ A package that is not included in the standalone executable (for example, one yo
 2. `node_modules` in the process's current working directory, then in each parent directory.
 3. The directories in `NODE_PATH`.
 
-So you can ship a `node_modules` directory next to the executable and start it from any working directory:
+So you can ship a `node_modules` directory next to the executable and start it from any working directory. Packages that use `main` or `exports` in their `package.json` also need `--compile-autoload-package-json` at build time (see [Automatic config loading](#automatic-config-loading)):
 
 ```bash terminal icon="terminal"
-bun build --compile --external sharp ./index.ts --outfile ./dist/myapp
+bun build --compile --external sharp --compile-autoload-package-json ./index.ts --outfile ./dist/myapp
 cp -r node_modules ./dist/
 cd / && ./dist/myapp
 ```
-
-Packages that use `main` or `exports` in their `package.json` need `--compile-autoload-package-json` at build time. See [Automatic config loading](#automatic-config-loading).
 
 ---
 

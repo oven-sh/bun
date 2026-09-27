@@ -3660,6 +3660,14 @@ export default db;
             });
         }
 
+        // Only a JS chunk is served as JS source. Any other embedded file (an asset
+        // imported `with { type: "file" }`, a `.wasm`, a client-side chunk) is left to
+        // `Bun__transpileFile`, which reads it from the graph as a virtual source and
+        // applies the loader its path gets on disk (#44095).
+        if !file.loader.is_javascript_like() {
+            return None;
+        }
+
         // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
         let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
@@ -3926,6 +3934,21 @@ unsafe fn get_loader_and_virtual_source<'a>(
             }
             None => return Err(crate::Error::BlobNotFound),
         }
+    } else if virtual_source.is_none() {
+        // An embedded file the builtin-module probe declined (`__bun_fetch_builtin_module`
+        // serves only JS chunks): its bytes come from the graph, never from the disk.
+        // The loader stays the one `loader_for_path` picked, so an embedded `.json`
+        // asset loads like a `.json` file on disk.
+        if let Some(file) =
+            bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_ref(path.text))
+        {
+            *virtual_source_to_use = Some(bun_ast::Source {
+                path: bun_paths::fs::Path::init(file.name),
+                contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
+                ..Default::default()
+            });
+            virtual_source = virtual_source_to_use.as_ref();
+        }
     }
 
     if query == b"?raw" {
@@ -4183,6 +4206,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             )
         };
         if !had_blob
+            // The transpiler thread reads the file from the disk; a virtual source has no file there.
+            && lr.virtual_source.is_none()
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()

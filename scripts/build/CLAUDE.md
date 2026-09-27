@@ -148,13 +148,13 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 1. Parse CLI: `--profile=<name>`, `--<field>=<value>` overrides, `--target=<ninja-target>`, `-j`/`-v`/`-k` passthrough, bare positionals = exec args for built binary.
 2. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
-3. Windows host: `loadMsvcEnv()` (`msvc.ts`) sets INCLUDE/LIB/PATH for the installed MSVC toolset and Windows SDK in this process, which ninja and everything under it inherit. No developer shell is involved, and one the caller is in is ignored.
 
 ### Phase 1 — Configure (`configure.ts::configure`)
 
 1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
+   - Windows target: `ensureWindowsSysroot(cfg)` (`winsysroot.ts`) — the pinned MSVC CRT + Windows SDK, on every host, a Windows one included: Visual Studio is not used and need not be installed. It is Microsoft's, so outside CI a build that has to fetch it fails first, naming the license terms, unless run with `--accept-microsoft-licenses`; once it is in the cache no build asks. Only `webkit=local` on a Windows host has no sysroot (`cfg.winsysroot === undefined`); there `loadMsvcEnv()` (`msvc.ts`) sets INCLUDE/LIB/PATH for the installed toolset in this process, which ninja and everything under it inherit. No developer shell is involved, and one the caller is in is ignored.
    - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the rustc edges pass `-C linker` themselves); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
@@ -240,8 +240,8 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                                                                        |
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                                                                           |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                                                                               |
-| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                                                                           |
-| `msvc.ts`                      | The installed MSVC toolset + Windows SDK of a Windows host — `findMsvc()`, and `loadMsvcEnv()` in place of a Visual Studio developer shell                              |
+| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin), what every build for Windows compiles and links against: validates, adds case aliases, fetches (CI, Windows hosts)               |
+| `msvc.ts`                      | The installed MSVC toolset + Windows SDK of a Windows host, for what runs Visual Studio's programs (`webkit=local`, node-gyp tests) — `findMsvc()`, `loadMsvcEnv()`     |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
@@ -296,6 +296,8 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 **PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
+
+**On a Windows host, every tool that links looks for Visual Studio unless told not to, and a link against the wrong CRT succeeds.** Each has its own way of being told. lld-link: `/winsysroot:` (it then ignores `LIB`). rustc: it sets `LIB` from the Visual Studio it finds, so host units get `-C link-arg=/winsysroot:` (`rust/units.ts`); target units get it from the rustflags. The clang-cl driver, when it links: it puts the found libraries ahead of everything after `/link` unless `LIB` is set, so the `link` rule sets it (`compile.ts`, which says why `/winsysroot` is not the answer there). None of this shows on a machine without Visual Studio, or on CI's Linux hosts. To see what a link really took, ask its PDB: `llvm-pdbutil dump --modules build/debug/bun-debug.pdb | grep "Program Files"` prints nothing.
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 

@@ -1433,9 +1433,9 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
     env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
   }
 
-  // Windows: pin the linker to MSVC's link.exe. Without this, if Git Bash
-  // is in PATH, its /usr/bin/link (GNU hard-link tool) shadows the real
-  // linker and cargo's link step fails with a baffling error.
+  // Windows: pin the linker. Without this rustc looks for MSVC's link.exe,
+  // and if Git Bash is in PATH finds its /usr/bin/link (GNU hard-link tool)
+  // instead, and cargo's link step fails with a baffling error.
   if (cfg.windows && cfg.msvcLinker !== undefined) {
     // Triple-specific linker env var. Cargo reads CARGO_TARGET_<TRIPLE>_LINKER
     // where <TRIPLE> is uppercased with hyphens→underscores.
@@ -1612,13 +1612,18 @@ function emitDirect(
     // so host-arch objects never land in obj/ (which would dirty ccache
     // for the target build).
     const toolDefs = Object.entries(cg.toolDefines ?? {}).map(([k, v]) => defineFlag(k, v));
+    // On a Windows host the tool is a Windows program too. The driver hands /winsysroot's libraries to the linker.
+    const toolSysroot =
+      cfg.host.os === "windows" && cfg.winsysroot !== undefined
+        ? ["/winsysroot", quote(cfg.winsysroot, true), "-fuse-ld=lld"]
+        : [];
     n.build({
       outputs: [toolOut],
       rule: "dep_host_cc",
       inputs: [toolSrc],
       implicitInputs: [toolIdentityFile(cfg, "hostCc")],
       orderOnlyInputs: orderOnly,
-      vars: { flags: ["-w", ...toolDefs].join(" ") },
+      vars: { flags: ["-w", ...toolSysroot, ...toolDefs].join(" ") },
     });
     const toolExe = toolOut;
 

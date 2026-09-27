@@ -60,9 +60,10 @@ function linkerFor(triple: string, cfg: Config): string {
  * Write `.cargo/config.toml` next to the workspace `Cargo.toml` (repo root).
  * Returns the absolute path written.
  *
- * Windows-msvc targets are omitted: the MSVC linker isn't a clang driver and
- * doesn't take `-fuse-ld=lld`; that path is handled entirely in `rust.ts`
- * (`-C linker=<cfg.msvcLinker>` on the rustc edges).
+ * Windows-msvc targets get lld-link and the sysroot, on a Windows host that
+ * builds against one: what the rustc edges pass (`rust.ts`, `rust/units.ts`),
+ * so that cargo's own links of build scripts and proc-macros need no Visual
+ * Studio either. Otherwise they are omitted, and rustc finds link.exe itself.
  */
 export function generateCargoConfig(cfg: Config): string {
   const outPath = resolve(cfg.cwd, ".cargo", "config.toml");
@@ -80,7 +81,14 @@ export function generateCargoConfig(cfg: Config): string {
   ];
 
   for (const triple of allRustTargets) {
-    if (tripleOs(triple) === "windows") continue;
+    if (tripleOs(triple) === "windows") {
+      if (cfg.host.os !== "windows" || cfg.winsysroot === undefined || cfg.msvcLinker === undefined) continue;
+      lines.push("");
+      lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
+      lines.push(`linker = ${JSON.stringify(cfg.msvcLinker)}`);
+      lines.push(`rustflags = ["-C", ${JSON.stringify(`link-arg=/winsysroot:${cfg.winsysroot}`)}]`);
+      continue;
+    }
     lines.push("");
     lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
     lines.push(`linker = ${JSON.stringify(linkerFor(triple, cfg))}`);

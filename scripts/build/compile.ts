@@ -162,11 +162,16 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // windows). Not in the console pool: that pool has depth 1; lld's only
   // output is diagnostics, which ninja shows when the edge finishes.
   //
-  // Windows: -fuse-ld=lld forces lld-link (clang-cl defaults to the
-  // link.exe msvc.ts puts first in PATH). /link separator —
-  // everything after passes verbatim to lld-link. Our ldflags are all
-  // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
-  // that clang-cl's driver doesn't recognize.
+  // Windows: -fuse-ld=lld forces lld-link (clang-cl defaults to link.exe).
+  // /link separator — everything after passes verbatim to lld-link. Our
+  // ldflags are all pure linker options (/STACK, /DEF, /OPT, /errorlimit,
+  // system libs) that clang-cl's driver doesn't recognize.
+  //
+  // LIB, on a Windows host with a sysroot: without it the driver looks for an
+  // installed Visual Studio and puts that one's libraries ahead of $ldflags,
+  // so ahead of the sysroot's, and the link succeeds against the wrong CRT.
+  // lld-link itself ignores LIB, having /winsysroot. Giving the driver
+  // /winsysroot as well would put the sysroot's UCRT ahead of the serviced one.
   //
   // /clang:-B<dir of cfg.ld> pins WHICH lld-link `-fuse-ld=lld` resolves:
   // -B program-prefix dirs are searched before the driver's own InstalledDir
@@ -188,9 +193,12 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
+  const linkWindows = `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`;
   n.rule("link", {
     command: cfg.windows
-      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
+      ? cfg.host.os === "windows" && cfg.winsysroot !== undefined
+        ? `cmd /c "set "LIB=${cfg.winsysroot}"&& ${linkWindows}"`
+        : linkWindows
       : `${cxx} @$out.rsp $lazy $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",

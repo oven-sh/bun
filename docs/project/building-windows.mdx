@@ -23,16 +23,9 @@ Bun v1.1 or later. The build uses Bun to run its own code generators.
 irm bun.sh/install.ps1 | iex
 ```
 
-[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, also install Git if Git for Windows is not already installed.
+You also need the following:
 
-Install Visual Studio with the graphical wizard or through WinGet:
-
-```ps1
-winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
-```
-
-After Visual Studio, you need the following:
-
+- Git for Windows
 - LLVM 23.1.1
 - Go
 - Rust (via rustup)
@@ -74,9 +67,27 @@ scoop install make cygwin python
 
 <Note>ARM64 builds do not need Cygwin because WebKit is provided as a pre-built binary.</Note>
 
-Any terminal works. The build finds the newest installed MSVC toolset and Windows SDK itself, so you do not need a Visual Studio developer shell.
+### Visual Studio (optional)
+
+Building Bun does not need Visual Studio. The compiler and linker are LLVM's, and the build downloads the MSVC C++ runtime and Windows SDK headers and libraries from Microsoft, at the versions the released `bun.exe` is built with (see [Building](#building)).
+
+You need [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload to build WebKit locally, and to run the tests that compile native addons (`test/napi`, `test/v8`):
+
+```ps1
+winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop" -s msstore
+```
+
+Any terminal works. Where the build or the test runner uses Visual Studio, it finds the newest installed MSVC toolset and Windows SDK itself, so you do not need a developer shell.
 
 ## Building
+
+The first build on a machine downloads the MSVC C++ runtime and the Windows SDK from Microsoft. They are under Microsoft's license terms for the [Visual Studio Build Tools](https://go.microsoft.com/fwlink/?LinkId=2086102) and the [Windows SDK](https://aka.ms/WinSDKLicenseURL), and the build stops without downloading anything until you accept them:
+
+```ps1
+bun run build --accept-microsoft-licenses
+```
+
+The download is about 450 MB and takes about a minute. It is kept in the build cache (1.5 GB) for every checkout on the machine, so later builds do not need the flag until Bun moves to newer versions of these components:
 
 ```ps1
 bun run build

@@ -12,12 +12,22 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 
+import { generateCargoConfig } from "../../../scripts/build/cargo-config.ts";
+import { registerCompileRules } from "../../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
+import { BuildError } from "../../../scripts/build/error.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
+import { Ninja } from "../../../scripts/build/ninja.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
+import {
+  ensureWindowsSysroot,
+  UCRT_SERVICING_VERSION,
+  windowsSysrootCachePath,
+} from "../../../scripts/build/winsysroot.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -49,7 +59,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cargo: undefined,
     cargoHome: undefined,
     rustupHome: undefined,
-    msvcLinker: undefined,
     rc: "/fake/llvm/bin/llvm-rc",
     mt: undefined,
     nasm: "/fake/bin/nasm",
@@ -206,5 +215,114 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // reject with "inconsistent LTO Unit splitting". WPD falls back to
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
+  });
+});
+
+// Only the refusals: an accepted fetch is a download from Microsoft.
+describe("Microsoft's licenses", () => {
+  const sysroot = basename(windowsSysrootCachePath("/"));
+  const cachedSysroot = {
+    [`${sysroot}/Windows Kits/10/Include/10.0.1/um/windows.h`]: "",
+    [`${sysroot}/Windows Kits/10/Lib/10.0.1/um/x64/kernel32.lib`]: "",
+    [`${sysroot}/VC/Tools/MSVC/14.0/include/atlstr.h`]: "",
+  };
+  const cachedUcrt = {
+    [`ucrt-servicing-${UCRT_SERVICING_VERSION}/x64/libucrt.lib`]: "",
+    [`ucrt-servicing-${UCRT_SERVICING_VERSION}/x64/ucrt.lib`]: "",
+  };
+  /** What `ensureWindowsSysroot` says to a person's build that has `cacheDir` and has not accepted anything. */
+  const ensure = (cacheDir: string): Promise<unknown> =>
+    ensureWindowsSysroot({
+      ...resolveWindowsCross({ ci: false }),
+      cacheDir,
+      winsysroot: windowsSysrootCachePath(cacheDir),
+    }).then(
+      () => "nothing to fetch",
+      error => error,
+    );
+
+  test("only CI accepts them without being told to", () => {
+    expect(resolveWindowsCross({ ci: false }).acceptMicrosoftLicenses).toBe(false);
+    expect(resolveWindowsCross({ ci: false, acceptMicrosoftLicenses: true }).acceptMicrosoftLicenses).toBe(true);
+    expect(resolveWindowsCross({ ci: true }).acceptMicrosoftLicenses).toBe(true);
+    expect(resolveWindowsCross({ ci: false, buildkite: true }).acceptMicrosoftLicenses).toBe(true);
+  });
+
+  test("an empty cache fails the build, naming both and the flag, with nothing fetched", async () => {
+    using dir = tempDir("winsysroot", {});
+    const error = await ensure(String(dir));
+    expect(error).toBeInstanceOf(BuildError);
+    expect((error as BuildError).hint).toContain("https://go.microsoft.com/fwlink/?LinkId=2086102");
+    expect((error as BuildError).hint).toContain("https://aka.ms/WinSDKLicenseURL");
+    expect((error as BuildError).hint).toContain("--accept-microsoft-licenses");
+    expect(readdirSync(String(dir))).toEqual([]);
+  });
+
+  test("so does a cache with the sysroot but not the serviced UCRT, which is a download of its own", async () => {
+    using dir = tempDir("winsysroot", cachedSysroot);
+    expect(await ensure(String(dir))).toBeInstanceOf(BuildError);
+    expect(readdirSync(String(dir))).toEqual([sysroot]);
+  });
+
+  test("a cache with both is not asked about", async () => {
+    using dir = tempDir("winsysroot", { ...cachedSysroot, ...cachedUcrt });
+    expect(await ensure(String(dir))).toBe("nothing to fetch");
+  });
+});
+
+describe("Windows sysroot flags", () => {
+  const on = (os: "windows" | "linux", root: string): Config => ({
+    ...resolveWindowsCross(),
+    host: { os, arch: "x64", exeSuffix: os === "windows" ? ".exe" : "" },
+    winsysroot: `${root}winsysroot`,
+    cacheDir: `${root}cache`,
+  });
+
+  test("are quoted for the shell of the host that runs them", () => {
+    const windows = computeFlags(on("windows", "C:\\build cache\\"));
+    expect(windows.cflags).toContain('"C:\\build cache\\winsysroot"');
+    expect(windows.ldflags).toContain('"/winsysroot:C:\\build cache\\winsysroot"');
+    expect(windows.ldflags.filter(f => f.includes("ucrt-servicing"))).toEqual([
+      expect.stringMatching(/^"\/libpath:C:\\build cache\\cache.ucrt-servicing-[\d.]+.x64"$/),
+    ]);
+
+    const linux = computeFlags(on("linux", "/build cache/"));
+    expect(linux.cflags).toContain("'/build cache/winsysroot'");
+    expect(linux.ldflags).toContain("'/winsysroot:/build cache/winsysroot'");
+  });
+
+  // Unset, clang-cl finds an installed Visual Studio and links its CRT instead, and nothing fails.
+  test("the link sets LIB on a Windows host, where the driver would otherwise look for Visual Studio", () => {
+    const linkCommand = (cfg: Config) => {
+      const n = new Ninja({ buildDir: cfg.buildDir });
+      registerCompileRules(n, cfg);
+      const lines = n.toString().split("\n");
+      return lines[lines.indexOf("rule link") + 1]!.trim();
+    };
+    const driver = "/fake/llvm/bin/clang-cl /nologo -fuse-ld=lld";
+    expect(linkCommand(on("windows", "C:\\build cache\\"))).toStartWith(
+      `command = cmd /c "set "LIB=C:\\build cache\\winsysroot"&& ${driver} `,
+    );
+    expect(linkCommand(on("linux", "/cache/"))).toStartWith(`command = ${driver} `);
+    expect(linkCommand({ ...on("windows", "C:\\"), winsysroot: undefined })).toStartWith(`command = ${driver} `);
+  });
+
+  test("cargo run by hand on a Windows host links its build scripts and proc-macros the same way", () => {
+    using dir = tempDir("cargo-config", {});
+    const generated = (cfg: Config) => readFileSync(generateCargoConfig({ ...cfg, cwd: String(dir) }), "utf8");
+    expect(generated(on("windows", "C:\\build cache\\"))).toContain(
+      [
+        "[target.x86_64-pc-windows-msvc]  # host",
+        'linker = "/fake/llvm/bin/lld-link"',
+        'rustflags = ["-C", "link-arg=/winsysroot:C:\\\\build cache\\\\winsysroot"]',
+      ].join("\n"),
+    );
+    expect(generated(on("linux", "/cache/"))).not.toContain("windows-msvc");
+    expect(generated({ ...on("windows", "C:\\"), winsysroot: undefined })).not.toContain("windows-msvc");
+  });
+
+  test("are absent from a build against the installed toolset", () => {
+    const flags = computeFlags({ ...on("windows", "C:\\"), winsysroot: undefined });
+    expect([...flags.cflags, ...flags.ldflags].filter(f => /winsysroot|ucrt-servicing/.test(f))).toEqual([]);
   });
 });

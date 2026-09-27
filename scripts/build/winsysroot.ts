@@ -1,13 +1,15 @@
 /**
- * Windows sysroot (xwin splat) handling for Windows cross-compiles.
+ * Windows sysroot (xwin splat) handling for Windows targets.
  *
- * Cross-compiling for Windows needs the MSVC CRT/STL + Windows SDK + ATL
- * headers and import libraries (see `Config.winsysroot`). Provisioned
+ * Building for Windows needs the MSVC CRT/STL + Windows SDK + ATL headers
+ * and import libraries (see `Config.winsysroot`), and nothing else of Visual
+ * Studio: the compiler, linker and resource compiler are LLVM's. Provisioned
  * sysroots come from the agent image (the `windowsSysroot` tool of ci-images/spec.ts bakes
  * an xwin splat at /opt/winsysroot) or from a
  * developer-created splat (docs/project/building-windows.mdx). When none is
- * present, CI builds fetch one into the per-build cache dir at configure
- * time — the build never depends on what the agent image happens to carry.
+ * present, CI builds and builds on a Windows host fetch one into the cache
+ * dir at configure time, so a build on Windows links what the shipped binary
+ * links, whatever the machine has installed.
  *
  * The fetch is two steps, both pinned:
  *   1. Download the xwin release binary for the build host (GitHub).
@@ -16,7 +18,8 @@
  *      single `/winsysroot` flag works for clang-cl and lld-link.
  *      `--accept-license` accepts Microsoft's license terms for those
  *      components (the same terms the Windows CI images accept when
- *      installing VS Build Tools).
+ *      installing VS Build Tools). CI accepts them; a person's build stops
+ *      before fetching until it is run with `--accept-microsoft-licenses`.
  *
  * Idempotent: a sentinel check (SDK include + lib trees with the target
  * arch's kernel32 import lib, plus the ATL headers) makes re-runs a no-op,
@@ -25,7 +28,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config } from "./config.ts";
@@ -43,6 +46,11 @@ export const XWIN_VERSION = pins.windowsSysroot.xwin;
  */
 export const WINDOWS_SDK_VERSION = pins.windowsSysroot.sdk;
 export const MSVC_CRT_VERSION = pins.windowsSysroot.crt;
+
+/** Where the build fetches a sysroot nobody provided. Named for its pins, so bumping one fetches another. */
+export function windowsSysrootCachePath(cacheDir: string): string {
+  return resolve(cacheDir, `winsysroot-${WINDOWS_SDK_VERSION}-${MSVC_CRT_VERSION}`);
+}
 
 /**
  * Serviced Universal CRT static libraries, fetched from the official
@@ -149,6 +157,27 @@ function ensureSdkCaseAliases(dir: string): void {
   }
 }
 
+/**
+ * Before anything of Microsoft's is fetched. Both fetches come from Microsoft
+ * itself, and each is under terms its usual installer has the user accept:
+ * xwin asks (`--accept-license` answers for them), and the NuGet package is
+ * marked `requireLicenseAcceptance`.
+ */
+function requireMicrosoftLicenses(cfg: Config): void {
+  if (cfg.acceptMicrosoftLicenses) return;
+  throw new BuildError(
+    "Building for Windows needs the MSVC C++ runtime and the Windows SDK, which are not in the cache",
+    {
+      hint: [
+        "The build downloads them from Microsoft (about 450 MB, once per machine). They are under Microsoft's license terms:",
+        "  Visual Studio Build Tools  https://go.microsoft.com/fwlink/?LinkId=2086102",
+        "  Windows SDK                https://aka.ms/WinSDKLicenseURL",
+        "If you accept them, run this build again with --accept-microsoft-licenses",
+      ].join("\n        "),
+    },
+  );
+}
+
 /** xwin release triple for the machine running the build. */
 function xwinHostTriple(cfg: Config): string {
   const arch = cfg.host.arch === "aarch64" ? "aarch64" : "x86_64";
@@ -157,6 +186,9 @@ function xwinHostTriple(cfg: Config): string {
       return `${arch}-unknown-linux-musl`;
     case "darwin":
       return `${arch}-apple-darwin`;
+    case "windows":
+      // The only Windows release. An arm64 machine emulates it.
+      return "x86_64-pc-windows-msvc";
     default:
       throw new BuildError(`No xwin release for host ${cfg.host.os}-${cfg.host.arch}`, {
         hint: "Provide a Windows sysroot via WINDOWS_SYSROOT / --winsysroot instead.",
@@ -167,16 +199,16 @@ function xwinHostTriple(cfg: Config): string {
 /**
  * Ensure `cfg.winsysroot` exists, is complete for the target arch, and has
  * the case aliases the LLVM toolchain needs. Fetches the sysroot with xwin
- * when it's missing — CI only; local builds get a clear error instead of a
- * surprise multi-GB download into a directory they configured themselves.
- * No-op for native Windows builds.
+ * when it's missing, in CI or at the build's own place in the cache; a local
+ * build gets a clear error instead of a surprise download into a directory
+ * its user configured.
  */
 export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
-  if (!cfg.windows || cfg.host.os === "windows" || cfg.winsysroot === undefined) return;
+  if (cfg.winsysroot === undefined) return;
   const dest = cfg.winsysroot;
 
   if (!isCompleteWindowsSysroot(dest, cfg.arch)) {
-    if (!cfg.ci && !cfg.buildkite) {
+    if (!cfg.ci && !cfg.buildkite && dest !== windowsSysrootCachePath(cfg.cacheDir)) {
       throw new BuildError(`Windows sysroot at ${dest} is missing the MSVC CRT / Windows SDK / ATL for ${cfg.arch}`, {
         hint:
           "Re-create it with xwin (see docs/project/building-windows.mdx):\n" +
@@ -194,11 +226,10 @@ export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
  * Directory holding the serviced UCRT static libs for the target arch (see
  * UCRT_SERVICING_VERSION). The link adds it as /libpath: ahead of the
  * winsysroot so these win over the splat's stale copies. Undefined for
- * native-Windows builds (they link the locally installed, already-serviced
- * SDK).
+ * builds against the installed, already-serviced SDK (msvc.ts).
  */
 export function ucrtServicingLibDir(cfg: Config): string | undefined {
-  if (!cfg.windows || cfg.host.os === "windows") return undefined;
+  if (cfg.winsysroot === undefined) return undefined;
   return join(cfg.cacheDir, `ucrt-servicing-${UCRT_SERVICING_VERSION}`, msArchName(cfg.arch));
 }
 
@@ -211,6 +242,7 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
   if (existsSync(join(libDir, "libucrt.lib")) && existsSync(join(libDir, "ucrt.lib"))) {
     return;
   }
+  requireMicrosoftLicenses(cfg);
 
   const arch = msArchName(cfg.arch);
   const pkg = `microsoft.windows.sdk.cpp.${arch}`;
@@ -242,10 +274,12 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
 
 /** Download xwin and splat the MSVC CRT + Windows SDK into `dest`. */
 async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
+  requireMicrosoftLicenses(cfg);
+
   // ─── 1. xwin binary ───
   const triple = xwinHostTriple(cfg);
   const xwinDir = resolve(cfg.cacheDir, `xwin-${XWIN_VERSION}`);
-  const xwinExe = join(xwinDir, `xwin-${XWIN_VERSION}-${triple}`, "xwin");
+  const xwinExe = join(xwinDir, `xwin-${XWIN_VERSION}-${triple}`, `xwin${cfg.host.exeSuffix}`);
   if (!existsSync(xwinExe)) {
     const url = `https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-${triple}.tar.gz`;
     const tarball = join(xwinDir, `xwin-${triple}.tar.gz`);
@@ -264,7 +298,8 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
   // CRT) links work; --include-atl for <atlstr.h> (rescle.cpp);
   // winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
   // with a single /winsysroot flag; symlinks stay ON (default) to fix
-  // include/lib casing on a case-sensitive filesystem.
+  // include/lib casing on a case-sensitive filesystem, and are OFF on
+  // Windows, which has none and lets only privileged users create them.
   //
   // The incomplete previous attempt is wiped before re-splatting, but only
   // when `dest` actually looks like a (partial) sysroot — a mistyped
@@ -285,6 +320,10 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     }
   }
   console.log(`fetching MSVC CRT + Windows SDK into ${dest} (xwin splat)`);
+  // Splat beside `dest` and rename: every checkout on the machine shares the
+  // cache, and a build must never see another's half-written sysroot.
+  const staging = `${dest}.staging-${process.pid}`;
+  const splat = join(staging, "sysroot");
   const args = [
     "--accept-license",
     "--arch",
@@ -297,24 +336,25 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     // Top-level option (payload selection), not a `splat` option.
     "--include-atl",
     "--cache-dir",
-    join(cfg.cacheDir, "xwin-dl"),
+    join(staging, "dl"),
     "splat",
     "--use-winsysroot-style",
     "--preserve-ms-arch-notation",
     "--include-debug-libs",
+    ...(cfg.host.os === "windows" ? ["--disable-symlinks"] : []),
     "--output",
-    dest,
+    splat,
   ];
   // Microsoft's CDN resets connections often enough that agents without a
   // baked sysroot were failing real builds on it — retry the whole splat a
-  // couple of times before giving up (the package cache in cacheDir/xwin-dl
+  // couple of times before giving up (the package cache beside the splat
   // makes retries cheap; the splat output dir is wiped each attempt so a
   // partial extraction can't leak through).
   const attempts = 3;
   let result;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    rmSync(dest, { recursive: true, force: true });
-    mkdirSync(dest, { recursive: true });
+    rmSync(splat, { recursive: true, force: true });
+    mkdirSync(splat, { recursive: true });
     // xwin draws progress bars to stdout even when it isn't a terminal, which
     // floods CI logs with megabytes of redraws. Keep stderr (real errors);
     // only show the progress locally where it's actually a progress bar.
@@ -331,11 +371,19 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     }
   }
   if (result!.error || result!.status !== 0) {
+    rmSync(staging, { recursive: true, force: true });
     throw new BuildError(`xwin splat failed${result!.status !== null ? ` (exit ${result!.status})` : ""}`, {
       cause: result!.error,
       hint: "The MSVC CRT / Windows SDK download from Microsoft's CDN failed — check network access, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
     });
   }
+  rmSync(dest, { recursive: true, force: true });
+  try {
+    renameSync(splat, dest);
+  } catch {
+    // Another build put its own there first, and the check below is of that one.
+  }
+  rmSync(staging, { recursive: true, force: true });
   if (!isCompleteWindowsSysroot(dest, cfg.arch)) {
     throw new BuildError(`xwin splat finished but ${dest} is missing expected SDK files`, {
       hint: "Delete the directory and retry, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",

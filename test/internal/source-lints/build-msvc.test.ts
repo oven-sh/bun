@@ -95,7 +95,6 @@ describe("findMsvc", () => {
       vsVersion: "18.3.11520.95",
       toolsDir,
       toolsVersion: "14.50.35717",
-      linker: join(toolsDir, "bin", `Host${arch}`, arch, "link.exe"),
       sdkDir: join(String(dir), "ProgramFilesX86", "Windows Kits", "10"),
       sdkVersion: "10.0.26100.0",
     });

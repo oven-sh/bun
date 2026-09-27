@@ -51,7 +51,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cargo: undefined,
     cargoHome: undefined,
     rustupHome: undefined,
-    msvcLinker: undefined,
     rc: undefined,
     mt: undefined,
     nasm: undefined,

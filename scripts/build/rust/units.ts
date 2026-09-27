@@ -504,6 +504,11 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (!isHost) args.push("--target", unit.platform);
   const linker = isHost ? ctx.linker.host : ctx.linker.target;
   if (linker !== undefined) args.push("-C", `linker=${linker}`);
+  // A Windows host's build scripts and proc-macros are Windows programs, and host units get no rustflags to say where
+  // the CRT and SDK libraries are. With this lld-link ignores the LIB that rustc sets when it finds a Visual Studio.
+  if (isHost && cfg.host.os === "windows" && cfg.winsysroot !== undefined) {
+    args.push("-C", `link-arg=/winsysroot:${cfg.winsysroot}`);
+  }
   // cargo: incremental for path packages only, and never when CI is set.
   if (p.incremental && local && !cfg.ci)
     args.push("-C", `incremental=${join(graph.dir, unit.platform, "incremental")}`);

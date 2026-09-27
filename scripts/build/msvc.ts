@@ -1,8 +1,13 @@
 /**
- * The MSVC toolset and Windows SDK of a Windows host, and the environment that
- * points every tool at them.
+ * The MSVC toolset and Windows SDK installed on a Windows host, and the
+ * environment that points every tool at them.
  *
- * clang-cl, lld-link, link.exe, llvm-rc, rustc, cmake, msbuild and node-gyp
+ * Building bun does not use them: it has a sysroot of its own (winsysroot.ts).
+ * What does is what runs Visual Studio's own programs: a local WebKit build
+ * (msbuild, WebKit's cmake), and with it the bun that links that WebKit; the
+ * tests that compile native addons (node-gyp); the symbol-order tracer.
+ *
+ * clang-cl, lld-link, cl, link, llvm-rc, rustc, cmake, msbuild and node-gyp
  * all take the CRT/STL and SDK headers, libraries and tools from INCLUDE, LIB
  * and PATH. Visual Studio sets those with a developer shell (vcvarsall.bat,
  * Launch-VsDevShell.ps1), which costs seconds per process tree, also puts
@@ -18,8 +23,6 @@
  *
  * A developer shell the caller happens to be in is not consulted: what is
  * installed decides, so every terminal builds with the same toolchain.
- *
- * Cross-compiling for Windows from another host uses winsysroot.ts instead.
  *
  * Imported by scripts that node runs (runner.node.ts): node builtins and
  * erasable syntax only.
@@ -49,8 +52,6 @@ export interface Msvc {
   sdkDir: string;
   /** `10.0.26100.0` */
   sdkVersion: string;
-  /** link.exe, by path: Git for Windows has a `link` of its own (coreutils') that PATH may reach first. */
-  linker: string;
 }
 
 /** Windows hosts only. Throws a BuildError naming what is missing. */
@@ -71,8 +72,9 @@ function findToolset(arch: MsvcArch): Omit<Msvc, "sdkDir" | "sdkVersion"> {
       const toolsDir = join(toolsets, toolsVersion);
       const complete = ["include/vcruntime.h", `lib/${arch}/msvcrt.lib`].every(f => existsSync(join(toolsDir, f)));
       for (const toolsHostArch of complete ? ([arch, "x64"] as const) : []) {
-        const linker = join(toolsDir, "bin", `Host${toolsHostArch}`, arch, "link.exe");
-        if (existsSync(linker)) return { arch, toolsHostArch, vsDir, vsVersion, toolsDir, toolsVersion, linker };
+        if (existsSync(join(toolsDir, "bin", `Host${toolsHostArch}`, arch, "link.exe"))) {
+          return { arch, toolsHostArch, vsDir, vsVersion, toolsDir, toolsVersion };
+        }
       }
       incomplete.push(toolsDir);
     }

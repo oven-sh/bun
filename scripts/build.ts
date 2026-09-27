@@ -47,7 +47,6 @@ import {
   type ConfigureInput,
 } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
-import { loadMsvcEnv } from "./build/msvc.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { chartHtml, formatReport, loadBuild } from "./build/timings.ts";
@@ -101,7 +100,7 @@ async function main(): Promise<void> {
   // (a machine set up for a gcc toolchain does), which hijacks <vector> & co. away from the MSVC
   // STL when cross-compiling for Windows ("'bits/c++config.h' file not
   // found"). Scrub them for Windows cross builds — they are host-targeted by
-  // definition. Native Windows builds (INCLUDE/LIB from msvc.ts) and
+  // definition. Native Windows builds and
   // every other target keep the environment as provisioned.
   const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
@@ -136,9 +135,6 @@ async function main(): Promise<void> {
     if (ninja.error) throw new BuildError("Failed to run ninja", { cause: ninja.error });
     process.exit(ninja.status ?? 1);
   }
-
-  // Where ninja's children, and the built binary's, find the CRT, the STL and the Windows SDK.
-  if (process.platform === "win32") loadMsvcEnv();
 
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
@@ -452,6 +448,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   macosSdk: "string",
   osxDeploymentTarget: "string",
   winsysroot: "string",
+  acceptMicrosoftLicenses: "boolean",
   nodejsVersion: "string",
   nodejsAbiVersion: "string",
   nodejsV8Version: "string",
@@ -536,6 +533,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--timings") {
       timings = true;
+      continue;
+    }
+
+    // A config field that reads as a statement, so it needs no `=on`.
+    if (arg === "--accept-microsoft-licenses") {
+      overrides.acceptMicrosoftLicenses = true;
       continue;
     }
 
@@ -643,10 +646,14 @@ Options:
                                   package.json files the build needs),
                                   buildDir, mode (full|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
-                                  winsysroot (Windows cross-compile SDK root)
+                                  winsysroot (MSVC CRT + Windows SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
-  --timings               After the build (or, with --configure-only, without
+  --accept-microsoft-licenses
+                          Let a build for Windows download the MSVC C++ runtime
+                          and Windows SDK. Needed once per machine: the build
+                          that has to download them names the license terms.
+  --timings              After the build (or, with --configure-only, without
                           one), report where the time went: totals per rule,
                           the slowest edges, the critical path, and how
                           parallel the last build was; and write the same as

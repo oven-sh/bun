@@ -1,31 +1,9 @@
 // Hardcoded module "ws"
-// Bun's implementation of https://github.com/websockets/ws over the native WebSocket and the
-// ServerWebSocket of Bun.serve.
+// Bun's implementation of https://github.com/websockets/ws over the native WebSocket and Bun.serve.
 //
-// Parts of this file are ported from ws 8.21.0: the EventTarget interface of the server socket
-// (lib/event-target.js and the on<event> accessors of lib/websocket.js) and parts of
-// lib/websocket-server.js.
-//
-// Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
-// Copyright (c) 2013 Arnout Kazemier and contributors
-// Copyright (c) 2016 Luigi Pinca and contributors
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// Parts are ported from ws 8.21.0: lib/event-target.js, lib/websocket.js, lib/websocket-server.js.
+// Copyright (c) 2011 Einar Otto Stangvik, (c) 2013 Arnout Kazemier and contributors,
+// (c) 2016 Luigi Pinca and contributors. MIT License. https://github.com/websockets/ws
 
 const ReadyState_CONNECTING = 0;
 const ReadyState_OPEN = 1;
@@ -1012,15 +990,11 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
-// The EventTarget interface of npm ws: lib/event-target.js, and the on<event> accessors of
-// lib/websocket.js. A listener is an adapter in the socket's own EventEmitter list. The tags
-// tell an adapter from a listener that on() added, and an on<event> handler from an
-// addEventListener() one.
+// The tags of the adapters that addEventListener() and the on<event> setters put in the EventEmitter list.
 const kForOnEventAttribute = Symbol("kIsForOnEventAttribute");
 const kListener = Symbol("kListener");
 
-// The event classes of npm ws, not the global ones. The first addEventListener() or on<event>
-// assignment of the process creates them.
+// The event classes of npm ws, not the global ones. The first registration of the process creates them.
 let Event, CloseEvent, ErrorEvent, MessageEvent, kTarget;
 
 function createEventClasses() {
@@ -1123,8 +1097,7 @@ function createEventClasses() {
   ObjectDefineProperty(MessageEvent.prototype, "data", { enumerable: true });
 }
 
-// npm ws returns nothing. The result goes back to emit(), so that an EventEmitter that captures
-// rejections gets the promise of an async listener, as it always did on this socket.
+// npm ws returns nothing. With the result, an EventEmitter that captures rejections gets the listener's promise.
 function callListener(listener, thisArg, event) {
   let handleEvent;
   if (typeof listener === "object" && (handleEvent = listener.handleEvent)) {
@@ -1149,9 +1122,7 @@ function createCloseAdapter(handler) {
     const event = new CloseEvent("close", {
       code,
       reason: message.toString(),
-      // npm ws: `this._closeFrameReceived && this._closeFrameSent`. The ServerWebSocket keeps
-      // neither flag. It reports 1006 when the connection ended with no close frame, and a
-      // socket that is not closed has not completed a close handshake.
+      // The native socket keeps no close frame flags. It reports 1006 for an end with no close frame.
       wasClean: this.readyState === ReadyState_CLOSED && code !== 1006,
     });
 
@@ -1187,8 +1158,7 @@ function isEventTargetType(type) {
 
 function addEventListener(type, handler, options = {}) {
   if (!isEventTargetType(type)) {
-    // npm ws ignores every other type. This socket has always added the listener, so a
-    // heartbeat that calls addEventListener("pong", f) works.
+    // npm ws ignores these types. This socket always added the listener, for example for "pong".
     if (options?.once) {
       this.once(type, handler);
     } else {
@@ -1234,9 +1204,7 @@ function removeEventListener(type, handler) {
   }
 
   for (const listener of this.listeners(type)) {
-    // npm ws tests `!listener[kForOnEventAttribute]`. That also holds for a listener that on()
-    // added, so removeEventListener(type, undefined) removes one there: for 'close', the listener
-    // that takes the socket out of `wss.clients`.
+    // `!listener[kForOnEventAttribute]`, as in npm ws, also removes an on() listener for an undefined handler.
     if (listener[kListener] === handler && listener[kForOnEventAttribute] === false) {
       this.removeListener(type, listener);
       break;

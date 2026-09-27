@@ -636,6 +636,74 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // A bare specifier from an embedded module resolves against the embedded `node_modules` tree first
+  // (as node SEA and deno compile do), then against the cwd's on disk. https://github.com/oven-sh/bun/issues/44101
+  itBundled("compile/EmbeddedNodeModules", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { tmpdir } from "os";
+        const s = (x: string) => x;
+        const root = process.platform === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
+        const outcome = (fn: () => unknown) => {
+          try {
+            return fn();
+          } catch (e: any) {
+            return e?.constructor?.name ?? String(e);
+          }
+        };
+        const load = require(s("./chunks/loader.js")).default;
+        // The cwd has a different "dep" on disk: the embedded one wins.
+        console.log(outcome(() => require(s("dep")).default), outcome(() => load(s("dep")).default));
+        console.log(outcome(() => require(s("dep/lib/util")).default), outcome(() => require(s("dep/lib/util.js")).default));
+        console.log((await import(s("dep"))).default, (await load(s("../esm.mjs")).load(s("dep"))).default);
+        console.log(outcome(() => require(s("disk-only")).default));
+        console.log(require.resolve(s("dep")) === root + "node_modules/dep/index.js", Bun.resolveSync(s("dep"), import.meta.dir) === root + "node_modules/dep/index.js");
+        // A subpath that is not embedded is looked for on disk, like any other miss.
+        console.log(JSON.stringify(outcome(() => require(s("dep/package.json")))));
+        console.log(outcome(() => require(s("missing-pkg"))));
+        // An empty cwd: nothing to fall back to on disk.
+        process.chdir(tmpdir());
+        console.log(outcome(() => require(s("dep")).default), outcome(() => load(s("dep/lib/util")).default));
+        console.log(outcome(() => require(s("disk-only"))));
+      `,
+      "/chunks/loader.js": `export default (n) => require(n);`,
+      "/esm.mjs": `export const load = (n) => import(n);`,
+      "/node_modules/dep/index.js": `export default "dep:embedded";`,
+      "/node_modules/dep/lib/util.js": `export default "util:embedded";`,
+    },
+    runtimeFiles: {
+      "/node_modules/dep/index.js": `module.exports = { default: "dep:disk" };`,
+      "/node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+      "/node_modules/disk-only/index.js": `module.exports = { default: "disk-only" };`,
+    },
+    entryPointsRaw: [
+      "./entry.ts",
+      "./chunks/loader.js",
+      "./esm.mjs",
+      "./node_modules/dep/index.js",
+      "./node_modules/dep/lib/util.js",
+    ],
+    root: ".",
+    outfile: "dist/out",
+    run: {
+      stdout: [
+        "dep:embedded dep:embedded",
+        "util:embedded util:embedded",
+        "dep:embedded dep:embedded",
+        "disk-only",
+        "true true",
+        '{"name":"dep","main":"index.js"}',
+        "ResolveMessage",
+        "dep:embedded util:embedded",
+        "ResolveMessage",
+        "",
+      ].join("\n"),
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

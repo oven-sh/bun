@@ -1043,6 +1043,37 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub type Implementation = RealFS;
 
+    /// The `bun build --compile` executable's embedded files, mounted at the virtual root (`/$bunfs/`). Set once,
+    /// before the first VM is created. `RealFS::read_directory` and `cache::Fs::read_file_with_allocator` serve
+    /// every path under it from here and never from disk, so the resolver's algorithm runs over embedded
+    /// directories as it does over real ones.
+    static STANDALONE_MODULE_GRAPH: std::sync::OnceLock<&'static dyn crate::StandaloneModuleGraph> =
+        std::sync::OnceLock::new();
+
+    /// See [`STANDALONE_MODULE_GRAPH`].
+    pub fn mount_standalone_module_graph(graph: &'static dyn crate::StandaloneModuleGraph) {
+        let _ = STANDALONE_MODULE_GRAPH.set(graph);
+    }
+
+    /// The mounted graph, if `path` is a directory it serves (see [`STANDALONE_MODULE_GRAPH`]).
+    #[inline]
+    pub(crate) fn standalone_graph_for_dir(
+        path: &[u8],
+    ) -> Option<&'static dyn crate::StandaloneModuleGraph> {
+        let graph = *STANDALONE_MODULE_GRAPH.get()?;
+        bun_options_types::standalone_path::is_bun_standalone_dir_path(path).then_some(graph)
+    }
+
+    /// The bytes of the embedded file `path`, if the mounted graph has it (see [`STANDALONE_MODULE_GRAPH`]).
+    #[inline]
+    pub(crate) fn standalone_file_contents(path: &[u8]) -> Option<&'static [u8]> {
+        let graph = *STANDALONE_MODULE_GRAPH.get()?;
+        if !bun_options_types::standalone_path::is_bun_standalone_file_path(path) {
+            return None;
+        }
+        graph.file_contents(path)
+    }
+
     // ── RealFS ───────────────────────────────────────────────────────────
 
     /// Real-filesystem backend: directory-entry cache plus fd-limit
@@ -1178,6 +1209,21 @@ pub mod fs {
             Ok(dir)
         }
 
+        /// `readdir` for a directory of the mounted embedded graph: `ENOENT` when the graph has no such directory.
+        fn readdir_embedded<I: DirEntryIterator>(
+            prev_map: Option<&mut dir_entry::EntryMap>,
+            dir_: &'static [u8],
+            generation: Generation,
+            graph: &dyn crate::StandaloneModuleGraph,
+            iterator: I,
+        ) -> crate::CrateResult<DirEntry> {
+            let mut dir = DirEntry::init(dir_, generation);
+            if !dir.add_entries_from_standalone_graph(prev_map, graph, iterator)? {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
+            Ok(dir)
+        }
+
         /// Cache (or threadlocal-
         /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
         fn read_directory_error(
@@ -1267,8 +1313,14 @@ pub mod fs {
             }
 
             let had_handle = maybe_handle.is_some();
+            let embedded = if had_handle {
+                None
+            } else {
+                standalone_graph_for_dir(dir)
+            };
             let handle: Fd = match maybe_handle {
                 Some(h) => h,
+                None if embedded.is_some() => Fd::INVALID,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
                     Err(err) => return self.read_directory_error(dir, err),
@@ -1277,7 +1329,8 @@ pub mod fs {
 
             // Close the handle on every exit path. Use
             // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
+            let should_close_handle =
+                !had_handle && handle.is_valid() && (!store_fd || self.need_to_close_files());
             let _close_guard = scopeguard::guard(handle, move |h| {
                 if should_close_handle {
                     let _ = bun_sys::close(h);
@@ -1305,8 +1358,11 @@ pub mod fs {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
                 unsafe { &mut (*p).data }
             });
-            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
-            {
+            let read = match embedded {
+                Some(graph) => Self::readdir_embedded(prev, dir, generation, graph, iterator),
+                None => self.readdir(store_fd, prev, dir, generation, handle, iterator),
+            };
+            let mut entries = match read {
                 Ok(e) => e,
                 Err(err) => {
                     if let Some(existing) = in_place {
@@ -2336,6 +2392,19 @@ pub mod cache {
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
+            if _file_handle.is_none()
+                && let Some(bytes) = fs_mod::standalone_file_contents(path)
+            {
+                // The embedded section lives for the process.
+                return Ok(Entry {
+                    contents: Contents::External {
+                        ptr: bytes.as_ptr(),
+                        len: bytes.len(),
+                    },
+                    fd: Fd::INVALID,
+                });
+            }
+
             let rfs = &_fs.fs;
 
             let will_close = rfs.need_to_close_files() && _file_handle.is_none();

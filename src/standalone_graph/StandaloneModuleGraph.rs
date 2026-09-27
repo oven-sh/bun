@@ -371,6 +371,34 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
     }
+    fn for_each_dir_entry(&self, dir: &[u8], each: &mut dyn FnMut(&[u8], bool)) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let dir = Self::normalize_dir_path(dir, &mut buf);
+        let mut found = false;
+        let mut child = |key: &[u8], is_dir: bool| {
+            let Some(rest) = key.strip_prefix(dir) else {
+                return;
+            };
+            let Some(name) = rest.strip_prefix(b"/") else {
+                return;
+            };
+            if name.is_empty() || strings::contains_char(name, b'/') {
+                return;
+            }
+            found = true;
+            each(name, is_dir);
+        };
+        for key in self.dirs.keys() {
+            child(key, true);
+        }
+        for key in self.files.keys() {
+            child(key, false);
+        }
+        found
+    }
+    fn file_contents(&self, name: &[u8]) -> Option<&[u8]> {
+        self.find_ref(name).map(File::utf8_contents)
+    }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()

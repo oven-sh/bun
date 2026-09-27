@@ -936,6 +936,20 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The result for the embedded module `file_name` (the graph's own name for it).
+    fn embedded_module(kind: ast::ImportKind, file_name: &'static [u8]) -> Result {
+        Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Path::init(file_name),
+                secondary: None,
+            },
+            module_type: options::ModuleType::Esm,
+            flags: ResultFlags::IS_STANDALONE_MODULE,
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
@@ -1302,38 +1316,77 @@ impl<'a> Resolver<'a> {
             Ok(None) => {}
         }
 
-        // When using `bun build --compile`, module resolution is never
-        // relative to our special /$bunfs/ directory.
+        // `bun build --compile`: the embedded module graph first, then the current working directory.
         //
-        // It's always relative to the current working directory of the project root.
-        //
-        // ...unless you pass a relative path that exists in the standalone module graph executable.
+        // A relative specifier between embedded modules, or an absolute `/$bunfs/` path, is the graph's own
+        // lookup. An embedded path the graph does not spell that way (a directory, a missing extension) and a
+        // bare specifier from an embedded module run the resolver's algorithm over the embedded tree, which the
+        // directory cache serves from the graph. A bare specifier that is not embedded then resolves from the
+        // cwd's `node_modules` chain on disk, as node SEA and deno compile do. Nothing else is ever resolved
+        // relative to `/$bunfs/`.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                if specifier_is_embedded_path
-                    || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
-                {
+                let source_dir_is_embedded =
+                    ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir);
+                if specifier_is_embedded_path || source_dir_is_embedded {
                     if let Some(file_name) = graph.resolve(source_dir, import_path) {
                         self.extension_order = original_order;
-                        return ResultUnion::Success(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Path::init(file_name),
-                                secondary: None,
-                            },
-                            module_type: options::ModuleType::Esm,
-                            flags: ResultFlags::IS_STANDALONE_MODULE,
-                            ..Default::default()
-                        });
+                        return ResultUnion::Success(Self::embedded_module(kind, file_name));
+                    }
+                    let top_level_dir = Fs::FileSystem::instance().top_level_dir;
+                    if specifier_is_embedded_path
+                        || (is_package_path(import_path) && self.custom_dir_paths.is_none())
+                    {
+                        let embedded_source_dir = if source_dir_is_embedded {
+                            source_dir
+                        } else {
+                            top_level_dir
+                        };
+                        match self.resolve_without_symlinks(
+                            embedded_source_dir,
+                            import_path,
+                            kind,
+                            global_cache,
+                        ) {
+                            ResultUnion::Success(result)
+                                if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
+                                    result.path_pair.primary.text(),
+                                ) =>
+                            {
+                                // The module loader keys on the graph's own name.
+                                let found =
+                                    graph.find_assume_standalone_path(result.path_pair.primary.text());
+                                self.extension_order = original_order;
+                                return match found {
+                                    Some(file_name) => {
+                                        let _ = self.flush_debug_logs(FlushMode::Success);
+                                        ResultUnion::Success(Self::embedded_module(kind, file_name))
+                                    }
+                                    None => {
+                                        let _ = self.flush_debug_logs(FlushMode::Fail);
+                                        ResultUnion::NotFound
+                                    }
+                                };
+                            }
+                            ResultUnion::Failure(err) => {
+                                let _ = self.flush_debug_logs(FlushMode::Fail);
+                                self.extension_order = original_order;
+                                return ResultUnion::Failure(err);
+                            }
+                            // Not embedded, or found on disk (`NODE_PATH`): the cwd pass below finds it
+                            // in its place in the search order.
+                            _ => {}
+                        }
                     }
                     if specifier_is_embedded_path {
+                        let _ = self.flush_debug_logs(FlushMode::Fail);
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir;
+                    break 'brk top_level_dir;
                 }
             }
 
@@ -4429,8 +4482,16 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
+            // A directory of the embedded module graph: no fd, its entries are listed from the graph below.
+            let embedded_graph = if queue_top.fd.is_valid() {
+                None
+            } else {
+                Fs::standalone_graph_for_dir(queue_top_unsafe_path)
+            };
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
+            } else if embedded_graph.is_some() {
+                FD::INVALID
             } else {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
@@ -4494,12 +4555,17 @@ impl<'a> Resolver<'a> {
                             // A permission-denied ancestor (sandboxed drive roots, x-only
                             // shared dirs) is treated as opaque and empty, like the
                             // ENOTDIR tolerance; the requested directory itself stays fatal.
+                            // So is a missing ancestor of an embedded path: the virtual
+                            // root's drive (`B:` on Windows) need not exist on disk.
                             if queue_slice_len > 0
-                                && matches!(
+                                && (matches!(
                                     err,
                                     crate::Error::Sys(bun_errno::SystemErrno::EPERM)
                                         | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                )
+                                ) || (err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                    && ::bun_options_types::standalone_path::is_bun_standalone_file_path(
+                                        &path[..input_path_len],
+                                    )))
                             {
                                 debuglog!(
                                     "treating permission-denied ancestor \"{}\" as empty: {}",
@@ -4661,6 +4727,17 @@ impl<'a> Resolver<'a> {
                             )
                             .expect("unreachable");
                     }
+                } else if let Some(graph) = embedded_graph
+                    && !new_entry.add_entries_from_standalone_graph(
+                        // SAFETY: see block-wide note above.
+                        in_place.map(|existing| unsafe { &mut (*existing).data }),
+                        graph,
+                        (),
+                    )?
+                {
+                    self.dir_cache_mut().mark_not_found(queue_top.result);
+                    rfs!().entries.mark_not_found(cached_dir_entry_result);
+                    return Ok(None);
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.

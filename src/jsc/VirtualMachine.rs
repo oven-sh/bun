@@ -3229,6 +3229,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).channel_ref).write(Default::default());
             if let Some(graph) = opts.graph {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
+                bun_resolver::fs::mount_standalone_module_graph(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);

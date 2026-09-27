@@ -517,6 +517,59 @@ console.log("PRELOAD");
     },
   });
 
+  // An embedded package's package.json "main" and "exports" are honoured only when autoloadPackageJson is on, as
+  // for a package on disk. The package.json is embedded as an asset at its own path. https://github.com/oven-sh/bun/issues/44101
+  for (const autoloadPackageJson of [true, false]) {
+    itBundled("compile/EmbeddedNodeModulesPackageJson" + (autoloadPackageJson ? "Enabled" : "Disabled"), {
+      backend: "cli",
+      compile: { autoloadPackageJson },
+      files: {
+        "/entry.ts": /* js */ `
+          import { tmpdir } from "os";
+          process.chdir(tmpdir());
+          const s = (x: string) => x;
+          const outcome = (spec: string) => {
+            try {
+              return require(spec).default;
+            } catch (e: any) {
+              return e?.constructor?.name ?? String(e);
+            }
+          };
+          console.log(outcome(s("with-main")), outcome(s("with-exports")), outcome(s("with-exports/feature")));
+        `,
+        "/assets.ts": /* js */ `
+          import a from "./node_modules/with-main/package.json" with { type: "file" };
+          import b from "./node_modules/with-exports/package.json" with { type: "file" };
+          export default [a, b];
+        `,
+        "/node_modules/with-main/package.json": `{ "name": "with-main", "main": "lib/main.js" }`,
+        "/node_modules/with-main/lib/main.js": `export default "main-field";`,
+        "/node_modules/with-main/index.js": `export default "index-file";`,
+        "/node_modules/with-exports/package.json": `{ "name": "with-exports", "exports": { ".": "./dist/main.js", "./feature": "./dist/feature.js" } }`,
+        "/node_modules/with-exports/dist/main.js": `export default "exports-main";`,
+        "/node_modules/with-exports/dist/feature.js": `export default "exports-feature";`,
+      },
+      entryPointsRaw: [
+        "./entry.ts",
+        "./assets.ts",
+        "./node_modules/with-main/lib/main.js",
+        "./node_modules/with-main/index.js",
+        "./node_modules/with-exports/dist/main.js",
+        "./node_modules/with-exports/dist/feature.js",
+      ],
+      assetNaming: "[dir]/[name].[ext]",
+      root: ".",
+      outfile: "dist/out",
+      run: {
+        stdout: autoloadPackageJson
+          ? "main-field exports-main exports-feature\n"
+          : "index-file ResolveMessage ResolveMessage\n",
+        file: "dist/out",
+        setCwd: true,
+      },
+    });
+  }
+
   // Test that autoloadBunfig: false works with execArgv (regression test for #25640)
   // When execArgv is present, bunfig should still be disabled if autoloadBunfig: false
   itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {

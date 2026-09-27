@@ -402,12 +402,54 @@ impl DirEntry {
         filename_store: &mut FilenameStoreAppender,
         iterator: I,
     ) -> crate::CrateResult<()> {
-        use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
         // transcoded `slice_u8()`.
-        let name_slice = entry.name.slice_u8();
-        let found_kind: Option<EntryKind> = match entry.kind {
+        self.add_entry_named(prev_map, entry.name.slice_u8(), entry.kind, filename_store, iterator)
+    }
+
+    /// Fills `self` with the entries of the embedded directory `self.dir` and returns whether the graph has that
+    /// directory. Every entry's kind is known, so none is ever `stat`ed.
+    pub(crate) fn add_entries_from_standalone_graph<I: DirEntryIterator>(
+        &mut self,
+        mut prev_map: Option<&mut dir_entry::EntryMap>,
+        graph: &dyn crate::StandaloneModuleGraph,
+        iterator: I,
+    ) -> crate::CrateResult<bool> {
+        let dir = self.dir;
+        let mut filename_store = FilenameStoreAppender::new();
+        let mut failed: Option<crate::Error> = None;
+        let found = graph.for_each_dir_entry(dir, &mut |name, is_dir| {
+            if failed.is_some() {
+                return;
+            }
+            let kind = if is_dir {
+                bun_sys::FileKind::Directory
+            } else {
+                bun_sys::FileKind::File
+            };
+            if let Err(err) =
+                self.add_entry_named(prev_map.as_deref_mut(), name, kind, &mut filename_store, &iterator)
+            {
+                failed = Some(err);
+            }
+        });
+        match failed {
+            Some(err) => Err(err),
+            None => Ok(found),
+        }
+    }
+
+    pub(crate) fn add_entry_named<I: DirEntryIterator>(
+        &mut self,
+        prev_map: Option<&mut dir_entry::EntryMap>,
+        name_slice: &[u8],
+        kind: bun_sys::FileKind,
+        filename_store: &mut FilenameStoreAppender,
+        iterator: I,
+    ) -> crate::CrateResult<()> {
+        use bun_sys::FileKind as DK;
+        let found_kind: Option<EntryKind> = match kind {
             DK::Directory => Some(EntryKind::Dir),
             DK::File => Some(EntryKind::File),
 

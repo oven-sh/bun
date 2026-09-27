@@ -66,4 +66,25 @@ pub mod standalone_path {
             is_bun_standalone_file_path_canonicalized(str_)
         }
     }
+
+    /// True iff `str_` is a directory that exists only in the embedded module graph: one under the virtual root, or
+    /// the root's parent (`/$bunfs`, `B:\~BUN`). The real filesystem has none of these, so the resolver's
+    /// directory cache lists them from the graph instead of `opendir`.
+    #[inline]
+    pub fn is_bun_standalone_dir_path(str_: &[u8]) -> bool {
+        if is_bun_standalone_file_path(str_) {
+            return true;
+        }
+        #[cfg(windows)]
+        let str_ = bun_paths::string_paths::without_nt_prefix::<u8>(str_);
+        let without_sep = match str_ {
+            [rest @ .., b'/'] => rest,
+            [rest @ .., b'\\'] if cfg!(windows) => rest,
+            _ => str_,
+        };
+        let base = BASE_PATH.as_bytes();
+        let public = BASE_PUBLIC_PATH.as_bytes();
+        without_sep == &base[..base.len() - 1]
+            || (cfg!(windows) && without_sep == &public[..public.len() - 1])
+    }
 }

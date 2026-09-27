@@ -44,7 +44,7 @@ pub struct JSMySQLQuery {
     // Process-lifetime backrefs (JSC_BORROW on m_ctx payload).
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
-    query: JsCell<MySQLQuery>,
+    query: MySQLQuery,
 }
 
 impl JSMySQLQuery {
@@ -95,11 +95,7 @@ impl JSMySQLQuery {
                 NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
             ),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(
-                query.to_bun_string(global_this)?,
-                bigint,
-                simple,
-            )),
+            query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,
@@ -214,7 +210,7 @@ impl JSMySQLQuery {
                 );
             }
         };
-        this.query.with_mut(|q| q.set_result_mode(mode));
+        this.query.set_result_mode(mode);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -241,7 +237,7 @@ impl JSMySQLQuery {
             }
         });
 
-        if !self.query.with_mut(|q| q.result(is_last_result)) {
+        if !self.query.result(is_last_result) {
             return;
         }
 
@@ -305,7 +301,7 @@ impl JSMySQLQuery {
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
-        let _ = self.query.with_mut(|q| q.fail());
+        let _ = self.query.fail();
     }
 
     pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
@@ -330,7 +326,7 @@ impl JSMySQLQuery {
             }
         });
 
-        if !self.query.with_mut(|q| q.fail()) {
+        if !self.query.fail() {
             return;
         }
 
@@ -379,7 +375,7 @@ impl JSMySQLQuery {
 
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
         {
-            let q = self.query.get();
+            let q = &self.query;
             if !q.is_pending() || q.is_being_prepared() {
                 debug!("run already running or being prepared");
                 // already running or completed
@@ -397,18 +393,9 @@ impl JSMySQLQuery {
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
         let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
-        // R-2: `JsCell::with_mut` scopes the `&mut MySQLQuery` to the closure
-        // body. `run_query` may run user JS (binding getters), which could
-        // re-enter another host-fn on this `JSMySQLQuery`; that re-entrant call
-        // would form a fresh `&Self` — sound, since the noalias attribute is
-        // suppressed by the `UnsafeCell` in `JsCell`. A re-entrant `with_mut`
-        // on `self.query` would still alias; `set_mode_from_js` is the only
-        // such path and is not reachable from a binding getter in well-formed
-        // SQL usage. This mirrors the pre-R-2 behaviour but with the *outer*
-        // `&mut self` UB structurally eliminated.
-        if let Err(err) = self
-            .query
-            .with_mut(|q| q.run_query(connection, global_object, columns_value, binding_value))
+        if let Err(err) =
+            self.query
+                .run_query(connection, global_object, columns_value, binding_value)
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
@@ -428,43 +415,43 @@ impl JSMySQLQuery {
 
     #[inline]
     pub(crate) fn is_completed(&self) -> bool {
-        self.query.get().is_completed()
+        self.query.is_completed()
     }
     #[inline]
     pub(crate) fn is_running(&self) -> bool {
-        self.query.get().is_running()
+        self.query.is_running()
     }
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
-        self.query.get().is_pending()
+        self.query.is_pending()
     }
     #[inline]
     pub(crate) fn is_being_prepared(&self) -> bool {
-        self.query.get().is_being_prepared()
+        self.query.is_being_prepared()
     }
     #[inline]
     pub(crate) fn is_pipelined(&self) -> bool {
-        self.query.get().is_pipelined()
+        self.query.is_pipelined()
     }
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
-        self.query.get().is_simple()
+        self.query.is_simple()
     }
     #[inline]
     pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.query.get().is_bigint_supported()
+        self.query.is_bigint_supported()
     }
     #[inline]
     pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.query.get().get_result_mode()
+        self.query.get_result_mode()
     }
     // TODO: isolate statement modification away from the connection
     pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
-        self.query.get().get_statement()
+        self.query.get_statement()
     }
 
     pub(crate) fn mark_as_prepared(&self) {
-        self.query.with_mut(|q| q.mark_as_prepared());
+        self.query.mark_as_prepared();
     }
 
     #[inline]

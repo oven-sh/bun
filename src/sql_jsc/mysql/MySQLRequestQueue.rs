@@ -32,6 +32,16 @@ pub struct MySQLRequestQueue {
     is_ready_for_query: Cell<bool>,
 }
 
+/// What a request is to the counters of the queue once it ran.
+enum Started {
+    /// Nothing was written: the request waits.
+    No,
+    /// The prepare of its statement was written.
+    Preparing,
+    Pipelined,
+    NotPipelined,
+}
+
 impl MySQLRequestQueue {
     #[inline]
     pub(crate) fn can_execute_query(&self, connection: &MySQLConnection) -> bool {
@@ -176,25 +186,13 @@ impl MySQLRequestQueue {
                     // `on_error` completed the request: the branch above retires it.
                     continue;
                 }
-                if req.is_being_prepared() {
-                    debug!("isBeingPrepared");
-                    // R-2: `reset_connection_timeout` takes `&self`; touches
-                    // timer state outside the queue.
-                    conn_ref.reset_connection_timeout();
-                    queue_ref.is_ready_for_query.set(false);
-                    queue_ref.waiting_to_prepare.set(true);
-                    break 'advance;
-                } else if req.is_running() {
-                    // R-2: `reset_connection_timeout` takes `&self`; touches
-                    // timer state outside the queue.
-                    conn_ref.reset_connection_timeout();
-                    debug!("isRunning after run");
-                    queue_ref.is_ready_for_query.set(false);
-
-                    if req.is_pipelined() {
-                        queue_ref
-                            .pipelined_requests
-                            .set(queue_ref.pipelined_requests.get() + 1);
+                match queue_ref.account(&req) {
+                    Started::No => {}
+                    Started::Preparing | Started::NotPipelined => {
+                        conn_ref.reset_connection_timeout();
+                    }
+                    Started::Pipelined => {
+                        conn_ref.reset_connection_timeout();
                         // `can_pipeline` takes `&self` + `&MySQLConnection`;
                         // both are shared reborrows — overlapping reads are sound.
                         if queue_ref.can_pipeline(conn_ref.get()) {
@@ -202,12 +200,7 @@ impl MySQLRequestQueue {
                             offset += 1;
                             continue;
                         }
-                        break 'advance;
                     }
-                    debug!("nonpipelinable requests");
-                    queue_ref
-                        .nonpipelinable_requests
-                        .set(queue_ref.nonpipelinable_requests.get() + 1);
                 }
                 break 'advance;
             }
@@ -236,22 +229,33 @@ impl MySQLRequestQueue {
         }
     }
 
-    pub(crate) fn add(&mut self, req: RefPtr<JSMySQLQuery>) {
-        debug!("add");
-        if req.is_being_prepared() {
+    /// Counts a request that ran: the gates read these counters.
+    fn account(&self, request: &JSMySQLQuery) -> Started {
+        if request.is_being_prepared() {
+            debug!("isBeingPrepared");
             self.is_ready_for_query.set(false);
             self.waiting_to_prepare.set(true);
-        } else if req.is_running() {
-            self.is_ready_for_query.set(false);
-
-            if req.is_pipelined() {
-                self.pipelined_requests
-                    .set(self.pipelined_requests.get() + 1);
-            } else {
-                self.nonpipelinable_requests
-                    .set(self.nonpipelinable_requests.get() + 1);
-            }
+            return Started::Preparing;
         }
+        if !request.is_running() {
+            return Started::No;
+        }
+        debug!("isRunning after run");
+        self.is_ready_for_query.set(false);
+        if request.is_pipelined() {
+            self.pipelined_requests
+                .set(self.pipelined_requests.get() + 1);
+            return Started::Pipelined;
+        }
+        debug!("nonpipelinable requests");
+        self.nonpipelinable_requests
+            .set(self.nonpipelinable_requests.get() + 1);
+        Started::NotPipelined
+    }
+
+    pub(crate) fn add(&mut self, req: RefPtr<JSMySQLQuery>) {
+        debug!("add");
+        self.account(&req);
         self.requests.with_mut(|q| q.push_back(req));
     }
 

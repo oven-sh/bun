@@ -1,6 +1,7 @@
 use crate::error::ThrowSqlError;
-use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use crate::jsc::{JSGlobalObject, JSValue, JsCell, MarkedArgumentBuffer};
 use bun_core::String as BunString;
+use core::cell::Cell;
 
 use super::my_sql_value::Value;
 use bun_sql::mysql::mysql_param::Param;
@@ -24,14 +25,15 @@ use bun_ptr::RefPtr;
 
 bun_core::define_scoped_log!(debug, MySQLQuery, visible);
 
+// Every method takes `&self`: the conversion of the parameters runs user JS, which reaches this request again.
 pub struct MySQLQuery {
     /// Shared with the connection's `PreparedStatementsMap` (each holder owns
     /// one ref).
-    statement: Option<RefPtr<MySQLStatement>>,
+    statement: JsCell<Option<RefPtr<MySQLStatement>>>,
     query: BunString,
 
-    status: Status,
-    flags: Flags,
+    status: Cell<Status>,
+    flags: Cell<Flags>,
 }
 
 /// Not all fields are `bool`, so per PORTING.md this is a transparent `u8` with shift accessors.
@@ -98,7 +100,7 @@ impl Flags {
 
 impl MySQLQuery {
     fn bind(
-        &mut self,
+        &self,
         param_types: &[Param],
         global_object: &JSGlobalObject,
         binding_value: JSValue,
@@ -142,16 +144,13 @@ impl MySQLQuery {
             return Err(AnyMySQLError::WrongNumberOfParametersProvided);
         }
 
-        self.status = Status::Binding;
+        self.status.set(Status::Binding);
         Ok(params)
     }
 
-    /// `statement` is a raw `*mut MySQLStatement` (not `&mut`) because the sole caller,
-    /// `run_prepared_query`, must derive it from `self.statement` and then call this
-    /// `&mut self` method — a `&mut MySQLStatement` rooted in `*self` would overlap that
-    /// reborrow.
+    /// `statement` is a raw pointer: the conversion runs user JS, which reaches the statement too.
     fn bind_and_execute<C: WriterContext>(
-        &mut self,
+        &self,
         writer: NewWriter<C>,
         statement: *mut MySQLStatement,
         global_object: &JSGlobalObject,
@@ -199,7 +198,7 @@ impl MySQLQuery {
     }
 
     fn bind_and_execute_impl<C: WriterContext>(
-        &mut self,
+        &self,
         writer: NewWriter<C>,
         statement: *mut MySQLStatement,
         global_object: &JSGlobalObject,
@@ -207,23 +206,27 @@ impl MySQLQuery {
         columns_value: JSValue,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<(), AnyMySQLError> {
-        // SAFETY: `statement` was copied from `self.statement` by `run_prepared_query`;
-        // the intrusive ref held there keeps the allocation alive across this call. The
-        // caller passes the raw pointer before reborrowing `self`, so this is the only
-        // live mutable access path to the statement for the duration of this function.
-        let statement = unsafe { &mut *statement };
-
         // Bind before touching the writer so a bind failure (user-triggerable via JS
         // getters / param-count mismatch) doesn't leave a partial packet header in
         // the connection's write buffer.
-        let params = self.bind(
-            &statement.signature.fields,
-            global_object,
-            binding_value,
-            columns_value,
-            roots,
-        )?;
+        let params = {
+            // The parameter types do not change once the statement is prepared.
+            let param_types = bun_ptr::ParentRef::from(
+                core::ptr::NonNull::new(statement).expect("bind_and_execute: statement non-null"),
+            );
+            self.bind(
+                &param_types.signature.fields,
+                global_object,
+                binding_value,
+                columns_value,
+                roots,
+            )?
+        };
         // `defer execute.deinit()` — `params: Vec<Value>` drops at end of scope.
+
+        // SAFETY: the intrusive ref in `self.statement` keeps the allocation alive, and no
+        // user JS runs from here to the end of the function.
+        let statement = unsafe { &mut *statement };
 
         let execute = prepared_statement::Execute {
             statement_id: statement.statement_id,
@@ -242,40 +245,41 @@ impl MySQLQuery {
         statement
             .execution_flags
             .remove(ExecutionFlags::NEED_TO_SEND_PARAMS);
-        self.status = Status::Running;
+        self.status.set(Status::Running);
         Ok(())
     }
 
-    fn run_simple_query(&mut self, connection: &MySQLConnection) -> crate::Result<()> {
-        if self.status != Status::Pending || !connection.can_execute_query() {
+    fn run_simple_query(&self, connection: &MySQLConnection) -> crate::Result<()> {
+        if self.status.get() != Status::Pending || !connection.can_execute_query() {
             debug!("cannot execute query");
             // cannot execute query
             return Ok(());
         }
         let query_str = self.query.to_utf8();
         let writer = connection.get_writer();
-        if self.statement.is_none() {
-            self.statement = Some(RefPtr::new(MySQLStatement::new(
+        if self.statement.get().is_none() {
+            self.statement.set(Some(RefPtr::new(MySQLStatement::new(
                 Signature::empty(),
                 my_sql_statement::Status::Parsing,
-            )));
+            ))));
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
 
-        self.status = Status::Running;
+        self.status.set(Status::Running);
         Ok(())
     }
 
-    fn run_prepared_query(
-        &mut self,
+    /// Finds or makes the statement for the signature of the values, and gives the query text when it encoded it.
+    fn resolve_statement(
+        &self,
         connection: &MySQLConnection,
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Option<bun_core::Utf8Bytes<'_>>> {
         let mut query_str: Option<bun_core::Utf8Bytes<'_>> = None;
 
-        if self.statement.is_none() {
+        if self.statement.get().is_none() {
             let query = self.query.to_utf8();
             let signature = match Signature::generate(
                 global_object,
@@ -313,23 +317,37 @@ impl MySQLQuery {
                         let _ = global_object.throw_value(error_response);
                         return Err(crate::Error::JSError);
                     }
-                    self.statement = Some(stmt.clone());
+                    self.statement.set(Some(stmt.clone()));
                 }
                 slot @ None => {
                     let stmt = RefPtr::new(MySQLStatement::new(
                         signature,
                         my_sql_statement::Status::Pending,
                     ));
-                    self.statement = Some(stmt.clone());
+                    self.statement.set(Some(stmt.clone()));
                     *slot = Some(stmt);
                 }
             }
         }
+        Ok(query_str)
+    }
+
+    fn run_prepared_query(
+        &self,
+        connection: &MySQLConnection,
+        global_object: &JSGlobalObject,
+        columns_value: JSValue,
+        binding_value: JSValue,
+    ) -> crate::Result<()> {
+        let mut query_str =
+            self.resolve_statement(connection, global_object, columns_value, binding_value)?;
         // `stmt` is kept alive by the ref in `self.statement`; separate heap
         // allocation (never aliases `*self`). `ParentRef` collapses the
         // read-only derefs below into one safe `Deref`; the `.Pending` arm's
         // status write goes through `get_statement()`.
-        let stmt = self.statement.as_ref().expect("set above").as_non_null();
+        let stmt = (self.statement.get().as_ref())
+            .expect("set above")
+            .as_non_null();
         let (stmt, stmt_ref) = (stmt.as_ptr(), bun_ptr::ParentRef::from(stmt));
         match stmt_ref.status {
             my_sql_statement::Status::Failed => {
@@ -343,7 +361,6 @@ impl MySQLQuery {
                 if connection.can_pipeline() {
                     debug!("bindAndExecute");
                     let writer = connection.get_writer();
-                    // Pass the raw `*mut MySQLStatement` separately from `&mut self`.
                     if let Err(err) = self.bind_and_execute(
                         writer,
                         stmt,
@@ -360,7 +377,7 @@ impl MySQLQuery {
                         }
                         return Err(crate::Error::JSError);
                     }
-                    self.flags.set_pipelined(true);
+                    self.set_pipelined();
                 }
             }
             my_sql_statement::Status::Parsing => {
@@ -395,21 +412,21 @@ impl MySQLQuery {
     /// Takes ownership of `query`; `cleanup()` releases it.
     pub(crate) fn init(query: BunString, bigint: bool, simple: bool) -> Self {
         Self {
-            statement: None,
+            statement: JsCell::new(None),
             query,
-            status: Status::Pending,
-            flags: Flags::new(bigint, simple),
+            status: Cell::new(Status::Pending),
+            flags: Cell::new(Flags::new(bigint, simple)),
         }
     }
 
     pub(crate) fn run_query(
-        &mut self,
+        &self,
         connection: &MySQLConnection,
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> crate::Result<()> {
-        if self.flags.simple() {
+        if self.flags.get().simple() {
             debug!("runSimpleQuery");
             return self.run_simple_query(connection);
         }
@@ -431,41 +448,50 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub(crate) fn set_result_mode(&mut self, result_mode: SQLQueryResultMode) {
-        self.flags.set_result_mode(result_mode);
+    pub(crate) fn set_result_mode(&self, result_mode: SQLQueryResultMode) {
+        let mut flags = self.flags.get();
+        flags.set_result_mode(result_mode);
+        self.flags.set(flags);
     }
 
     #[inline]
-    pub(crate) fn result(&mut self, is_last_result: bool) -> bool {
-        if self.status == Status::Success || self.status == Status::Fail {
+    fn set_pipelined(&self) {
+        let mut flags = self.flags.get();
+        flags.set_pipelined(true);
+        self.flags.set(flags);
+    }
+
+    #[inline]
+    pub(crate) fn result(&self, is_last_result: bool) -> bool {
+        if self.is_completed() {
             return false;
         }
-        self.status = if is_last_result {
+        self.status.set(if is_last_result {
             Status::Success
         } else {
             Status::PartialResponse
-        };
+        });
 
         true
     }
 
-    pub(crate) fn fail(&mut self) -> bool {
-        if self.status == Status::Fail || self.status == Status::Success {
+    pub(crate) fn fail(&self) -> bool {
+        if self.is_completed() {
             return false;
         }
-        self.status = Status::Fail;
+        self.status.set(Status::Fail);
 
         true
     }
 
     #[inline]
     pub(crate) fn is_completed(&self) -> bool {
-        self.status == Status::Success || self.status == Status::Fail
+        matches!(self.status.get(), Status::Success | Status::Fail)
     }
 
     #[inline]
     pub(crate) fn is_running(&self) -> bool {
-        match self.status {
+        match self.status.get() {
             Status::Running | Status::Binding | Status::PartialResponse => true,
             Status::Success | Status::Fail | Status::Pending => false,
         }
@@ -473,12 +499,12 @@ impl MySQLQuery {
 
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
-        self.status == Status::Pending
+        self.status.get() == Status::Pending
     }
 
     #[inline]
     pub(crate) fn is_being_prepared(&self) -> bool {
-        self.status == Status::Pending
+        self.status.get() == Status::Pending
             && self
                 .get_statement()
                 .is_some_and(|s| s.status == my_sql_statement::Status::Parsing)
@@ -486,27 +512,27 @@ impl MySQLQuery {
 
     #[inline]
     pub(crate) fn is_pipelined(&self) -> bool {
-        self.flags.pipelined()
+        self.flags.get().pipelined()
     }
 
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
-        self.flags.simple()
+        self.flags.get().simple()
     }
 
     #[inline]
     pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.flags.bigint()
+        self.flags.get().bigint()
     }
 
     #[inline]
     pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.flags.result_mode()
+        self.flags.get().result_mode()
     }
 
     #[inline]
-    pub(crate) fn mark_as_prepared(&mut self) {
-        if self.status == Status::Pending {
+    pub(crate) fn mark_as_prepared(&self) {
+        if self.status.get() == Status::Pending {
             if let Some(statement) = self.get_statement() {
                 if statement.status == my_sql_statement::Status::Parsing
                     && statement.params.len() == statement.params_received as usize
@@ -524,8 +550,6 @@ impl MySQLQuery {
         // SAFETY: kept alive by the ref we hold. Returning `&mut` permits
         // shared mutation through the intrusive pointer; the lifetime is
         // bounded by `&self`, which owns one ref.
-        self.statement
-            .as_ref()
-            .map(|stmt| unsafe { &mut *stmt.as_ptr() })
+        (self.statement.get().as_ref()).map(|stmt| unsafe { &mut *stmt.as_ptr() })
     }
 }

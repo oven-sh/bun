@@ -1,15 +1,12 @@
-//! Which operating system runs this process. `bun_core::host` is the interface and says what it is for; the
-//! value is kept here because `bun_alloc` is the lowest crate that decides by it (the separator that a
+//! Which operating system runs this process, in the portable image (`cfg(bun_portable)`): a build for one
+//! OS does not have this module. `bun_core::host` is the interface and says what it is for; the value is
+//! kept here because `bun_alloc` is the lowest crate that decides by it (the separator that a
 //! [`crate::BSSMap`] key is trimmed by).
 
 /// The numbers of `__bun_host_os()`, the function of the C library of the portable image.
 pub const LINUX: u8 = 1;
 pub const WINDOWS: u8 = 2;
 pub const MAC: u8 = 3;
-/// Not a host of the portable image: what [`code`] is where bun is compiled for FreeBSD.
-pub const FREEBSD: u8 = 4;
-/// Not a host of the portable image: what [`code`] is where bun is compiled for something else.
-pub const OTHER: u8 = 5;
 
 /// The host whose functions the code calls: the system calls of Linux and macOS through the C library, the
 /// functions of Windows and of libuv through the addresses that the host of the image resolves.
@@ -43,32 +40,6 @@ pub mod native {
     );
 }
 
-#[cfg(not(bun_portable))]
-mod imp {
-    use super::{FREEBSD, LINUX, MAC, OTHER, WINDOWS};
-
-    #[inline(always)]
-    pub const fn native_code() -> u8 {
-        code()
-    }
-
-    #[inline(always)]
-    pub const fn code() -> u8 {
-        if cfg!(windows) {
-            WINDOWS
-        } else if cfg!(target_os = "macos") {
-            MAC
-        } else if cfg!(any(target_os = "linux", target_os = "android")) {
-            LINUX
-        } else if cfg!(target_os = "freebsd") {
-            FREEBSD
-        } else {
-            OTHER
-        }
-    }
-}
-
-#[cfg(bun_portable)]
 mod imp {
     use super::{LINUX, MAC, WINDOWS};
     use core::ffi::{CStr, c_ulong};
@@ -190,19 +161,14 @@ mod imp {
 }
 
 pub use imp::code;
-#[cfg(bun_portable)]
 pub use imp::{InvalidTestHookValue, init};
 
-/// Defines a `const fn`; in the portable image the same function without `const`, because there the host is
-/// known when the program runs.
+/// Defines a function that answers by the host. A build for one OS has a constant where the portable
+/// image calls such a function, and no function.
 #[macro_export]
 macro_rules! host_fn {
     ($(#[$attr:meta])* $visibility:vis fn $name:ident($($parameters:tt)*) -> $type:ty $body:block) => {
         $(#[$attr])*
-        #[cfg(not(bun_portable))]
-        $visibility const fn $name($($parameters)*) -> $type $body
-        $(#[$attr])*
-        #[cfg(bun_portable)]
         $visibility fn $name($($parameters)*) -> $type $body
     };
 }

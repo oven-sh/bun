@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { tempDir, type DirectoryTree } from "harness";
 import { join } from "node:path";
-import { Registry, type RegistryOptions } from "./registry.ts";
+import { Registry, type RegistryOptions } from "./src/registry.ts";
 
 export * from "./index.ts";
 

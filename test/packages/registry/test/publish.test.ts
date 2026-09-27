@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { Manifest } from "./fixtures.ts";
-import { abbreviatedAccept, jsonHeaders, pack, publishBody, request, sha1, sha512, storage } from "./fixtures.ts";
-import { Registry } from "./index.ts";
+import { Registry } from "../index.ts";
+import type { Manifest } from "./helpers.ts";
+import { abbreviatedAccept, jsonHeaders, pack, publishBody, request, sha1, sha512, storage } from "./helpers.ts";
 
 let fixtures: Awaited<ReturnType<typeof storage>>;
 

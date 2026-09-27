@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isIPv6 } from "harness";
-import { abbreviatedAccept, jsonHeaders, md5, request, sha1, sha512, storage } from "./fixtures.ts";
-import { Registry } from "./index.ts";
-import { urlHost } from "./registry.ts";
+import { Registry } from "../index.ts";
+import { urlHost } from "../src/registry.ts";
+import { abbreviatedAccept, jsonHeaders, md5, request, sha1, sha512, storage } from "./helpers.ts";
 
 let fixtures: Awaited<ReturnType<typeof storage>>;
 let registry: Registry;

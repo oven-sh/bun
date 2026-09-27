@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { spawnSync } from "node:child_process";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -927,7 +928,7 @@ describe("Bun.Image", () => {
     expect(() => new Bun.Image(cornersPng).rotate(45)).toThrow();
   });
 
-  describe("HEIC / AVIF (system-backend formats)", () => {
+  describe("HEIC / AVIF (no static codec)", () => {
     // Minimal ftyp boxes — enough for the sniffer; not valid images. Decode
     // must reject AFTER sniffing the format (so we hit the right codepath).
     const heicHdr = Buffer.from([
@@ -959,8 +960,9 @@ describe("Bun.Image", () => {
 
     test("sniffer recognises ftyp brands", async () => {
       // metadata() will fail (not a real image) but the FORMAT in the error
-      // path proves the sniffer routed correctly. On Linux it's
-      // UnsupportedOnPlatform; on macOS/Windows the system codec rejects.
+      // path proves the sniffer routed correctly. Which error depends on what
+      // is installed: UnsupportedOnPlatform with no decoder, DecodeFailed once
+      // a system backend or a dlopen'd libheif gets to look at it.
       await expect(new Bun.Image(heicHdr).metadata()).rejects.toThrow();
       await expect(new Bun.Image(avifHdr).metadata()).rejects.toThrow();
     });
@@ -997,6 +999,88 @@ describe("Bun.Image", () => {
         expect((await new Bun.Image(out).metadata()).format).toBe(fmt);
       });
     }
+
+    // 64×32 HEIC, 8-bit HEVC 4:2:0, major brand `heic` — what a phone writes.
+    // Committed rather than built in-process, which is what the fixtures above
+    // do, because Bun has no HEIC encoder to build one with.
+    const heic64x32 = Buffer.from(
+      "AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAXttZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACJpbG9jAAAAAERAAAEAAQAAAAABnwABAAAAAAAAAHwAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABodmMxAAAAAA5waXRtAAAAAAABAAAA+2lwcnAAAADbaXBjbwAAAHZodmNDAQNwAAAAAAAAAAAAHvAA/P34+AAADwNgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAHroCQGEAAQAqQgEBA3AAAAMAkAAAAwAAAwAeoCCBBZbq5Ka5uAhoMCAAAAMDIAAAAwAhYgABAAZEAcFzwIkAAAATY29scm5jbHgAAQANAAaAAAAAFGlzcGUAAAAAAAAAQAAAAEAAAAAoY2xhcAAAAEAAAAABAAAAIAAAAAEAAAAAAAAAAv///+AAAAACAAAADnBpeGkAAAAAAQgAAAAYaXBtYQAAAAAAAAABAAEFgQIDBYQAAACEbWRhdAAAAHgoAa8GOJcW/bzSnOhJazbrZ2EbvHy6RZKkO5xT+cQHldy3lk37Ql/XJ/dgeioZOk3fL7ul1d7Nb798+z3Zx+VDId/52a9joxrd4vi2B5/74KCs7hXkkfuYjMLOs5pIB0BPCD+Cbv4WD7GLswmZ9VN/rAbPFlD7cz4=",
+      "base64",
+    );
+
+    // Whether THIS host can decode THAT fixture — two separate questions
+    // (is libheif installed, was its HEVC decoder built for 12-bit) that the
+    // tests below do not need to tell apart. Answered in a subprocess so a
+    // failed dlopen cannot affect this one, and synchronously because
+    // `skipIf` needs the answer before the tests are declared.
+    const heicDecodes = (() => {
+      if (isMacOS || isWindows) return false; // covered by the system backend
+      const r = spawnSync(
+        bunExe(),
+        [
+          "-e",
+          `const b = Buffer.from(process.argv[1], "base64");
+           new Bun.Image(b).metadata().then(
+             m => process.exit(m.width === 64 && m.height === 32 ? 0 : 1),
+             () => process.exit(1),
+           );`,
+          heic64x32.toString("base64"),
+        ],
+        { env: bunEnv, stdio: ["ignore", "ignore", "ignore"] },
+      );
+      return r.status === 0;
+    })();
+
+    describe.skipIf(!heicDecodes)("decode on Linux (dlopen'd libheif)", () => {
+      test("metadata() reads the container without decoding it", async () => {
+        expect(await new Bun.Image(heic64x32).metadata()).toEqual({ width: 64, height: 32, format: "heic" });
+      });
+
+      test("decodes into the pipeline", async () => {
+        const png = decodePngRaw(await new Bun.Image(heic64x32).png().bytes());
+        expect({ w: png.w, h: png.h }).toEqual({ w: 64, h: 32 });
+        // A red-to-blue gradient down the image, so the two ends must differ;
+        // a blank or garbage decode would leave them equal. Measured values
+        // are ~[236,0,20] and ~[19,0,234], so the margins are wide enough not
+        // to care which HEVC decoder libheif dispatched to.
+        const top = rgbaAt(png.data, png.w, 16, 2);
+        const bottom = rgbaAt(png.data, png.w, 16, 29);
+        expect(top[0]).toBeGreaterThan(160);
+        expect(bottom[2]).toBeGreaterThan(160);
+        expect(top[2]).toBeLessThan(96);
+        expect(bottom[0]).toBeLessThan(96);
+        expect(top[3]).toBe(255);
+      });
+
+      test("resize and re-encode work like any other source", async () => {
+        const webp = await new Bun.Image(heic64x32).resize(16).webp().bytes();
+        expect(await new Bun.Image(webp).metadata()).toEqual({ width: 16, height: 8, format: "webp" });
+      });
+
+      test("no format setter yields PNG, as for the other decode-only formats", async () => {
+        const out = await new Bun.Image(heic64x32).bytes();
+        expect(await new Bun.Image(out).metadata()).toEqual({ width: 64, height: 32, format: "png" });
+      });
+
+      test("maxPixels is enforced from the header", async () => {
+        await expect(new Bun.Image(heic64x32, { maxPixels: 100 }).metadata()).rejects.toMatchObject({
+          code: "ERR_IMAGE_TOO_MANY_PIXELS",
+        });
+        expect((await new Bun.Image(heic64x32, { maxPixels: 64 * 32 }).metadata()).width).toBe(64);
+      });
+
+      test("a truncated HEIC rejects instead of decoding garbage", async () => {
+        await expect(new Bun.Image(heic64x32.subarray(0, 200)).png().bytes()).rejects.toMatchObject({
+          code: "ERR_IMAGE_DECODE_FAILED",
+        });
+      });
+
+      test("encoding HEIC is still unavailable", async () => {
+        await expect(new Bun.Image(heic64x32).heic().bytes()).rejects.toMatchObject({
+          code: "ERR_IMAGE_FORMAT_UNSUPPORTED",
+        });
+      });
+    });
   });
 
   // Fixtures are 64×48 gradients whose pixel formula is asserted below.

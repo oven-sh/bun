@@ -28,6 +28,15 @@ pub(crate) use super::backend_coregraphics as system_backend;
 #[cfg(windows)]
 pub(crate) use super::backend_wic as system_backend;
 
+/// HEIC/HEIF decode on Linux via a dlopen'd system libheif (and,
+/// transitively, whichever HEVC decoder it was built against — libde265 or
+/// ffmpeg). See `src/jsc/bindings/image_heif_shim.cpp`. Nothing is linked: a
+/// host without `libheif.so.1` surfaces `UnsupportedOnPlatform`, which is
+/// what Linux returns for HEIC today. Decode only — HEIC output needs an
+/// HEVC encoder. macOS/Windows decode HEIC through `system_backend`.
+#[cfg(target_os = "linux")]
+pub(crate) use super::codec_heif as heif;
+
 /// `true` on platforms where `system_backend` is present.
 const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
@@ -98,7 +107,10 @@ pub(crate) enum Format {
     Jpeg,
     Png,
     Webp,
-    /// System-backend-only on macOS/Windows; no static codec.
+    /// Decode via `system_backend` on macOS/Windows, or a dlopen'd system
+    /// libheif on Linux (`codec_heif.rs`); Linux without libheif installed
+    /// returns `UnsupportedOnPlatform`. No encoder outside macOS/Windows:
+    /// writing HEIC needs an HEVC encoder, which Bun does not ship.
     Heic,
     /// System-backend-only on macOS/Windows; no static codec.
     Avif,
@@ -239,8 +251,9 @@ pub enum Error {
     /// BEFORE allocating the full RGBA buffer.
     #[error("TooManyPixels")]
     TooManyPixels,
-    /// HEIC/AVIF on a platform with no system backend (Linux), or the system
-    /// backend declined and there's no static codec to fall back to.
+    /// AVIF on a platform with no system backend (Linux), HEIC on Linux
+    /// without libheif installed, or the system backend declined and there's
+    /// no static codec to fall back to.
     #[error("UnsupportedOnPlatform")]
     UnsupportedOnPlatform,
     #[error("OutOfMemory")]
@@ -277,8 +290,18 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
-        Format::Heic | Format::Avif | Format::Tiff => match decode_via_system(bytes, max_pixels)? {
+        Format::Avif | Format::Tiff => match decode_via_system(bytes, max_pixels)? {
             Some(d) => Ok(d),
+            None => Err(Error::UnsupportedOnPlatform),
+        },
+        // HEIC: ImageIO/WIC on macOS/Windows, dlopen'd libheif on Linux.
+        // Same capability-fallback shape as BMP/GIF, so mac/win never reach
+        // the dlopen — their backend answers first.
+        Format::Heic => match decode_via_system(bytes, max_pixels)? {
+            Some(d) => Ok(d),
+            #[cfg(target_os = "linux")]
+            None => heif::decode(bytes, max_pixels),
+            #[cfg(not(target_os = "linux"))]
             None => Err(Error::UnsupportedOnPlatform),
         },
         // BMP/GIF have static decoders so Linux (and `backend == .bun`) work;
@@ -388,7 +411,15 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
                 as u32;
         }
-        Format::Tiff | Format::Heic | Format::Avif => {
+        // Linux reads HEIC dimensions from the container without running the
+        // HEVC decode, so `metadata()` on an iPhone photo stays a box walk.
+        #[cfg(target_os = "linux")]
+        Format::Heic => {
+            let (pw, ph) = heif::probe(bytes, max_pixels)?;
+            w = pw;
+            h = ph;
+        }
+        Format::Tiff | Format::Avif | Format::Heic => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().
             #[cfg(not(target_os = "macos"))]
             return Err(Error::UnsupportedOnPlatform);

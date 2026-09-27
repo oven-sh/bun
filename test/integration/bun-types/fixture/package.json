@@ -7,8 +7,5 @@
   "type": "module",
   "dependencies": {
     "typescript": "latest"
-  },
-  "resolutions": {
-    "@types/node": "latest"
   }
 }

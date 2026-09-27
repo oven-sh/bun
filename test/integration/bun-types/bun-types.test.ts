@@ -48,6 +48,26 @@ const bunTypesCheckoutBeforeSetup = snapshotBunTypesCheckout();
 
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
+/** The @types/node release the fixture checks bun-types against. */
+let NODE_TYPES_VERSION: string;
+
+/**
+ * The highest release of `pkg` on the registry. Not the `latest` dist-tag, and
+ * not a semver range either (bun resolves a range to `latest` whenever that tag
+ * satisfies it): DefinitelyTyped publishes the @types/node backport lines after
+ * the current line, and on 2026-09-09 that left `latest` on 22.20.2 while
+ * 26.5.1 was out. bun-types only tracks the current line, so checking it
+ * against a backport reports errors that no bun-types change can fix.
+ */
+async function newestRelease(pkg: string): Promise<string> {
+  const versions: string[] = await $`bun pm view ${pkg} versions --json`.json();
+  const newest = versions
+    .filter(version => !version.includes("-"))
+    .sort(Bun.semver.order)
+    .at(-1);
+  if (!newest) throw new Error(`the registry lists no release of ${pkg}`);
+  return newest;
+}
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
@@ -60,6 +80,14 @@ beforeAll(async () => {
       recursive: true,
       filter: source => basename(source) !== "node_modules",
     });
+
+    // bun-types depends on `@types/node@*`. Pin the fixture copy so that the
+    // tarball's dependency resolves to the newest release.
+    NODE_TYPES_VERSION = await newestRelease("@types/node");
+    const fixturePackageJsonPath = join(BASE_FIXTURE_DIR, "package.json");
+    const fixturePackageJson = await Bun.file(fixturePackageJsonPath).json();
+    fixturePackageJson.resolutions = { ...fixturePackageJson.resolutions, "@types/node": NODE_TYPES_VERSION };
+    await Bun.write(fixturePackageJsonPath, JSON.stringify(fixturePackageJson, null, 2) + "\n");
 
     await $`cd ${BUN_TYPES_PACKAGE_ROOT} && BUN_VERSION=${BUN_VERSION} bun run build ${bunTypesBuildDir}`.quiet();
     await $`cd ${bunTypesBuildDir} && bun pm pack --destination ${BASE_FIXTURE_DIR}`.quiet();
@@ -133,7 +161,7 @@ function typeTest(name: string, config: TypeTestConfig) {
     if (typeof config.diagnostics === "function") {
       config.diagnostics(diagnostics);
     } else {
-      expect(diagnostics).toEqual(config.diagnostics);
+      expect(diagnostics, `diagnostics with @types/node@${NODE_TYPES_VERSION}`).toEqual(config.diagnostics);
     }
   });
 }
@@ -324,6 +352,11 @@ describe("@types/bun integration test", () => {
     const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
     expect(await claude.exists()).toBe(true);
     expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
+  test("the fixture resolves bun-types' @types/node dependency to the newest release", async () => {
+    const installed = await Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "@types", "node", "package.json")).json();
+    expect(installed.version).toBe(NODE_TYPES_VERSION);
   });
 
   describe("basic type checks", () => {

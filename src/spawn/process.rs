@@ -32,11 +32,11 @@ pub use posix_spawn::WaitPidResult;
 /// The fd / memfd helpers of `bun_sys` that spawning uses, under the path
 /// `bun_runtime::api::bun_spawn::stdio` and `Terminal` import them from.
 pub mod spawn_sys {
-    // POSIX-only: memfd and FD_CLOEXEC have no Windows equivalent.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
+    // memfd is Linux; FD_CLOEXEC is POSIX (Win32 handles are non-inheritable unless asked).
     #[cfg(unix)]
-    pub use bun_sys::{can_use_memfd, set_close_on_exec};
+    pub use bun_sys::set_close_on_exec;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, can_use_memfd, memfd_create};
 }
 
 bun_core::declare_scope!(PROCESS, visible);
@@ -45,12 +45,14 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`,
 // `spawn_process_windows`) lives in the leaf `bun_spawn_sys` crate so it has no
 // event-loop dependency. Re-export here so `bun_spawn::process::*` paths resolve.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub use bun_spawn_sys::PidFdType;
 #[cfg(windows)]
 pub use bun_spawn_sys::WindowsOptions;
 pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidFdType, PidT, Rusage, SpawnOptions, SpawnResult,
-    Stdio, StdioKind,
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidT, Rusage, SpawnOptions, SpawnResult, Stdio,
+    StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.

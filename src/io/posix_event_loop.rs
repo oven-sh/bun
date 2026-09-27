@@ -1280,7 +1280,6 @@ impl Flags {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) struct FlagsFormatter(pub FlagsSet);
 
 impl fmt::Display for FlagsFormatter {

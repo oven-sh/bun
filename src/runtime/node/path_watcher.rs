@@ -322,7 +322,6 @@ impl PathWatcher {
     // `unlock()` and `remove_watch()` (see the SAFETY notes below), so no
     // whole-struct reference may span that window — every access below is
     // scoped to a single statement.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no reference is asserted before

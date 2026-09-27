@@ -373,13 +373,6 @@ impl us_socket_t {
         );
         rc
     }
-    #[cfg(windows)]
-    pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // A `compile_error!` here would brick the windows build even with no
-        // callers (it is evaluated at item definition), so use a runtime trap
-        // instead; no current Windows call site.
-        unreachable!("us_socket_t::write_fd is not implemented on Windows")
-    }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {

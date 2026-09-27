@@ -662,7 +662,6 @@ impl PackageManager {
     /// responsibility not to alias the returned `&mut Log` (single-threaded by
     /// construction — only the main install loop touches `log`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn log_mut<'a>(&self) -> &'a mut bun_ast::Log {
         let p = self.log;
         // SAFETY: `self.log` is non-null for the manager's lifetime (set in
@@ -680,7 +679,6 @@ impl PackageManager {
     /// leaked-singleton manager and callers interleave node updates with
     /// disjoint `&mut self.X` field writes.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
         let p = self.downloads_node.expect("downloads_node active");
         // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
@@ -700,7 +698,6 @@ impl PackageManager {
     /// Single-threaded by construction (main install loop only — see
     /// `lifecycle_script_runner` "monotonic is okay" comments).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn scripts_node_mut<'a>(&self) -> Option<&'a mut ProgressNode> {
         let mut p = self.scripts_node?;
         // SAFETY: `scripts_node` is `Some(NonNull)` pointing at a caller
@@ -1028,7 +1025,6 @@ impl PackageManager {
     /// outside the manager (set once in `init()`), and callers interleave env
     /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
@@ -1973,6 +1969,7 @@ pub fn init(
         PackageManager::set_verbose_install(true);
     }
 
+    #[cfg(unix)]
     if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
         bun_spawn::waiter_thread_flag::set();
     }

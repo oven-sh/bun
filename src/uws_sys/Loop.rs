@@ -344,7 +344,6 @@ impl Loop {
 
 type LoopCb = unsafe extern "C" fn(*mut Loop);
 
-#[allow(non_snake_case)]
 mod c {
     use super::*;
 

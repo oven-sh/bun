@@ -624,7 +624,6 @@ impl All {
         );
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn insert(&mut self, timer: *mut EventLoopTimer) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
@@ -658,7 +657,6 @@ impl All {
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn remove(&mut self, timer: *mut EventLoopTimer) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
@@ -688,7 +686,6 @@ impl All {
     /// # Safety
     /// `timer` must point to a live `EventLoopTimer` with whole-container
     /// provenance for its tag (see [`js_timer_flags_ptr`]).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.assert_js_thread();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
@@ -716,7 +713,6 @@ impl All {
         self.insert(timer);
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn wtf_arm(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
@@ -735,7 +731,6 @@ impl All {
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn wtf_disarm(&mut self, timer: *mut EventLoopTimer) {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
@@ -811,9 +806,6 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn get_timeout(
         &mut self,
         spec: &mut Timespec,
@@ -909,9 +901,6 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
@@ -965,7 +954,6 @@ impl All {
     // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
@@ -984,7 +972,6 @@ impl All {
     // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
     // documented in `# Safety` above. Cannot be `&mut` without breaking the
     // out-of-file call sites that hold raw pointers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;

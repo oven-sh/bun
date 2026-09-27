@@ -6563,7 +6563,6 @@ impl NodeFS {
                 phase = 1;
             }
         }
-        let _ = phase; // silence the unused-assignment lint on the final phase value
 
         let final_len = if string_type == ReadFileStringType::NullTerminated {
             total + 1
@@ -8200,11 +8199,8 @@ impl NodeFS {
     /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(not(windows))]
     fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
-        // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
-        // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
-        // monomorphic (and lets it type-check on Windows where it's dead code).
         match sys::open(dest, flags, mode) {
             Ok(result) => Ok(result),
             Err(err) => {

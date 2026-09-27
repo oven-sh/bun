@@ -2597,7 +2597,6 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
     }
     #[cfg(not(windows))]
     {
-        let _ = USE_WSA;
         errno_sys(res, tag)
     }
 }

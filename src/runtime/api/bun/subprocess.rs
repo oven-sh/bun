@@ -880,10 +880,6 @@ impl Subprocess<'_> {
     /// `process` must be the live `*mut Process` threaded from the
     /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
     /// duration of the call).
-    // Forwards `process` to `VirtualMachine::on_subprocess_exit` without
-    // dereferencing it; not_unsafe_ptr_arg_deref is a false positive on
-    // opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();

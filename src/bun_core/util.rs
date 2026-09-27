@@ -3382,10 +3382,6 @@ macro_rules! impl_native_endian_int {
 }
 impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 
-// ── mach_port ─────────────────────────────────────────────────────────────
-#[cfg(target_os = "macos")]
-pub type mach_port = libc::mach_port_t;
-
 // ── rand ──────────────────────────────────────────────────────────────────
 // xoshiro256++; the exact algorithm keeps `bun.fastRandom()` output
 // reproducible.

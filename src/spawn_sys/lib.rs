@@ -29,6 +29,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 /// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
+#[cfg(unix)]
 #[path = "posix_spawn.rs"]
 pub mod posix_spawn;
 
@@ -116,7 +117,7 @@ pub mod ffi {
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
 // `SpawnResult::pifd_from_pid` can flip it without depending on
-// `bun_threading`. `bun_spawn::WaiterThread` reads/writes through these.
+// `bun_threading`. `bun_spawn::process::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -186,13 +187,15 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub use spawn_process::PidFdType;
 #[cfg(windows)]
 pub use spawn_process::process_rusage;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
 pub use spawn_process::{
-    Dup2, ExtraPipe, PidFdType, PidT, Rusage, RusageFields, SpawnOptions, SpawnResult, Stdio,
-    StdioKind, rusage_zeroed,
+    Dup2, ExtraPipe, PidT, Rusage, RusageFields, SpawnOptions, SpawnResult, Stdio, StdioKind,
+    rusage_zeroed,
 };
 #[cfg(windows)]
 pub use windows::{WindowsOptions, spawn_process_windows};

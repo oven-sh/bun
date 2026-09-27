@@ -10,8 +10,6 @@ use crate::env::version_string;
 use crate::output as Output;
 
 use crate::USE_MIMALLOC;
-#[cfg(debug_assertions)]
-use crate::debug_allocator_data;
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
@@ -698,11 +696,6 @@ pub fn exit(code: u32) -> ! {
     // If we are crashing, allow the crash handler to finish it's work.
     // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
     crate::sleep_forever_if_another_thread_is_crashing();
-
-    #[cfg(debug_assertions)]
-    {
-        debug_assert!(debug_allocator_data::deinit_ok());
-    }
 
     // Flush output before exiting to ensure all messages are visible
     Output::flush();

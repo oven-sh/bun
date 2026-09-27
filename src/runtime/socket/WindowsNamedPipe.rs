@@ -70,10 +70,6 @@ pub(crate) struct WindowsNamedPipe {
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
     pub(crate) vm: &'static VirtualMachine,
-    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    #[cfg_attr(windows, allow(dead_code))]
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
 
     /// Owns the open pipe (`writer.source`); reads go through it too.
     pub(crate) writer: JsCell<StreamingWriter<WindowsNamedPipe>>,
@@ -605,7 +601,6 @@ impl WindowsNamedPipe {
     pub(crate) fn init(handlers: Handlers, vm: &'static VirtualMachine) -> WindowsNamedPipe {
         WindowsNamedPipe {
             vm,
-            event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
             connect_req: JsCell::new(None),
             wrapper: JsCell::new(None),
             deferred_writer_close: Cell::new(false),
@@ -996,18 +991,44 @@ pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut bori
     }
 }
 
-// This module is Windows-only; `poll_tag` and `event_loop` feed the macro's
-// POSIX impl alone.
-bun_io::impl_streaming_writer_parent! {
-    WindowsNamedPipe;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::NULL,
-    borrow     = shared,
-    on_write   = on_write,
-    on_error   = on_error,
-    on_ready   = on_writable,
-    on_close   = on_close,
-    event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
-    uws_loop   = |this| (*this).vm.uws_loop(),
-    ref_       = |this| (&*this).r#ref(),
-    deref      = |this| (&*this).deref(),
+impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
+    #[inline]
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: BACKREF set via `set_parent`; shared-only read.
+        unsafe { (*this).vm.uws_loop() }
+    }
+    #[inline]
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see loop_. Intrusive refcount bump.
+        unsafe { (*this).r#ref() };
+    }
+    #[inline]
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see loop_. May free `this`.
+        unsafe { (*this).deref() };
+    }
+}
+
+impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
+    const HAS_ON_WRITABLE: bool = true;
+    #[inline]
+    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
+        // SAFETY: BACKREF set via `set_parent`; the callbacks take `&self`.
+        unsafe { (*this).on_write(amount, status) }
+    }
+    #[inline]
+    unsafe fn on_error(this: *mut Self, err: bun_sys::Error) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_error(err) }
+    }
+    #[inline]
+    unsafe fn on_writable(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_writable() }
+    }
+    #[inline]
+    unsafe fn on_close(this: *mut Self) {
+        // SAFETY: see on_write.
+        unsafe { (*this).on_close() }
+    }
 }

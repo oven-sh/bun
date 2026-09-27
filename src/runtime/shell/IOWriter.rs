@@ -1082,7 +1082,6 @@ pub(crate) fn on_io_writer_chunk(
         // lives outside the NodeId arena (heap-allocated PipeReader), so it
         // is carried in `child.raw` instead of `child.node`.
         WriterTag::Subproc => {
-            let _ = interp;
             debug_assert!(!child.raw.is_null());
             // SAFETY: `raw` was set from `&mut CapturedWriter` in
             // `CapturedWriter::do_write`; the PipeReader (and the embedded

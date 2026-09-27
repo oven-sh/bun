@@ -1062,7 +1062,6 @@ impl UpgradeCommand {
             // Keep the `&ZStr` form for Windows `sys::rename` (needs
             // a NUL-terminated path); `destination_executable` (bytes view) is
             // used everywhere else.
-            #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();

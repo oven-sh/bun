@@ -663,9 +663,7 @@ impl Handle {
             close_on_complete: false,
             owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
@@ -678,9 +676,7 @@ impl Handle {
             close_on_complete: true,
             owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
@@ -698,10 +694,6 @@ impl Handle {
             close_on_complete,
             owns_fd: true,
             cluster_seq: None,
-            #[cfg(windows)]
-            win_export_hex: None,
-            #[cfg(windows)]
-            peer_pid: 0,
         })
     }
 }

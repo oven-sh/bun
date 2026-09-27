@@ -38,8 +38,6 @@ pub type FdT = libc::c_int;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub type PidFdType = ();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
@@ -468,6 +466,7 @@ impl Drop for OwnedProcessHandle {
 #[derive(Default)]
 pub struct SpawnResult {
     pub pid: PidT,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub pidfd: Option<PidFdType>,
     /// `to_process` moves it into the `Process`.
     #[cfg(windows)]

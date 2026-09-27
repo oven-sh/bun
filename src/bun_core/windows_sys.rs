@@ -7,7 +7,7 @@
 //! wrapper and the `Zeroable` impls live here. All declarations are zero-cost FFI
 //! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
 #![cfg(windows)]
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+#![allow(non_snake_case)]
 
 pub use bun_windows_sys::{
     BOOL, CONSOLE_SCREEN_BUFFER_INFO, COORD, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,

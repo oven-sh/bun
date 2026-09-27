@@ -16,19 +16,6 @@
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
 
-/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4) of
-/// `bun_spawn_sys`, with this crate's `process::*` glue (`Process`/`Status`/
-/// `spawn_process`/`sync`) beside them under `bun_spawn::posix_spawn::bun_spawn`.
-pub mod posix_spawn {
-    pub use bun_spawn_sys::posix_spawn::*;
-
-    pub mod bun_spawn {
-        pub use crate::process;
-        pub use crate::process::{Process, SpawnOptions, Status, spawn_process, sync};
-        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
-    }
-}
-
 /// Ctrl+C handling for a process acting as a shell for foreground children.
 #[path = "ctrl_c.rs"]
 pub mod ctrl_c;

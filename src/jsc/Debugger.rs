@@ -202,7 +202,6 @@ impl Debugger {
         // accesses form short-lived `&mut`s under the single-JS-thread
         // invariant via safe `&VirtualMachine` accessors.
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
-        let _ = this; // release: param otherwise unused
         let this: &VirtualMachine = VirtualMachine::get();
         let Some(dbg) = this.debugger_mut() else {
             return;
@@ -823,7 +822,6 @@ impl TestReporterAgent {
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {
         debug_assert!(!self.handle.is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap

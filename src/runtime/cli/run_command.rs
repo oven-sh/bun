@@ -2598,7 +2598,6 @@ impl RunCommand {
         // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
         // search the whole stitched PATH.
         {
-            let _ = force_using_bun;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
             let top_level_dir = fs.top_level_dir;

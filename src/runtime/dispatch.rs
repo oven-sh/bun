@@ -935,7 +935,6 @@ unsafe fn __bun_io_pollable_on_io_error(
         }
         bun_io::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
-            let _ = err;
         }
     }
 }

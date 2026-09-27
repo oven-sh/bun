@@ -14,7 +14,8 @@ use bun_io::Loop as AsyncLoop;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdExt, SystemError};
+use bun_sys::FdExt;
+use bun_sys::{self, Fd, SystemError};
 use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -247,7 +248,6 @@ impl ShellSubprocess {
     /// The shell is single-threaded; `process` is set for the lifetime of
     /// `ShellSubprocess` until `close_process`.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn proc(&self) -> &mut Process {
         self.process.as_ref().expect("process closed").process_mut()
     }
@@ -874,6 +874,7 @@ pub enum WritableInitError {
 pub(crate) enum Writable {
     Fd,
     Buffer(RefPtr<StaticPipeWriter>),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -922,6 +923,7 @@ impl Writable {
                     JscSubprocess::source_from_blob(blob),
                 )))
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(memfd) => {
                 debug_assert!(memfd.is_valid());
                 let fd = *memfd;
@@ -962,6 +964,7 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;
@@ -978,7 +981,7 @@ impl Writable {
 
 pub(crate) enum Readable {
     Fd,
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Pipe(Arc<PipeReader>),
     Inherit,
@@ -1072,6 +1075,7 @@ impl Readable {
             // blobs are immutable, so we should only ever get the case
             // where the user passed in a Blob with an fd
             Stdio::Blob(_) => Readable::Ignore,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(memfd) => {
                 let fd = *memfd;
                 // Ownership of the fd transfers to `Readable::Memfd`. Swap in
@@ -1106,6 +1110,7 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Readable::Memfd(fd) => {
                 *self = Readable::Closed;
                 fd.close();
@@ -1509,7 +1514,6 @@ impl PipeReader {
         }
 
         let reader = IOReader::init::<PipeReader>();
-        let stdio_result = result;
 
         // Allocate directly into the Arc so the address is stable BEFORE we
         // hand it to `reader.set_parent` / `container_of` consumers.
@@ -1526,7 +1530,7 @@ impl PipeReader {
             process: Some(process),
             reader,
             event_loop,
-            stdio_result,
+            stdio_result: result,
             out_type,
             state: PipeReaderState::Pending,
             captured_writer,

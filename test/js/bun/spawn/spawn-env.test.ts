@@ -93,6 +93,19 @@ describe.skipIf(!isWindows).each(["spawn", "spawnSync"] as const)("%s: the last 
     expect(await stdoutOf("echo %PATH%", env)).toBe("C:\\replaced\r\n");
   });
 
+  // `set` prints the block in the block's order. Windows keeps it sorted by upper-cased name, where
+  // `_` comes after the letters.
+  test("the block is sorted the way Windows sorts it", async () => {
+    const lines = (await stdoutOf("set", { bun_o_z: "1", BUN_OZ: "2", bun_ob: "3", BUN_OA: "4" })).split(/\r?\n/);
+    expect(lines.filter(line => /^bun_o/i.test(line))).toEqual(["BUN_OA=4", "bun_ob=3", "BUN_OZ=2", "bun_o_z=1"]);
+  });
+
+  // A drive's current directory is a variable named after it, behind a `=`: each has an empty name.
+  test("one hidden drive variable does not replace another", async () => {
+    const env = { "=X:": "X:\\one", A: "1", "=Y:": "Y:\\other" };
+    expect(await stdoutOf("echo [%=X:%] [%=Y:%] [%A%]", env)).toBe("[X:\\one] [Y:\\other] [1]\r\n");
+  });
+
   test("a required variable is not added next to another spelling of it", async () => {
     const lines = (await stdoutOf("set", { SystemRoot: process.env.SYSTEMROOT })).split(/\r?\n/);
     expect(lines.filter(line => /^systemroot=/i.test(line))).toEqual(["SystemRoot=" + process.env.SYSTEMROOT]);

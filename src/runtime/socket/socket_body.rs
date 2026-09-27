@@ -5199,19 +5199,11 @@ pub(crate) mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
-            } else if cfg!(windows) && syscall_str.eq_ascii(b"poll_slow") {
-                fi::POLL_SLOW
-            } else if cfg!(windows) && syscall_str.eq_ascii(b"socket") {
-                fi::SOCKET
-            } else if cfg!(windows) && syscall_str.eq_ascii(b"wait_fallback") {
-                fi::WAIT_FALLBACK
             } else {
-                // close/shutdown have enum slots but no hooks, and poll_slow,
-                // socket and wait_fallback have theirs in the Windows backend only;
+                // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer{}",
-                    if cfg!(windows) { ", poll_slow, socket, wait_fallback" } else { "" }
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
                 )));
             };
 

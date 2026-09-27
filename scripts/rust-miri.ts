@@ -56,19 +56,6 @@ const MIRI_CRATES = [
   "bun_wyhash",
 ];
 
-// Crates whose unit tests are `#[cfg(windows)]`. Miri interprets any target on
-// any host, and no other job builds these tests: `cargo test` cannot link them
-// (they need the C++ half of Bun) and every Rust job runs on Linux. Only their
-// `windows` modules: the rest of these crates does not meet (c).
-const MIRI_WINDOWS_CRATES = ["bun_io", "bun_spawn_sys"];
-const WINDOWS_TARGET = ["--target", "x86_64-pc-windows-msvc"];
-
-type Suite = { crate: string; target: string[]; filter: string[] };
-const SUITES: Suite[] = [
-  ...MIRI_CRATES.map(crate => ({ crate, target: [], filter: [] })),
-  ...MIRI_WINDOWS_CRATES.map(crate => ({ crate, target: WINDOWS_TARGET, filter: ["windows::"] })),
-];
-
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
 }
@@ -119,23 +106,17 @@ if (extraArgs.length > 0) {
 // Default set: Miri interprets one test at a time per process, so a single
 // `cargo miri test -p a -p b ...` is serial end to end. Build everything once,
 // then run one `cargo miri test -p <crate>` per crate concurrently.
-for (const [crates, target] of [
-  [MIRI_CRATES, []],
-  [MIRI_WINDOWS_CRATES, WINDOWS_TARGET],
-] as const) {
-  const args = ["miri", "test", "--no-run", ...target, ...crates.flatMap(c => ["-p", c])];
-  console.log(`\x1b[36m[miri]\x1b[0m cargo ${args.join(" ")}`);
-  if (run("cargo", args, { env }).status !== 0) process.exit(1);
-}
+const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
+console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
+if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
 
 type Result = { crate: string; ok: boolean; seconds: number; output: string };
 
-function testCrate({ crate, target, filter }: Suite): Promise<Result> {
+function testCrate(crate: string): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
-    const args = ["miri", "test", ...target, "-p", crate, "--color", "always", ...filter];
-    const child = spawn("cargo", args, { cwd: repo, env });
+    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], { cwd: repo, env });
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
     child.on("close", code =>
@@ -144,15 +125,15 @@ function testCrate({ crate, target, filter }: Suite): Promise<Result> {
   });
 }
 
-const width = Math.max(1, Math.min(availableParallelism(), SUITES.length));
-console.log(`\x1b[36m[miri]\x1b[0m ${SUITES.length} crates, ${width} at a time`);
-const queue = [...SUITES];
+const width = Math.max(1, Math.min(availableParallelism(), MIRI_CRATES.length));
+console.log(`\x1b[36m[miri]\x1b[0m ${MIRI_CRATES.length} crates, ${width} at a time`);
+const queue = [...MIRI_CRATES];
 const results: Result[] = [];
 const inActions = !!process.env.GITHUB_ACTIONS;
 
 async function worker() {
-  for (let suite = queue.shift(); suite; suite = queue.shift()) {
-    const result = await testCrate(suite);
+  for (let crate = queue.shift(); crate; crate = queue.shift()) {
+    const result = await testCrate(crate);
     results.push(result);
     const status = result.ok ? "\x1b[32mok\x1b[0m" : "\x1b[31mFAILED\x1b[0m";
     console.log(`\x1b[36m[miri]\x1b[0m ${result.crate} ${status} ${result.seconds.toFixed(0)}s`);

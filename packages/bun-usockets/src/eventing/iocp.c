@@ -504,13 +504,6 @@ static struct us_internal_afd_poll *afd_poll_create(struct us_loop_t *loop, void
         WSASetLastError(WSAENOTSOCK);
         return NULL;
     }
-#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
-    ssize_t injected = 0;
-    int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_POLL_SLOW, socket, injected, unused)) {
-        poll->base_socket = INVALID_SOCKET;
-    }
-#endif
     if (poll->base_socket == INVALID_SOCKET) {
         poll->slow = 1;
     } else {
@@ -868,13 +861,7 @@ struct us_iocp_wait *us_iocp_wait_create(struct us_loop_t *loop) {
     nt_ensure();
     struct us_iocp_wait *wait = us_calloc(1, sizeof(struct us_iocp_wait));
     wait->loop = loop;
-    int fallback = 0;
-#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
-    ssize_t injected = 0;
-    int unused = 0;
-    fallback = US_FAULT_CHECK(US_FAULT_WAIT_FALLBACK, -1, injected, unused);
-#endif
-    if (pNtCreateWaitCompletionPacket && !fallback) {
+    if (pNtCreateWaitCompletionPacket) {
         if (!NT_SUCCESS(pNtCreateWaitCompletionPacket(&wait->packet, GENERIC_ALL, NULL))) {
             wait->packet = NULL;
         }
@@ -1506,13 +1493,6 @@ enum {
 };
 
 static int acceptor_start(struct us_internal_acceptor *a) {
-#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
-    ssize_t injected = 0;
-    int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_SOCKET, a->listener, injected, unused)) {
-        return US_ACCEPT_FAILED;
-    }
-#endif
     a->socket = WSASocketW(a->family, a->type, a->protocol, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (a->socket == INVALID_SOCKET) {
         return US_ACCEPT_FAILED;

@@ -378,6 +378,236 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(Bun.stripANSI(output)).toContain("MODES=[231,231,0,2] DONE");
   });
 
+  // A Windows console hands over key records. Raw mode asks it to make VT sequences of the keys
+  // itself; for one that cannot (legacy console mode), Bun does, with libuv's (so Node's) mappings.
+  // The child puts the records into its own console's queue, each case followed by a key that
+  // marks its end.
+  describe.skipIf(!isWindows)("GAP: key records in raw mode", () => {
+    const [ALT_R, ALT_L, CTRL_R, CTRL_L, SHIFT, ENHANCED] = [0x1, 0x2, 0x4, 0x8, 0x10, 0x100];
+    const [CLEAR, MENU, PRIOR, NEXT, END, HOME, LEFT, UP, RIGHT, DOWN, INSERT, DELETE] = [
+      0x0c, 0x12, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2d, 0x2e,
+    ];
+    const [NUMPAD0, DECIMAL, F1] = [0x60, 0x6e, 0x70];
+    type KeyRecord = [type: number, down: number, repeat: number, vk: number, unit: number, modifiers: number];
+    const key = (down: boolean, repeat: number, vk: number, unit: number, modifiers = 0): KeyRecord => [
+      1,
+      +down,
+      repeat,
+      vk,
+      unit,
+      modifiers,
+    ];
+    const char = (c: string | number, modifiers = 0) =>
+      key(true, 1, 0, typeof c === "string" ? c.charCodeAt(0) : c, modifiers);
+    const fn = (vk: number, modifiers = 0) => key(true, 1, vk, 0, modifiers);
+    // WINDOW_BUFFER_SIZE_EVENT, and MOUSE_EVENT, MENU_EVENT and FOCUS_EVENT.
+    const resize: KeyRecord = [4, 120, 0, 0, 0, 0];
+    const notAKey = [2, 8, 16].map((type): KeyRecord => [type, 1, 1, UP, 0x78, 0]);
+
+    // name -> [the records, in the batches they are written in, and the bytes expected]
+    const cases: Record<string, [KeyRecord[][], string | number[]]> = {};
+    const add = (name: string, records: KeyRecord[], expected: string | number[]) => {
+      expect(cases).not.toHaveProperty(name);
+      cases[name] = [[records], expected];
+    };
+
+    add("a", [char("a")], "a");
+    add("enter", [char(0x0d)], "\r");
+    add("ctrl+c", [char(0x03, CTRL_L)], "\x03");
+    add("ctrl+]", [key(true, 1, 0xdd, 0x1d, CTRL_L)], "\x1d");
+    add("two bytes", [char("é")], "é");
+    add("three bytes", [char("€")], "€");
+    add("shift is in the character", [char("h", SHIFT), char("i")], "hi");
+
+    add("left alt", [char("x", ALT_L)], "\x1bx");
+    add("right alt", [char("x", ALT_R)], "\x1bx");
+    add("alt+shift", [char("é", ALT_L | SHIFT)], "\x1bé");
+    add("altgr", [char("€", ALT_R | CTRL_L)], "€");
+    add("altgr, the other two keys", [char("@", ALT_L | CTRL_R)], "@");
+
+    add("surrogate pair", [char(0xd83d), char(0xde00)], "😀");
+    add("surrogate pair with alt", [char(0xd83d, ALT_L), char(0xde00, ALT_L)], "\x1b😀");
+    add("surrogate pair around other records", [char(0xd83d), key(false, 1, 0, 0xd83d), resize, char(0xde00)], "😀");
+    cases["surrogate pair in two reads, and the next key"] = [[[char(0xd83d)], [char(0xde00)], [char("a")]], "😀a"];
+    add("lone low surrogate", [char(0xde00)], [0xed, 0xb8, 0x80]);
+    add("lone high surrogate", [char(0xd83d), char("a")], [0xed, 0xa0, 0xbd, 0x61]);
+    add("a second high surrogate replaces the first", [char(0xd83c), char(0xd83d), char(0xde00)], "😀");
+
+    // How a character composed with Alt+numpad arrives, and one outside the BMP from a pseudoconsole.
+    add("alt up with a character", [key(false, 1, MENU, 0xe9)], "é");
+    add("alt up with a character, alt still reported", [key(false, 1, MENU, 0xe9, ALT_L)], "é");
+    add("alt up with a surrogate pair", [key(false, 1, MENU, 0xd83d), key(false, 1, MENU, 0xde00)], "😀");
+    add("alt up", [key(false, 1, MENU, 0)], "");
+    add("key up", [key(false, 1, 0x41, 0x61), key(false, 1, UP, 0), key(false, 1, F1, 0, SHIFT)], "");
+
+    const modified = [
+      ["", 0],
+      ["shift+", SHIFT],
+      ["ctrl+", CTRL_L],
+      ["right ctrl+", CTRL_R],
+      ["shift+ctrl+", SHIFT | CTRL_L],
+    ] as const;
+    for (const [vk, letter] of [
+      [UP, "A"],
+      [DOWN, "B"],
+      [RIGHT, "C"],
+      [LEFT, "D"],
+    ] as const) {
+      const sequences = [`[${letter}`, `[1;2${letter}`, `[1;5${letter}`, `[1;5${letter}`, `[1;6${letter}`];
+      modified.forEach(([name, modifiers], i) =>
+        add(`${name}arrow ${letter}`, [fn(vk, ENHANCED | modifiers)], "\x1b" + sequences[i]),
+      );
+    }
+    [
+      [INSERT, "[2~"],
+      [END, "[4~"],
+      [DOWN, "[B"],
+      [NEXT, "[6~"],
+      [LEFT, "[D"],
+      [CLEAR, "[G"],
+      [RIGHT, "[C"],
+      [UP, "[A"],
+      [HOME, "[1~"],
+      [PRIOR, "[5~"],
+    ].forEach(([vk, sequence], digit) => {
+      add(`navigation ${sequence}`, [fn(vk as number)], "\x1b" + sequence);
+      add(`numpad ${digit}`, [fn(NUMPAD0 + digit)], "\x1b" + sequence);
+    });
+    add("delete", [fn(DELETE)], "\x1b[3~");
+    add("numpad .", [fn(DECIMAL)], "\x1b[3~");
+    add("shift+home", [fn(HOME, SHIFT)], "\x1b[1;2~");
+    add("ctrl+end", [fn(END, CTRL_L)], "\x1b[4;5~");
+    add("shift+ctrl+page up", [fn(PRIOR, SHIFT | CTRL_R)], "\x1b[5;6~");
+    add("shift+ctrl+clear", [fn(CLEAR, SHIFT | CTRL_L)], "\x1b[1;6G");
+    [
+      ["[[A", "[23~", "[11^", "[23^"],
+      ["[[B", "[24~", "[12^", "[24^"],
+      ["[[C", "[25~", "[13^", "[25^"],
+      ["[[D", "[26~", "[14^", "[26^"],
+      ["[[E", "[28~", "[15^", "[28^"],
+      ["[17~", "[29~", "[17^", "[29^"],
+      ["[18~", "[31~", "[18^", "[31^"],
+      ["[19~", "[32~", "[19^", "[32^"],
+      ["[20~", "[33~", "[20^", "[33^"],
+      ["[21~", "[34~", "[21^", "[34^"],
+      ["[23~", "[23$", "[23^", "[23@"],
+      ["[24~", "[24$", "[24^", "[24@"],
+    ].forEach(([normal, shift, ctrl, shiftCtrl], i) => {
+      const sequences = [normal, shift, ctrl, ctrl, shiftCtrl];
+      modified.forEach(([name, modifiers], j) =>
+        add(`${name}F${i + 1}`, [fn(F1 + i, modifiers)], "\x1b" + sequences[j]),
+      );
+    });
+    add("alt+arrow", [fn(UP, ENHANCED | ALT_L)], "\x1b\x1b[A");
+    add("right alt+F1", [fn(F1, ALT_R)], "\x1b\x1b[[A");
+    // Unlike with a character.
+    add("ctrl does not take the prefix from alt+delete", [fn(DELETE, ENHANCED | ALT_L | CTRL_L)], "\x1b\x1b[3;5~");
+    // Shift, Ctrl, Alt, Caps Lock and F13.
+    for (const vk of [0x10, 0x11, MENU, 0x14, 0x7c]) {
+      add(`key 0x${vk.toString(16)} sends nothing`, [fn(vk), fn(vk, ALT_L)], "");
+    }
+
+    add("repeated", [key(true, 3, 0x41, 0x61)], "aaa");
+    add("repeated 0 times", [key(true, 0, 0x41, 0x61)], "a");
+    add("repeated with alt", [key(true, 2, 0x41, 0x61, ALT_L)], "\x1ba\x1ba");
+    add("repeated arrow", [key(true, 2, LEFT, 0, ENHANCED)], "\x1b[D\x1b[D");
+    add("repeated low surrogate", [char(0xd83d), key(true, 2, 0, 0xde00)], "😀😀");
+    add("what came before is not repeated", [char("x"), key(true, 2, 0x41, 0x61)], "xaa");
+
+    // The digits of an Alt+numpad composition: the numpad's keys (the navigation cluster's are
+    // ENHANCED_KEY) while left Alt is down, whether NumLock makes them digits or not.
+    const numpad = [INSERT, END, DOWN, NEXT, LEFT, CLEAR, RIGHT, HOME, UP, PRIOR];
+    for (let digit = 0; digit < 10; digit++) numpad.push(NUMPAD0 + digit);
+    for (const vk of numpad) {
+      add(`composing with 0x${vk.toString(16)}`, [fn(vk, ALT_L), key(true, 1, vk, 0x31, ALT_L)], "");
+    }
+    add("right alt does not compose", [fn(NUMPAD0 + 4, ALT_R)], "\x1b\x1b[D");
+    add("the navigation cluster does not compose", [fn(LEFT, ALT_L | ENHANCED)], "\x1b\x1b[D");
+    add("delete does not compose", [fn(DELETE, ALT_L), fn(DECIMAL, ALT_L)], "\x1b\x1b[3~\x1b\x1b[3~");
+
+    add("records that are not keys", [resize, ...notAKey], "");
+    add("keys between records that are not", [char("a"), resize, notAKey[2], char("b")], "ab");
+
+    async function expectBytes(names: string[], vtInput: boolean) {
+      using dir = tempDir("terminal-key-records", {
+        "cases.json": JSON.stringify(names.map(name => [name, cases[name][0]])),
+      });
+      const { output } = await runInTerminal(
+        `const { dlopen, ptr } = require("bun:ffi");
+       const { readFileSync, writeFileSync } = require("node:fs");
+       const k32 = dlopen("kernel32.dll", {
+         GetStdHandle: { args: ["i32"], returns: "ptr" },
+         GetNumberOfConsoleInputEvents: { args: ["ptr", "ptr"], returns: "i32" },
+         GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+         SetConsoleMode: { args: ["ptr", "u32"], returns: "i32" },
+         WriteConsoleInputW: { args: ["ptr", "ptr", "u32", "ptr"], returns: "i32" },
+       }).symbols;
+       const input = k32.GetStdHandle(-10);
+       const count = new Uint32Array(1);
+       function send(records) {
+         // INPUT_RECORD: EventType, then a KEY_EVENT_RECORD at offset 4.
+         const words = new Uint16Array(records.length * 10);
+         records.forEach(([type, down, repeat, vk, unit, modifiers], i) =>
+           words.set([type, 0, down, 0, repeat, vk, 0, unit, modifiers & 0xffff, modifiers >>> 16], i * 10),
+         );
+         if (!k32.WriteConsoleInputW(input, ptr(words), records.length, ptr(count))) throw new Error("WriteConsoleInputW");
+       }
+       async function taken() {
+         for (;;) {
+           if (!k32.GetNumberOfConsoleInputEvents(input, ptr(count))) throw new Error("GetNumberOfConsoleInputEvents");
+           if (count[0] === 0) return;
+           await new Promise(setImmediate);
+         }
+       }
+       const END = 0x1f;
+       let received = [];
+       let ended = Promise.withResolvers();
+       process.stdin.setRawMode(true);
+       if (!${vtInput}) {
+         // As raw mode leaves a console that refuses ENABLE_VIRTUAL_TERMINAL_INPUT.
+         if (!k32.GetConsoleMode(input, ptr(count))) throw new Error("GetConsoleMode");
+         if (!k32.SetConsoleMode(input, count[0] & ~0x200)) throw new Error("SetConsoleMode");
+       }
+       process.stdin.on("data", chunk => {
+         received.push(...chunk);
+         if (chunk.includes(END)) ended.resolve();
+       });
+       const results = {};
+       for (const [name, batches] of JSON.parse(readFileSync(${JSON.stringify(join(String(dir), "cases.json"))}, "utf8"))) {
+         for (const batch of batches.slice(0, -1)) {
+           send(batch);
+           await taken();
+         }
+         send([...batches.at(-1), [1, 1, 1, 0, END, 0]]);
+         await ended.promise;
+         results[name] = Buffer.from(received).toString("hex");
+         received = [];
+         ended = Promise.withResolvers();
+       }
+       writeFileSync(${JSON.stringify(join(String(dir), "results.json"))}, JSON.stringify(results));
+       process.stdout.write("DONE");
+       process.exit(0);`,
+        { readyMarker: "DONE", done: o => o.includes("DONE") },
+      );
+      expect(Bun.stripANSI(output)).toContain("DONE");
+      expect(await Bun.file(join(String(dir), "results.json")).json()).toEqual(
+        Object.fromEntries(names.map(name => [name, Buffer.from(cases[name][1]).toString("hex") + "1f"])),
+      );
+    }
+
+    test("on a console without VT input", () => expectBytes(Object.keys(cases), false));
+
+    // What the console makes of a function key is the console's business.
+    test("on a console with VT input", () =>
+      expectBytes(
+        [
+          ...["a", "enter", "ctrl+c", "two bytes", "three bytes", "shift is in the character"],
+          ...["surrogate pair", "key up", "records that are not keys", "keys between records that are not"],
+        ],
+        true,
+      ));
+  });
+
   // The key that ends input is Ctrl-Z at the start of a line on Windows and Ctrl-D on POSIX.
   test("SAME: a shell builtin that reads the terminal ends at the end-of-input key, and the next one reads on", async () => {
     const end = isWindows ? "\x1a\r" : "\x04";

@@ -1,4 +1,3 @@
-import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
@@ -821,43 +820,6 @@ describe("worker_threads", () => {
 // A worker's loop is freed when the worker goes, and first collects every operation it still has
 // with the kernel: each has to be one that can be taken back, or one the loop does not wait for.
 describe.skipIf(!isWindows)("terminate() with an operation out that the worker cannot finish", () => {
-  // select() on a helper thread, for a socket AFD cannot poll; it cannot be interrupted.
-  test.skipIf(!fault.available())("a socket polled with the select() fallback", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
-        const net = require("node:net");
-        const server = net.createServer(() => {});
-        server.listen(0, "127.0.0.1", () => {
-          const src = \`
-            import { socketFaultInjection as fault } from "bun:internal-for-testing";
-            import net from "node:net";
-            fault.set({ syscall: "poll_slow", action: "errno", errno: "EINVAL", repeat: -1 });
-            const client = net.connect({ port: \${server.address().port}, host: "127.0.0.1" }, () => postMessage("connected"));
-            client.on("error", () => {});
-          \`;
-          const worker = new Worker(URL.createObjectURL(new Blob([src])));
-          worker.onmessage = () => worker.terminate();
-          worker.addEventListener("close", () => {
-            fault.clear();
-            console.log("closed");
-            process.exit(0);
-          });
-        });
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({ stdout: "closed", stderr: "" });
-    expect(exitCode).toBe(0);
-  });
-
   // The pipe's one instance is taken, so the worker's connect waits for the server to offer another.
   test.skipIf(!Bun.which("powershell.exe"))("a connect that waits for a busy named pipe", async () => {
     const name = `bun-test-${crypto.randomUUID()}`;

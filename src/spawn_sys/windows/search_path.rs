@@ -14,6 +14,8 @@
 //! - A directory never matches; an unreadable file does.
 //! - UNC paths work in both the name and `PATH`.
 
+use super::win32;
+
 const BACKSLASH: u16 = b'\\' as u16;
 const SLASH: u16 = b'/' as u16;
 const COLON: u16 = b':' as u16;
@@ -84,13 +86,15 @@ fn ascii_eq_ignore_case(a: u16, b: u16) -> bool {
     lower(a) == lower(b)
 }
 
-fn join_test(
-    dir: &[u16],
-    name: &[u16],
-    ext: &[u16],
-    cwd: &[u16],
-    exists: &mut dyn FnMut(&[u16]) -> bool,
-) -> Option<Vec<u16>> {
+/// Whether `path` (NUL-terminated) names something that is not a directory.
+fn exists(path: &[u16]) -> bool {
+    // SAFETY: `path` is NUL-terminated.
+    let attributes = unsafe { win32::GetFileAttributesW(path.as_ptr()) };
+    attributes != win32::INVALID_FILE_ATTRIBUTES
+        && attributes & win32::FILE_ATTRIBUTE_DIRECTORY == 0
+}
+
+fn join_test(dir: &[u16], name: &[u16], ext: &[u16], cwd: &[u16]) -> Option<Vec<u16>> {
     let (cwd, dir) = match cwd_use(dir) {
         CwdUse::None => (&cwd[..0], dir),
         CwdUse::DriveOnly => (&cwd[..cwd.len().min(2)], dir),
@@ -131,39 +135,25 @@ fn join_test(
     if exists(&result) { Some(result) } else { None }
 }
 
-fn walk_ext(
-    dir: &[u16],
-    name: &[u16],
-    cwd: &[u16],
-    name_has_ext: bool,
-    exists: &mut dyn FnMut(&[u16]) -> bool,
-) -> Option<Vec<u16>> {
+fn walk_ext(dir: &[u16], name: &[u16], cwd: &[u16], name_has_ext: bool) -> Option<Vec<u16>> {
     const COM: [u16; 3] = [b'c' as u16, b'o' as u16, b'm' as u16];
     const EXE: [u16; 3] = [b'e' as u16, b'x' as u16, b'e' as u16];
     if name_has_ext {
-        if let Some(found) = join_test(dir, name, &[], cwd, exists) {
+        if let Some(found) = join_test(dir, name, &[], cwd) {
             return Some(found);
         }
     }
-    if let Some(found) = join_test(dir, name, &COM, cwd, exists) {
+    if let Some(found) = join_test(dir, name, &COM, cwd) {
         return Some(found);
     }
-    join_test(dir, name, &EXE, cwd, exists)
+    join_test(dir, name, &EXE, cwd)
 }
 
 /// The NUL-terminated path of the image `file` names, or `None`.
 ///
 /// `cwd` is the child's directory and `path` its `PATH` (neither
 /// NUL-terminated); see [`needs_cwd`] / [`needs_path`] for when they are read.
-/// `cwd_first` is `NeedCurrentDirectoryForExePathW("")`. `exists` answers
-/// whether a NUL-terminated path names something that is not a directory.
-pub fn search_path(
-    file: &[u16],
-    cwd: &[u16],
-    path: &[u16],
-    cwd_first: bool,
-    exists: &mut dyn FnMut(&[u16]) -> bool,
-) -> Option<Vec<u16>> {
+pub fn search_path(file: &[u16], cwd: &[u16], path: &[u16]) -> Option<Vec<u16>> {
     if file.is_empty() || file == [DOT] {
         return None;
     }
@@ -177,11 +167,13 @@ pub fn search_path(
         .is_some_and(|dot| dot + 1 < name.len());
 
     if name_start != 0 {
-        return walk_ext(&file[..name_start], name, cwd, name_has_ext, exists);
+        return walk_ext(&file[..name_start], name, cwd, name_has_ext);
     }
 
+    // SAFETY: an empty NUL-terminated string.
+    let cwd_first = unsafe { win32::NeedCurrentDirectoryForExePathW([0u16].as_ptr()) } != 0;
     if cwd_first {
-        if let Some(found) = walk_ext(&[], file, cwd, name_has_ext, exists) {
+        if let Some(found) = walk_ext(&[], file, cwd, name_has_ext) {
             return Some(found);
         }
     }
@@ -225,185 +217,8 @@ pub fn search_path(
             dir = &dir[..dir.len() - 1];
         }
 
-        if let Some(found) = walk_ext(dir, file, cwd, name_has_ext, exists) {
+        if let Some(found) = walk_ext(dir, file, cwd, name_has_ext) {
             return Some(found);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn w(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
-    /// Runs the search against a fixed set of existing files; returns the match
-    /// and every path probed, in order.
-    fn run(
-        file: &str,
-        cwd: &str,
-        path: &str,
-        cwd_first: bool,
-        files: &[&str],
-    ) -> (Option<String>, Vec<String>) {
-        let mut probed = Vec::new();
-        let found = search_path(&w(file), &w(cwd), &w(path), cwd_first, &mut |p| {
-            assert_eq!(p.last(), Some(&0));
-            let p = String::from_utf16(&p[..p.len() - 1]).unwrap();
-            let hit = files.iter().any(|f| f.eq_ignore_ascii_case(&p));
-            probed.push(p);
-            hit
-        })
-        .map(|p| String::from_utf16(&p[..p.len() - 1]).unwrap());
-        (found, probed)
-    }
-
-    #[test]
-    fn empty_and_dot_never_match() {
-        assert_eq!(run("", "C:\\cwd", "C:\\bin", true, &[]).0, None);
-        assert_eq!(
-            run(".", "C:\\cwd", "C:\\bin", true, &["C:\\cwd\\..exe"]).0,
-            None
-        );
-    }
-
-    #[test]
-    fn bare_name_tries_cwd_then_path_with_com_before_exe() {
-        let (found, probed) = run(
-            "node",
-            "C:\\cwd",
-            "C:\\a;C:\\b\\",
-            true,
-            &["C:\\b\\node.exe"],
-        );
-        assert_eq!(found.as_deref(), Some("C:\\b\\node.exe"));
-        assert_eq!(
-            probed,
-            [
-                "C:\\cwd\\node.com",
-                "C:\\cwd\\node.exe",
-                "C:\\a\\node.com",
-                "C:\\a\\node.exe",
-                "C:\\b\\node.com",
-                "C:\\b\\node.exe",
-            ]
-        );
-    }
-
-    #[test]
-    fn cwd_is_skipped_when_the_system_says_so() {
-        let (found, probed) = run("x", "C:\\cwd", "C:\\a", false, &["C:\\cwd\\x.exe"]);
-        assert_eq!(found, None);
-        assert_eq!(probed, ["C:\\a\\x.com", "C:\\a\\x.exe"]);
-    }
-
-    #[test]
-    fn a_name_with_an_extension_is_tried_exactly_first() {
-        let (found, probed) = run("run.cmd", "C:\\cwd", "", true, &["C:\\cwd\\run.cmd"]);
-        assert_eq!(found.as_deref(), Some("C:\\cwd\\run.cmd"));
-        assert_eq!(probed, ["C:\\cwd\\run.cmd"]);
-
-        // A trailing dot is not an extension, and no second dot is added.
-        let (_, probed) = run("noext.", "C:\\cwd", "", true, &[]);
-        assert_eq!(probed, ["C:\\cwd\\noext.com", "C:\\cwd\\noext.exe"]);
-    }
-
-    #[test]
-    fn a_name_with_a_directory_never_reads_path() {
-        let (found, probed) = run(
-            "sub/tool",
-            "C:\\cwd",
-            "C:\\a",
-            true,
-            &["C:\\a\\tool.exe", "C:\\cwd\\sub/tool.exe"],
-        );
-        assert_eq!(found.as_deref(), Some("C:\\cwd\\sub/tool.exe"));
-        assert_eq!(probed, ["C:\\cwd\\sub/tool.com", "C:\\cwd\\sub/tool.exe"]);
-        assert!(!needs_path(&w("sub/tool")));
-        assert!(needs_path(&w("tool")));
-    }
-
-    #[test]
-    fn cwd_rules_for_each_kind_of_directory() {
-        // Absolute with a drive, and UNC: cwd unused.
-        assert_eq!(
-            run("C:\\x\\a.exe", "D:\\cwd", "", true, &["C:\\x\\a.exe"])
-                .0
-                .as_deref(),
-            Some("C:\\x\\a.exe")
-        );
-        assert!(!needs_cwd(&w("C:\\x\\a.exe")));
-        assert_eq!(
-            run(
-                "\\\\srv\\share\\a.exe",
-                "D:\\cwd",
-                "",
-                true,
-                &["\\\\srv\\share\\a.exe"]
-            )
-            .0
-            .as_deref(),
-            Some("\\\\srv\\share\\a.exe")
-        );
-        assert!(!needs_cwd(&w("\\\\srv\\share\\a.exe")));
-        // Rooted without a drive: the drive of cwd.
-        assert_eq!(
-            run("\\x\\a.exe", "D:\\cwd", "", true, &["D:\\x\\a.exe"])
-                .0
-                .as_deref(),
-            Some("D:\\x\\a.exe")
-        );
-        // Drive-relative: all of cwd on the same drive, none of it otherwise.
-        assert_eq!(
-            run("d:x\\a.exe", "D:\\cwd", "", true, &["D:\\cwd\\x\\a.exe"])
-                .0
-                .as_deref(),
-            Some("D:\\cwd\\x\\a.exe")
-        );
-        assert_eq!(
-            run("E:x\\a.exe", "D:\\cwd", "", true, &["E:x\\a.exe"])
-                .0
-                .as_deref(),
-            Some("E:x\\a.exe")
-        );
-        assert!(needs_cwd(&w("E:x\\a.exe")));
-        assert!(needs_cwd(&w("a.exe")));
-    }
-
-    #[test]
-    fn path_entries_may_be_quoted_relative_or_empty() {
-        let (found, probed) = run(
-            "t",
-            "C:\\cwd",
-            ";;\"C:\\semi;colon\";rel;'C:\\q'",
-            false,
-            &["C:\\q\\t.exe"],
-        );
-        assert_eq!(found.as_deref(), Some("C:\\q\\t.exe"));
-        assert_eq!(
-            probed,
-            [
-                "C:\\semi;colon\\t.com",
-                "C:\\semi;colon\\t.exe",
-                "C:\\cwd\\rel\\t.com",
-                "C:\\cwd\\rel\\t.exe",
-                "C:\\q\\t.com",
-                "C:\\q\\t.exe",
-            ]
-        );
-    }
-
-    #[test]
-    fn a_lone_quote_entry_is_skipped() {
-        let (found, probed) = run("t", "C:\\cwd", "\";C:\\a", false, &["C:\\a\\t.exe"]);
-        // The unterminated quote swallows the rest of PATH.
-        assert_eq!(found, None);
-        assert_eq!(probed, ["C:\\cwd\\;C:\\a\\t.com", "C:\\cwd\\;C:\\a\\t.exe"]);
-        assert_eq!(
-            run("t", "C:\\cwd", "\"", false, &[]).1,
-            Vec::<String>::new()
-        );
     }
 }

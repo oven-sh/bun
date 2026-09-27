@@ -2466,14 +2466,10 @@ fn convert_wtf8_to_utf16_in_buffer<'a, const STRICT: bool>(
     if input.len() > buf.len() && element_length_utf8_into_utf16(input) > buf.len() {
         return None;
     }
-    // Miri cannot call simdutf, and `bun_spawn_sys`'s unit tests reach this.
-    // The fallback converts valid input as well.
-    if !cfg!(miri) {
-        let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
-        if r.is_successful() {
-            debug_assert!(r.count <= buf.len());
-            return Some(&mut buf[..r.count]);
-        }
+    let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
+    if r.is_successful() {
+        debug_assert!(r.count <= buf.len());
+        return Some(&mut buf[..r.count]);
     }
     // WTF-8 fallback (invalid byte → U+FFFD; lone surrogates pass through).
     let mut written = 0usize;

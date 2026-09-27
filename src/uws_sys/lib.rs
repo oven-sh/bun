@@ -459,8 +459,6 @@ pub mod fault_inject {
     pub const RECVMSG: c_int = 4;
     pub const CONNECT: c_int = 5;
     pub const ACCEPT: c_int = 6;
-    /// Windows: the socket a listener's `AcceptEx` accepts into.
-    pub const SOCKET: c_int = 7;
     pub const SHUTDOWN: c_int = 9;
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.
@@ -472,12 +470,6 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
-    /// Not a syscall: `afd_poll_create` (Windows) takes the `select()`
-    /// fallback for the socket.
-    pub const POLL_SLOW: c_int = 13;
-    /// Not a syscall: `us_iocp_wait_create` (Windows) waits with the
-    /// thread-pool fallback instead of a wait completion packet.
-    pub const WAIT_FALLBACK: c_int = 14;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

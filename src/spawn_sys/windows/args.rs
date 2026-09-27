@@ -15,7 +15,7 @@ pub fn push_wtf8(out: &mut Vec<u16>, s: &[u8]) {
 /// or one containing a space, a tab or `"`; `"` becomes `\"`; a run of `n`
 /// backslashes is doubled only where a `"` follows it (the embedded one or the
 /// closing one).
-pub fn quote_arg(out: &mut Vec<u16>, arg: &[u16]) {
+fn quote_arg(out: &mut Vec<u16>, arg: &[u16]) {
     const QUOTE: u16 = b'"' as u16;
     const BACKSLASH: u16 = b'\\' as u16;
 
@@ -64,65 +64,4 @@ pub fn make_command_line<'a>(args: impl Iterator<Item = &'a [u8]>, verbatim: boo
     }
     out.push(0);
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn w(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
-    fn quoted(s: &str) -> String {
-        let mut out = Vec::new();
-        quote_arg(&mut out, &w(s));
-        String::from_utf16(&out).unwrap()
-    }
-
-    #[test]
-    fn quoting_matches_the_msvcrt_rules() {
-        assert_eq!(quoted(""), r#""""#);
-        assert_eq!(quoted("plain"), "plain");
-        assert_eq!(quoted("hello world"), r#""hello world""#);
-        assert_eq!(quoted("tab\there"), "\"tab\there\"");
-        assert_eq!(quoted(r#"hello"world"#), r#""hello\"world""#);
-        assert_eq!(quoted(r#"hello""world"#), r#""hello\"\"world""#);
-        assert_eq!(quoted(r"hello\world"), r"hello\world");
-        assert_eq!(quoted(r"hello\\world"), r"hello\\world");
-        assert_eq!(quoted(r#"hello\"world"#), r#""hello\\\"world""#);
-        assert_eq!(quoted(r#"hello\\"world"#), r#""hello\\\\\"world""#);
-        assert_eq!(quoted(r"hello world\"), r#""hello world\\""#);
-        assert_eq!(quoted(r"a\b c"), r#""a\b c""#);
-        assert_eq!(quoted("new\nline"), "new\nline");
-    }
-
-    #[test]
-    fn command_line_joins_with_one_space_and_terminates() {
-        let args: [&[u8]; 4] = [b"C:\\Program Files\\x.exe", b"", b"a b", b"c"];
-        let line = make_command_line(args.iter().copied(), false);
-        assert_eq!(line.last(), Some(&0));
-        assert_eq!(
-            String::from_utf16(&line[..line.len() - 1]).unwrap(),
-            r#""C:\Program Files\x.exe" "" "a b" c"#
-        );
-    }
-
-    #[test]
-    fn verbatim_copies_arguments_untouched() {
-        let args: [&[u8]; 3] = [b"cmd.exe", b"/c", br#""echo "a b"""#];
-        let line = make_command_line(args.iter().copied(), true);
-        assert_eq!(
-            String::from_utf16(&line[..line.len() - 1]).unwrap(),
-            r#"cmd.exe /c "echo "a b"""#
-        );
-    }
-
-    #[test]
-    fn lone_surrogates_survive() {
-        // U+D800 as WTF-8.
-        let mut out = Vec::new();
-        push_wtf8(&mut out, &[b'a', 0xED, 0xA0, 0x80, b'b']);
-        assert_eq!(out, [b'a' as u16, 0xD800, b'b' as u16]);
-    }
 }

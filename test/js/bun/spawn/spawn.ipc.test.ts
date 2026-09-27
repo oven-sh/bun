@@ -468,7 +468,14 @@ describe("a channel this side is done with", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(!isWindows)("a frame that breaks the framing ends delivery, also behind a send in flight", async () => {
+  // [flags, reserved, payload length, reserved]. Flag 2 is a socket that comes with the frame, and 4
+  // says that it is a connection.
+  it.skipIf(!isWindows).each([
+    ["an unknown flag", [8, 0, 0, 0]],
+    ["a reserved field that is not zero", [1, 0, 1, 1]],
+    ["a connection with no socket", [1 | 4, 0, 1, 0]],
+    ["a length with no data", [0, 0, 1, 0]],
+  ])("a frame that breaks the framing (%s) ends delivery, also behind a send in flight", async (_, header) => {
     const received: unknown[] = [];
     const disconnected = Promise.withResolvers<void>();
     await using child = spawn({
@@ -476,9 +483,8 @@ describe("a channel this side is done with", () => {
         bunExe(),
         "-e",
         rawChannelChild(`
-          const unknownFlag = Buffer.alloc(16);
-          unknownFlag.writeUInt32LE(8, 0);
-          channel.write(Buffer.concat([frame('"first"'), unknownFlag]));
+          const broken = Buffer.from(new Uint32Array(${JSON.stringify(header)}).buffer);
+          channel.write(Buffer.concat([frame('"first"'), broken]));
           go.then(() => channel.write(frame('"second"'), () => process.exit(0)));
         `),
       ],
@@ -500,6 +506,41 @@ describe("a channel this side is done with", () => {
     expect(received).toEqual(["first"]);
     expect(exitCode).toBe(0);
   });
+});
+
+// A frame's boundaries mean nothing to what it carries, and neither do a read's to a frame.
+it.skipIf(!isWindows)("a message in several frames arrives whole, wherever a write ends", async () => {
+  const received: unknown[] = [];
+  const disconnected = Promise.withResolvers<void>();
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const channel = require("node:net").connect({ fd: 3 });
+        const frame = payload => Buffer.concat([Buffer.from(new Uint32Array([payload.length ? 1 : 0, 0, payload.length, 0]).buffer), Buffer.from(payload)]);
+        const wire = Buffer.concat([frame('"hello'), frame(""), frame(' world"\\n')]);
+        const write = bytes => new Promise(resolve => channel.write(bytes, resolve));
+        for (let split = 0; split <= wire.length; split++) {
+          await write(wire.subarray(0, split));
+          // The parent is waiting for these bytes, and reads them before the rest is written.
+          await new Promise(setImmediate);
+          await write(wire.subarray(split));
+        }
+        console.log(wire.length);
+        channel.end();
+      `,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "inherit"],
+    serialization: "json",
+    ipc: message => void received.push(message),
+    onDisconnect: () => disconnected.resolve(),
+  });
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited, disconnected.promise]);
+  expect(received).toEqual(Array(Number(stdout) + 1).fill("hello world"));
+  expect(received.length).toBeGreaterThan(48);
+  expect(exitCode).toBe(0);
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

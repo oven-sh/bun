@@ -346,13 +346,6 @@ unsafe fn c_str_array<'a>(list: *const *const core::ffi::c_char) -> impl Iterato
     })
 }
 
-fn file_exists(path: &[u16]) -> bool {
-    // SAFETY: `path` is NUL-terminated (`search_path` contract).
-    let attributes = unsafe { win32::GetFileAttributesW(path.as_ptr()) };
-    attributes != win32::INVALID_FILE_ATTRIBUTES
-        && attributes & win32::FILE_ATTRIBUTE_DIRECTORY == 0
-}
-
 fn current_directory() -> Result<Vec<u16>, DWORD> {
     let mut buf: Vec<u16> = vec![0; win32::MAX_PATH];
     loop {
@@ -414,11 +407,7 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
         None
     } else {
         // SAFETY: caller contract.
-        Some(env::make_env_block(
-            unsafe { c_str_array(envp) },
-            env::compare_names_ordinal,
-            env::parent_value,
-        ))
+        Some(env::make_env_block(unsafe { c_str_array(envp) }))
     };
 
     // NUL-terminated when present.
@@ -455,10 +444,7 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
             None => &[],
         };
         let mut parent_path: Vec<u16> = Vec::new();
-        let mut cwd_first = false;
         let path: &[u16] = if search_path::needs_path(&application) {
-            // SAFETY: an empty NUL-terminated string.
-            cwd_first = unsafe { win32::NeedCurrentDirectoryForExePathW([0u16].as_ptr()) } != 0;
             match env_block.as_deref().and_then(env::find_path) {
                 Some(path) => path,
                 None => {
@@ -469,7 +455,7 @@ unsafe fn spawn(options: &SpawnOptions, argv: Argv, envp: Envp) -> bun_sys::Resu
         } else {
             &[]
         };
-        search_path::search_path(&application, search_cwd, path, cwd_first, &mut file_exists)
+        search_path::search_path(&application, search_cwd, path)
     };
     let Some(application_path) = application_path else {
         return Err(spawn_error(win32::ERROR_FILE_NOT_FOUND));

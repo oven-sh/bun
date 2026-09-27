@@ -1275,6 +1275,21 @@ describe("close handling", () => {
       },
     );
 
+    // What tells a child's C runtime of its descriptors has room for 255.
+    it.skipIf(!isWindows)("the last of 255 descriptors reaches the child, and 256 are refused", async () => {
+      const script =
+        "try { require('fs').writeSync(254, 'x'); console.log('wrote'); } catch (e) { console.log(e.code); }";
+      const options = (length: number) => ({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdio: Array.from({ length }, (_, i) => (i === 1 || i === length - 1 ? "pipe" : "ignore")) as any,
+      });
+      await using without = spawn(options(254));
+      await using withIt = spawn(options(255));
+      expect([await without.stdout.text(), await withIt.stdout.text()]).toEqual(["EBADF\n", "wrote\n"]);
+      expect(() => spawn(options(256))).toThrow(expect.objectContaining({ code: "ENOTSUP" }));
+    });
+
     it.skipIf(isWindows)("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
       // Once .stdio exposes the raw fd number, JS owns it; the Subprocess
       // finalizer must not close that number again at GC time (the kernel may

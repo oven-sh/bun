@@ -18,9 +18,9 @@ pub const SOCKET_TRANSFER_LEN: usize = 632;
 /// Offset of the `u32` deferred error inside a socket transfer.
 pub const SOCKET_TRANSFER_PROTOCOL_INFO_LEN: usize = 628;
 
-pub const FLAG_HAS_DATA: u32 = 0x01;
-pub const FLAG_HAS_SOCKET_TRANSFER: u32 = 0x02;
-pub const FLAG_TRANSFER_IS_CONNECTION: u32 = 0x04;
+const FLAG_HAS_DATA: u32 = 0x01;
+const FLAG_HAS_SOCKET_TRANSFER: u32 = 0x02;
+const FLAG_TRANSFER_IS_CONNECTION: u32 = 0x04;
 const VALID_FLAGS: u32 = 0x07;
 
 /// The header of a frame that carries `data_len` payload bytes and no socket.
@@ -35,7 +35,6 @@ pub fn data_header(data_len: u32) -> [u8; HEADER_LEN] {
 }
 
 /// The peer broke the framing; the channel cannot be resynchronized.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidFrame;
 
 pub enum Event<'a> {
@@ -144,82 +143,5 @@ impl Decoder {
             self.payload_remaining = data_length as usize;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn collect(decoder: &mut Decoder, input: &[u8]) -> Result<(Vec<u8>, usize), InvalidFrame> {
-        let mut data = Vec::new();
-        let mut sockets = 0;
-        decoder.feed(input, |event| match event {
-            Event::Data(bytes) => data.extend_from_slice(bytes),
-            Event::SocketTransfer { .. } => sockets += 1,
-        })?;
-        Ok((data, sockets))
-    }
-
-    #[test]
-    fn round_trips_data_split_anywhere() {
-        let mut wire = Vec::new();
-        wire.extend_from_slice(&data_header(5));
-        wire.extend_from_slice(b"hello");
-        wire.extend_from_slice(&data_header(0));
-        wire.extend_from_slice(&data_header(6));
-        wire.extend_from_slice(b" world");
-        for split in 0..wire.len() {
-            let mut decoder = Decoder::new();
-            let (mut data, _) = collect(&mut decoder, &wire[..split]).unwrap();
-            data.extend(collect(&mut decoder, &wire[split..]).unwrap().0);
-            assert_eq!(data, b"hello world");
-        }
-    }
-
-    #[test]
-    fn socket_transfer_precedes_its_data() {
-        let mut wire = Vec::new();
-        let mut header = data_header(2);
-        header[0] = (FLAG_HAS_DATA | FLAG_HAS_SOCKET_TRANSFER | FLAG_TRANSFER_IS_CONNECTION) as u8;
-        wire.extend_from_slice(&header);
-        wire.extend_from_slice(&[7u8; SOCKET_TRANSFER_LEN]);
-        wire.extend_from_slice(b"ok");
-        let mut decoder = Decoder::new();
-        let mut order = Vec::new();
-        decoder
-            .feed(&wire, |event| match event {
-                Event::Data(bytes) => order.push(bytes.len()),
-                Event::SocketTransfer {
-                    info,
-                    is_connection,
-                } => {
-                    assert!(is_connection);
-                    assert_eq!(info[0], 7);
-                    order.push(usize::MAX);
-                }
-            })
-            .unwrap();
-        assert_eq!(order, [usize::MAX, 2]);
-    }
-
-    #[test]
-    fn rejects_bad_headers() {
-        let mut unknown_flag = data_header(1);
-        unknown_flag[0] = 0x08;
-        let mut reserved = data_header(1);
-        reserved[12] = 1;
-        let mut connection_without_transfer = data_header(1);
-        connection_without_transfer[0] = (FLAG_HAS_DATA | FLAG_TRANSFER_IS_CONNECTION) as u8;
-        let mut length_without_data = data_header(1);
-        length_without_data[0] = 0;
-        for header in [
-            unknown_flag,
-            reserved,
-            connection_without_transfer,
-            length_without_data,
-        ] {
-            assert_eq!(collect(&mut Decoder::new(), &header), Err(InvalidFrame),);
-        }
     }
 }

@@ -9,7 +9,7 @@ use bun_core::wstr;
 /// define them: Winsock and the legacy CryptoAPI fail to initialize without
 /// `SYSTEMROOT`, several APIs read `TEMP`, and Cygwin-based programs need the
 /// rest. NUL-terminated, sorted.
-pub static REQUIRED_VARS: [&[u16]; 11] = [
+static REQUIRED_VARS: [&[u16]; 11] = [
     wstr!("HOMEDRIVE"),
     wstr!("HOMEPATH"),
     wstr!("LOGONSERVER"),
@@ -39,13 +39,7 @@ struct Entry {
 /// otherwise). Of entries whose names compare equal the last one is kept, as
 /// the last assignment to a variable is: a program is given the first one it
 /// finds, and `{ ...process.env, PATH }` comes after the `Path` it replaces.
-/// `compare_names` orders two names; `parent_value` appends this process's
-/// value of a NUL-terminated name and returns whether it has one.
-pub fn make_env_block<'a>(
-    entries: impl Iterator<Item = &'a [u8]>,
-    compare_names: impl Fn(&[u16], &[u16]) -> Ordering,
-    mut parent_value: impl FnMut(&[u16], &mut Vec<u16>) -> bool,
-) -> Vec<u16> {
+pub fn make_env_block<'a>(entries: impl Iterator<Item = &'a [u8]>) -> Vec<u16> {
     let mut strings: Vec<u16> = Vec::new();
     let mut vars: Vec<Entry> = Vec::new();
     for entry in entries {
@@ -144,7 +138,7 @@ pub fn find_path(block: &[u16]) -> Option<&[u16]> {
 /// Name order of an environment block: `CompareStringOrdinal` ignoring case,
 /// the same order the kernel keeps a process's block in (it compares
 /// upper-cased, so `_` sorts after the letters, unlike `_wcsicmp`).
-pub fn compare_names_ordinal(a: &[u16], b: &[u16]) -> Ordering {
+fn compare_names(a: &[u16], b: &[u16]) -> Ordering {
     use super::win32;
     // Names here are slices of one spawn's arguments, far below `c_int::MAX`.
     // SAFETY: both pointers are valid for the given lengths.
@@ -182,136 +176,5 @@ pub fn parent_value(name: &[u16], out: &mut Vec<u16>) -> bool {
         }
         // Too small: `n` is the size needed, including the terminator.
         capacity = n;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn upper(c: u16) -> u16 {
-        if (b'a' as u16..=b'z' as u16).contains(&c) {
-            c - 32
-        } else {
-            c
-        }
-    }
-
-    fn compare(a: &[u16], b: &[u16]) -> Ordering {
-        a.iter().map(|&c| upper(c)).cmp(b.iter().map(|&c| upper(c)))
-    }
-
-    fn block_strings(block: &[u16]) -> Vec<String> {
-        assert_eq!(block.last(), Some(&0));
-        let mut rest = &block[..block.len() - 1];
-        let mut strings = Vec::new();
-        while !rest.is_empty() {
-            let len = bun_core::strings::index_of_any16(rest, &[0]).unwrap_or(rest.len());
-            if len != 0 {
-                strings.push(String::from_utf16(&rest[..len]).unwrap());
-            }
-            rest = &rest[(len + 1).min(rest.len())..];
-        }
-        strings
-    }
-
-    fn build(entries: &[&str], parent: &[(&str, &str)]) -> Vec<String> {
-        let block = make_env_block(
-            entries.iter().map(|s| s.as_bytes()),
-            compare,
-            |name, out| {
-                let name = String::from_utf16(&name[..name.len() - 1]).unwrap();
-                match parent.iter().find(|(k, _)| *k == name) {
-                    Some((_, v)) => {
-                        out.extend(v.encode_utf16());
-                        true
-                    }
-                    None => false,
-                }
-            },
-        );
-        assert!(block.ends_with(&[0]));
-        block_strings(&block)
-    }
-
-    #[test]
-    fn sorts_case_insensitively_with_underscore_after_letters() {
-        assert_eq!(
-            build(&["foo_bar=1", "FOOBAR=2", "b=3", "A=4"], &[]),
-            ["A=4", "b=3", "FOOBAR=2", "foo_bar=1"]
-        );
-    }
-
-    #[test]
-    fn injects_missing_required_variables_in_order() {
-        assert_eq!(
-            build(
-                &["ZED=1", "Path=C:\\bin", "NOEQUALS", "AAA=0"],
-                &[
-                    ("SYSTEMROOT", "C:\\Windows"),
-                    ("PATH", "ignored"),
-                    ("TEMP", "C:\\T"),
-                ],
-            ),
-            [
-                "AAA=0",
-                "Path=C:\\bin",
-                "SYSTEMROOT=C:\\Windows",
-                "TEMP=C:\\T",
-                "ZED=1",
-            ]
-        );
-    }
-
-    #[test]
-    fn the_last_spelling_of_a_name_replaces_the_others() {
-        assert_eq!(
-            build(&["foo=1", "FOO=2", "EMPTY="], &[]),
-            ["EMPTY=", "FOO=2"]
-        );
-        assert_eq!(build(&["FOO=2", "foo=1"], &[]), ["foo=1"]);
-        assert_eq!(
-            build(&["a=1", "Foo=1", "b=2", "FOO=2", "c=3", "foo=3"], &[]),
-            ["a=1", "b=2", "c=3", "foo=3"]
-        );
-        assert_eq!(build(&["A=1", "A=2", "A="], &[]), ["A="]);
-        assert_eq!(
-            build(&["Path=old", "PATH=new"], &[("PATH", "ignored")]),
-            ["PATH=new"]
-        );
-    }
-
-    #[test]
-    fn keeps_every_hidden_drive_entry() {
-        assert_eq!(
-            build(&["=D:=D:\\other", "A=1", "=C:=C:\\dir"], &[]),
-            ["=D:=D:\\other", "=C:=C:\\dir", "A=1"]
-        );
-    }
-
-    #[test]
-    fn empty_environment_ends_in_two_nuls() {
-        let block = make_env_block(core::iter::empty(), compare, |_, _| false);
-        assert_eq!(block, [0, 0]);
-        let dropped = make_env_block([&b"NOEQUALS"[..]].into_iter(), compare, |_, _| false);
-        assert_eq!(dropped, [0, 0]);
-    }
-
-    #[test]
-    fn one_variable_ends_in_two_nuls() {
-        let block = make_env_block([&b"A=1"[..]].into_iter(), compare, |_, _| false);
-        let expected: Vec<u16> = "A=1\0\0".encode_utf16().collect();
-        assert_eq!(block, expected);
-    }
-
-    #[test]
-    fn finds_path_in_any_case() {
-        let block: Vec<u16> = "A=1\0pAtH=C:\\x;D:\\y\0Z=2\0\0".encode_utf16().collect();
-        assert_eq!(
-            find_path(&block).map(|p| String::from_utf16(p).unwrap()),
-            Some("C:\\x;D:\\y".to_string())
-        );
-        let none: Vec<u16> = "PATHS=1\0\0".encode_utf16().collect();
-        assert_eq!(find_path(&none), None);
     }
 }

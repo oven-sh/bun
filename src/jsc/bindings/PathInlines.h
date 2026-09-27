@@ -1,6 +1,8 @@
 #pragma once
 #include "root.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostOS.h"
+#endif
 
 #define POSIX_PATH_SEP_s "/"_s
 #define POSIX_PATH_SEP '/'
@@ -26,6 +28,7 @@
 
 ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 {
+#if defined(BUN_PORTABLE)
 #if BUN_HOST_MAY_BE_WINDOWS
     if (Bun::hostIsWindows()) {
         if (input.is8Bit()) {
@@ -55,7 +58,40 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         }
     }
 #endif
+#else
+#if OS(WINDOWS)
+    if (input.is8Bit()) {
+        auto len = input.length();
+        if (len < 1)
+            return false;
+        const auto bytes = input.span8().data();
+        if (IS_SLASH(bytes[0]))
+            return true;
+        if (len < 3)
+            return false;
+        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
+            return true;
+        return false;
+    } else {
+        auto len = input.length();
+        if (len < 1)
+            return false;
+        const auto bytes = input.span16().data();
+        if (IS_SLASH(bytes[0]))
+            return true;
+        if (len < 3)
+            return false;
+        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
+            return true;
+        return false;
+    }
+#else // OS(WINDOWS)
     return input.startsWith('/');
+#endif
+#endif
+#if defined(BUN_PORTABLE)
+    return input.startsWith('/');
+#endif
 }
 
 #undef IS_LETTER

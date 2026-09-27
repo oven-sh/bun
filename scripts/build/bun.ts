@@ -323,6 +323,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(rescleBinding);
   }
 
+  // Portable-only cpp sources: the host OS that the image learns when it runs
+  // (BunHostOS.h, BunHostPath.h). Outside of the globbed directories, so that
+  // every other build has the sources, and the unified bundles, it had.
+  if (cfg.portable) {
+    cxxSources.push(
+      resolve(cfg.cwd, "src/jsc/bindings/portable/BunHostOS.cpp"),
+      resolve(cfg.cwd, "src/jsc/bindings/portable/BunHostPath.cpp"),
+    );
+  }
+
   // Deps with provides.sources compiled in the loop below so each dep's
   // phony can point at its own .o files.
 

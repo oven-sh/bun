@@ -1,5 +1,7 @@
 #include "root.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 #include "BunCPUProfiler.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -130,7 +132,11 @@ static WTF::String formatLocation(const WTF::String& url, int lineNumber)
     WTF::String path = url;
     WTF::URL parsedUrl { url };
     if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
+#if defined(BUN_PORTABLE)
         path = Bun::fileSystemPath(parsedUrl);
+#else
+        path = parsedUrl.fileSystemPath();
+#endif
 
     if (lineNumber >= 0) {
         WTF::StringBuilder sb;
@@ -416,7 +422,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             isAbsolutePath = true;
                         }
                         if (isAbsolutePath)
+#if defined(BUN_PORTABLE)
                             u = Bun::fileURLWithFileSystemPath(u).string();
+#else
+                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
+#endif
                     };
 
                     // Function definition location. JSC returns these 1-based;
@@ -667,7 +677,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                                 isAbsolutePath = true;
                         }
                         if (isAbsolutePath)
+#if defined(BUN_PORTABLE)
                             url = Bun::fileURLWithFileSystemPath(url).string();
+#else
+                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
+#endif
                     }
 
                     if (frame.hasExpressionInfo()) {

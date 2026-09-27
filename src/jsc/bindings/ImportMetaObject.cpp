@@ -1,5 +1,7 @@
 #include "ErrorCode.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 #include "root.h"
 #include "headers.h"
 
@@ -95,10 +97,18 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     URL url;
     if (index != notFound) {
         StringView view = specifier;
+#if defined(BUN_PORTABLE)
         url = Bun::fileURLWithFileSystemPath(view.substring(0, index));
+#else
+        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
+#endif
         url.setQuery(view.substring(index + 1));
     } else {
+#if defined(BUN_PORTABLE)
         url = Bun::fileURLWithFileSystemPath(specifier);
+#else
+        url = URL::fileURLWithFileSystemPath(specifier);
+#endif
     }
     return create(globalObject, url.string());
 }
@@ -411,7 +421,11 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
 #endif
     ) {
+#if defined(BUN_PORTABLE)
         auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : Bun::fileURLWithFileSystemPath(fromWTFString);
+#else
+        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+#endif
         if (!fromURL.isValid()) {
             JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
             RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
@@ -441,7 +455,11 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     RETURN_IF_EXCEPTION(scope, {});
     if (isAbsolutePath(resultString)) {
         // file path -> url
+#if defined(BUN_PORTABLE)
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, Bun::fileURLWithFileSystemPath(resultString).string())));
+#else
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
+#endif
     }
     return JSValue::encode(result);
 }
@@ -538,7 +556,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+#if defined(BUN_PORTABLE)
         return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(Bun::fileSystemPath(url), url.queryWithLeadingQuestionMark())));
+#else
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+#endif
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())
@@ -648,12 +670,20 @@ void ImportMetaObject::finishCreation(VM& vm)
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
 
+#if defined(BUN_PORTABLE)
         WTF::URL url = isAbsolutePath(meta->url) ? Bun::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+#else
+        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+#endif
         WTF::String path;
 
         if (url.isValid()) {
             if (url.protocolIsFile()) {
+#if defined(BUN_PORTABLE)
                 path = Bun::fileSystemPath(url);
+#else
+                path = url.fileSystemPath();
+#endif
             } else {
                 path = url.path().toString();
             }
@@ -677,7 +707,11 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String dirname;
 
         if (url.protocolIsFile()) {
+#if defined(BUN_PORTABLE)
             dirname = Bun::fileSystemPath(url);
+#else
+            dirname = url.fileSystemPath();
+#endif
         } else {
             dirname = url.path().toString();
         }
@@ -697,7 +731,11 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String path;
 
         if (url.protocolIsFile()) {
+#if defined(BUN_PORTABLE)
             path = Bun::fileSystemPath(url);
+#else
+            path = url.fileSystemPath();
+#endif
         } else {
             path = url.path().toString();
         }
@@ -716,7 +754,11 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::URL url(meta->url);
         if (url.protocolIsFile()) {
+#if defined(BUN_PORTABLE)
             init.set(jsString(init.vm, Bun::fileSystemPath(url)));
+#else
+            init.set(jsString(init.vm, url.fileSystemPath()));
+#endif
         } else {
             init.set(jsString(init.vm, url.path()));
         }

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "root.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostOS.h"
+#endif
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -37,8 +39,18 @@ public:
         Locker locker { m_lock };
         String normalized = normalizeKey(key).isolatedCopy();
         auto result = m_map.add(normalized, Entry {});
+#if defined(BUN_PORTABLE)
         if (result.isNewEntry)
             result.iterator->value.name = Bun::hostIsWindows() ? key.isolatedCopy() : normalized;
+#else
+        if (result.isNewEntry) {
+#if OS(WINDOWS)
+            result.iterator->value.name = key.isolatedCopy();
+#else
+            result.iterator->value.name = normalized;
+#endif
+        }
+#endif
         result.iterator->value.value = value.isolatedCopy();
     }
 
@@ -63,7 +75,15 @@ public:
     // and is case-sensitive for one rooted at a snapshot worker (MapKVStore).
     static ALWAYS_INLINE String normalizeKey(const String& key)
     {
+#if defined(BUN_PORTABLE)
         return Bun::hostIsWindows() ? key.convertToASCIIUppercase() : key;
+#else
+#if OS(WINDOWS)
+        return key.convertToASCIIUppercase();
+#else
+        return key;
+#endif
+#endif
     }
 
 private:

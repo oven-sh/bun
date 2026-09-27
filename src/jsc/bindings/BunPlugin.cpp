@@ -1,5 +1,7 @@
 #include "BunPlugin.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -652,7 +654,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         if (specifier.startsWith("file:"_s)) {
             URL fileURL = URL(url, specifier);
             if (fileURL.isValid()) {
+#if defined(BUN_PORTABLE)
                 specifier = Bun::fileSystemPath(fileURL);
+#else
+                specifier = fileURL.fileSystemPath();
+#endif
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -663,7 +669,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         }
 
         if (url.isValid() && url.protocolIsFile()) {
+#if defined(BUN_PORTABLE)
             auto fromString = Bun::fileSystemPath(url);
+#else
+            auto fromString = url.fileSystemPath();
+#endif
             BunString from = Bun::toString(fromString);
             // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
             // while resolving (e.g. by an onResolve plugin) propagates.
@@ -684,7 +694,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                     if (relativeURL.protocolIsFile())
+#if defined(BUN_PORTABLE)
                         specifier = Bun::fileSystemPath(relativeURL);
+#else
+                        specifier = relativeURL.fileSystemPath();
+#endif
                     else
                         specifier = relativeURL.string();
 
@@ -888,9 +902,17 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         String joinedPath = path;
 
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
+#if defined(BUN_PORTABLE)
             auto url = Bun::fileURLWithFileSystemPath(from);
+#else
+            auto url = WTF::URL::fileURLWithFileSystemPath(from);
+#endif
             ASSERT(url.isValid());
+#if defined(BUN_PORTABLE)
             joinedPath = Bun::fileSystemPath(URL(url, path));
+#else
+            joinedPath = URL(url, path).fileSystemPath();
+#endif
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

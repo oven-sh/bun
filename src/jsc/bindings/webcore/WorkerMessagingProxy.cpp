@@ -25,7 +25,9 @@
  */
 
 #include "config.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 #include "WorkerMessagingProxy.h"
 
 #include "BunClientData.h"
@@ -129,7 +131,11 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
             WTF::URL urlObject = WTF::URL(str);
             if (!urlObject.isValid())
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
+#if defined(BUN_PORTABLE)
             str = Bun::fileSystemPath(urlObject);
+#else
+            str = urlObject.fileSystemPath();
+#endif
         }
         preloadModules.append(Bun::toString(str));
     }

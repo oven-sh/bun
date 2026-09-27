@@ -1,7 +1,9 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostOS.h"
+#endif
 #include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
@@ -83,7 +85,6 @@ static void putHostConstants(VM& vm, JSObject* object, HostConstants category)
         object->putDirect(vm, Identifier::fromString(vm, String(std::span { name, nameLength })), jsNumber(value));
 }
 #endif
-
 static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();

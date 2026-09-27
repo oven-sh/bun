@@ -1,7 +1,9 @@
 
 
 #include "BunString.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
@@ -568,7 +570,11 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
 
 extern "C" BunString URL__getFileURLString(const BunString* filePath)
 {
+#if defined(BUN_PORTABLE)
     return Bun::toStringRef(Bun::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
+#else
+    return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
+#endif
 }
 
 extern "C" size_t URL__originLength(const char* latin1_slice, size_t len)
@@ -632,7 +638,11 @@ extern "C" BunString URL__pathFromFileURL(const BunString* input)
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
+#if defined(BUN_PORTABLE)
     return Bun::toStringRef(Bun::fileSystemPath(url));
+#else
+    return Bun::toStringRef(url.fileSystemPath());
+#endif
 }
 
 extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString* relativeStr)

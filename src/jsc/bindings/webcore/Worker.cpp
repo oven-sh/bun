@@ -25,7 +25,9 @@
  */
 
 #include "config.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 #include "Worker.h"
 
 #include "InternalModuleRegistry.h"
@@ -75,7 +77,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         WTF::URL urlObject { url };
         if (!urlObject.isValid())
             return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
+#if defined(BUN_PORTABLE)
         url = Bun::fileSystemPath(urlObject);
+#else
+        url = urlObject.fileSystemPath();
+#endif
     }
 
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));

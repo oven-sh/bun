@@ -1,29 +1,27 @@
 #pragma once
 
-// The operating system this process runs on: what process.platform names, and every decision that has to
-// agree with it. The C++ view of bun_core::host (src/bun_core/host.rs).
+// The operating system this process runs on, in the portable image (BUN_PORTABLE): what process.platform
+// names there, and every decision that has to agree with it. The C++ view of bun_core::host
+// (src/bun_core/host.rs).
 //
-// OS(WINDOWS), OS(DARWIN), OS(LINUX) say what the code is COMPILED for. In every build but one that is also
-// where it runs, and the functions here are constants. The portable image (BUN_PORTABLE) is compiled for
-// Linux and runs on Linux, macOS and Windows: there they read one byte that is written once at startup.
+// OS(WINDOWS), OS(DARWIN), OS(LINUX) say what the code is COMPILED for. In every build but the portable
+// image that is also where it runs, and such a build reads nothing of this file. The portable image is
+// compiled for Linux and runs on Linux, macOS and Windows: the functions here read one byte that is written
+// once at startup.
+
+#if defined(BUN_PORTABLE)
 
 #include <wtf/Compiler.h>
 #include <wtf/Platform.h>
 #include <wtf/text/ASCIILiteral.h>
 #include <cstdint>
 
-#if defined(BUN_PORTABLE)
 #include <atomic>
 
-// Code for a Windows host is compiled where the target is Windows, and in the portable image.
+// The portable image has the code for a Windows host and the code for every other one.
 #define BUN_HOST_MAY_BE_WINDOWS 1
 #define BUN_HOST_MAY_BE_POSIX 1
 #define BUN_HOST_OS_FUNCTION ALWAYS_INLINE
-#else
-#define BUN_HOST_MAY_BE_WINDOWS OS(WINDOWS)
-#define BUN_HOST_MAY_BE_POSIX !OS(WINDOWS)
-#define BUN_HOST_OS_FUNCTION constexpr
-#endif
 
 namespace Bun {
 
@@ -35,8 +33,6 @@ enum class HostOS : uint8_t {
     FreeBSD = 4,
 };
 
-#if defined(BUN_PORTABLE)
-
 extern "C" std::atomic<uint8_t> Bun__hostOS;
 extern "C" uint8_t Bun__readHostOS();
 
@@ -47,23 +43,6 @@ ALWAYS_INLINE HostOS hostOS()
         os = Bun__readHostOS();
     return static_cast<HostOS>(os);
 }
-
-#else
-
-constexpr HostOS hostOS()
-{
-#if OS(WINDOWS)
-    return HostOS::Windows;
-#elif OS(DARWIN)
-    return HostOS::Mac;
-#elif OS(FREEBSD)
-    return HostOS::FreeBSD;
-#else
-    return HostOS::Linux;
-#endif
-}
-
-#endif
 
 BUN_HOST_OS_FUNCTION bool hostIsWindows() { return hostOS() == HostOS::Windows; }
 BUN_HOST_OS_FUNCTION bool hostIsMac() { return hostOS() == HostOS::Mac; }
@@ -92,3 +71,5 @@ BUN_HOST_OS_FUNCTION ASCIILiteral hostPlatformName()
 } // namespace Bun
 
 #undef BUN_HOST_OS_FUNCTION
+
+#endif

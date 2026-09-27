@@ -3,7 +3,9 @@
 
 #include "helpers.h"
 #include "JSEnvironmentVariableMap.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostOS.h"
+#endif
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -470,6 +472,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     return true;
 }
 
+#if defined(BUN_PORTABLE)
 #if BUN_HOST_MAY_BE_WINDOWS
 extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
@@ -547,6 +550,85 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 #endif
+#else
+#if OS(WINDOWS)
+extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
+
+// Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
+// plus the TZ side effect so it survives `delete process.env.TZ`. Returns the string.
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    JSValue value = callFrame->argument(1);
+    JSC::JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (key.isString()) {
+        auto keyView = asString(key)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (WTF::equal(keyView, "TZ"_s)) {
+            applyTimeZoneEnvValue(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+            applyTLSRejectEnvValue(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return JSValue::encode(string);
+}
+
+// `delete process.env.X` on Windows: undo X's native side effect (POSIX handles this in
+// JSEnvironmentVariableMap::deleteProperty; the Windows internalEnv is a plain object).
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    if (!key.isString())
+        return JSValue::encode(jsUndefined());
+    auto keyView = asString(key)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (WTF::equal(keyView, "TZ"_s)) {
+        if (shouldApplyTZSideEffect(globalObject)) {
+            WTF::setTimeZoneOverride(String());
+            resetDateCachesAfterTimeZoneChange(vm);
+        }
+    } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(global->vm());
+    ASSERT(callFrame->argumentCount() == 2);
+    ASSERT(callFrame->uncheckedArgument(0).isString());
+    WTF::String string1 = callFrame->uncheckedArgument(0).toWTFString(global);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue arg2 = callFrame->uncheckedArgument(1);
+    ASSERT(arg2.isNull() || arg2.isString());
+    if (arg2.isCell()) {
+        WTF::String string2 = arg2.toWTFString(global);
+        RETURN_IF_EXCEPTION(scope, {});
+        BunString k = Bun::toString(string1);
+        BunString v = Bun::toString(string2);
+        Bun__Process__editWindowsEnvVar(&k, &v);
+        // fetch() reads the proxy variables from the native env map.
+        if (isProxyEnvVarName(global->vm(), string1))
+            Bun__setEnvValue(global, &k, &v);
+    } else {
+        BunString k = Bun::toString(string1);
+        BunString v = { .tag = BunStringTag::Dead };
+        Bun__Process__editWindowsEnvVar(&k, &v);
+        if (isProxyEnvVarName(global->vm(), string1))
+            Bun__setEnvValue(global, &k, &v);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+#endif
+#endif
 
 // Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
 // called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
@@ -555,6 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 // reaches the OS env too. `value == nullptr` deletes.
 static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
 {
+#if defined(BUN_PORTABLE)
 #if BUN_HOST_MAY_BE_WINDOWS
     if (!Bun::hostIsWindows() || !store || !store->isMainRooted())
         return;
@@ -565,6 +648,19 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
     UNUSED_PARAM(store);
     UNUSED_PARAM(key);
     UNUSED_PARAM(value);
+#endif
+#else
+#if OS(WINDOWS)
+    if (!store || !store->isMainRooted())
+        return;
+    BunString k = Bun::toString(key);
+    BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
+    Bun__Process__editWindowsEnvVar(&k, &v);
+#else
+    UNUSED_PARAM(store);
+    UNUSED_PARAM(key);
+    UNUSED_PARAM(value);
+#endif
 #endif
 }
 
@@ -980,6 +1076,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
+#if defined(BUN_PORTABLE)
     const bool isWindows = Bun::hostIsWindows();
     JSC::JSObject* object = nullptr;
 #if BUN_HOST_MAY_BE_WINDOWS
@@ -1004,6 +1101,25 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         object = JSEnvironmentVariableMap::create(vm, structure);
     }
 #endif
+#else
+#if OS(WINDOWS)
+    // On Windows the windowsEnv Proxy intercepts every operation before the exotic
+    // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
+    // the exotic put's symbol-key TypeError. Keep a plain object; semantics live in traps.
+    JSC::JSObject* object = nullptr;
+    if (count > 0 && count < 63) {
+        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+    } else {
+        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
+    }
+
+    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    RETURN_IF_EXCEPTION(scope, {});
+#else
+    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
+#endif
+#endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
     String NODE_TLS_REJECT_UNAUTHORIZED = String("NODE_TLS_REJECT_UNAUTHORIZED"_s);
@@ -1019,9 +1135,15 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         size_t len = Bun__getEnvKey(list, i, &chars);
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
+#if defined(BUN_PORTABLE)
 #if BUN_HOST_MAY_BE_WINDOWS
         if (isWindows)
             keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+#endif
+#else
+#if OS(WINDOWS)
+        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+#endif
 #endif
         if (name == TZ) {
             hasTZ = true;
@@ -1036,7 +1158,15 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             continue;
         }
         ASSERT(len > 0);
+#if defined(BUN_PORTABLE)
         String idName = isWindows ? name.convertToASCIIUppercase() : name;
+#else
+#if OS(WINDOWS)
+        String idName = name.convertToASCIIUppercase();
+#else
+        String idName = name;
+#endif
+#endif
         Identifier identifier = Identifier::fromString(vm, idName);
 
         // CustomGetterSetter doesn't support indexed properties yet.
@@ -1086,6 +1216,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         vm,
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
+#if defined(BUN_PORTABLE)
 #if BUN_HOST_MAY_BE_WINDOWS
     if (isWindows) {
         auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
@@ -1111,6 +1242,36 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         RELEASE_AND_RETURN(scope, result);
     }
 #endif
+#else
+#if OS(WINDOWS)
+    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
+
+    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer args;
+    args.append(object);
+    args.append(keyArray);
+    args.append(editWindowsEnvVar);
+    args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getSourceEvent);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return jsUndefined();
+    }
+
+    RELEASE_AND_RETURN(scope, result);
+#else
     return object;
+#endif
+#endif
+#if defined(BUN_PORTABLE)
+    return object;
+#endif
 }
 }

@@ -8,7 +8,9 @@
  *      can be disabled if necessary. Consult cppbind.ts for details.
  */
 #include "root.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/TopExceptionScope.h"
@@ -2675,7 +2677,11 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
             return BunString { BunStringTag::Dead, nullptr };
         }
 #endif
+#if defined(BUN_PORTABLE)
         return Bun::toStringRef(Bun::fileSystemPath(url));
+#else
+        return Bun::toStringRef(url.fileSystemPath());
+#endif
     }
     *errorCode = 3;
     return BunString { BunStringTag::Dead, nullptr };
@@ -3427,18 +3433,35 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     JSC::EncodedJSValue JSValue5, JSC::EncodedJSValue* arg6)
 {
     WTF::String src = WTF::String::fromUTF8(std::span { arg1, arg2 }).isolatedCopy();
+#if defined(BUN_PORTABLE)
     WTF::URL origin = Bun::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { originUrlPtr, originURLLen })).isolatedCopy();
     WTF::URL referrer = Bun::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
+#else
+    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { originUrlPtr, originURLLen })).isolatedCopy();
+    WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
+#endif
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::SourceCode sourceCode = JSC::makeSource(
+#if defined(BUN_PORTABLE)
         src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, Bun::fileSystemPath(origin),
+#else
+        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
+#endif
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
+#if defined(BUN_PORTABLE)
     globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, Bun::fileSystemPath(origin)), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
+#else
+    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
+#endif
     RETURN_IF_EXCEPTION(scope, {});
+#if defined(BUN_PORTABLE)
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, Bun::fileSystemPath(origin)), JSC::Identifier::fromString(vm, Bun::fileSystemPath(referrer)), nullptr, nullptr);
+#else
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::Identifier::fromString(vm, referrer.fileSystemPath()), nullptr, nullptr);
+#endif
 
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);

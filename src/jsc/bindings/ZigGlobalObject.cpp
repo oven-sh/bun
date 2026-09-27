@@ -1,8 +1,12 @@
 #include "root.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostPath.h"
+#endif
 
 #include "ZigGlobalObject.h"
+#if defined(BUN_PORTABLE)
 #include "BunHostOS.h"
+#endif
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
@@ -1818,6 +1822,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetUserAgent, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);
+#if defined(BUN_PORTABLE)
     // https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
     // https://github.com/oven-sh/bun/issues/4588
     switch (Bun::hostOS()) {
@@ -1835,6 +1840,25 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * gl
 #endif
     }
     return JSValue::encode(JSC::jsEmptyString(vm));
+#else
+// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
+// https://github.com/oven-sh/bun/issues/4588
+#if OS(DARWIN)
+    return JSValue::encode(JSC::jsString(vm, String("MacIntel"_s)));
+#elif OS(WINDOWS)
+    return JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
+#elif OS(LINUX)
+    return JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
+#elif OS(FREEBSD)
+#if CPU(ARM64)
+    return JSValue::encode(JSC::jsString(vm, String("FreeBSD arm64"_s)));
+#else
+    return JSValue::encode(JSC::jsString(vm, String("FreeBSD amd64"_s)));
+#endif
+#else
+    return JSValue::encode(JSC::jsEmptyString(vm));
+#endif
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
@@ -3531,7 +3555,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
+#if defined(BUN_PORTABLE)
                 keyString = Bun::fileSystemPath(url);
+#else
+                keyString = url.fileSystemPath();
+#endif
             } else {
                 keyString = moduleName;
             }
@@ -3666,7 +3694,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
+#if defined(BUN_PORTABLE)
         sourceOriginStringHolder = Bun::fileSystemPath(sourceURL);
+#else
+        sourceOriginStringHolder = sourceURL.fileSystemPath();
+#endif
         auto query = sourceURL.queryWithLeadingQuestionMark();
         auto referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
@@ -3695,7 +3727,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
+#if defined(BUN_PORTABLE)
                 moduleName = Bun::fileSystemPath(url);
+#else
+                moduleName = url.fileSystemPath();
+#endif
             }
         }
 

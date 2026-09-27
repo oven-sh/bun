@@ -26,16 +26,15 @@ export interface Places {
   /** The vendor directory of a checkout whose build has fetched it. $VENDOR, or the one of this checkout. */
   vendor: string;
   /**
-   * The build directory of a portable build of bun: the headers of WebKit that bun's C++ includes, and the
-   * configuration of c-ares that bun's build wrote. $PORTABLE_BUILD, or build/release-portable of this
-   * checkout, which `bun misctools/portable/build.ts bun` makes.
+   * The build directory of a portable build of bun: the headers of WebKit that bun's C++ includes, the
+   * configuration of c-ares that bun's build wrote, and what the file system slice takes from it.
    */
   portableBuild: string;
 }
 
 /** Takes `--out <dir>` out of the arguments. Without it: build/portable/<arch> in the repository. */
 export function places(args: string[]): Places {
-  const { out, slice, image: fileSystemImage, host } = placesOfTheSlice(args);
+  const { out, slice, image: fileSystemImage, host, portableBuild } = placesOfTheSlice(args);
   const loop = join(out, "loop");
   return {
     out,
@@ -48,6 +47,6 @@ export function places(args: string[]): Places {
     checked: join(loop, "wincheck"),
     sdk: resolve(process.env.SDK ?? join(out, "winsdk")),
     vendor: resolve(process.env.VENDOR ?? join(REPOSITORY, "vendor")),
-    portableBuild: resolve(process.env.PORTABLE_BUILD ?? join(REPOSITORY, "build", "release-portable")),
+    portableBuild,
   };
 }

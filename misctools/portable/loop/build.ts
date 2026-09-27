@@ -429,6 +429,9 @@ panic = "abort"
           "-Ztls-model=emulated",
           "-Clink-self-contained=no",
           `-Clinker=${llvm}/clang++`,
+          // In front of the C library, as bun's link has its allocator: malloc and its family are the
+          // ones of mimalloc, and the ones of the C library are not taken.
+          `-Zpre-link-args=${join(slice, "cdeps/libcdeps.a")}`,
           `-Clink-arg=--config=${join(sysroot, "portable.cfg")}`,
           "-Clink-arg=-Qunused-arguments",
           `-Clink-arg=-Wl,--Map=${map}`,

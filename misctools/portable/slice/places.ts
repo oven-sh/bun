@@ -13,6 +13,12 @@ export interface Places {
   image: string;
   /** The Linux test host, which `bun misctools/portable/build.ts host` makes. */
   host: string;
+  /**
+   * The build directory of a portable build of bun: what bun compiles of its C and C++ for the image, and the
+   * command of every source. $PORTABLE_BUILD, or build/release-portable of this checkout, which
+   * `bun misctools/portable/build.ts bun` makes.
+   */
+  portableBuild: string;
 }
 
 /** Takes `--out <dir>` out of the arguments. Without it: build/portable/<arch> in the repository. */
@@ -22,5 +28,11 @@ export function places(args: string[]): Places {
   if (at >= 0 && option === undefined) throw new Error("--out needs a directory");
   const out = resolve(option ?? join(REPOSITORY, "build", "portable", ARCH));
   const slice = join(out, "slice");
-  return { out, slice, image: join(slice, "bun_fs_slice.img"), host: join(out, "host-linux") };
+  return {
+    out,
+    slice,
+    image: join(slice, "bun_fs_slice.img"),
+    host: join(out, "host-linux"),
+    portableBuild: resolve(process.env.PORTABLE_BUILD ?? join(REPOSITORY, "build", "release-portable")),
+  };
 }

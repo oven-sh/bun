@@ -6,9 +6,16 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert";
+import diagnostics_channel from "node:diagnostics_channel";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http, { Agent, createServer, request as httpRequest } from "node:http";
 import https from "node:https";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
+import { dirname, join } from "node:path";
+import type { Duplex } from "node:stream";
+import tls from "node:tls";
+import { fileURLToPath } from "node:url";
 
 // Helper to make a request and get the response.
 // Uses a shared agent so that all requests go through the same TCP connection,
@@ -33,7 +40,7 @@ function makeRequest(
   });
 }
 
-function listenOnRandomPort(server: ReturnType<typeof createServer>): Promise<number> {
+function listenOnRandomPort(server: net.Server): Promise<number> {
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address() as AddressInfo;
@@ -209,3 +216,401 @@ describe(
     }
   },
 );
+
+function proxiedAgent(proxyUrl: string, options: https.AgentOptions = {}, AgentClass = https.Agent) {
+  return new AgentClass({ ...options, proxyEnv: { https_proxy: proxyUrl } } as any);
+}
+
+// What the request emits, in order, up to and including its 'close'.
+function eventsOf(req: http.ClientRequest) {
+  const events: unknown[] = [];
+  const { promise, resolve } = Promise.withResolvers<unknown[]>();
+  req.on("socket", () => events.push("socket"));
+  req.on("response", res => {
+    events.push(`response ${res.statusCode}`);
+    res.resume();
+  });
+  req.on("abort", () => events.push("abort"));
+  req.on("error", (err: NodeJS.ErrnoException) => events.push({ code: err.code, message: err.message }));
+  req.on("close", () => {
+    events.push("close");
+    resolve(events);
+  });
+  return promise;
+}
+
+describe(
+  "https request through a proxy that ends the connection before the TLS handshake is done",
+  { skip: typeof setGlobalProxyFromEnv !== "function" },
+  () => {
+    const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+    // Self-signed, for localhost and 127.0.0.1.
+    const cert = readFileSync(join(fixtures, "cert.pem"), "utf8");
+    const key = readFileSync(join(fixtures, "cert.key"), "utf8");
+
+    const disconnected = {
+      code: "ECONNRESET",
+      message: "Client network socket disconnected before secure TLS connection was established",
+    };
+    const target = { host: "example.invalid", port: 443, path: "/" };
+    const established = "HTTP/1.1 200 Connection established\r\n\r\n";
+
+    // Every proxy ends its side with end(), after it read all that the client sent. A destroy()
+    // with unread bytes is a reset, and a reset takes another path through the client.
+    function endWithThe200(socket: net.Socket) {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end(established));
+    }
+    function endOnTheClientHello(socket: net.Socket) {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write(established);
+        socket.once("data", () => socket.end());
+      });
+    }
+    function endOnTheFirstBytes(socket: net.Socket) {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end());
+    }
+
+    const routes = [
+      { name: "the 200 and the end together", scheme: "http", createProxy: () => net.createServer(endWithThe200) },
+      {
+        name: "the end when the ClientHello arrives",
+        scheme: "http",
+        createProxy: () => net.createServer(endOnTheClientHello),
+      },
+      {
+        name: "an https proxy that ends during its own TLS handshake",
+        scheme: "https",
+        createProxy: () => net.createServer(endOnTheFirstBytes),
+      },
+      {
+        name: "an https proxy, the end when the ClientHello arrives",
+        scheme: "https",
+        createProxy: () => tls.createServer({ key, cert }, endOnTheClientHello).on("tlsClientError", () => {}),
+        trusted: true,
+      },
+    ];
+
+    for (const { name, scheme, createProxy, trusted } of routes) {
+      test(name, async () => {
+        const defaults = trusted ? tls.getCACertificates("default") : undefined;
+        if (defaults) tls.setDefaultCACertificates([...defaults, cert]);
+        const proxy = createProxy();
+        const agent = proxiedAgent(`${scheme}://127.0.0.1:${await listenOnRandomPort(proxy)}`);
+        try {
+          assert.deepStrictEqual(await eventsOf(https.get({ ...target, agent })), [disconnected, "close"]);
+          assert.strictEqual((agent as any).totalSocketCount, 0);
+        } finally {
+          agent.destroy();
+          proxy.close();
+          if (defaults) tls.setDefaultCACertificates(defaults);
+        }
+      });
+    }
+
+    // Runs `makeRequest` against a proxy that ends when the ClientHello arrives.
+    async function eventsThroughProxy(makeRequest: (agent: https.Agent, proxyUrl: string) => http.ClientRequest) {
+      const proxy = net.createServer(endOnTheClientHello);
+      const proxyUrl = `http://127.0.0.1:${await listenOnRandomPort(proxy)}`;
+      const agent = proxiedAgent(proxyUrl);
+      try {
+        return await eventsOf(makeRequest(agent, proxyUrl));
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    }
+
+    test("a request that was destroyed before the tunnel failed", async () => {
+      const events = await eventsThroughProxy(agent => {
+        const req = https.get({ ...target, agent });
+        req.destroy(new Error("destroyed by the user"));
+        return req;
+      });
+      assert.deepStrictEqual(events, [disconnected, "close"]);
+    });
+
+    test("a request that was aborted before the tunnel failed", async () => {
+      const events = await eventsThroughProxy(agent => {
+        const req = https.get({ ...target, agent });
+        req.abort();
+        return req;
+      });
+      assert.deepStrictEqual(events, ["abort", disconnected, "close"]);
+    });
+
+    test("new http.ClientRequest with the https: protocol", async () => {
+      const events = await eventsThroughProxy(agent => {
+        const req = new http.ClientRequest({ ...target, protocol: "https:", agent });
+        req.end();
+        return req;
+      });
+      assert.deepStrictEqual(events, [disconnected, "close"]);
+    });
+
+    test("the global agent after http.setGlobalProxyFromEnv()", async () => {
+      let restore: (() => void) | undefined;
+      try {
+        const events = await eventsThroughProxy((_agent, proxyUrl) => {
+          restore = setGlobalProxyFromEnv({ https_proxy: proxyUrl });
+          return https.get(target);
+        });
+        assert.deepStrictEqual(events, [disconnected, "close"]);
+      } finally {
+        restore?.();
+      }
+    });
+
+    test("the error is published once on http.client.request.error", async () => {
+      const published: unknown[] = [];
+      let request: http.ClientRequest | undefined;
+      function onRequestError(message: any) {
+        if (message.request === request) published.push(message.error.code);
+      }
+      diagnostics_channel.subscribe("http.client.request.error", onRequestError);
+      try {
+        const events = await eventsThroughProxy(agent => (request = https.get({ ...target, agent })));
+        assert.deepStrictEqual({ events, published }, { events: [disconnected, "close"], published: ["ECONNRESET"] });
+      } finally {
+        diagnostics_channel.unsubscribe("http.client.request.error", onRequestError);
+      }
+    });
+
+    test("a request that waited for a socket behind maxSockets", async () => {
+      const answer = Promise.withResolvers<void>();
+      // "close", so that the second request cannot take the socket of the first.
+      const server = https.createServer({ key, cert }, async (_req, res) => {
+        await answer.promise;
+        res.setHeader("connection", "close");
+        res.end("ok");
+      });
+      const serverPort = await listenOnRandomPort(server);
+
+      // The first CONNECT gets a tunnel to the server. Each later one gets the 200 and the end.
+      let connects = 0;
+      const proxy = createServer().on("connect", (_req, socket: net.Socket, head: Buffer) => {
+        if (++connects > 1) {
+          socket.on("error", () => {});
+          socket.write(established);
+          socket.once("data", () => socket.end());
+          return;
+        }
+        const upstream = net.connect(serverPort, "127.0.0.1", () => {
+          socket.write(established);
+          if (head.length > 0) upstream.write(head);
+          upstream.pipe(socket);
+          socket.pipe(upstream);
+        });
+        upstream.on("error", () => socket.destroy());
+        socket.on("error", () => upstream.destroy());
+      });
+      const agent = proxiedAgent(`http://127.0.0.1:${await listenOnRandomPort(proxy)}`, { maxSockets: 1 });
+      try {
+        const options = { host: "127.0.0.1", port: serverPort, path: "/", agent, rejectUnauthorized: false };
+        const first = https.get(options);
+        const firstEvents = eventsOf(first);
+        await once(first, "socket");
+
+        const second = https.get(options);
+        const secondEvents = eventsOf(second);
+        assert.strictEqual(Object.values(agent.requests).flat().length, 1);
+
+        // The socket of the first request closes after its response. Only then the agent opens one for the second.
+        answer.resolve();
+        assert.deepStrictEqual(
+          { first: await firstEvents, second: await secondEvents, connects },
+          { first: ["socket", "response 200", "close"], second: [disconnected, "close"], connects: 2 },
+        );
+      } finally {
+        answer.resolve();
+        agent.destroy();
+        proxy.close();
+        server.close();
+      }
+    });
+  },
+);
+
+describe(
+  "https.Agent and a proxy that refuses the CONNECT and holds the connection",
+  { skip: typeof setGlobalProxyFromEnv !== "function" },
+  () => {
+    // Node leaves the destroy to req.onSocket, which does not get the socket, so the connection stays open:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L389-L393
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L383-L385
+    // Bun closes the connection.
+    const closesTheConnection = process.versions.bun !== undefined;
+    const target = { host: "example.invalid", port: 443, servername: "example.invalid" };
+
+    async function holdingProxy(statusLine: string) {
+      const closed = Promise.withResolvers<void>();
+      const sockets: net.Socket[] = [];
+      const proxy = net.createServer(socket => {
+        sockets.push(socket);
+        socket.on("error", () => {});
+        socket.on("close", () => closed.resolve());
+        socket.once("data", () => socket.write(`${statusLine}\r\nContent-Length: 0\r\n\r\n`));
+      });
+      return {
+        url: `http://127.0.0.1:${await listenOnRandomPort(proxy)}`,
+        // Resolves when the client closed the connection.
+        closed: closed.promise,
+        close() {
+          for (const socket of sockets) socket.destroy();
+          proxy.close();
+        },
+      };
+    }
+
+    test("createConnection() gives its caller the socket", async () => {
+      const proxy = await holdingProxy("HTTP/1.1 407 Proxy Authentication Required");
+      const agent = proxiedAgent(proxy.url);
+      try {
+        const called = Promise.withResolvers<unknown>();
+        agent.createConnection(target, (err: any, socket: Duplex) =>
+          called.resolve({ code: err.code, statusCode: err.statusCode, destroyed: socket.destroyed }),
+        );
+        assert.deepStrictEqual(await called.promise, {
+          code: "ERR_PROXY_TUNNEL",
+          statusCode: 407,
+          destroyed: closesTheConnection,
+        });
+        if (closesTheConnection) await proxy.closed;
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    });
+
+    test("createConnection() closes the connection when the status line has no code, like node", async () => {
+      const proxy = await holdingProxy("HTTP/1.1 abc Nope");
+      const agent = proxiedAgent(proxy.url);
+      try {
+        const called = Promise.withResolvers<unknown>();
+        agent.createConnection(target, (err: any, socket: Duplex) =>
+          called.resolve({ code: err.code, statusCode: err.statusCode, destroyed: socket.destroyed }),
+        );
+        assert.deepStrictEqual(await called.promise, { code: "ERR_PROXY_TUNNEL", statusCode: NaN, destroyed: true });
+        await proxy.closed;
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    });
+
+    test("createSocket() gives its caller only the error", async () => {
+      const proxy = await holdingProxy("HTTP/1.1 407 Proxy Authentication Required");
+      const agent = proxiedAgent(proxy.url);
+      try {
+        const called = Promise.withResolvers<any[]>();
+        (agent as any).createSocket({ getHeader() {} }, target, (...args: any[]) => called.resolve(args));
+        const args = await called.promise;
+        assert.deepStrictEqual(
+          { length: args.length, code: args[0].code, statusCode: args[0].statusCode },
+          { length: 1, code: "ERR_PROXY_TUNNEL", statusCode: 407 },
+        );
+        if (closesTheConnection) await proxy.closed;
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    });
+
+    test("an agent that passes on only the error of createConnection()", async () => {
+      class OnlyTheError extends https.Agent {
+        createConnection(options: any, callback: any) {
+          return super.createConnection(options, (err: Error | null, socket: Duplex) =>
+            err ? callback(err) : callback(null, socket),
+          );
+        }
+      }
+      const proxy = await holdingProxy("HTTP/1.1 407 Proxy Authentication Required");
+      const agent = proxiedAgent(proxy.url, {}, OnlyTheError);
+      try {
+        const message = `Failed to establish tunnel to example.invalid:443 via ${proxy.url}: HTTP/1.1 407 Proxy Authentication Required`;
+        assert.deepStrictEqual(await eventsOf(https.get({ ...target, path: "/", agent })), [
+          { code: "ERR_PROXY_TUNNEL", message },
+          "close",
+        ]);
+        if (closesTheConnection) await proxy.closed;
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    });
+  },
+);
+
+describe("Agent#createConnection() that calls back with an error and a second argument", () => {
+  const failed = [{ code: "ERR_TEST_NO_CONNECTION", message: "no connection" }, "close"];
+
+  // The request reports the error and leaves the second argument alone.
+  async function eventsWith(second: unknown) {
+    class FailingAgent extends Agent {
+      createConnection(_options: any, callback: any): undefined {
+        const err = Object.assign(new Error("no connection"), { code: "ERR_TEST_NO_CONNECTION" });
+        process.nextTick(callback, err, second);
+      }
+    }
+    const agent = new FailingAgent();
+    try {
+      const req = httpRequest({ host: "example.invalid", port: 80, path: "/", agent });
+      req.end();
+      return await eventsOf(req);
+    } finally {
+      agent.destroy();
+    }
+  }
+
+  for (const [name, value] of [
+    ["a string", "socket"],
+    ["a number", 42],
+    ["an object with no destroy()", {}],
+  ] as const) {
+    test(name, async () => {
+      assert.deepStrictEqual(await eventsWith(value), failed);
+    });
+  }
+
+  test("an object with a destroy()", async () => {
+    let destroyCalls = 0;
+    const second = {
+      destroy() {
+        destroyCalls++;
+      },
+    };
+    assert.deepStrictEqual({ events: await eventsWith(second), destroyCalls }, { events: failed, destroyCalls: 0 });
+  });
+
+  test("a connected socket", async () => {
+    const server = net.createServer(socket => socket.on("error", () => {}));
+    const socket = net.connect(await listenOnRandomPort(server), "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      const events = await eventsWith(socket);
+      assert.deepStrictEqual({ events, destroyed: socket.destroyed }, { events: failed, destroyed: false });
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  test("a TLS socket that the server ended during the handshake", async () => {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end());
+    });
+    const socket = tls.connect({ host: "127.0.0.1", port: await listenOnRandomPort(server) });
+    try {
+      const [err] = await once(socket, "error");
+      assert.deepStrictEqual(
+        { code: err.code, events: await eventsWith(socket) },
+        { code: "ECONNRESET", events: failed },
+      );
+    } finally {
+      server.close();
+    }
+  });
+});

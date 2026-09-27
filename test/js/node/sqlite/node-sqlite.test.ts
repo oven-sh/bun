@@ -1,4 +1,4 @@
-import { heapStats } from "bun:jsc";
+import { describe as jscDescribe, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, statSync } from "node:fs";
@@ -1816,18 +1816,77 @@ describe("row-shape structure caching", () => {
     db.close();
   });
 
-  test("picks up column renames across ALTER TABLE (structure rebuilt per reset)", () => {
+  test("picks up column renames across ALTER TABLE (structure rebuilt on re-prepare)", () => {
     // sqlite3_prepare_v2 transparently re-prepares on SQLITE_SCHEMA,
     // so after ALTER TABLE … RENAME COLUMN the same `SELECT *`
     // statement returns the SAME column count with DIFFERENT names.
     // Keying the row-structure cache on count alone would serve the
-    // stale names forever; it must be rebuilt on each reset.
+    // stale names forever; it must be rebuilt when the names change.
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a INTEGER, b INTEGER); INSERT INTO t VALUES (1, 2)");
     const stmt = db.prepare("SELECT * FROM t");
     expect(stmt.get()).toEqual({ a: 1, b: 2 });
     db.exec("ALTER TABLE t RENAME COLUMN a TO x");
     expect(stmt.get()).toEqual({ x: 1, b: 2 });
+    db.close();
+  });
+
+  test("picks up column renames made through another connection", () => {
+    // The schema change comes from a second connection on the same
+    // file, so a per-connection write counter would not see it. The
+    // first connection's statement is re-prepared inside its next
+    // step(), and the row keys must follow.
+    using dir = tempDir("node-sqlite-rename-xconn", {});
+    const file = path.join(String(dir), "db.sqlite");
+    const db1 = new DatabaseSync(file);
+    db1.exec("CREATE TABLE t (a INTEGER, b INTEGER); INSERT INTO t VALUES (1, 2)");
+    const stmt = db1.prepare("SELECT * FROM t");
+    expect(stmt.get()).toEqual({ a: 1, b: 2 });
+    const db2 = new DatabaseSync(file);
+    db2.exec("ALTER TABLE t RENAME COLUMN a TO x");
+    db2.close();
+    expect(stmt.get()).toEqual({ x: 1, b: 2 });
+    expect(stmt.all()).toEqual([{ x: 1, b: 2 }]);
+    db1.close();
+  });
+
+  test("get()/all()/iterate() reuse one row Structure across calls", () => {
+    // Rebuilding the Structure per call costs one Structure cell per
+    // column per get(). The cache must survive the reset between
+    // calls and only rebuild when SQLite re-prepares the statement
+    // with different column names. bun:jsc's describe() exposes the
+    // StructureID, which is the only JS-visible handle on this.
+    const structureId = (row: unknown) => {
+      const m = jscDescribe(row).match(/StructureID: (\d+)/);
+      expect(m).not.toBeNull();
+      return m![1];
+    };
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a, b, c, d, e); INSERT INTO t VALUES (1,2,3,4,5),(6,7,8,9,10)");
+    // `LIMIT ?` and `LIKE ?` make SQLite re-prepare the statement on
+    // every call once the parameter is re-bound. The names do not
+    // change, so the Structure must still be reused.
+    for (const sql of [
+      "SELECT ? AS a, 2 AS b, 3 AS c",
+      "SELECT * FROM t WHERE rowid = ?",
+      "SELECT * FROM t LIMIT ?",
+      "SELECT * FROM t WHERE a LIKE ?",
+    ]) {
+      const stmt = db.prepare(sql);
+      const first = stmt.get("1");
+      const id = structureId(first);
+      expect(structureId(stmt.get("1"))).toBe(id);
+      expect(stmt.all("1").map(structureId)).toEqual([id]);
+      expect([...stmt.iterate("1")].map(structureId)).toEqual([id]);
+    }
+    // A rename still invalidates the cache.
+    const stmt = db.prepare("SELECT * FROM t");
+    const before = stmt.get();
+    db.exec("ALTER TABLE t RENAME COLUMN a TO x");
+    const after = stmt.get();
+    expect(Object.keys(after)).toEqual(["x", "b", "c", "d", "e"]);
+    expect(structureId(after)).not.toBe(structureId(before));
+    expect(structureId(stmt.get())).toBe(structureId(after));
     db.close();
   });
 

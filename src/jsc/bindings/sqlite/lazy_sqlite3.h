@@ -77,6 +77,7 @@ typedef int (*lazy_sqlite3_sleep_type)(int);
 typedef int (*lazy_sqlite3_stmt_status_type)(sqlite3_stmt*, int op, int resetFlg);
 typedef int (*lazy_sqlite3_load_extension_type)(sqlite3* db, const char* zFile, const char* zProc, char** pzErrMsg);
 typedef const char* (*lazy_sqlite3_libversion_type)();
+typedef int (*lazy_sqlite3_libversion_number_type)();
 typedef void* (*lazy_sqlite3_malloc64_type)(sqlite3_uint64);
 typedef unsigned char* (*lazy_sqlite3_serialize_type)(sqlite3* db, const char* zSchema, sqlite3_int64* piSize, unsigned int mFlags);
 typedef int (*lazy_sqlite3_deserialize_type)(sqlite3* db, const char* zSchema, unsigned char* pData, sqlite3_int64 szDb, sqlite3_int64 szBuf, unsigned mFlags);
@@ -172,6 +173,7 @@ inline lazy_sqlite3_db_filename_type lazy_sqlite3_db_filename;
 inline lazy_sqlite3_db_handle_type lazy_sqlite3_db_handle;
 inline lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension;
 inline lazy_sqlite3_libversion_type lazy_sqlite3_libversion;
+inline lazy_sqlite3_libversion_number_type lazy_sqlite3_libversion_number;
 inline lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64;
 inline lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
 inline lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
@@ -267,6 +269,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_db_handle lazy_sqlite3_db_handle
 #define sqlite3_load_extension lazy_sqlite3_load_extension
 #define sqlite3_libversion lazy_sqlite3_libversion
+#define sqlite3_libversion_number lazy_sqlite3_libversion_number
 #define sqlite3_malloc64 lazy_sqlite3_malloc64
 #define sqlite3_serialize lazy_sqlite3_serialize
 #define sqlite3_deserialize lazy_sqlite3_deserialize
@@ -339,6 +342,11 @@ inline WTF::Lock sqlite3_handle_lock;
 // is built without SQLITE_ENABLE_SESSION, so node:sqlite session/changeset
 // APIs must be runtime-gated on this instead of compiled out.
 inline bool lazy_sqlite3_has_session = false;
+// True when sqlite3_stmt_status(SQLITE_STMTSTATUS_REPREPARE) is real: the
+// op was added in SQLite 3.20.0. An older library returns SQLITE_MISUSE for
+// it, and the stub below returns 0, so callers must not key a cache on the
+// value unless this is set.
+inline bool lazy_sqlite3_has_stmt_status_reprepare = false;
 
 inline void unloadSQLiteHandleUnlocked()
 {
@@ -420,6 +428,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_db_handle = (lazy_sqlite3_db_handle_type)dlsym(sqlite3_handle, "sqlite3_db_handle");
     lazy_sqlite3_load_extension = (lazy_sqlite3_load_extension_type)dlsym(sqlite3_handle, "sqlite3_load_extension");
     lazy_sqlite3_libversion = (lazy_sqlite3_libversion_type)dlsym(sqlite3_handle, "sqlite3_libversion");
+    lazy_sqlite3_libversion_number = (lazy_sqlite3_libversion_number_type)dlsym(sqlite3_handle, "sqlite3_libversion_number");
     lazy_sqlite3_serialize = (lazy_sqlite3_serialize_type)dlsym(sqlite3_handle, "sqlite3_serialize");
     lazy_sqlite3_deserialize = (lazy_sqlite3_deserialize_type)dlsym(sqlite3_handle, "sqlite3_deserialize");
     lazy_sqlite3_malloc64 = (lazy_sqlite3_malloc64_type)dlsym(sqlite3_handle, "sqlite3_malloc64");
@@ -495,6 +504,9 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
         lazy_sqlite3_column_origin_name = [](sqlite3_stmt*, int) -> const char* { return nullptr; };
     }
 
+    lazy_sqlite3_has_stmt_status_reprepare = lazy_sqlite3_stmt_status != nullptr
+        && lazy_sqlite3_libversion_number != nullptr
+        && lazy_sqlite3_libversion_number() >= 3020000;
     if (!lazy_sqlite3_stmt_status) {
         lazy_sqlite3_stmt_status = [](sqlite3_stmt*, int, int) -> int { return 0; };
     }

@@ -123,7 +123,11 @@ const linuxAarch64 = arch === "aarch64" && process.platform === "linux";
 const imageDirect = linuxAarch64 ? withTraps("image.linux-only.img", ["no-x18", "no-tpidrro"]) : image;
 const imageHosted = linuxAarch64 ? withTraps("image.x18-only.img", ["no-svc", "no-tpidr", "no-tpidrro"]) : image;
 
-type Check = (out: string) => string | null;
+/** What is wrong with the output of a run, or null. `mode` is the way it ran. */
+type Check = (out: string, mode: string) => string | null;
+/** The host of the run tells the image that memory is committed (AT_BUN_HOST_MEMORY). */
+const hostCommits = (mode: string) =>
+  mode === "winmem" || (process.platform === "win32" && mode !== "native" && mode !== "direct");
 type Scenario = {
   name: string;
   args: string[];
@@ -223,6 +227,21 @@ const scenarios: Scenario[] = [
         "jitstress wasm functions 22 checksum 34e285b8\njitstress wasm seen in bbq 22 omg 22\n",
     ),
   },
+  // Blocks of the heap give the pages back that hold no live cell, and use them again: see the file.
+  // Under a host that commits memory JavaScriptCore keeps them, as it does on Windows.
+  {
+    name: "12-heap-pages",
+    args: ["--useDollarVM=1", "--sweepSynchronously=1", join(tree, "jsc/scenarios/heappages.js")],
+    expect: (out: string, mode: string) => {
+      const lines =
+        /^heap pages sums 80001000000 80001000000 80001000000 live 4124 of 4124\nheap pages given back (true|false) pages in a block (\d+)\n$/.exec(
+          out,
+        );
+      if (lines === null) return "output is not the expected one";
+      const givesBack = Number(lines[2]) > 1 && !hostCommits(mode);
+      return lines[1] === String(givesBack) ? null : `pages given back: ${lines[1]}, expected ${givesBack}`;
+    },
+  },
 ].filter(
   s =>
     (only.length ? only.some(o => s.name.includes(o)) : true) && s.args.every(a => !a.endsWith(".js") || existsSync(a)),
@@ -279,7 +298,7 @@ async function once(s: Scenario, mode: string, index: number): Promise<string | 
   let problem = late
     ? `no end after ${timeout / 1000} s`
     : (s.codes ?? [0]).includes(code)
-      ? expect(stdout)
+      ? expect(stdout, mode)
       : `exit code ${code}${proc.signalCode ? ` (${proc.signalCode})` : ""}`;
   if (!problem && stderr.trim()) problem = `output on stderr: ${stderr.trim().split("\n")[0]}`;
   if (mode !== "direct" && mode !== "native" && existsSync(counts)) {

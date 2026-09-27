@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isIPv6 } from "harness";
-import { abbreviatedAccept, md5, request, sha1, sha512, storage } from "./fixtures.ts";
+import { abbreviatedAccept, jsonHeaders, md5, request, sha1, sha512, storage } from "./fixtures.ts";
 import { Registry } from "./index.ts";
 import { urlHost } from "./registry.ts";
 
@@ -56,8 +56,9 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  // stop() throws when a handler failed. The directory goes away then too.
+  using _ = fixtures.directory;
   registry.stop();
-  fixtures.directory[Symbol.dispose]();
 });
 
 describe("packument", () => {
@@ -655,8 +656,25 @@ describe("hooks", () => {
     expect(own.requests[0].headers.accept).toBe(abbreviatedAccept);
   });
 
+  test("intercept reads the body of a request that the registry answers", async () => {
+    const bodies: unknown[] = [];
+    using own = new Registry({
+      intercept: async request => {
+        if (request.method === "PUT") bodies.push(await request.json());
+      },
+    }).start();
+    const user = { name: "reader", password: "secret", email: "reader@example.com" };
+    const reply = await request(`${own.url}-/user/org.couchdb.user:reader`, {
+      method: "PUT",
+      headers: jsonHeaders(),
+      body: JSON.stringify(user),
+    });
+    expect(reply).toMatchObject({ status: 201, json: { ok: true, id: "org.couchdb.user:reader" } });
+    expect(bodies).toEqual([user]);
+  });
+
   test("an error in intercept fails the test that stops the registry", async () => {
-    const own = new Registry({
+    using own = new Registry({
       storage: fixtures.path,
       intercept: request => {
         // What a failed expect() in a handler does.
@@ -676,7 +694,7 @@ describe("hooks", () => {
   });
 
   test("an answer of the registry is not an error", async () => {
-    const own = new Registry({ storage: fixtures.path }).start();
+    using own = new Registry({ storage: fixtures.path }).start();
     expect((await request(`${own.url}nothing-here`)).status).toBe(404);
     expect((await request(`${own.url}-/whoami`)).status).toBe(401);
     expect(() => own.stop()).not.toThrow();
@@ -714,7 +732,7 @@ describe("hooks", () => {
   });
 
   test("stop and start keep the state", async () => {
-    const own = new Registry({ storage: fixtures.path });
+    using own = new Registry({ storage: fixtures.path });
     expect(() => own.port).toThrow("The registry has no port before start()");
     own.auth.addUser("keeper", "secret");
     own.start();
@@ -723,13 +741,9 @@ describe("hooks", () => {
     own.stop();
     expect(own.listening).toBe(false);
     own.start();
-    try {
-      const reply = await request(`${own.url}-/whoami`, {
-        headers: { authorization: `Basic ${btoa("keeper:secret")}` },
-      });
-      expect(reply.json).toEqual({ username: "keeper" });
-    } finally {
-      own.stop();
-    }
+    const reply = await request(`${own.url}-/whoami`, {
+      headers: { authorization: `Basic ${btoa("keeper:secret")}` },
+    });
+    expect(reply.json).toEqual({ username: "keeper" });
   });
 });

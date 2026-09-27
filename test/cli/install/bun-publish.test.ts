@@ -112,6 +112,7 @@ describe("otp", async () => {
         },
       });
       await Promise.all([
+        registry.packages.delete("otp-pkg-1"),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -146,6 +147,7 @@ describe("otp", async () => {
     });
 
     await Promise.all([
+      registry.packages.delete("otp-pkg-2"),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -200,6 +202,7 @@ describe("otp", async () => {
     });
 
     await Promise.all([
+      registry.packages.delete("otp-pkg-5"),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -403,6 +406,7 @@ describe("otp", async () => {
       });
 
       await Promise.all([
+        registry.packages.delete("otp-pkg-3"),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -448,6 +452,7 @@ describe("otp", async () => {
       });
 
       await Promise.all([
+        registry.packages.delete("otp-pkg-4"),
         write(join(packageDir, "bunfig.toml"), bunfig),
         write(
           packageJson,
@@ -474,6 +479,7 @@ test("can publish a package then install it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("basic");
   await Promise.all([
+    registry.packages.delete("publish-pkg-1"),
     write(
       packageJson,
       JSON.stringify({
@@ -530,7 +536,11 @@ test("can publish from a tarball", async () => {
       "publish-pkg-2": "2.2.2",
     },
   };
-  await Promise.all([write(packageJson, JSON.stringify(json)), write(join(packageDir, "bunfig.toml"), bunfig)]);
+  await Promise.all([
+    registry.packages.delete("publish-pkg-2"),
+    write(packageJson, JSON.stringify(json)),
+    write(join(packageDir, "bunfig.toml"), bunfig),
+  ]);
 
   await pack(packageDir, env);
 
@@ -567,7 +577,11 @@ test("can publish scoped packages", async () => {
       "@scoped/pkg-1": "1.1.1",
     },
   };
-  await Promise.all([write(packageJson, JSON.stringify(json)), write(join(packageDir, "bunfig.toml"), bunfig)]);
+  await Promise.all([
+    registry.packages.delete("@scoped/pkg-1"),
+    write(packageJson, JSON.stringify(json)),
+    write(join(packageDir, "bunfig.toml"), bunfig),
+  ]);
 
   const { out, err, exitCode } = await publish(env, packageDir);
   expect(err).not.toContain("error:");
@@ -589,6 +603,7 @@ for (const info of [
     const bunfig = await registry.authBunfig("binaries-" + info.user);
 
     await Promise.all([
+      registry.packages.delete("publish-pkg-" + info.user),
       write(
         join(publishDir, "package.json"),
         JSON.stringify({
@@ -660,6 +675,7 @@ test("dependencies are installed", async () => {
   const publishDir = tmpdirSync();
   const bunfig = await registry.authBunfig("manydeps");
   await Promise.all([
+    registry.packages.delete("publish-pkg-deps"),
     write(
       join(publishDir, "package.json"),
       JSON.stringify(
@@ -720,6 +736,7 @@ test("can publish workspace package", async () => {
     },
   };
   await Promise.all([
+    registry.packages.delete("publish-pkg-3"),
     write(join(packageDir, "bunfig.toml"), bunfig),
     write(
       packageJson,
@@ -745,6 +762,7 @@ describe("--dry-run", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("dryrun");
     await Promise.all([
+      registry.packages.delete("dry-run-1"),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -767,6 +785,7 @@ describe("--dry-run", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("dryruntarball");
     await Promise.all([
+      registry.packages.delete("dry-run-2"),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -1015,6 +1034,7 @@ test("prepublishOnly modifying version publishes correct version (#17195)", asyn
     fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));`;
 
   await Promise.all([
+    registry.packages.delete("publish-version-update"),
     write(
       packageJson,
       JSON.stringify({
@@ -1046,6 +1066,7 @@ test("attempting to publish a private package should fail", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("privatepackage");
   await Promise.all([
+    registry.packages.delete("publish-pkg-6"),
     write(
       packageJson,
       JSON.stringify({
@@ -1079,6 +1100,7 @@ describe("access", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("accessflag");
     await Promise.all([
+      registry.packages.delete("publish-pkg-7"),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         packageJson,
@@ -1145,7 +1167,11 @@ describe("tag", async () => {
         "publish-pkg-9": "simpletag",
       },
     };
-    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
+    await Promise.all([
+      registry.packages.delete("publish-pkg-9"),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
 
     let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
     expect(exitCode).toBe(0);
@@ -1168,6 +1194,7 @@ it("$npm_command is accurate during publish", async () => {
     }),
   );
   await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_command"));
+  registry.packages.delete("publish-pkg-10");
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo $npm_command\n`);
   expect(out.split("\n")).toEqual([
@@ -1207,6 +1234,7 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     `,
   );
   await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_lifecycle_event"));
+  registry.packages.delete("publish-pkg-11");
   let { out, err, exitCode } = await publish(env, packageDir, "--tag", "simpletag");
   expect(err).toBe(`$ echo 2 $npm_lifecycle_event\n$ echo 3 $npm_lifecycle_event\n`);
   expect(out.split("\n")).toEqual([
@@ -1349,7 +1377,11 @@ describe("--tolerate-republish", async () => {
       version: "1.0.0",
     };
 
-    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
+    await Promise.all([
+      registry.packages.delete("republish-test-1"),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
 
     // First publish should succeed
     let { out, err, exitCode } = await publish(env, packageDir);
@@ -1371,7 +1403,11 @@ describe("--tolerate-republish", async () => {
       version: "1.0.0",
     };
 
-    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
+    await Promise.all([
+      registry.packages.delete("republish-test-2"),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
 
     // First publish should succeed
     let { out, err, exitCode } = await publish(env, packageDir);
@@ -1393,7 +1429,11 @@ describe("--tolerate-republish", async () => {
       version: "1.0.0",
     };
 
-    await Promise.all([write(join(packageDir, "bunfig.toml"), bunfig), write(packageJson, JSON.stringify(pkgJson))]);
+    await Promise.all([
+      registry.packages.delete("republish-test-3"),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify(pkgJson)),
+    ]);
 
     // Create tarball
     await pack(packageDir, env);

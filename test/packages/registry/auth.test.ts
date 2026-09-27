@@ -263,11 +263,11 @@ describe("tokens and profile", () => {
 
 describe("one-time passwords", () => {
   async function setup() {
+    const manifest = { name: "guarded", version: "1.0.0" };
+    const body = JSON.stringify(publishBody(manifest, await pack(manifest)));
     const registry = new Registry().start();
     const user = registry.auth.addUser("olga", "secret", { tfa: "auth-and-writes", otp: ["123456"] });
     const { token } = registry.auth.createToken(user);
-    const manifest = { name: "guarded", version: "1.0.0" };
-    const body = JSON.stringify(publishBody(manifest, await pack(manifest)));
     const publish = (headers: Record<string, string> = {}, bearer = token) =>
       request(`${registry.url}guarded`, { method: "PUT", headers: { ...jsonHeaders(bearer), ...headers }, body });
     return { registry, user, token, publish };

@@ -57,20 +57,21 @@ function load(group) {
   };
 }
 
-// Returns the output size of one pass over the group.
+// Returns the output length of one pass over the group, in UTF-16 code units.
+// Two builds that print the same length did the same work.
 function transformAll(input) {
-  let bytes = 0;
+  let length = 0;
   for (let pass = input.repeat ?? 1; pass > 0; pass--) {
-    bytes = 0;
+    length = 0;
     for (let i = 0; i < input.sources.length; i++) {
       try {
-        bytes += input.transpiler.transformSync(input.sources[i]).length;
+        length += input.transpiler.transformSync(input.sources[i]).length;
       } catch (error) {
         throw new Error(`${input.name}: ${input.dir}/${input.paths[i]} does not parse`, { cause: error });
       }
     }
   }
-  return bytes;
+  return length;
 }
 
 let iterations = 0;
@@ -93,7 +94,7 @@ const inputs = groups.filter(group => only === undefined || group.name === only)
 if (iterations > 0) {
   const row = (...cells) =>
     console.log(cells.map((cell, i) => (i === 0 ? cell.padEnd(16) : String(cell).padStart(14))).join(""));
-  row("group", "files", "input bytes", "passes", "output bytes", "ms");
+  row("group", "files", "input bytes", "passes", "output length", "ms");
   for (const input of inputs) {
     const start = performance.now();
     let output = 0;

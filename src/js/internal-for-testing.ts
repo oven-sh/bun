@@ -644,6 +644,10 @@ export const socketFaultInjection = {
   set: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetSocketFault", 1) as (
     rule: SocketFaultRule,
   ) => boolean,
+  /** How many calls the rule for `syscall` changed since `set()` armed it. `clear()` keeps the count. */
+  hits: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSocketFaultHits", 1) as (
+    syscall: SocketFaultSyscall,
+  ) => number,
   /** Disarm all fault rules. */
   clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };

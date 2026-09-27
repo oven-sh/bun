@@ -103,6 +103,32 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     fault.clear();
   });
 
+  test("hits() validates syscall", () => {
+    expect(() => fault.hits("bogus" as any)).toThrow(/syscall must be one of/);
+  });
+
+  test("hits() counts the calls that a rule changed", async () => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const client = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    try {
+      fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: 2 });
+      const counts = [fault.hits("send")];
+      for (const byte of ["a", "b", "c"]) {
+        client.write(byte);
+        counts.push(fault.hits("send"));
+      }
+      // The third send finds the rule used up and goes through.
+      expect(counts).toEqual([0, 1, 2, 2]);
+
+      fault.clear();
+      expect(fault.hits("send")).toBe(2);
+      fault.set({ syscall: "send", action: "none" });
+      expect(fault.hits("send")).toBe(0);
+    } finally {
+      client.end();
+    }
+  });
+
   test("rules can target each hooked syscall", () => {
     for (const sc of ["recv", "send", "writev", "sendmsg", "recvmsg", "connect", "accept"] as const) {
       expect(fault.set({ syscall: sc, action: "none" })).toBe(true);
@@ -133,4 +159,8 @@ test.skipIf(fault.available())("set() throws helpfully when compiled out", () =>
 
 test.skipIf(fault.available())("clear() throws helpfully when compiled out", () => {
   expect(() => fault.clear()).toThrow(/not compiled into this build/);
+});
+
+test.skipIf(fault.available())("hits() throws helpfully when compiled out", () => {
+  expect(() => fault.hits("send")).toThrow(/not compiled into this build/);
 });

@@ -88,6 +88,9 @@ extern "C" {
 extern int us_fault_armed;
 
 void us_fault_set(int syscall, const struct us_fault_rule *rule);
+/* Calls the rule for `syscall` changed since us_fault_set() armed it. Clearing
+ * the rule keeps the count. */
+int us_fault_hit_count(int syscall);
 void us_fault_clear(int syscall);
 void us_fault_clear_all(void);
 int us_fault_hit(int syscall, int fd, ssize_t *out, int *clamp);

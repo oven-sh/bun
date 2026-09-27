@@ -399,13 +399,15 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
 describe.skipIf(skip)("send() stalls after the client's FIN", () => {
   const BODY = 8 * 1024 * 1024;
   const payload = Buffer.alloc(BODY, "a");
+  // Four, not one: the server reads the FIN on the dispatch after the request,
+  // and that dispatch runs writable first, so the first stall can land ahead of
+  // the FIN.
+  const STALLS = 4;
 
   // Call after the first send() of the response. That send fills the socket
-  // buffers, so the stalled ones are the retries on writable events. Four, not
-  // one: the server reads the FIN on the dispatch after the request, and that
-  // dispatch runs writable first, so the first stall can land ahead of the FIN.
+  // buffers, so the stalled ones are the retries on writable events.
   function stallSends() {
-    fault.set({ syscall: "send", action: "errno", errno: "ENOBUFS", repeat: 4 });
+    fault.set({ syscall: "send", action: "errno", errno: "ENOBUFS", repeat: STALLS });
   }
 
   function nodeHandler(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -441,11 +443,17 @@ describe.skipIf(skip)("send() stalls after the client's FIN", () => {
     return out;
   }
 
+  async function expectWholeBody(socket: net.Socket) {
+    expect(await bodyOfHalfClosedClient(socket)).toEqual({ body: BODY, ended: true });
+    // A response that met no stall proves nothing.
+    expect(fault.hits("send")).toBe(STALLS);
+  }
+
   test("node:http delivers the whole body", async () => {
     await using server = http.createServer(nodeHandler);
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as net.AddressInfo;
-    expect(await bodyOfHalfClosedClient(net.connect(port, "127.0.0.1"))).toEqual({ body: BODY, ended: true });
+    await expectWholeBody(net.connect(port, "127.0.0.1"));
   });
 
   // The stalled send() is the drain of the TLS layer's ciphertext spill.
@@ -453,8 +461,7 @@ describe.skipIf(skip)("send() stalls after the client's FIN", () => {
     await using server = https.createServer(certs, nodeHandler);
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as net.AddressInfo;
-    const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-    expect(await bodyOfHalfClosedClient(socket)).toEqual({ body: BODY, ended: true });
+    await expectWholeBody(tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }));
   });
 
   // The stalled send() is the retry of a tryEnd tail. Bun.serve writes the
@@ -468,6 +475,6 @@ describe.skipIf(skip)("send() stalls after the client's FIN", () => {
         return new Response(payload);
       },
     });
-    expect(await bodyOfHalfClosedClient(net.connect(server.port, "127.0.0.1"))).toEqual({ body: BODY, ended: true });
+    await expectWholeBody(net.connect(server.port, "127.0.0.1"));
   });
 });

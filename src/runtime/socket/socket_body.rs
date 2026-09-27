@@ -5136,6 +5136,62 @@ pub(crate) mod testing_apis {
         )))
     }
 
+    /// How many calls the rule for a syscall changed since `set()` armed it.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_socket_fault_hits(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(not(socket_fault_injection))]
+        {
+            let _ = frame;
+            return Err(global.throw(format_args!(
+                "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
+            )));
+        }
+        #[cfg(socket_fault_injection)]
+        {
+            let [name] = frame.arguments_as_array::<1>();
+            let name = name.to_bun_string(global)?;
+            let Some(syscall) = parse_fault_syscall(&name) else {
+                return Err(global.throw(format_args!(
+                    "syscall must be one of: {FAULT_SYSCALL_NAMES}"
+                )));
+            };
+            Ok(JSValue::js_number_from_int32(
+                bun_uws_sys::fault_inject::us_fault_hit_count(syscall),
+            ))
+        }
+    }
+
+    #[cfg(socket_fault_injection)]
+    const FAULT_SYSCALL_NAMES: &str = "recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer";
+
+    /// socket/close/shutdown have enum slots but no bsd.c hooks; accepting them
+    /// would arm rules that can never fire.
+    #[cfg(socket_fault_injection)]
+    fn parse_fault_syscall(name: &bun_core::String) -> Option<c_int> {
+        use bun_uws_sys::fault_inject as fi;
+        macro_rules! map {
+            ($($s:literal => $v:expr,)*) => {
+                $(if name.eq_ascii($s) { return Some($v); })*
+            };
+        }
+        map! {
+            b"recv" => fi::RECV,
+            b"send" => fi::SEND,
+            b"writev" => fi::WRITEV,
+            b"sendmsg" => fi::SENDMSG,
+            b"recvmsg" => fi::RECVMSG,
+            b"connect" => fi::CONNECT,
+            b"accept" => fi::ACCEPT,
+            b"ssl_loop_buffer" => fi::SSL_LOOP_BUFFER,
+            b"poll_start" => fi::POLL_START,
+            b"session_buffer" => fi::SESSION_BUFFER,
+        }
+        None
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn js_set_socket_fault(
         global: &JSGlobalObject,
@@ -5168,31 +5224,9 @@ pub(crate) mod testing_apis {
                     ));
                 }
             };
-            let syscall: c_int = if syscall_str.eq_ascii(b"recv") {
-                fi::RECV
-            } else if syscall_str.eq_ascii(b"send") {
-                fi::SEND
-            } else if syscall_str.eq_ascii(b"writev") {
-                fi::WRITEV
-            } else if syscall_str.eq_ascii(b"sendmsg") {
-                fi::SENDMSG
-            } else if syscall_str.eq_ascii(b"recvmsg") {
-                fi::RECVMSG
-            } else if syscall_str.eq_ascii(b"connect") {
-                fi::CONNECT
-            } else if syscall_str.eq_ascii(b"accept") {
-                fi::ACCEPT
-            } else if syscall_str.eq_ascii(b"ssl_loop_buffer") {
-                fi::SSL_LOOP_BUFFER
-            } else if syscall_str.eq_ascii(b"poll_start") {
-                fi::POLL_START
-            } else if syscall_str.eq_ascii(b"session_buffer") {
-                fi::SESSION_BUFFER
-            } else {
-                // socket/close/shutdown have enum slots but no bsd.c hooks;
-                // accepting them would arm rules that can never fire.
+            let Some(syscall) = parse_fault_syscall(&syscall_str) else {
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: {FAULT_SYSCALL_NAMES}"
                 )));
             };
 

@@ -12,6 +12,8 @@ struct us_fault_slot {
     struct us_fault_rule rule;
     int calls_seen;
     int fired;
+    /* Calls the rule changed. `fired` also counts the one that disarms it. */
+    int hits;
 };
 
 /* Process-global so rules armed on the JS thread also affect the HTTP-client
@@ -45,8 +47,17 @@ void us_fault_set(int sc, const struct us_fault_rule *rule) {
     us_fault_state[sc].rule = *rule;
     us_fault_state[sc].calls_seen = 0;
     us_fault_state[sc].fired = 0;
+    us_fault_state[sc].hits = 0;
     us_fault_recompute_armed();
     Bun__unlock(&us_fault_lock);
+}
+
+int us_fault_hit_count(int sc) {
+    if ((unsigned)sc >= US_FAULT_COUNT) return 0;
+    Bun__lock(&us_fault_lock);
+    int hits = us_fault_state[sc].hits;
+    Bun__unlock(&us_fault_lock);
+    return hits;
 }
 
 void us_fault_clear(int sc) {
@@ -86,6 +97,7 @@ int us_fault_hit(int sc, int fd, ssize_t *out, int *clamp) {
                 us_fault_recompute_armed();
             } else {
                 fire = 1;
+                slot->hits++;
             }
         }
     }

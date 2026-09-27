@@ -2585,6 +2585,8 @@ describe("fileControl without storage from the caller", () => {
   ];
   // The memdb VFS of a deserialized database answers these.
   const memdb = ["VFSNAME", "SIZE_LIMIT"];
+  // The VFS allocates a string for these and writes its address to the argument.
+  const strings = ["VFSNAME", "TEMPFILENAME"];
 
   async function runWithFileDatabase(dir, script) {
     await using proc = Bun.spawn({
@@ -2631,6 +2633,8 @@ describe("fileControl without storage from the caller", () => {
           );
         const result = {
           memory: statuses(new Database(":memory:"), ${JSON.stringify(core)}),
+          // A database in memory has no file, so nothing writes a string to the argument.
+          memoryStrings: statuses(new Database(":memory:"), ${JSON.stringify(strings)}),
           deserialized: statuses(deserialized, ${JSON.stringify([...core, ...memdb])}),
           file: statuses(file, ${JSON.stringify([...core, ...vfs])}),
           attached: Object.fromEntries(
@@ -2673,16 +2677,13 @@ describe("fileControl without storage from the caller", () => {
     // known. winFileControl has no case for HAS_MOVED and EXTERNAL_READER and
     // answers SQLITE_NOTFOUND (12). macOS loads the system SQLite. There, the
     // status is the one that the same call with -1 returns.
-    const status = (name, withMinusOne) => {
-      if (isMacOS) return withMinusOne;
-      if (isWindows && (name === "HAS_MOVED" || name === "EXTERNAL_READER")) return 12;
-      return 0;
-    };
-    const expected = (names, table, calls) =>
-      Object.fromEntries(names.map(name => [name, Array(calls).fill(status(name, table?.[name]?.[0]))]));
+    const status = name => (isWindows && (name === "HAS_MOVED" || name === "EXTERNAL_READER") ? 12 : 0);
+    const expected = (names, table, calls, bundled = status) =>
+      Object.fromEntries(names.map(name => [name, Array(calls).fill(isMacOS ? table?.[name]?.[0] : bundled(name))]));
 
     expect(result).toEqual({
       memory: expected(core, result.memory, 3),
+      memoryStrings: expected(strings, result.memoryStrings, 3, () => 12),
       deserialized: expected([...core, ...memdb], result.deserialized, 3),
       file: expected([...core, ...vfs], result.file, 3),
       attached: expected(vfs, result.attached, 2),

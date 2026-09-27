@@ -1665,7 +1665,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             // pending JS write the same way on_writable's tail does, otherwise
             // the do_socket_write backpressure arms the normal writable
             // subscription.
-            let _ = this.internal_flush();
+            let fatal_send_errno = this.internal_flush();
+            #[cfg(not(windows))]
+            if fatal_send_errno != 0 {
+                return Self::fail_write(this, &handlers, fatal_send_errno);
+            }
+            #[cfg(windows)]
+            let _ = fatal_send_errno;
             if this.buffered_data_for_node_net.get().len() == 0
                 && !this.socket.get().is_detached()
                 && this.handlers_are(&handlers)
@@ -3259,7 +3265,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let _ = this.internal_flush();
+        let _guard = this.ref_guard();
+        let fatal_send_errno = this.internal_flush();
+        #[cfg(not(windows))]
+        if fatal_send_errno != 0 {
+            if let Some(handlers) = this.handlers_opt() {
+                // SAFETY: `_guard` keeps `this` alive for this call.
+                let this = unsafe { bun_ptr::ThisPtr::new(this.as_ctx_ptr()) };
+                Self::fail_write(this, &handlers, fatal_send_errno)?;
+            }
+        }
+        #[cfg(windows)]
+        let _ = fatal_send_errno;
         Ok(JSValue::UNDEFINED)
     }
 

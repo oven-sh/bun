@@ -1352,11 +1352,7 @@ impl StandaloneModuleGraph {
         let module_count = modules.count();
         modules.lock_pointers(); // make the pointers stable forever
         // A repeated name collapsed into one entry: the record's indexes no longer fit.
-        if native_library_set
-            .members
-            .iter()
-            .any(|m| m.file_index as usize >= module_count)
-        {
+        if module_count != modules_list_count {
             native_library_set = NativeLibrarySet::default();
         }
 

@@ -1485,9 +1485,11 @@ describe("s3-server", () => {
     }
   });
 
-  it("signs for the region auto when the options and the environment have no region", async () => {
+  it.concurrent("signs for the region auto when the options and the environment have no region", async () => {
     // Each other client of this file has a region. This one has the default of Bun for an endpoint that is not AWS.
-    const { S3_REGION, AWS_REGION, S3_SESSION_TOKEN, AWS_SESSION_TOKEN, ...env } = bunEnv;
+    // Windows reads `s3_region` as `S3_REGION`.
+    const absent = ["S3_REGION", "AWS_REGION", "S3_SESSION_TOKEN", "AWS_SESSION_TOKEN"];
+    const env = Object.fromEntries(Object.entries(bunEnv).filter(([name]) => !absent.includes(name.toUpperCase())));
     const program = `
       import { s3 } from "bun";
       const file = s3.file("default-region.txt");
@@ -1498,6 +1500,7 @@ describe("s3-server", () => {
           await file.text().catch(outcome),
           await file.write("Hello Bun!").catch(outcome),
           presigned.status,
+          presigned.headers.get("content-type"),
           await presigned.text(),
         ]),
       );
@@ -1511,6 +1514,8 @@ describe("s3-server", () => {
         "S3_ACCESS_KEY_ID": localCredentials.accessKeyId as string,
         "S3_SECRET_ACCESS_KEY": localCredentials.secretAccessKey as string,
       },
+      // Bun reads the .env files of its directory. This directory has none.
+      cwd: testDir,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1519,11 +1524,17 @@ describe("s3-server", () => {
     // The server has the region us-east-1. Its error tells the region of the signature.
     const refused =
       "AuthorizationHeaderMalformed: The authorization header is malformed; the region 'auto' is wrong; expecting 'us-east-1'";
-    expect(JSON.parse(stdout)).toEqual([
+    const message =
+      "Error parsing the X-Amz-Credential parameter; the region &apos;auto&apos; is wrong; expecting &apos;us-east-1&apos;";
+    const [read, write, status, type, document] = JSON.parse(stdout);
+    // Each response has its own IDs.
+    const ids = /<RequestId>[0-9A-F]{16}<\/RequestId><HostId>[A-Za-z0-9+\/]{56}<\/HostId>/;
+    expect([read, write, status, type, document.replace(ids, "<RequestId/><HostId/>")]).toEqual([
       refused,
       refused,
       400,
-      expect.stringContaining("the region &apos;auto&apos; is wrong; expecting &apos;us-east-1&apos;"),
+      "application/xml",
+      `<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AuthorizationQueryParametersError</Code><Message>${message}</Message><Region>us-east-1</Region><RequestId/><HostId/></Error>`,
     ]);
     expect(exitCode).toBe(0);
   });

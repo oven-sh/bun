@@ -1650,7 +1650,7 @@ fn connect_finish<const IS_SSL: bool>(
         IS_SSL && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), false),
     );
     socket_ref.update_flags(|f| {
-        f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+        f.set(SocketFlags::ENDS_ON_PEER_FIN, !allow_half_open);
         f.set(SocketFlags::PAUSE_ON_CONNECT, pause_on_connect);
     });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.

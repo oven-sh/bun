@@ -613,10 +613,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             uws::SocketKind::BunSocketTcp
         };
-        let flags: i32 = if self.flags.get().contains(Flags::ALLOW_HALF_OPEN) {
-            uws::LIBUS_SOCKET_ALLOW_HALF_OPEN
-        } else {
+        let flags: i32 = if self.flags.get().contains(Flags::ENDS_ON_PEER_FIN) {
             0
+        } else {
+            uws::LIBUS_SOCKET_ALLOW_HALF_OPEN
         };
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
             self.owned_ssl_ctx
@@ -1083,6 +1083,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[inline]
     pub(crate) fn has_handlers(&self) -> bool {
         self.handlers.get().is_some()
+    }
+
+    /// False for a named pipe, an upgraded duplex, a pending connect and a detached wrapper.
+    #[inline]
+    pub(crate) fn is_usockets_backed(&self) -> bool {
+        matches!(self.socket.get().socket, uws::InternalSocket::Connected(_))
     }
 
     /// True when this socket still points at `handlers` — false once a
@@ -1730,6 +1736,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
+            if this.is_usockets_backed() && this.buffered_data_for_node_net.get().len() > 0 {
+                // `on_writable` sends the queued tail, then ends the socket.
+                this.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
+                return Ok(());
+            }
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
@@ -1739,17 +1750,36 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let _scope = ScopeExit {
+        let scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
+        let handled = match callback.call(&global, this_value, &[this_value]) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])
+            }
+        };
+        drop(scope);
+        this.end_on_peer_fin();
+        handled
+    }
+
+    /// `allowHalfOpen: false`: the peer's FIN ends the socket once nothing is left to send.
+    fn end_on_peer_fin(&self) {
+        if !self.flags.get().contains(Flags::ENDS_ON_PEER_FIN)
+            || !self.is_usockets_backed()
+            || self.socket.get().is_closed()
+        {
+            return;
         }
-        Ok(())
+        self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
+        if self.can_end_after_flush() {
+            self.mark_inactive();
+        }
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
@@ -4203,7 +4233,8 @@ bitflags::bitflags! {
         const END_AFTER_FLUSH      = 1 << 5;
         const OWNED_PROTOS         = 1 << 6;
         const IS_PAUSED            = 1 << 7;
-        const ALLOW_HALF_OPEN      = 1 << 8;
+        /// `allowHalfOpen: false` from `Bun.listen` / `Bun.connect`: `on_end` ends the socket.
+        const ENDS_ON_PEER_FIN     = 1 << 8;
         /// Set on the `raw` half of an `upgradeTLS` pair. Writes route through
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.

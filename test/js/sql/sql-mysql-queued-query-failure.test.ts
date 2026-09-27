@@ -124,7 +124,13 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
         marker(2),
         marker(3),
       ]),
-    ).toEqual([[{ marker: 1 }], overflow, overflow, [{ marker: 2 }], [{ marker: 3 }]]);
+    ).toEqual([
+      [{ marker: 1 }],
+      overflow,
+      rejectedWith({ code: "ERR_MYSQL_OVERFLOW", message: "failed to prepare query" }),
+      [{ marker: 2 }],
+      [{ marker: 3 }],
+    ]);
   });
 
   test("a failed prepare rejects every query that shares the statement", async () => {

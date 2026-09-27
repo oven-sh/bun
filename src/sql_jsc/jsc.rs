@@ -62,8 +62,7 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
     }
 }
 
-/// An instance of `MySQLError` or `PostgresError` (`src/js/internal/sql/errors.ts`) of the realm
-/// of `global`, with its `name`, `message` and `stack`, made with no call into JS.
+/// A `MySQLError` or a `PostgresError` of the realm of `global`, made with no call into JS.
 pub(crate) fn create_sql_error(
     global: &JSGlobalObject,
     is_mysql: bool,

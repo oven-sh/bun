@@ -13,8 +13,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// The Structure of the instances of `MySQLError` or `PostgresError` (src/js/internal/sql/errors.ts)
-// in `realm`. It is not a LazyProperty: an initializer of one has no way to fail.
+// Not a LazyProperty: requireId() can throw, and the initializer of a LazyProperty cannot fail.
 static Structure* sqlErrorStructure(VM& vm, Zig::GlobalObject* realm, bool isMySQL)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -38,14 +37,8 @@ static Structure* sqlErrorStructure(VM& vm, Zig::GlobalObject* realm, bool isMyS
     return structure;
 }
 
-// An instance of `MySQLError` or `PostgresError` of the realm of `globalObject`, made with no call
-// into JavaScript.
-//
-// The client makes an error while no JavaScript runs, or below frames of Bun's own modules, so the
-// error keeps no stack frames and `stack` is "<name>: <message>". The error info is materialized
-// here: JSC writes `stack`, `line` and `column` of an error once, on the first read of one of them,
-// and PostgreSQL has fields named `line` and `column`. After this call nothing writes them again.
-// Frames for `stack` have to be collected before the error info is materialized.
+// Calls no JavaScript. The error info is filled here, with no frames: JSC fills it on the first
+// read of `stack`, `line` or `column`, and then overwrites PostgreSQL's `line` and `column`.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__create(JSC::JSGlobalObject* globalObject, bool isMySQL, const char* messagePtr, size_t messageLength)
 {
     auto& vm = getVM(globalObject);

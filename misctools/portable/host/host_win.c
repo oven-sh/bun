@@ -25,7 +25,8 @@
 // (tkill, tgkill) is kept as pending at the thread and taken by the thread itself:
 // at the end of the request that it is in, in a wait, or, when the thread runs code
 // of the image, after this host has stopped it and pointed it to signal_landing().
-// See "signals to a thread" below.
+// The sender tries that once and returns, a thread of the host tries until the
+// signal is taken. See "signals to a thread" below.
 //
 // arm64: x18 is the TEB, in the host and in the image. The image never writes it, and
 // what a handler of the image does to x18 in its ucontext is not taken over.
@@ -116,9 +117,10 @@ struct host_thread {
   int fault_repeats;
   int fault_access; /* of the fault that is delivered now: 0 read, 1 write, 8 execute, as Windows numbers them */
   /* Signals. mask: what the thread blocks, written by the thread only. pending: what was
-     sent and not taken yet, bit n - 1 for signal n. in_host: the thread is inside of a
-     request (or has not reached the image yet) and looks at pending by itself.
-     waiting_on: the address that it waits on in WaitOnAddress. */
+     sent and not taken yet, bit n - 1 for signal n, set by the sender and cleared by the
+     thread. in_host: the thread is inside of a request (or has not reached the image yet)
+     and looks at pending by itself. waiting_on: the address that it waits on in
+     WaitOnAddress. */
   HANDLE handle, wake;
   l_sigset mask, restore;
   int suspended;
@@ -167,6 +169,8 @@ static long long precise_ms(void) {
 enum { COUNT_LINUX = 1024, COUNT_SLOTS = COUNT_LINUX + 256 };
 static volatile LONG64 counts[COUNT_SLOTS], refused[COUNT_SLOTS];
 static volatile LONG64 futex_ops[16], madvise_advice[32], lazy_commits, signals_delivered[L_NSIG], cache_bytes;
+/* Signals that their sender left to the thread that delivers, and threads that it pointed to their signals. */
+static volatile LONG64 signals_left, threads_pointed_later;
 static HANDLE paths_file = INVALID_HANDLE_VALUE;
 
 static int count_slot(long long n) {
@@ -195,6 +199,8 @@ static void write_counts(void) {
     if (madvise_advice[i]) fprintf(f, "detail madvise_advice %d %lld\n", i, (long long)madvise_advice[i]);
   for (int i = 0; i < L_NSIG; i++)
     if (signals_delivered[i]) fprintf(f, "detail signal_delivered %d %lld\n", i, (long long)signals_delivered[i]);
+  if (signals_left) fprintf(f, "detail signals_left_by_the_sender 0 %lld\n", (long long)signals_left);
+  if (threads_pointed_later) fprintf(f, "detail threads_pointed_after_the_send 0 %lld\n", (long long)threads_pointed_later);
   if (lazy_commits) fprintf(f, "detail lazy_commits 0 %lld\n", (long long)lazy_commits);
   if (cache_bytes) fprintf(f, "detail clear_cache_bytes 0 %lld\n", (long long)cache_bytes);
   fclose(f);
@@ -1225,10 +1231,20 @@ static int deliver(int sig, int code, uintptr_t address, int fault, CONTEXT *con
    image: the host stops it, saves its registers on its stack, and points it to
    signal_landing(), which runs the handlers and goes back to where the thread was. A
    thread that is inside of the host or of Windows is not touched that way (it may hold a
-   lock). It is inside of a request then, and it takes its signals by itself: at the end
-   of the request, and in every wait (futex, sleep, sigsuspend), which the sender ends.
-   JavaScriptCore needs this to stop a thread and look at its stack: the garbage collector
-   does that now and then, the sampling profiler all the time, the watchdog to end a loop. */
+   lock). Inside of a request it takes its signals by itself: at the end of the request, and
+   in every wait (futex, sleep, sigsuspend), which the sender ends. Inside of a function of
+   Windows that the image called by itself (the entry "lookup" of the host table) nobody
+   can reach it: the signal waits until the thread is back in the image.
+   The sender does not wait, as it does not on Linux: it marks the signal, wakes the waits
+   of the thread, tries once to point the thread, and returns. What it leaves is taken up by
+   one thread of the host, which is made when the first signal is left: see "the thread
+   that delivers" below.
+   The order that loses no signal: the sender sets the bit in "pending" and then reads
+   "in_host", the thread clears "in_host" and then reads "pending", and each of the two
+   writes is an interlocked one, which no later read of the same thread can overtake. So
+   either the sender finds the thread outside of a request, or the thread finds the signal.
+   JavaScriptCore needs signals to stop a thread and look at its stack: the garbage collector
+   does that now and then, the sampling profiler all the time. */
 static l_sigset lowest(l_sigset set) { return set & (~set + 1); }
 /* Runs the handlers of the signals that the thread can take. 1 if a handler ran. */
 static int deliver_pending(struct host_thread *t, CONTEXT *context, void *fxsave) {
@@ -1348,40 +1364,113 @@ static int stop_and_point(struct host_thread *target, CONTEXT *context) {
   return SetThreadContext(target->handle, &go) != 0;
 }
 #endif
-/* One sender at a time: two threads that stop each other would both stay stopped. */
+/* One at a time stops a thread: two threads that stop each other would both stay stopped. */
 static SRWLOCK sender_lock = SRWLOCK_INIT;
+/* Stops the thread, looks where it is, and lets it go on. 1: the thread has no signal that it
+   can take (one that it blocks waits until it does not), or it ran code of the image and
+   goes on in signal_landing(). 0: the thread has a signal to take and nobody can point it
+   anywhere now. It is inside of a request and takes the signal by itself, or inside of
+   Windows, or on its way between the image and the host.
+   Nothing that takes a lock is called while the thread is stopped, except the lock of the
+   table of the memory, which is only tried: the thread may be the one that holds it.
+   The caller holds threads_lock, so the thread is one of the table while this runs. */
+static int point_to_signals(struct host_thread *target) {
+  int pointed = 0;
+  AcquireSRWLockExclusive(&sender_lock);
+  if (SuspendThread(target->handle) != (DWORD)-1) {
+    if (!signals_ready(target)) pointed = 1;
+    else if (!target->in_host) {
+      CONTEXT context;
+      context.ContextFlags = CONTEXT_OF_STOPPED;
+      if (GetThreadContext(target->handle, &context) && !STOPPED_IN_THE_KERNEL(&context) && TryAcquireSRWLockExclusive(&memory_srw)) {
+        int of_image = region_at((uintptr_t)CONTEXT_PC(&context)) != 0;
+        ReleaseSRWLockExclusive(&memory_srw);
+        if (of_image) pointed = stop_and_point(target, &context);
+      }
+    }
+    ResumeThread(target->handle);
+  } else if (WaitForSingleObject(target->handle, 0) == WAIT_OBJECT_0) {
+    /* Windows has ended the thread and this host was not told (a thread that ends by
+       itself passes finish_thread() or adopted_thread_ends() and is out of the table):
+       what was sent to it goes with it. */
+    InterlockedExchange64(&target->pending, 0);
+    pointed = 1;
+  }
+  ReleaseSRWLockExclusive(&sender_lock);
+  return pointed;
+}
+
+/* ---- the thread that delivers ----
+   One thread of the host, made when a sender leaves its first signal. It is no thread of
+   the image: it has no number, nobody sends it a signal, it never runs code of the image.
+   While a thread of the image has a signal that it can take, it goes around the threads,
+   at once 50 times (a thread on its way between the image and the host is there after a
+   moment) and then every millisecond, and does for each what the sender did once. It looks
+   at a thread that is inside of a request as well, without stopping it: the thread takes
+   the signal by itself, and until it has, its waits are woken again (the wake of the sender
+   may have come before the wait began). It sleeps while no thread has such a signal.
+   A thread that ends is taken out of the table under threads_lock, which a round holds:
+   what was sent to it goes with it. A signal that its thread blocks is none of this
+   thread's: the thread that unblocks it looks at what is pending (sigprocmask, the end of
+   sigsuspend, the return of a handler). */
+static HANDLE deliverer_wake;
+static volatile LONG deliverer_made;
+/* this_thread() of a thread without a state is the main thread. The handler of exceptions
+   asks for it where this thread writes to the stack of a stopped thread, so it has its own. */
+static struct host_thread deliverer_thread;
+
+/* 0 when no thread is left with a signal that it can take and was not pointed to. */
+static int deliver_round(void) {
+  int left = 0;
+  AcquireSRWLockShared(&threads_lock);
+  for (int i = -1; i < thread_count; i++) {
+    struct host_thread *t = i < 0 ? &main_thread : threads[i];
+    if (!signals_ready(t)) continue;
+    if (t->in_host) {
+      SetEvent(t->wake);
+      void *waits_on = t->waiting_on;
+      if (waits_on) WakeByAddressAll(waits_on);
+      left++;
+    } else if (point_to_signals(t)) InterlockedIncrement64(&threads_pointed_later);
+    else left++;
+  }
+  ReleaseSRWLockShared(&threads_lock);
+  return left;
+}
+static DWORD WINAPI deliver_signals(LPVOID unused) {
+  (void)unused;
+  TlsSetValue(thread_slot, &deliverer_thread);
+  for (;;) {
+    WaitForSingleObject(deliverer_wake, INFINITE);
+    for (int round = 0; deliver_round(); round++) {
+      if (round < 50) Sleep(0);
+      else if (WaitForSingleObject(deliverer_wake, 1) == WAIT_OBJECT_0) round = 0;
+    }
+  }
+}
+/* A thread has a signal that it can take, and whoever says so does not wait for that. The
+   wake is kept for a thread that cannot be made now: it is made at the next signal. */
+static void leave_to_deliverer(void) {
+  InterlockedIncrement64(&signals_left);
+  if (!deliverer_made && !InterlockedCompareExchange(&deliverer_made, 1, 0)) {
+    HANDLE thread = CreateThread(0, 0, deliver_signals, 0, 0, 0);
+    if (thread) {
+      CloseHandle(thread);
+      if (trace) host_log("[host] the thread that delivers signals is made\n");
+    } else {
+      host_log("host: no thread that delivers signals (%lu)\n", GetLastError());
+      deliverer_made = 0;
+    }
+  }
+  SetEvent(deliverer_wake);
+}
 static long long send_to_thread(struct host_thread *target, int sig) {
   l_sigset bit = 1ull << (sig - 1);
   InterlockedOr64(&target->pending, (LONG64)bit);
   SetEvent(target->wake);
   void *waits_on = target->waiting_on;
   if (waits_on) WakeByAddressAll(waits_on);
-  for (int attempt = 0; attempt < 5000; attempt++) {
-    if (!((l_sigset)target->pending & bit)) return 0;
-    int settled = 0;
-    AcquireSRWLockExclusive(&sender_lock);
-    if (SuspendThread(target->handle) != (DWORD)-1) {
-      /* Inside of a request the thread takes the signal by itself, and a signal that it
-         blocks waits until it does not. Nothing that takes a lock is called while the
-         thread is stopped, except the lock of the table of the memory, which is only
-         tried: the thread may be the one that holds it. */
-      if (target->in_host || !((l_sigset)target->pending & bit & ~target->mask)) settled = 1;
-      else {
-        CONTEXT context;
-        context.ContextFlags = CONTEXT_OF_STOPPED;
-        if (GetThreadContext(target->handle, &context) && !STOPPED_IN_THE_KERNEL(&context) && TryAcquireSRWLockExclusive(&memory_srw)) {
-          int of_image = region_at((uintptr_t)CONTEXT_PC(&context)) != 0;
-          ReleaseSRWLockExclusive(&memory_srw);
-          if (of_image) settled = stop_and_point(target, &context);
-        }
-      }
-      ResumeThread(target->handle);
-    }
-    ReleaseSRWLockExclusive(&sender_lock);
-    if (settled) return 0;
-    /* The thread is on its way between the image and the host (or in an exception). */
-    Sleep(attempt < 50 ? 0 : 1);
-  }
+  if (!point_to_signals(target)) leave_to_deliverer();
   return 0;
 }
 
@@ -1476,11 +1565,17 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e) {
 #if defined(__x86_64__)
   /* Windows reports a breakpoint at the instruction, Linux after it. */
   if (record->ExceptionCode == EXCEPTION_BREAKPOINT) context->Rip++;
-  if (deliver(sig, code, address, 1, context, &context->FltSave)) return EXCEPTION_CONTINUE_EXECUTION;
+  void *state = &context->FltSave;
 #else
   /* arm64: both report "brk" at the instruction. */
-  if (deliver(sig, code, address, 1, context, 0)) return EXCEPTION_CONTINUE_EXECUTION;
+  void *state = 0;
 #endif
+  if (deliver(sig, code, address, 1, context, state)) {
+    /* The thread has the mask from before the handler again: what was sent meanwhile and
+       was blocked by the handler is taken here, where the thread goes back into the image. */
+    deliver_pending(t, context, state);
+    return EXCEPTION_CONTINUE_EXECUTION;
+  }
   (void)code;
   host_log("host: %s (Windows exception %#lx) at address %#llx, program counter %#llx%s, and the image has no handler for it\n", signal_name(sig),
            (unsigned long)record->ExceptionCode, (unsigned long long)address, (unsigned long long)pc, pc >= image_base && pc < image_end ? " (in the image)" : "");
@@ -1723,7 +1818,7 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
      the signal as pending, so the look at pending after in_host is 0 misses none. */
   do {
     take_signals(t);
-    t->in_host = 0;
+    InterlockedExchange(&t->in_host, 0);
   } while (signals_ready(t) && !InterlockedExchange(&t->in_host, 1));
   return r;
 }
@@ -1739,7 +1834,8 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
    linker of a build for Windows finds it in one of the libraries it always
    searches: the DLLs of those are asked here, in this order.
    The thread is not inside of a request here: a signal that is sent to it
-   meanwhile waits until it is back in the image (send_to_thread() tries again).
+   meanwhile waits until it is back in the image (the thread that delivers
+   tries again until then, see "signals to a thread").
    What the image hands to such a function is not known here, so nothing calls
    model_touch() for it: a page of the image that is reserved and was never
    touched is committed when code of the process faults on it, and is
@@ -1888,7 +1984,9 @@ int wmain(int argc, wchar_t **wide) {
   main_thread.altstack.flags = L_SS_DISABLE;
   main_thread.in_host = 1;
   main_thread.wake = CreateEventW(0, FALSE, FALSE, 0);
-  if (!main_thread.wake || !DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &main_thread.handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) return 2;
+  deliverer_thread.in_host = 1;
+  deliverer_wake = CreateEventW(0, FALSE, FALSE, 0);
+  if (!main_thread.wake || !deliverer_wake || !DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &main_thread.handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) return 2;
 #if defined(__x86_64__)
   {
     /* XSAVE, and enabled by the system: the size of the area for what is enabled. */

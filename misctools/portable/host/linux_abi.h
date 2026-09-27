@@ -27,6 +27,15 @@
                               (memory.h). The image reads the entry with getauxval() */
 #define AT_BUN_HOST_MEMORY 0x62756e11
 #define BUN_HOST_MEMORY_COMMITS 1
+/* How a signal reaches a thread that another thread sent it to, as bits. A host that sends nothing,
+   and the kernel of Linux, have the value 0: the thread runs the handler wherever it is.
+   BUN_HOST_SIGNALS_LATE      a signal for another thread reaches it when it runs code of the image
+                              or waits inside of the host; while it is inside of a function of the
+                              host's OS the signal waits. The sender does not wait. Code that has
+                              another way to reach a thread takes it (JavaScriptCore: the traps of
+                              the VM are polled). The image reads the entry with getauxval() */
+#define AT_BUN_HOST_SIGNALS 0x62756e12
+#define BUN_HOST_SIGNALS_LATE 1
 /* Requests of the image that are not Linux syscalls. They arrive through the
    syscall entry of the host table like the others.
    N_set_tp(tp)               make tp the thread pointer of this thread (aarch64 images.

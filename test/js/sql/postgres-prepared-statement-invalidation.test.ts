@@ -856,7 +856,18 @@ test.each([
       version = 2;
       holdNextDescribe = true;
       const first = q().execute();
-      await describeHeld.promise;
+      // Without a re-prepare `first` settles and no second Describe comes.
+      await Promise.race([
+        describeHeld.promise,
+        first.then(
+          () => {
+            throw new Error("query settled before the re-prepare Describe");
+          },
+          e => {
+            throw e;
+          },
+        ),
+      ]);
       // The client gives no signal when it has read ParseComplete and
       // ParameterDescription, so the second query waits many turns of the
       // loop. `bindsInWindow` below proves that it was written in the window.

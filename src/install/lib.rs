@@ -724,9 +724,10 @@ impl RunCommand {
 
         let mut buf = bun_paths::w_path_buffer_pool::get();
 
-        // Running as a shim already (nested `--bun`): reuse its directory.
+        // Running as a shim already (nested `--bun`): reuse its directory for every tier.
+        let nested = Self::is_shim_dir(exe_dir);
         buf[..exe_dir.len()].copy_from_slice(exe_dir);
-        let len = if Self::is_shim_dir(exe_dir) {
+        let len = if nested {
             exe_dir.len()
         } else {
             Self::append_dir_name(&mut buf, exe_dir.len(), Self::BESIDE_EXE_DIR_NAME)?
@@ -742,21 +743,26 @@ impl RunCommand {
             Err(e) => e,
         };
 
-        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs into `buf`.
-        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
-        if temp_len == 0 || temp_len >= buf.len() {
-            return Err(beside_exe_err);
-        }
-        let mut temp_dir_len = temp_len;
-        while temp_dir_len > 0 && bun_paths::is_sep_any_t::<u16>(buf[temp_dir_len - 1]) {
-            temp_dir_len -= 1;
-        }
-        let mut name_buf = [0u8; Self::TEMP_SHIM_DIR_NAME_LEN];
-        let len = Self::append_dir_name(
-            &mut buf,
-            temp_dir_len,
-            Self::temp_shim_dir_name(&mut name_buf, launched),
-        )?;
+        let len = if nested {
+            len
+        } else {
+            // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs into `buf`.
+            let temp_len =
+                unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+            if temp_len == 0 || temp_len >= buf.len() {
+                return Err(beside_exe_err);
+            }
+            let mut temp_dir_len = temp_len;
+            while temp_dir_len > 0 && bun_paths::is_sep_any_t::<u16>(buf[temp_dir_len - 1]) {
+                temp_dir_len -= 1;
+            }
+            let mut name_buf = [0u8; Self::TEMP_SHIM_DIR_NAME_LEN];
+            Self::append_dir_name(
+                &mut buf,
+                temp_dir_len,
+                Self::temp_shim_dir_name(&mut name_buf, launched),
+            )?
+        };
         if Self::plant_windows_node_shims_in(
             &mut buf,
             len,
@@ -807,13 +813,23 @@ impl RunCommand {
 
     /// `%TEMP%\bun-node-<hash>`: keyed on the path bun was launched as, so the name
     /// is stable across upgrades of one install and distinct for two installs.
-    /// Case-insensitive, like the path itself.
+    /// ASCII letters are folded, like the path itself.
     fn temp_shim_dir_name<'a>(
         buf: &'a mut [u8; Self::TEMP_SHIM_DIR_NAME_LEN],
         launched: &bun_core::WStr,
     ) -> &'a str {
         let prefix = Self::TEMP_SHIM_DIR_PREFIX.as_bytes();
-        let hash = bun_wyhash::hash_ascii_lowercase(0, bytemuck::cast_slice(launched.as_slice()));
+        let mut lowered = bun_paths::w_path_buffer_pool::get();
+        let path = launched.as_slice();
+        let path_len = path.len().min(lowered.len());
+        for (dst, &c) in lowered[..path_len].iter_mut().zip(path) {
+            *dst = if c < 0x80 {
+                (c as u8).to_ascii_lowercase() as u16
+            } else {
+                c
+            };
+        }
+        let hash = bun_wyhash::hash_with_seed(0, bytemuck::cast_slice(&lowered[..path_len]));
         buf[..prefix.len()].copy_from_slice(prefix);
         bun_core::fmt::bytes_to_hex_lower(&hash.to_be_bytes(), &mut buf[prefix.len()..]);
         core::str::from_utf8(buf).expect("prefix and hex digits are ASCII")

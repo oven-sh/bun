@@ -1533,9 +1533,9 @@ impl Listener {
             Ok(b) => b,
             Err(_) => return Ok(JSValue::UNDEFINED),
         };
-        let family_js = match address_bytes.len() {
-            4 => global.common_strings().ipv4(),
-            16 => global.common_strings().ipv6(),
+        let is_ipv6 = match address_bytes.len() {
+            4 => false,
+            16 => true,
             _ => return Ok(JSValue::UNDEFINED),
         };
         // Format with `SocketAddrV{4,6}` so `format_ip`'s strip logic sees the
@@ -1567,9 +1567,7 @@ impl Listener {
             None => JSValue::UNDEFINED,
         };
 
-        out.put(global, b"family", family_js);
-        out.put(global, b"address", address_js);
-        out.put(global, b"port", port_js);
+        bun_jsc::cpp::JSSocketAddressDTO__assign(global, out, address_js, port_js, is_ipv6)?;
         Ok(JSValue::UNDEFINED)
     }
 }

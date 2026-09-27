@@ -100,6 +100,178 @@ test.each(["'x'", "Symbol()", "1n"])("useFakeTimers does not crash when globalTh
   expect(proc.signalCode).toBeNull();
 });
 
+// useFakeTimers() marks the value of globalThis.setTimeout with an own `clock` property. User code can put any object there.
+describe("the clock marker of useFakeTimers() on a setTimeout of the user", () => {
+  const data = { value: true, writable: true, enumerable: true, configurable: true };
+
+  // Calls `run` while `globalThis.setTimeout` is the property that `replacement` describes.
+  function withSetTimeout(replacement: PropertyDescriptor, run: () => void) {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!;
+    Object.defineProperty(globalThis, "setTimeout", { ...replacement, configurable: true });
+    try {
+      run();
+    } finally {
+      Object.defineProperty(globalThis, "setTimeout", original);
+      jest.useRealTimers();
+    }
+  }
+
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    return "did not throw";
+  }
+
+  // A bound function is what happy-dom's GlobalRegistrator puts in globalThis.setTimeout.
+  test.each([
+    ["a function", () => function () {}],
+    ["a bound function", () => setTimeout.bind(globalThis)],
+  ])("%s gets the marker and useRealTimers() removes it", (_, make) => {
+    const fn = make();
+    withSetTimeout({ value: fn }, () => {
+      expect<unknown>(jest.useFakeTimers()).toBe(jest);
+      expect(Object.getOwnPropertyDescriptor(fn, "clock")).toEqual(data);
+      expect<unknown>(jest.useRealTimers()).toBe(jest);
+      expect(Object.hasOwn(fn, "clock")).toBe(false);
+    });
+  });
+
+  test.each([
+    ["frozen", Object.freeze],
+    ["sealed", Object.seal],
+    ["non-extensible", Object.preventExtensions],
+  ])("a %s function is not changed and fake timers are on", (_, lock) => {
+    const fn = lock(function () {});
+    const keys = Reflect.ownKeys(fn);
+    withSetTimeout({ value: fn }, () => {
+      expect<unknown>(jest.useFakeTimers()).toBe(jest);
+      expect(jest.isFakeTimers()).toBe(true);
+      expect(Reflect.ownKeys(fn)).toEqual(keys);
+      expect(Object.isExtensible(fn)).toBe(false);
+      expect<unknown>(jest.useRealTimers()).toBe(jest);
+      expect(jest.isFakeTimers()).toBe(false);
+    });
+  });
+
+  test.each([
+    ["a read-only clock", { value: "of the user", writable: false, enumerable: false, configurable: false }],
+    ["an accessor clock", { get: () => "of the user", set: undefined, enumerable: false, configurable: false }],
+  ])("%s that is not configurable stays", (_, descriptor) => {
+    const fn = Object.defineProperty(function () {}, "clock", descriptor);
+    withSetTimeout({ value: fn }, () => {
+      expect<unknown>(jest.useFakeTimers()).toBe(jest);
+      expect(jest.isFakeTimers()).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(fn, "clock")).toEqual(descriptor);
+      expect<unknown>(jest.useRealTimers()).toBe(jest);
+      expect(Object.getOwnPropertyDescriptor(fn, "clock")).toEqual(descriptor);
+    });
+  });
+
+  test("a Proxy gets the defineProperty trap", () => {
+    const calls: unknown[] = [];
+    const target = function () {};
+    const proxy = new Proxy(target, {
+      defineProperty(target, key, descriptor) {
+        calls.push([key, descriptor]);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+    withSetTimeout({ value: proxy }, () => {
+      expect<unknown>(jest.useFakeTimers()).toBe(jest);
+      expect(calls).toEqual([["clock", data]]);
+      expect(Object.prototype.hasOwnProperty.call(proxy, "clock")).toBe(true);
+      expect<unknown>(jest.useRealTimers()).toBe(jest);
+      expect(Object.hasOwn(target, "clock")).toBe(false);
+    });
+  });
+
+  test("a defineProperty trap that returns false is not an error", () => {
+    const target = function () {};
+    const proxy = new Proxy(target, { defineProperty: () => false });
+    withSetTimeout({ value: proxy }, () => {
+      expect<unknown>(jest.useFakeTimers()).toBe(jest);
+      expect(jest.isFakeTimers()).toBe(true);
+      expect(Object.hasOwn(target, "clock")).toBe(false);
+    });
+  });
+
+  test.each([
+    [
+      "a defineProperty trap that throws",
+      () => ({
+        value: new Proxy(function () {}, {
+          defineProperty() {
+            throw new RangeError("from user code");
+          },
+        }),
+      }),
+      { name: "RangeError", message: "from user code" },
+    ],
+    [
+      "a revoked Proxy",
+      () => {
+        const { proxy, revoke } = Proxy.revocable(function () {}, {});
+        revoke();
+        return { value: proxy };
+      },
+      {
+        name: "TypeError",
+        message: "Proxy has already been revoked. No more operations are allowed to be performed on it",
+      },
+    ],
+    [
+      "a getter of globalThis.setTimeout that throws",
+      () => ({
+        get() {
+          throw new RangeError("from user code");
+        },
+      }),
+      { name: "RangeError", message: "from user code" },
+    ],
+  ])("%s makes useFakeTimers() throw and leaves fake timers off", (_, replacement, expected) => {
+    withSetTimeout(replacement(), () => {
+      const error = thrownBy(() => jest.useFakeTimers()) as Error;
+      expect({ name: error.name, message: error.message }).toEqual(expected);
+      expect(jest.isFakeTimers()).toBe(false);
+    });
+  });
+
+  // The store into a WebAssembly GC reference was an abort, so it runs in a process of its own.
+  test("a WebAssembly GC reference gets no marker and fake timers are on", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `// (module (type $s (struct (field (mut i32)))) (func (export "mk") (result (ref null $s)) struct.new_default $s))
+         const bytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,10,2, 0x5f,1,0x7f,1, 0x60,0,1,0x63,0, 3,2,1,1, 7,6,1,2,0x6d,0x6b,0,0, 10,7,1,5,0,0xfb,1,0,0x0b]);
+         globalThis.setTimeout = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+         const jest = Bun.jest().jest;
+         console.log(jest.useFakeTimers() === jest, jest.isFakeTimers(), Reflect.ownKeys(globalThis.setTimeout));
+         // The reference refuses the [[Delete]] of the marker with a TypeError. The fake clock is off before that.
+         try {
+           jest.useRealTimers();
+           console.log("did not throw");
+         } catch (e) {
+           console.log(e.name + ": " + e.message, jest.isFakeTimers());
+         }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "true true []\nTypeError: Cannot delete property for WebAssembly GC object false\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(proc.signalCode).toBeNull();
+  });
+});
+
 test("real timer heap is ticked against the real clock under useFakeTimers", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", path.join(import.meta.dir, "test-timers-gc-spin-fixture.ts")],

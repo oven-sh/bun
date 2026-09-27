@@ -1404,7 +1404,10 @@ impl<C: SourceContext> NewSource<C> {
             streams::Result::TemporaryAndDone(_)
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
-                flags.put_index(cx.global(), 0, JSValue::TRUE)?;
+                // `flags` is an argument of `pull()`: bun's callers pass an array, other code can pass anything.
+                if flags.is_array() {
+                    flags.put_index(cx.global(), 0, JSValue::TRUE)?;
+                }
                 result.to_js(cx)
             }
             _ => result.to_js(cx),

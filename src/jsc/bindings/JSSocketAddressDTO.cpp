@@ -82,3 +82,30 @@ extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* global
 
     return JSValue::encode(thisObject);
 }
+
+// `out` is the caller's object: each field is a [[Set]], and a store that `out` refuses is not an error, as in Node's AddressToJS:
+// https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L567-L583
+// Node stores address, family, port. The order here is the key order that server.address() already has in Bun.
+extern "C" [[ZIG_EXPORT(false_is_throw)]] bool JSSocketAddressDTO__assign(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedOut, JSC::EncodedJSValue address, JSC::EncodedJSValue port, bool isIPv6)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* out = asObject(JSValue::decode(encodedOut));
+    auto& commonStrings = Bun::commonStrings(vm);
+    JSValue family = isIPv6 ? commonStrings.IPv6String() : commonStrings.IPv4String();
+
+    PutPropertySlot familySlot(out, false);
+    out->methodTable()->put(out, globalObject, Identifier::fromString(vm, "family"_s), family, familySlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    PutPropertySlot addressSlot(out, false);
+    out->methodTable()->put(out, globalObject, Identifier::fromString(vm, "address"_s), JSValue::decode(address), addressSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    PutPropertySlot portSlot(out, false);
+    out->methodTable()->put(out, globalObject, WebCore::builtinNames(vm).portPublicName(), JSValue::decode(port), portSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return true;
+}

@@ -555,8 +555,7 @@ impl<T: JsSinkType> JSSink<T> {
             return Self::write_argument_error(global, frame, arg);
         }
 
-        // Converting a String object can run user JS that closes the sink, so
-        // convert before resolving `this`.
+        // A String object's conversion runs user JS that can free the sink.
         let view = arg.to_js_string_view(global)?;
         let Some(this) = Self::resolve(global, frame)? else {
             return Ok(JSValue::js_number(0.0));
@@ -582,8 +581,7 @@ impl<T: JsSinkType> JSSink<T> {
             .to_js(&cx))
     }
 
-    /// `write()` with a chunk that is not a string or a buffer. An error of
-    /// `this` wins over the error of the argument.
+    /// The `write()` error tail. Resolves `this` first, so its error wins.
     #[cold]
     #[inline(never)]
     fn write_argument_error(

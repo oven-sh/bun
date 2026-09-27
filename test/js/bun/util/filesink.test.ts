@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -602,7 +602,7 @@ it("start() with a path/fd getter that closes the writer throws instead of crash
 // object's Symbol.toPrimitive / toString runs user JS, and that JS can close()
 // the writer, which frees it (ASAN: heap-use-after-free in FileSink::write_latin1).
 it("write() with a conversion hook that closes the writer throws instead of crashing", async () => {
-  const dir = tmpdirSync();
+  using dir = tempDir("filesink-write-hook", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -623,7 +623,7 @@ it("write() with a conversion hook that closes the writer throws instead of cras
         }
       }
       `,
-      dir,
+      String(dir),
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -641,20 +641,20 @@ it("write() with a conversion hook that closes the writer throws instead of cras
 // The accepted chunk types do not change. fs.promises.writeFile() with an
 // iterable reaches this write() and node writes a String object too.
 it("write() still accepts a String object", async () => {
-  const dir = tmpdirSync();
+  using dir = tempDir("filesink-write-string-object", {});
   class Sub extends String {}
   for (const [label, chunk] of [
     ["new String", new String("abc")],
     ["Object()", Object("abc")],
     ["subclass", new Sub("abc")],
   ] as const) {
-    const path = join(dir, "benign-" + label.replace(/\W/g, "") + ".txt");
+    const path = join(String(dir), "benign-" + label.replace(/\W/g, "") + ".txt");
     const writer = Bun.file(path).writer();
     expect(writer.write(chunk as any)).toBe(3);
     await writer.end();
     expect(await Bun.file(path).text()).toBe("abc");
   }
-  const iterablePath = join(dir, "iterable.txt");
+  const iterablePath = join(String(dir), "iterable.txt");
   await fs.promises.writeFile(iterablePath, [new String("abc"), "def"] as any);
   expect(await Bun.file(iterablePath).text()).toBe("abcdef");
 });

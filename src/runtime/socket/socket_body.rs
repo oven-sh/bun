@@ -3387,8 +3387,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
-        // The "socket" getter above runs user JS that can close this socket
-        // and drop its handlers. Re-check before reading them.
+        // The "socket" getter above can have closed this socket, dropping its
+        // handlers.
         let Some(handlers) = this.handlers_opt() else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -3598,10 +3598,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             default_data.ensure_still_alive();
         }
 
-        // The option getters above run user JS. It can close this socket or
-        // re-enter upgradeTLS on it, which adopts the fd and detaches
-        // `this.socket`, freeing the original `us_socket_t`. Re-read the live
-        // pointer and bail instead of adopting a freed socket.
+        // Re-read after the option getters: one of them can have closed this
+        // socket, or re-entered upgradeTLS and adopted the fd, freeing it.
         let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"

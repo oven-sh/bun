@@ -358,10 +358,15 @@ fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsRe
                 // default in place — the same shape `maxPixels` above uses.
                 // #40520 is converting this file's option handling to throw
                 // instead; this follows whatever that settles on.
+                //
+                // Both tests run after the narrowing cast rather than before
+                // it, because the cast is what can break them: 1e300 is a
+                // finite f64 and an infinite f32, and 1e-300 a positive f64
+                // and a zero one. LibRaw would take either.
                 if b.is_number() {
-                    let n = b.as_number();
+                    let n = b.as_number() as f32;
                     if n.is_finite() && n > 0.0 {
-                        img.raw_brightness = Some(n as f32);
+                        img.raw_brightness = Some(n);
                     }
                 }
             }
@@ -671,7 +676,7 @@ fn error_message(e: codecs::Error) -> &'static ZStr {
         E::EncodeFailed => zstr!("Image: encode failed"),
         E::TooManyPixels => zstr!("Image: input exceeds maxPixels limit"),
         E::UnsupportedOnPlatform => zstr!(
-            "Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)"
+            "Image: format not supported on this machine (HEIC/AVIF require the OS codec; TIFF requires it, or LibRaw for a camera raw; AVIF encode needs an AV1 encoder)"
         ),
         E::OutOfMemory => zstr!("Image: out of memory"),
     }

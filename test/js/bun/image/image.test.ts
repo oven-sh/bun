@@ -1715,6 +1715,14 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
         format: "png",
       });
 
+      // A brightness the narrowing cast would ruin is ignored rather than
+      // handed to LibRaw: 1e300 is a finite double and an infinite float,
+      // 1e-300 a positive double and a zero one. Either would develop a
+      // different frame; both come back as the one developed above.
+      for (const brightness of [1e300, 1e-300]) {
+        expect(await new Bun.Image(bytes, { raw: { brightness } }).resize(64).bytes()).toEqual(out);
+      }
+
       // Truncated: the header still identifies, the sensor data runs out.
       // LibRaw's default data-error callback prints to stderr here, so the
       // decoder replaces it; the error arrives through the return value.

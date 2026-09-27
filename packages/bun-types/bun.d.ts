@@ -9299,7 +9299,8 @@ declare module "bun" {
      * Branch on these instead of parsing the message.
      *
      * - `ERR_IMAGE_FORMAT_UNSUPPORTED` — the requested format isn't available
-     *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
+     *   on this *machine* (HEIC/AVIF without the OS codec; TIFF on Linux,
+     *   unless it is a camera raw and the system LibRaw is installed).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
@@ -9324,8 +9325,9 @@ declare module "bun" {
     /**
      * `bmp`/`tiff`/`gif` are decode-only — `metadata().format` may report them
      * but there are no `.bmp()`/`.tiff()`/`.gif()` encoder methods. `tiff`
-     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
-     * frame everywhere.
+     * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on
+     * Linux, except for a camera raw when the system LibRaw is installed;
+     * `gif` decodes the first frame everywhere.
      */
     type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
     type Filter =

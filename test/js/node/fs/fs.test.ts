@@ -6315,6 +6315,211 @@ const outcome = async fn => {
   expect(exitCode).toBe(0);
 });
 
+// writeFile opens without O_TRUNC, writes, then cuts the old tail with
+// ftruncate(2). When that ftruncate fails on a regular file, the file keeps
+// stale bytes past the new end, so the call must fail. The LD_PRELOAD shim
+// fails ftruncate with ENOSPC for every file whose name starts with "enospc-"
+// (glibc-only: relies on ELF symbol interposition).
+it.skipIf(!isGlibc || !cc)("writeFile fails when the final ftruncate fails on a regular file (#42598)", async () => {
+  using dir = tempDir("writefile-ftruncate-enospc", {
+    "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static int should_fail(int fd) {
+  char link[64], target[4096];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+  ssize_t n = readlink(link, target, sizeof target - 1);
+  if (n < 0) return 0;
+  target[n] = 0;
+  const char *name = strrchr(target, '/');
+  name = name ? name + 1 : target;
+  return strncmp(name, "enospc-", 7) == 0;
+}
+
+int ftruncate(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate");
+  if (should_fail(fd)) { errno = ENOSPC; return -1; }
+  return real(fd, len);
+}
+
+int ftruncate64(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate64");
+  if (should_fail(fd)) { errno = ENOSPC; return -1; }
+  return real(fd, len);
+}
+`,
+    "child.js": `
+const fs = require("node:fs");
+const path = require("node:path");
+const longer = JSON.stringify({ status: "shell", pad: Buffer.alloc(507, "x").toString() });
+const shorter = JSON.stringify({ status: "busy", pad: Buffer.alloc(507, "x").toString() });
+const outcome = async fn => {
+  try {
+    await fn();
+    return "resolved";
+  } catch (e) {
+    return { code: e.code, syscall: e.syscall, path: path.basename(e.path) };
+  }
+};
+const after = name => ({ size: fs.statSync(name).size, json: (() => { try { JSON.parse(fs.readFileSync(name, "utf8")); return "valid"; } catch { return "invalid"; } })() });
+
+(async () => {
+  const out = {};
+  // The size matches after the first write, so a failed ftruncate there is harmless.
+  fs.writeFileSync("enospc-sync.json", longer);
+  out.sync = await outcome(async () => fs.writeFileSync("enospc-sync.json", shorter));
+  out.syncAfter = after("enospc-sync.json");
+
+  await fs.promises.writeFile("enospc-promise.json", longer);
+  out.promise = await outcome(() => fs.promises.writeFile("enospc-promise.json", shorter));
+  out.promiseAfter = after("enospc-promise.json");
+
+  fs.writeFileSync("enospc-callback.json", longer);
+  out.callback = await outcome(() => new Promise((resolve, reject) => fs.writeFile("enospc-callback.json", shorter, err => (err ? reject(err) : resolve()))));
+  out.callbackAfter = after("enospc-callback.json");
+
+  fs.writeFileSync("ok.json", longer);
+  out.control = await outcome(async () => fs.writeFileSync("ok.json", shorter));
+  out.controlAfter = after("ok.json");
+
+  // copyFile and cp open the destination the same way and cut its old tail after the copy.
+  fs.writeFileSync("shorter.json", shorter);
+  fs.writeFileSync("enospc-copy-sync.json", longer);
+  out.copySync = await outcome(async () => fs.copyFileSync("shorter.json", "enospc-copy-sync.json"));
+  out.copySyncAfter = after("enospc-copy-sync.json");
+  fs.writeFileSync("enospc-copy-promise.json", longer);
+  out.copyPromise = await outcome(() => fs.promises.copyFile("shorter.json", "enospc-copy-promise.json"));
+  out.copyPromiseAfter = after("enospc-copy-promise.json");
+  fs.writeFileSync("enospc-cp-sync.json", longer);
+  out.cpSync = await outcome(async () => fs.cpSync("shorter.json", "enospc-cp-sync.json"));
+  out.cpSyncAfter = after("enospc-cp-sync.json");
+  fs.writeFileSync("enospc-cp-promise.json", longer);
+  out.cpPromise = await outcome(() => fs.promises.cp("shorter.json", "enospc-cp-promise.json"));
+  out.cpPromiseAfter = after("enospc-cp-promise.json");
+  fs.writeFileSync("ok-copy.json", longer);
+  out.copyControl = await outcome(async () => fs.copyFileSync("shorter.json", "ok-copy.json"));
+  out.copyControlAfter = after("ok-copy.json");
+
+  // A target with no length to cut must keep working.
+  out.devnull = await outcome(async () => fs.writeFileSync("/dev/null", shorter));
+  out.devnullPromise = await outcome(() => fs.promises.writeFile("/dev/null", shorter));
+  out.devnullCopy = await outcome(async () => fs.copyFileSync("shorter.json", "/dev/null"));
+  console.log(JSON.stringify(out));
+})();
+`,
+  });
+
+  const soPath = path.join(String(dir), "shim.so");
+  const compile = Bun.spawnSync({
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+  });
+  if (compile.exitCode !== 0) {
+    throw new Error(`Failed to build ftruncate shim:\n${compile.stderr.toString()}`);
+  }
+
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath,
+      // On a reflink filesystem (btrfs, XFS) copyFile clones the source and
+      // never reaches the ftruncate. Force the copy loop so the shim fires.
+      BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const failed = (name: string) => ({ code: "ENOSPC", syscall: "ftruncate", path: name });
+  // `longer` is 534 bytes, `shorter` is 533. The failed call leaves the old tail in place.
+  const stale = { size: 534, json: "invalid" };
+  expect(JSON.parse(stdout)).toEqual({
+    sync: failed("enospc-sync.json"),
+    syncAfter: stale,
+    promise: failed("enospc-promise.json"),
+    promiseAfter: stale,
+    callback: failed("enospc-callback.json"),
+    callbackAfter: stale,
+    control: "resolved",
+    controlAfter: { size: 533, json: "valid" },
+    copySync: { code: "ENOSPC", syscall: "copyfile", path: "shorter.json" },
+    copySyncAfter: stale,
+    copyPromise: { code: "ENOSPC", syscall: "copyfile", path: "shorter.json" },
+    copyPromiseAfter: stale,
+    cpSync: failed("enospc-cp-sync.json"),
+    cpSyncAfter: stale,
+    cpPromise: failed("enospc-cp-promise.json"),
+    cpPromiseAfter: stale,
+    copyControl: "resolved",
+    copyControlAfter: { size: 533, json: "valid" },
+    devnull: "resolved",
+    devnullPromise: "resolved",
+    devnullCopy: "resolved",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The Windows arm of the same bug, with a natural trigger: while another
+// process holds a mapped view of the file, the shrink fails with
+// STATUS_USER_MAPPED_FILE. git maps work-tree files while it diffs them.
+it.skipIf(!isWindows)("writeFile fails when another process maps the file and the shrink fails (#42598)", async () => {
+  using dir = tempDir("writefile-mapped-view", {});
+  const file = path.join(String(dir), "data.json");
+  const longer = JSON.stringify({ status: "longer", pad: Buffer.alloc(4000, "x").toString() });
+  const shorter = JSON.stringify({ status: "short", pad: Buffer.alloc(4000, "x").toString() });
+  const outcome = async (fn: () => unknown) => {
+    try {
+      await fn();
+      return "resolved";
+    } catch (e: any) {
+      return { code: e.code, syscall: e.syscall, path: path.basename(e.path) };
+    }
+  };
+
+  const out: Record<string, unknown> = {};
+  for (const [label, write] of [
+    ["sync", () => fs.writeFileSync(file, shorter)],
+    ["promise", () => fs.promises.writeFile(file, shorter)],
+  ] as const) {
+    fs.writeFileSync(file, longer);
+    await using child = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fs-mapped-view-fixture.ts"), file],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = child.stdout.getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(value)).toBe("mapped\n");
+    out[label] = await outcome(write);
+    out[`${label}Size`] = fs.statSync(file).size;
+    child.stdin.end();
+    expect(await child.exited).toBe(0);
+  }
+
+  // `longer` is 4028 bytes, `shorter` is 4027. The failed shrink leaves the old tail in place.
+  const failed = { code: "EUNKNOWN", syscall: "ftruncate", path: "data.json" };
+  expect(out).toEqual({ sync: failed, syncSize: 4028, promise: failed, promiseSize: 4028 });
+
+  // Once the view is gone, the same write shrinks the file.
+  fs.writeFileSync(file, shorter);
+  expect(fs.statSync(file).size).toBe(4027);
+});
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,

@@ -8228,12 +8228,13 @@ describe("fs.close() that is not waited for", () => {
     }
   });
 
-  // The read is over when the other end of the pipe says so, which here is never.
+  // The read is over when the other end of the pipe says so. It outlives its descriptor, whose
+  // number (on POSIX) is the next file's.
   it.each([
     "fs.read(0, Buffer.alloc(1), 0, 1, null, () => {})",
     "fs.readv(0, [Buffer.alloc(1)], () => {})",
     "fs.readFile(0, () => {})",
-  ])("does not wait for %s on a pipe nothing is written to", async read => {
+  ])("does not wait for %s on a pipe nothing is written to, nor does the next file's", async read => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -8242,7 +8243,7 @@ describe("fs.close() that is not waited for", () => {
            ${read};
            fs.close(0, err => {
              console.log("closed", err ? err.code : null);
-             process.exit(0);
+             fs.close(fs.openSync(process.execPath, "r"), err => console.log("closed the next", err ? err.code : null));
            });`,
       ],
       env: bunEnv,
@@ -8250,9 +8251,16 @@ describe("fs.close() that is not waited for", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "closed null\n", stderr: "" });
-    expect(exitCode).toBe(0);
+    const stderr = proc.stderr.text();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      // Ends the read, and with it the child.
+      if (stdout.includes("closed the next")) proc.stdin.end();
+    }
+    expect({ stdout, stderr: await stderr }).toEqual({ stdout: "closed null\nclosed the next null\n", stderr: "" });
+    expect(await proc.exited).toBe(0);
   });
 
   it("does not keep a Worker from being terminated", async () => {

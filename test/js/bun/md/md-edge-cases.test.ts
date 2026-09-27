@@ -1349,6 +1349,29 @@ describe("pathological autolink inputs", () => {
       console.log("DONE");
     `);
   }, 90_000);
+
+  test("autolink candidates that fail at the same byte render in linear time", async () => {
+    await expectRendersQuickly(`
+      const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+      const n = 36000;
+      // Each "www." comes after a paired delimiter, so it is a candidate. Each
+      // candidate reads up to the "(", and "(" is no boundary, so no candidate
+      // is a link.
+      const cases = [
+        ["path", "www.a.bc/" + fill(n, "*www.a.bc/x*") + "y("],
+        ["path behind emphasis", "www.a.bc/x" + fill(n, "*y*www.a.bc/x") + "("],
+        ["host", "www.a" + fill(n, "._www.b_") + ".c("],
+      ];
+      for (const [name, input] of cases) {
+        const html = Bun.markdown.html(input, { autolinks: true });
+        if (html !== Bun.markdown.html(input)) {
+          throw new Error("unexpected output for " + name + ": " + JSON.stringify(html.slice(0, 120)));
+        }
+        console.log("OK " + name);
+      }
+      console.log("DONE");
+    `);
+  }, 90_000);
 });
 
 // ============================================================================

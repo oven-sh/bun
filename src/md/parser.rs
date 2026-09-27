@@ -67,6 +67,8 @@ pub(crate) struct Parser<'a> {
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
     pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
+    // Memo of the url and www autolink candidates that failed (autolinks.rs).
+    pub(crate) autolink_scan_memo: crate::autolinks::AutolinkScanMemo,
 
     // Number of active containers
     pub(crate) n_containers: u32,
@@ -278,6 +280,7 @@ impl<'a> Parser<'a> {
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
+            autolink_scan_memo: crate::autolinks::AutolinkScanMemo::EMPTY,
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),

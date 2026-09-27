@@ -1,4 +1,6 @@
-use crate::autolinks::{Autolink, find_email_autolink, find_url_autolink, find_www_autolink};
+use crate::autolinks::{
+    Autolink, ScanContext, find_email_autolink, find_url_autolink, find_www_autolink,
+};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
@@ -182,6 +184,7 @@ impl Parser<'_> {
         // Label frames below are subslices of `content`, so the memo stays
         // valid for them via `offset_within`.
         self.html_scan_memo.set(HtmlScanMemo::EMPTY);
+        self.autolink_scan_memo.reset();
 
         // Bracket-pair map for the whole slice: link processing looks up the
         // ']' matching a '[' here instead of rescanning the rest of the slice
@@ -477,7 +480,7 @@ impl Parser<'_> {
                         || (c == b'@' && self.flags.permissive_email_autolinks)
                         || (c == b'.' && self.flags.permissive_www_autolinks))
                 {
-                    if let Some(a) = self.permissive_autolink_at(content, i, &resolved) {
+                    if let Some(a) = self.permissive_autolink_at(content, i, &resolved, base) {
                         if a.beg > text_start {
                             self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
                         }
@@ -584,15 +587,20 @@ impl Parser<'_> {
     /// The permissive autolink with its trigger at `pos`. Not inline: the walk is faster without this code in it.
     #[inline(never)]
     fn permissive_autolink_at(
-        &self,
+        &mut self,
         content: &[u8],
         pos: usize,
         resolved: &[EmphDelim],
+        base: usize,
     ) -> Option<Autolink> {
+        let mut ctx = ScanContext {
+            memo: &mut self.autolink_scan_memo,
+            base,
+        };
         match content[pos] {
-            b':' => find_url_autolink(content, pos, resolved),
+            b':' => find_url_autolink(content, pos, resolved, &mut ctx),
             b'@' => find_email_autolink(content, pos, resolved),
-            _ => find_www_autolink(content, pos, resolved),
+            _ => find_www_autolink(content, pos, resolved, &mut ctx),
         }
     }
 

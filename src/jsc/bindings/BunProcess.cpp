@@ -902,6 +902,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // A throw from an 'exit' listener is reported as uncaught, and then the process exits. Node throws it
+    // to the caller of process.exit(), and the process continues when something catches it.
     Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
     RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -1392,6 +1394,12 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     } else {
         return false;
     }
+
+    // Node keeps the loop alive for one more turn after a handled error (setImmediate in
+    // process._fatalException), so a loop that is empty emits 'beforeExit' again. During the exit
+    // the loop does not run again, so the task would stay queued.
+    if (!process->m_isExiting)
+        globalObject->scriptExecutionContext()->postTask([](ScriptExecutionContext&) {});
 
     return true;
 }

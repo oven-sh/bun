@@ -124,9 +124,21 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     return emit(eventType, arguments);
 }
 
+// The runtime starts this emit, so no JS caller can receive a listener's exception.
+// It is reported once as uncaught, after the pass that it ended.
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    return fireEventListeners(eventType, arguments);
+    VM& vm = scriptExecutionContext()->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSGlobalObject* listenerGlobal = nullptr;
+    bool fired = fireEventListeners(eventType, arguments, listenerGlobal);
+    if (auto* exception = scope.exception(); exception && listenerGlobal) [[unlikely]] {
+        // A TerminationException is taken here too, as the catching JSC::call did, and the report ignores
+        // it. Left pending, it can outlive its termination request (VMTraps::deferTerminationSlow asserts).
+        scope.clearException();
+        Bun__reportUnhandledError(listenerGlobal, JSValue::encode(exception));
+    }
+    return fired;
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -175,8 +187,9 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
     return listeners;
 }
 
-// https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+// One pass over the listeners of `eventType`, like EventEmitter.prototype.emit in node: it has no catch, so a
+// listener's exception ends the pass. Then this returns with the exception pending and `listenerGlobal` set.
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, JSC::JSGlobalObject*& listenerGlobal)
 {
 
     auto* data = eventTargetData();
@@ -199,15 +212,14 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, listenerGlobal);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
-// https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments, JSC::JSGlobalObject*& listenerGlobal)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -215,6 +227,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
     auto& context = *scriptExecutionContext();
     VM& vm = context.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = protectedThis->m_thisObject.get();
     JSC::JSValue thisValue = thisObject ? thisObject : JSC::jsUndefined();
@@ -250,12 +263,11 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             continue;
 
         fired = true;
-        WTF::NakedPtr<JSC::Exception> exceptionPtr;
-        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
-        auto* exception = exceptionPtr.get();
-
-        if (exception) [[unlikely]]
-            Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
+        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments);
+        if (scope.exception()) [[unlikely]] {
+            listenerGlobal = lexicalGlobalObject;
+            break;
+        }
     }
 
     return fired;

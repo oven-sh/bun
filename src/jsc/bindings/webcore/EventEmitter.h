@@ -72,7 +72,7 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, JSC::JSGlobalObject*& listenerGlobal);
     bool isFiringEventListeners() const;
 
     const EventEmitterData* eventTargetData() const;
@@ -101,7 +101,7 @@ private:
     {
     }
 
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, JSC::JSGlobalObject*& listenerGlobal);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

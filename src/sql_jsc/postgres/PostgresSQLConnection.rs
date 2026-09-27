@@ -3033,6 +3033,8 @@ impl PostgresSQLConnection {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
+                // The ReadyForQuery that ends this batch is still to come.
+                self.update_flags(|f| f.remove(ConnectionFlags::IS_READY_FOR_QUERY));
                 let invalidates = err.invalidates_prepared_statement();
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.

@@ -19,6 +19,7 @@ import {
   pgCommandComplete,
   pgDataRow,
   pgErrorResponse,
+  pgHold,
   pgMockServer,
   pgParameterDescription,
   pgParseComplete,
@@ -399,6 +400,80 @@ test("postgres: every pipelined Bind that hits 26000 is re-run once under one fr
       parses: 3,
       uniqueNames: 3,
     });
+  } finally {
+    mock.server.close();
+  }
+});
+
+// The server flushes an ErrorResponse before the ReadyForQuery that ends the
+// batch, so the two can arrive in separate reads. An earlier sibling's
+// ReadyForQuery has already marked the connection ready. A query enqueued in
+// that window must not make the client write the re-Parse before the error
+// batch's ReadyForQuery: the later ReadyForQuery would then pipeline the new
+// query ahead of the retry's Bind and hand each the other's rows.
+test("postgres: a query enqueued between a sibling's ErrorResponse and its ReadyForQuery keeps its own rows", async () => {
+  const parses: string[] = [];
+  const queries = new Map<string, string>();
+  const known = new Set<string>();
+  let bound: Buffer | null = null;
+  let bindFailed = false;
+  let holdOnce = true;
+  const mock = await pgMockServer((type, body) => {
+    switch (type) {
+      case "P": {
+        const name = body.subarray(0, body.indexOf(0)).toString("utf-8");
+        const after = body.indexOf(0) + 1;
+        queries.set(name, body.subarray(after, body.indexOf(0, after)).toString("utf-8"));
+        parses.push(name);
+        known.add(name);
+        return pgParseComplete();
+      }
+      case "D":
+        return [pgParameterDescription([25 /* text */]), pgRowDescription([{ name: "v", typeOid: 25 }])];
+      case "B": {
+        const afterPortal = body.indexOf(0) + 1;
+        const name = body.subarray(afterPortal, body.indexOf(0, afterPortal)).toString("utf-8");
+        if (!known.has(name)) {
+          bound = null;
+          bindFailed = true;
+          return pgErrorResponse({ S: "ERROR", C: "26000", M: `prepared statement "${name}" does not exist` });
+        }
+        bound = pgBindParameters(body)[0]!;
+        return pgBindComplete();
+      }
+      case "E":
+        return bound === null ? undefined : [pgDataRow([bound]), pgCommandComplete("SELECT 1")];
+      case "S": {
+        bound = null;
+        const hold = bindFailed && holdOnce;
+        bindFailed = false;
+        if (hold) {
+          holdOnce = false;
+          return [pgHold, pgReadyForQuery()];
+        }
+        return pgReadyForQuery();
+      }
+    }
+  });
+
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1, idleTimeout: 5 });
+    const echo = (text: string) => sql`select ${text} as v`;
+    const other = (text: string) => sql`select ${text}::text as v`;
+    expect(await echo("0")).toEqual([{ v: "0" }]);
+    expect(await other("a")).toEqual([{ v: "a" }]);
+    for (const [name, query] of queries) if (!query.includes("::text")) known.delete(name);
+
+    // execute() sends at once, so these two are pipelined: `other` succeeds,
+    // `echo` gets 26000 and its ReadyForQuery is held back.
+    const s0 = other("b").execute();
+    const s1 = echo("1").execute();
+    expect(await s0).toEqual([{ v: "b" }]);
+    // Enqueued while the error batch's ReadyForQuery is outstanding.
+    const s3 = other("x").execute();
+    mock.release();
+    expect(await Promise.all([s1, s3])).toEqual([[{ v: "1" }], [{ v: "x" }]]);
+    expect(parses.length).toBe(3);
   } finally {
     mock.server.close();
   }

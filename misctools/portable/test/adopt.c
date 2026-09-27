@@ -3,8 +3,10 @@
 // On Windows a callback of the image runs on threads of libuv's pool, of the pool of Windows, on the
 // thread of a console control handler. Such a thread has no thread pointer of the image. The function
 // that is entered checks the slot of the thread pointer and adopts the thread (libc/patch_musl.ts,
-// bun_adopt.c). Here the threads are made by the library of tests of the Linux test host, which calls
-// the callback the way Windows calls one: with the calling convention of Windows, on a thread of its own.
+// bun_adopt.c). Who makes the threads here:
+//   the Linux test host   its library of tests (test_threads), which calls the callback the way Windows
+//                         calls one: with the calling convention of Windows, on a thread of its own
+//   a Windows host        Windows: CreateThread of kernel32, which the image calls by itself
 //
 // Who writes the check:
 //   the source        `callback`: what bun_portable_macros::win_abi writes into a function of Rust
@@ -149,6 +151,45 @@ static void *image_thread(void *arg) {
   return (void *)(intptr_t)(rounds > 0 && !strcmp(name_of_this_thread, "unset") && arg == (void *)&lock);
 }
 
+// On a Windows host the threads are made by Windows: CreateThread of kernel32 starts each of them in
+// windows_thread, which Windows enters the way it enters a callback. It touches nothing of the thread
+// before the callback that is tested has run.
+unsigned long __bun_host_os(void);
+typedef WIN64 unsigned WindowsStart(void *argument);
+typedef WIN64 void *WindowsCreateThread(void *security, size_t stack, WindowsStart *start, void *argument, unsigned flags, unsigned *id);
+typedef WIN64 unsigned WindowsWaitForSingleObject(void *handle, unsigned milliseconds);
+typedef WIN64 int WindowsCloseHandle(void *handle);
+struct windows_thread {
+  Callback *callback;
+  void *context, *handle;
+  long long number, calls, result;
+};
+WIN64 static unsigned windows_thread(void *argument) {
+  struct windows_thread *t = argument;
+  for (long long call = 0; call < t->calls; call++) t->result += t->callback(t->context, t->number, call);
+  return 0;
+}
+WIN64 static long long windows_test_threads(Callback *callback, void *context, long long threads, long long calls) {
+  WindowsCreateThread *create = (WindowsCreateThread *)__bun_host_lookup("kernel32", "CreateThread");
+  WindowsWaitForSingleObject *wait = (WindowsWaitForSingleObject *)__bun_host_lookup("kernel32", "WaitForSingleObject");
+  WindowsCloseHandle *close_handle = (WindowsCloseHandle *)__bun_host_lookup("kernel32", "CloseHandle");
+  if (!create || !wait || !close_handle || threads < 1 || threads > 64) return -1;
+  static struct windows_thread t[64];
+  long long started = 0, result = 0;
+  for (; started < threads; started++) {
+    t[started] = (struct windows_thread){.callback = callback, .context = context, .number = started, .calls = calls};
+    t[started].handle = create(0, 0, windows_thread, &t[started], 0, 0);
+    if (!t[started].handle) break;
+  }
+  for (long long i = 0; i < started; i++) {
+    // The thread has ended, and what Windows runs at the end of a thread has run, when the wait returns.
+    wait(t[i].handle, 0xffffffffu);
+    close_handle(t[i].handle);
+    result += t[i].result;
+  }
+  return started == threads ? result : -1;
+}
+
 int main(int argc, char **argv) {
   const char *who = argc > 1 ? argv[1] : "source";
   Callback *entered = callback;
@@ -160,6 +201,7 @@ int main(int argc, char **argv) {
   else if (strcmp(who, "source")) return 2;
   if (pthread_key_create(&key, destructor)) return 1;
   TestThreads *test_threads = (TestThreads *)__bun_host_lookup("bun_host_test", "test_threads");
+  if (!test_threads && __bun_host_os() == 2) test_threads = windows_test_threads;
 
   if (!test_threads) {
     // No host, or a host without the library of tests: every thread is the image's. The check finds a

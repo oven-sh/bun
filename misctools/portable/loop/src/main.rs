@@ -78,8 +78,10 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     bun_core::output::stdio::init();
     if let Some(invalid) = invalid_hook {
         error(&[
-            b"bun_loop_slice: BUN_PORTABLE_HOST_OS is not linux, darwin or win32: ",
-            invalid.0,
+            b"bun_loop_slice: ",
+            invalid.0.to_bytes(),
+            b" is not linux, darwin or win32: ",
+            invalid.1,
             b"\n",
         ]);
         return 2;

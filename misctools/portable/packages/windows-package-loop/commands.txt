@@ -8,14 +8,19 @@ Linux (uSockets on epoll, bun's POSIX pipes, posix_spawn) and the code bun compi
 it takes the code for Windows, which calls libuv, ws2_32, kernel32 and ntdll through addresses that the
 host resolves (293 imports).
 
-WHAT HAS RUN ON WINDOWS, AND WHAT HAS NOT. This program ran on Windows x64 before the work on the event
-loop was merged with the rest of the portable image: with the image and the host of that work, every
-step passed and every import was bound (expected\differences.json, "ran"). THIS image and THIS host
-are built from the merged tree, and they have not run on Windows: the C library of the image, the
-flags it is compiled with and the host are the merged ones. host_win.diff is what the host has more
-than the host that ran the file system slice on Windows x64 (commit 6165b36e55). On Linux the image
-was made to take the code for Windows (BUN_PORTABLE_HOST_INTERFACE=win32), where it stops at its first
-call of libuv. A step that fails here and is not in expected\differences.json is a finding.
+WHAT HAS RUN ON WINDOWS.
+THIS image and THIS host ran on Windows x64 on 2026-09-27: a person did the steps below there
+(clang 23.1.1, libuv 8023581113 with bun's two patches, everything built on that machine with the commands below).
+  - libuv: 37 of 37 objects, the host linked, no message of the compiler
+  - check_on_windows.c and check_on_windows.cpp: exit code 0, no line of output
+  - imports: total 293, missing 0
+  - the slice: exit code 0, 8 lines, every step ok (host, timer, tcp echo, tcp echo large, thread pool, child with three pipes, child that is killed, timer of uSockets)
+  - compare-run.ts: "host win32: 5 steps as on Linux, 3 accepted differences, 0 unexpected"
+Windows arm64: not run, the package has no image for arm64.
+host_win.diff is what the host has more than the host that ran the file system slice of the first merge
+on Windows x64 (commit 6165b36e55). On Linux the image was made to take the code for Windows
+(BUN_PORTABLE_HOST_INTERFACE=win32), where it stops at its first call of libuv. A step that fails on
+your machine and is not in expected\differences.json is a finding.
 
 What was done on the machine that built the image, without running anything (checked-on-linux\):
   Debian clang version 23.1.2 (++20260910044214+069ef0e7cb36-1~exp1~20260910044225.69), target x86_64-pc-windows-msvc,

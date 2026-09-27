@@ -19,13 +19,14 @@ import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { REPOSITORY as repo, TREE as tree } from "../flags.ts";
+import { whatRanOnWindows } from "../packages/ran-on-windows.ts";
 import { places } from "./places.ts";
 
 const here = dirname(import.meta.path);
 const args = process.argv.slice(2);
 const { slice, image } = places(args);
 const out = resolve(args[0] ?? join(slice, "windows-package"));
-// The host of the first merge: it was built natively and ran this slice on Windows x64.
+// The host of the first merge: host_win.diff is what the host has more than that one.
 const hostThatRan = process.env.HOST_THAT_RAN ?? "6165b36e55";
 const hostFiles = ["host_win.c", "host_win_uv.c", "linux_abi.h", "memory.h"];
 
@@ -101,11 +102,12 @@ the bytes the program wrote (PowerShell's own ">" re-encodes them).
 
    host_win_uv.c names every libuv function of bun's bindings: "undefined symbol uv_.." here means
    that this libuv does not have a function that the bindings declare. Please send the message.
-   The host of commit ${hostThatRan} was built with these commands on Windows x64 and ran this
-   slice there. This host is that one with what the event loop and the image for arm64 need:
-   host_win.diff is what changed. It compiles for this target, x64 and arm64, against the headers
-   of the Windows SDK without a message where the image is built, and it has not run on Windows.
-   What the compiler says here, an error or a warning, is a finding: please send it as it is.
+   WHAT HAS RUN ON WINDOWS.
+${whatRanOnWindows("files", image, join(tree, "host"), "   ")}
+   host_win.diff is what the host has more than the host of commit ${hostThatRan}, which ran the
+   slice of that commit on Windows x64: what the event loop and the image for arm64 need.
+   What the compiler says on your machine, an error or a warning, is a finding: please send it as
+   it is. A step that fails and is not in expected\\differences.json is a finding.
 
 4. every import of the image against this Windows (it binds each one and prints the ones that fail)
 

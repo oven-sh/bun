@@ -25,6 +25,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writ
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { REPOSITORY, TREE } from "../flags.ts";
+import { whatRanOnWindows } from "../packages/ran-on-windows.ts";
 import { places } from "./places.ts";
 import { headerCheckFlags, host as hostBuild, libuv, signatureCheckFlags } from "./windows_build.ts";
 
@@ -35,7 +36,7 @@ const args = process.argv.slice(2);
 const at = places(args);
 const work = at.loop;
 const out = resolve(args[0] ?? join(work, "windows-package"));
-// The host of the first merge: it was built natively and ran the file system slice on Windows x64.
+// The host of the first merge: host_win.diff is what the host has more than that one.
 const base = process.env.HOST_THAT_RAN ?? "6165b36e55";
 const checked = at.checked;
 
@@ -121,14 +122,12 @@ Linux (uSockets on epoll, bun's POSIX pipes, posix_spawn) and the code bun compi
 it takes the code for Windows, which calls libuv, ws2_32, kernel32 and ntdll through addresses that the
 host resolves (${total} imports).
 
-WHAT HAS RUN ON WINDOWS, AND WHAT HAS NOT. This program ran on Windows x64 before the work on the event
-loop was merged with the rest of the portable image: with the image and the host of that work, every
-step passed and every import was bound (expected\\differences.json, "ran"). THIS image and THIS host
-are built from the merged tree, and they have not run on Windows: the C library of the image, the
-flags it is compiled with and the host are the merged ones. host_win.diff is what the host has more
-than the host that ran the file system slice on Windows x64 (commit ${base}). On Linux the image
-was made to take the code for Windows (BUN_PORTABLE_HOST_INTERFACE=win32), where it stops at its first
-call of libuv. A step that fails here and is not in expected\\differences.json is a finding.
+WHAT HAS RUN ON WINDOWS.
+${whatRanOnWindows("loop", image, join(tree, "host"), "")}
+host_win.diff is what the host has more than the host that ran the file system slice of the first merge
+on Windows x64 (commit ${base}). On Linux the image was made to take the code for Windows
+(BUN_PORTABLE_HOST_INTERFACE=win32), where it stops at its first call of libuv. A step that fails on
+your machine and is not in expected\\differences.json is a finding.
 
 What was done on the machine that built the image, without running anything (checked-on-linux\\):
   ${summary.compiler}, target ${summary.target},

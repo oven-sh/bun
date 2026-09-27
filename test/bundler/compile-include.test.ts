@@ -307,6 +307,54 @@ describe.concurrent("compile include", () => {
       TIMEOUT,
     );
 
+    // `.//x` is `./x`: a doubled slash after the `./` prefix must not turn the pattern
+    // absolute once the prefix is dropped. The prefix forms below all look relative.
+    test.each([".//", "././/", ".///", ".//./"])(
+      "a glob written as %s<outside dir>/*.js is not resolved outside the cwd",
+      async prefix => {
+        using outside = tempDir(`compile-include-outside-${via}`, { "leak.js": `export default "leaked";` });
+        using dir = tempDir(`compile-include-doubleslash-${via}`, { "index.ts": `console.log("x");` });
+        const rel = String(outside).replace(/^[/\\]+/, "");
+        const built = await build(String(dir), via, [`${prefix}${rel}/*.js`]);
+        expect(built.failed).toBe(true);
+        expect(built.message).toMatch(
+          isWindows ? /must be relative to cwd/ : /failed to read --include path/,
+        );
+      },
+      TIMEOUT,
+    );
+
+    test.skipIf(isWindows)(
+      "a glob with a doubled slash after ./ stays relative to the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-doubleslash-ok-${via}`, {
+          "index.ts": /* ts */ `
+            const mod = await import("./plugins/" + "target" + ".js");
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, [".//plugins/*.js"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test.skipIf(!isWindows)(
+      "rejects a drive-letter pattern behind a .\\ prefix",
+      async () => {
+        using dir = tempDir(`compile-include-dotdrive-${via}`, { "index.ts": `console.log("x");` });
+        const built = await build(String(dir), via, [".\\C:\\x\\*.js"]);
+        expect(built.message).toContain("must be relative to cwd");
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
     test.skipIf(!isWindows)(
       "rejects an absolute drive-letter pattern",
       async () => {

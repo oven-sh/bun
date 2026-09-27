@@ -1399,12 +1399,28 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         #[cfg(not(windows))]
         let to_check: &[u8] = trimmed;
 
+        // Normalize before validating: collapse repeated slashes (`.//x` is `./x`) and drop
+        // leading `./` components, so every branch below sees the same cwd-relative path and
+        // a pattern that only looks relative (`.//tmp/*.js`) cannot turn absolute once its
+        // `./` prefix is removed. `..` segments are left alone in all three branches.
+        let mut norm: Vec<u8> = Vec::with_capacity(to_check.len());
+        for &b in to_check {
+            if b == b'/' && norm.last() == Some(&b'/') {
+                continue;
+            }
+            norm.push(b);
+        }
+        while norm.len() > 2 && norm.starts_with(b"./") {
+            norm.drain(..2);
+        }
+        let norm: &[u8] = &norm;
+
         // Patterns are relative to the cwd. `:` only makes a drive path on Windows.
         #[cfg(windows)]
-        let is_absolute = to_check.starts_with(b"/")
-            || (to_check.len() > 1 && to_check[0].is_ascii_alphabetic() && to_check[1] == b':');
+        let is_absolute = norm.starts_with(b"/")
+            || (norm.len() > 1 && norm[0].is_ascii_alphabetic() && norm[1] == b':');
         #[cfg(not(windows))]
-        let is_absolute = to_check.starts_with(b"/");
+        let is_absolute = norm.starts_with(b"/");
         if is_absolute {
             return Err(format!(
                 "--include pattern {} must be relative to cwd",
@@ -1412,11 +1428,10 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
             ));
         }
 
-        if has_glob_metachar(to_check) {
+        if has_glob_metachar(norm) {
             // Walk only the glob's literal leading directories (`./a/b/*.js` walks
-            // `a/b`, not the whole cwd); a leading `./` is not part of the match.
-            let glob_src: &[u8] = to_check;
-            let pattern = glob_src.strip_prefix(b"./").unwrap_or(glob_src);
+            // `a/b`, not the whole cwd); the normalized pattern has no leading `./`.
+            let pattern: &[u8] = norm;
             let mut prefix_len = 0usize;
             let mut pos = 0usize;
             for part in pattern.split(|&c| c == b'/') {
@@ -1491,14 +1506,14 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
             continue;
         }
 
-        if trimmed.len() >= zbuf.len() {
+        if norm.len() >= zbuf.len() {
             return Err(fail(
                 trimmed,
                 bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open),
             ));
         }
-        let n = trimmed.len();
-        zbuf[..n].copy_from_slice(trimmed);
+        let n = norm.len();
+        zbuf[..n].copy_from_slice(norm);
         zbuf[n] = 0;
         let trimmed_z = bun_core::ZStr::from_buf(&zbuf[..], n);
 
@@ -1508,7 +1523,7 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         };
 
         if bun_core::S::ISDIR(st.st_mode as _) {
-            let dir = match bun_sys::open_dir_for_iteration(cwd, trimmed) {
+            let dir = match bun_sys::open_dir_for_iteration(cwd, norm) {
                 Ok(d) => d,
                 Err(e) => return Err(fail(trimmed, e)),
             };
@@ -1546,8 +1561,8 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
                 #[cfg(not(windows))]
                 let rel: Vec<u8> = entry.path.as_bytes().to_vec();
 
-                let mut dest = Vec::with_capacity(trimmed.len() + 1 + rel.len());
-                dest.extend_from_slice(trimmed);
+                let mut dest = Vec::with_capacity(norm.len() + 1 + rel.len());
+                dest.extend_from_slice(norm);
                 dest.push(b'/');
                 dest.extend_from_slice(&rel);
                 out.push(dest.into_boxed_slice());
@@ -1560,7 +1575,7 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
                 ));
             }
         } else if bun_core::S::ISREG(st.st_mode as _) {
-            out.push(trimmed.to_vec().into_boxed_slice());
+            out.push(norm.to_vec().into_boxed_slice());
         } else {
             return Err(format!(
                 "--include {} is not a regular file, directory, or glob",

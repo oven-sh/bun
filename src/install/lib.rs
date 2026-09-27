@@ -783,8 +783,7 @@ impl RunCommand {
         Ok(Self::windows_node_shim_at(&buf[..len], image))
     }
 
-    /// The last component of `path` is `bun-node` or `bun-node-<16 hex digits>`
-    /// (ASCII, case-insensitive): a directory this bun plants shims in.
+    /// The last component of `path` is `bun-node` or `bun-node-<16 hex>`.
     fn is_shim_dir(path: &[u16]) -> bool {
         let start = path
             .iter()
@@ -811,9 +810,7 @@ impl RunCommand {
     /// `bun-node-` + 16 hex digits.
     const TEMP_SHIM_DIR_NAME_LEN: usize = Self::TEMP_SHIM_DIR_PREFIX.len() + 16;
 
-    /// `%TEMP%\bun-node-<hash>`: keyed on the path bun was launched as, so the name
-    /// is stable across upgrades of one install and distinct for two installs.
-    /// ASCII letters are folded, like the path itself.
+    /// `bun-node-<hash of the launched path, ASCII folded>`: one name per install.
     fn temp_shim_dir_name<'a>(
         buf: &'a mut [u8; Self::TEMP_SHIM_DIR_NAME_LEN],
         launched: &bun_core::WStr,
@@ -1006,12 +1003,8 @@ impl RunCommand {
     }
 
     /// Makes the shim as `<dest>.<pid>.tmp`, then renames it over `<dest>`.
-    ///
-    /// NTFS refuses to remove the last link of an image a process has mapped, but
-    /// lets it be renamed. A stale `<dest>` that a `--bun` child still runs is moved
-    /// to `<dest>.old` (or `<dest>.<pid>.old` when `.old` is itself still mapped) so
-    /// the name stays in this directory instead of dropping to the next tier.
-    /// Every replace first removes the `*.old` files whose image is no longer mapped.
+    /// NTFS cannot unlink the last name of a mapped image but can rename it: a
+    /// stale `<dest>` a child still runs moves to `<dest>.old` first.
     fn replace_windows_node_shim(
         buf: &mut [u16],
         dest_len: usize,

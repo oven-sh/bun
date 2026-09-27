@@ -217,13 +217,32 @@ impl Metadata {
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
     // translated from:
     // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
+    //
+    // `strict_null_checks` is tsc's `strictNullChecks`. With it off, `null` and
+    // `undefined` are elided from a union or intersection. With it on they
+    // serialize to `void 0` like `void` does, so `string | undefined` is two
+    // different constituents and becomes `Object`.
+
+    /// Whether this constituent serializes to `void 0` when it is compared
+    /// with another constituent. `MNever` is handled before any comparison.
+    fn is_void_like(&self) -> bool {
+        matches!(
+            self,
+            Metadata::MNull | Metadata::MUndefined | Metadata::MVoid
+        )
+    }
 
     /// Return the final union type if possible, or return None to continue merging.
     ///
-    /// If the current type is MNever, MNull, or MUndefined assign the current type
-    /// to MNone and return None to ensure it's always replaced by the next type.
+    /// If the current type is MNever (or MNull / MUndefined without strict null
+    /// checks) assign the current type to MNone and return None to ensure it's
+    /// always replaced by the next type.
     /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
-    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, load_name: F) -> Option<Self> {
+    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(
+        &mut self,
+        strict_null_checks: bool,
+        load_name: F,
+    ) -> Option<Self> {
         let current = self;
         match current {
             Metadata::MIdentifier(r) => {
@@ -235,7 +254,12 @@ impl Metadata {
 
             Metadata::MUnknown | Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
 
-            Metadata::MNever | Metadata::MNull | Metadata::MUndefined => {
+            Metadata::MNever => {
+                *current = Metadata::MNone;
+                None
+            }
+
+            Metadata::MNull | Metadata::MUndefined if !strict_null_checks => {
                 *current = Metadata::MNone;
                 None
             }
@@ -244,12 +268,21 @@ impl Metadata {
         }
     }
 
-    pub fn merge_union(&mut self, left: Self) {
+    pub fn merge_union(&mut self, strict_null_checks: bool, left: Self) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
                 *result = match result {
-                    Metadata::MNever | Metadata::MUndefined | Metadata::MNull => left,
+                    Metadata::MNever => left,
+
+                    // both sides are `void 0`
+                    Metadata::MNull | Metadata::MUndefined | Metadata::MVoid
+                        if left.is_void_like() =>
+                    {
+                        left
+                    }
+
+                    Metadata::MNull | Metadata::MUndefined if !strict_null_checks => left,
 
                     _ => Metadata::MObject,
                 };
@@ -271,10 +304,12 @@ impl Metadata {
 
     /// Return the final intersection type if possible, or return None to continue merging.
     ///
-    /// If the current type is MUnknown, MNull, or MUndefined assign the current type
-    /// to MNone and return None to ensure it's always replaced by the next type.
+    /// If the current type is MUnknown (or MNull / MUndefined without strict
+    /// null checks) assign the current type to MNone and return None to ensure
+    /// it's always replaced by the next type.
     pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(
         &mut self,
+        strict_null_checks: bool,
         load_name: F,
     ) -> Option<Self> {
         let current = self;
@@ -291,7 +326,12 @@ impl Metadata {
 
             Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
 
-            Metadata::MUnknown | Metadata::MNull | Metadata::MUndefined => {
+            Metadata::MUnknown => {
+                *current = Metadata::MNone;
+                None
+            }
+
+            Metadata::MNull | Metadata::MUndefined if !strict_null_checks => {
                 *current = Metadata::MNone;
                 None
             }
@@ -300,15 +340,24 @@ impl Metadata {
         }
     }
 
-    pub fn merge_intersection(&mut self, left: Self) {
+    pub fn merge_intersection(&mut self, strict_null_checks: bool, left: Self) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
                 *result = match result {
-                    Metadata::MUnknown | Metadata::MUndefined | Metadata::MNull => left,
+                    Metadata::MUnknown => left,
 
                     // ensure MNever is the final type
                     Metadata::MNever => Metadata::MNever,
+
+                    // both sides are `void 0`
+                    Metadata::MNull | Metadata::MUndefined | Metadata::MVoid
+                        if left.is_void_like() =>
+                    {
+                        left
+                    }
+
+                    Metadata::MNull | Metadata::MUndefined if !strict_null_checks => left,
 
                     _ => Metadata::MObject,
                 };

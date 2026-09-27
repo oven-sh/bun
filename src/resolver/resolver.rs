@@ -6561,6 +6561,12 @@ impl<'a> Resolver<'a> {
                         if let Some(v) = parent_config.use_define_for_class_fields {
                             mc.use_define_for_class_fields = Some(v);
                         }
+                        if let Some(v) = parent_config.strict {
+                            mc.strict = Some(v);
+                        }
+                        if let Some(v) = parent_config.strict_null_checks {
+                            mc.strict_null_checks = Some(v);
+                        }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }

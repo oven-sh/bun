@@ -132,6 +132,12 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
+/// What `strictNullChecks` means when a tsconfig sets neither it nor
+/// `strict`. This is the TypeScript 5 default. TypeScript 6 turned `strict`
+/// on by default, but Bun keeps the older default so projects that never set
+/// the keys keep the metadata they got before.
+pub const STRICT_NULL_CHECKS_DEFAULT: bool = false;
+
 pub struct TSConfigJSON {
     pub(crate) abs_path: Box<[u8]>,
 
@@ -163,6 +169,10 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+    /// `None` = unset. Only read as the fallback for `strictNullChecks`.
+    pub strict: Option<bool>,
+    /// `None` = unset, then `strict` decides.
+    pub strict_null_checks: Option<bool>,
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +189,8 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            strict: None,
+            strict_null_checks: None,
         }
     }
 }
@@ -226,9 +238,18 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
+    /// The effective `strictNullChecks` value, the way tsc's
+    /// `getStrictOptionValue` computes it: an explicit `strictNullChecks`
+    /// wins, otherwise `strict` decides, otherwise it is off.
+    pub fn strict_null_checks(&self) -> bool {
+        self.strict_null_checks
+            .or(self.strict)
+            .unwrap_or(STRICT_NULL_CHECKS_DEFAULT)
+    }
+
     /// The `design:*` metadata mode this tsconfig asks for.
     pub fn decorator_metadata(&self) -> bun_ast::ts::DecoratorMetadata {
-        bun_ast::ts::DecoratorMetadata::new(self.emit_decorator_metadata, false)
+        bun_ast::ts::DecoratorMetadata::new(self.emit_decorator_metadata, self.strict_null_checks())
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
@@ -380,6 +401,8 @@ impl TSConfigJSON {
             let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
             let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
             let mut use_define_for_class_fields_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut strict_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut strict_null_checks_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
@@ -402,6 +425,10 @@ impl TSConfigJSON {
                         }
                         b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
                             use_define_for_class_fields_v = Some(value)
+                        }
+                        b"strict" if strict_v.is_none() => strict_v = Some(value),
+                        b"strictNullChecks" if strict_null_checks_v.is_none() => {
+                            strict_null_checks_v = Some(value)
                         }
                         b"jsxFactory" if jsx_factory_v.is_none() => {
                             jsx_factory_v = Some((value, loc))
@@ -450,6 +477,16 @@ impl TSConfigJSON {
             // Parse "useDefineForClassFields"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_for_class_fields_v {
                 result.use_define_for_class_fields = Some(val);
+            }
+
+            // Parse "strict"
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = strict_v {
+                result.strict = Some(val);
+            }
+
+            // Parse "strictNullChecks"
+            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = strict_null_checks_v {
+                result.strict_null_checks = Some(val);
             }
 
             // Parse "jsxFactory"

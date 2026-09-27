@@ -16,6 +16,15 @@ use bun_ast::ts::Metadata;
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// tsc's `strictNullChecks`, as the decorator metadata serializer reads it.
+    #[inline]
+    fn strict_null_checks(&self) -> bool {
+        self.options
+            .features
+            .decorator_metadata
+            .strict_null_checks()
+    }
+
     #[inline]
     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(
@@ -802,7 +811,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: GET_METADATA implies Some"))
                         .clone();
                         if let Some(final_) =
-                            Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
+                            Metadata::finish_union(&mut left, self.strict_null_checks(), |r| {
+                                self.load_name_from_ref(r)
+                            })
                         {
                             // finish skipping the rest of the type without collecting type metadata.
                             **result
@@ -823,6 +834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 result
                                     .as_deref_mut()
                                     .expect("infallible: GET_METADATA implies Some"),
+                                self.strict_null_checks(),
                                 left,
                             );
                         }
@@ -846,9 +858,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .as_mut()
                             .expect("infallible: GET_METADATA implies Some"))
                         .clone();
-                        if let Some(final_) =
-                            Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
-                        {
+                        if let Some(final_) = Metadata::finish_intersection(
+                            &mut left,
+                            self.strict_null_checks(),
+                            |r| self.load_name_from_ref(r),
+                        ) {
                             // finish skipping the rest of the type without collecting type metadata.
                             **result
                                 .as_mut()
@@ -868,6 +882,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 result
                                     .as_deref_mut()
                                     .expect("infallible: GET_METADATA implies Some"),
+                                self.strict_null_checks(),
                                 left,
                             );
                         }
@@ -987,9 +1002,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.lexer.expect(T::TQuestion)?;
                         let mut left = self.skip_type_script_type_with_metadata(Level::Lowest)?;
                         self.lexer.expect(T::TColon)?;
-                        if let Some(final_) =
-                            Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
-                        {
+                        if let Some(final_) = Metadata::finish_intersection(
+                            &mut left,
+                            self.strict_null_checks(),
+                            |r| self.load_name_from_ref(r),
+                        ) {
                             **result
                                 .as_mut()
                                 .expect("infallible: GET_METADATA implies Some") = final_;
@@ -1004,6 +1021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 result
                                     .as_deref_mut()
                                     .expect("infallible: GET_METADATA implies Some"),
+                                self.strict_null_checks(),
                                 left,
                             );
                         }

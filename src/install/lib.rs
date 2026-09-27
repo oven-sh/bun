@@ -1003,8 +1003,7 @@ impl RunCommand {
     }
 
     /// Makes the shim as `<dest>.<pid>.tmp`, then renames it over `<dest>`.
-    /// NTFS cannot unlink the last name of a mapped image but can rename it: a
-    /// stale `<dest>` a child still runs moves to `<dest>.old` first.
+    /// A `<dest>` a child still runs cannot be unlinked: it moves to `<dest>.old`.
     fn replace_windows_node_shim(
         buf: &mut [u16],
         dest_len: usize,

@@ -8,6 +8,13 @@
    },
    "why": "the host, and the code that the image takes for it"
   },
+  "tcp echo, large": {
+   "fields": {
+    "several_writes": false,
+    "waited_to_write": false
+   },
+   "why": "On Windows the first write takes the whole payload, 16 MiB too: the client writes once, nothing is left for a second write, and neither side waits to be writable. On Linux a write to a socket takes what the buffer of the kernel has room for, so the same program writes several times and waits in between. It is bun's normal behaviour on each system: the code is the same (packages/bun-usockets/src/socket.c us_socket_write, bsd.c bsd_send, which is send() of Winsock on a socket that libuv polls), and what differs is how much of a buffer the system takes at once. Seen on Windows x64."
+  },
   "timer of uSockets": {
    "only_here": {
     "step": "timer of uSockets",
@@ -26,7 +33,7 @@
    "why": "the host"
   }
  },
- "not_run": {
-  "win32": "Nothing of this program has run on Windows when this file was written. The lines of the steps are expected to be the ones of Linux: a child that uv_process_kill ended is Signaled for bun (src/spawn/process.rs, on_exit_uv), and 16 MiB do not pass a loopback socket in one write on either system. The program has one step more on Windows, the timer of uSockets, at the end. A line that differs is a finding, not an accepted difference."
+ "ran": {
+  "win32": "The program ran on Windows x64 as the image of the event loop work, before that work was merged: timer, tcp echo, thread pool, child with three pipes, child that is killed, and every import bound. The lines of the steps are the ones of Linux but for what this file lists: a child that uv_process_kill ended is Signaled for bun (src/spawn/process.rs, on_exit_uv). A line that differs and is not listed is a finding, not an accepted difference."
  }
 }

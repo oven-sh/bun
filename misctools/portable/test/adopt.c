@@ -3,10 +3,15 @@
 // On Windows a callback of the image runs on threads of libuv's pool, of the pool of Windows, on the
 // thread of a console control handler. Such a thread has no thread pointer of the image. The function
 // that is entered checks the slot of the thread pointer and adopts the thread (libc/patch_musl.ts,
-// bun_adopt.c). Who makes the threads here:
-//   the Linux test host   its library of tests (test_threads), which calls the callback the way Windows
-//                         calls one: with the calling convention of Windows, on a thread of its own
-//   a Windows host        Windows: CreateThread of kernel32, which the image calls by itself
+// bun_adopt.c). Who makes the threads here, by the second argument:
+//   threads   threads that end when they have made their calls
+//             the Linux test host   its library of tests (test_threads), which calls the callback the
+//                                   way Windows calls one: with the calling convention of Windows, on a
+//                                   thread of its own
+//             a Windows host        Windows: CreateThread of kernel32, which the image calls by itself
+//   pool      threads of a pool, which do not end when the work returns
+//             the Linux test host   its library of tests (test_submit)
+//             a Windows host        the thread pool of Windows: TrySubmitThreadpoolCallback of kernel32
 //
 // Who writes the check:
 //   the source        `callback`: what bun_portable_macros::win_abi writes into a function of Rust
@@ -15,10 +20,21 @@
 //                     list (build.ts): it calls the check of the C library at their entry.
 //   nobody            `unlisted_callback`, `bun_test::Callbacks::unlisted`, and `callback` with no-check
 //
-//   adopt.img [listed|listed-cpp]              exit code 42 and one line that starts with "adopt: "
-//   adopt.img no-check|unlisted|unlisted-cpp   nothing checks: a thread of the host that runs the callback
+//   adopt.img [source|listed|listed-cpp] [threads|pool]   exit code 42 and one line that starts with "adopt: "
+//   adopt.img no-check|unlisted|unlisted-cpp [threads|pool]
+//                                              nothing checks: a thread of the host that runs the callback
 //                                              has to stop the program, which shows that the check is
 //                                              what makes the other runs pass
+//
+// What the line says of the threads that were adopted, and what is expected:
+//   threads   adopted_now=0 adopted_ever=8 destructors=8. The maker waits for the end of its threads, and a
+//             thread that ends leaves the image: it is not adopted any more, and the destructors of its keys
+//             have run.
+//   pool      adopted_now=8 adopted_ever=8 destructors=0. The work has returned and the threads are still
+//             there, they are the pool's: each is adopted still, and its keys are its own until it ends. A
+//             pool may end a thread that has no work at any time. Such a thread has left the image as
+//             every thread does that ends, so what holds is adopted_now + destructors = 8, and
+//             adopted_now is above 0 as long as the pool has kept one of them.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>
@@ -27,6 +43,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 extern unsigned long __bun_tp_offset;
@@ -190,8 +207,66 @@ WIN64 static long long windows_test_threads(Callback *callback, void *context, l
   return started == threads ? result : -1;
 }
 
+// The threads of a pool. A job is what one thread of the other makers does: its calls, one after the other,
+// with its number. The test wants every job on a thread of its own (what a call leaves in the thread-locals
+// is what the next call of the job finds), and a pool runs a job on any thread that has no work. So a job
+// keeps its thread, after its first call, until every job has made its first call: the pool has to come up
+// with a thread for each. The first call is the first thing of the image that the thread runs.
+typedef WIN64 void PoolWork(void *instance, void *argument);
+typedef WIN64 int PoolSubmit(PoolWork *work, void *argument, void *environment);
+typedef WIN64 int PoolMayRunLong(void *instance);
+struct pool_job {
+  Callback *callback;
+  void *context;
+  long long number, calls, jobs, result;
+};
+static PoolSubmit *pool_submit;
+static PoolMayRunLong *pool_may_run_long;
+static volatile int pool_jobs_in, pool_jobs_done;
+
+static void nap(void) {
+  struct timespec t = {0, 1000000};
+  nanosleep(&t, 0);
+}
+static long long seconds_now(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return t.tv_sec;
+}
+WIN64 static void pool_work(void *instance, void *argument) {
+  struct pool_job *job = argument;
+  // Windows is told that this work takes its time (CallbackMayRunLong of kernel32): the pool gives the next
+  // job another thread. A function of Windows, nothing of the image.
+  if (pool_may_run_long) pool_may_run_long(instance);
+  job->result += job->callback(job->context, job->number, 0);
+  __sync_fetch_and_add(&pool_jobs_in, 1);
+  while (pool_jobs_in < job->jobs) nap();
+  for (long long call = 1; call < job->calls; call++) job->result += job->callback(job->context, job->number, call);
+  __sync_fetch_and_add(&pool_jobs_done, 1);
+}
+WIN64 static long long pool_test_threads(Callback *callback, void *context, long long threads, long long calls) {
+  static struct pool_job jobs[64];
+  if (threads < 1 || threads > 64) return -1;
+  for (long long i = 0; i < threads; i++) {
+    jobs[i] = (struct pool_job){.callback = callback, .context = context, .number = i, .calls = calls, .jobs = threads};
+    if (!pool_submit(pool_work, &jobs[i], 0)) return -1;
+  }
+  // The work has returned when the job is counted. The thread has not ended, and nobody waits for that.
+  for (long long until = seconds_now() + 60; pool_jobs_done < threads; nap()) {
+    if (seconds_now() < until) continue;
+    fprintf(stderr, "adopt: after 60 s the pool has begun %d of %lld jobs and ended %d\n", pool_jobs_in, threads, pool_jobs_done);
+    return -1;
+  }
+  long long result = 0;
+  for (long long i = 0; i < threads; i++) result += jobs[i].result;
+  return result;
+}
+
 int main(int argc, char **argv) {
   const char *who = argc > 1 ? argv[1] : "source";
+  const char *maker = argc > 2 ? argv[2] : "threads";
+  int pool = !strcmp(maker, "pool");
+  if (!pool && strcmp(maker, "threads")) return 2;
   Callback *entered = callback;
   if (!strcmp(who, "no-check")) check = 0;
   else if (!strcmp(who, "listed")) entered = listed_callback;
@@ -200,8 +275,18 @@ int main(int argc, char **argv) {
   else if (!strcmp(who, "unlisted-cpp")) entered = adopt_cpp_callback(0);
   else if (strcmp(who, "source")) return 2;
   if (pthread_key_create(&key, destructor)) return 1;
-  TestThreads *test_threads = (TestThreads *)__bun_host_lookup("bun_host_test", "test_threads");
-  if (!test_threads && __bun_host_os() == 2) test_threads = windows_test_threads;
+  TestThreads *test_threads = 0;
+  if (pool) {
+    pool_submit = (PoolSubmit *)__bun_host_lookup("bun_host_test", "test_submit");
+    if (!pool_submit && __bun_host_os() == 2) {
+      pool_submit = (PoolSubmit *)__bun_host_lookup("kernel32", "TrySubmitThreadpoolCallback");
+      pool_may_run_long = (PoolMayRunLong *)__bun_host_lookup("kernel32", "CallbackMayRunLong");
+    }
+    if (pool_submit) test_threads = pool_test_threads;
+  } else {
+    test_threads = (TestThreads *)__bun_host_lookup("bun_host_test", "test_threads");
+    if (!test_threads && __bun_host_os() == 2) test_threads = windows_test_threads;
+  }
 
   if (!test_threads) {
     // No host, or a host without the library of tests: every thread is the image's. The check finds a
@@ -230,9 +315,12 @@ int main(int argc, char **argv) {
   unsigned long ever = 0;
   unsigned long now = __bun_adopted_threads(&ever);
   long long expected = 100ll * CALLS * (HOST_THREADS * (HOST_THREADS - 1) / 2) + (long long)HOST_THREADS * (CALLS * (CALLS - 1) / 2);
-  int ok = sum == expected && now == 0 && ever == HOST_THREADS && destructors_ran == HOST_THREADS &&
-           shared_calls == HOST_THREADS * CALLS && image_threads_ok == IMAGE_THREADS && !strcmp(name_of_this_thread, "unset");
-  printf("adopt: mode=hosted check=%s threads=%d calls=%lld sum=%lld expected=%lld adopted_now=%lu adopted_ever=%lu destructors=%d image_threads_ok=%d/%d main_tls=%s\n",
-         who, HOST_THREADS, shared_calls, sum, expected, now, ever, destructors_ran, image_threads_ok, IMAGE_THREADS, name_of_this_thread);
+  int destructors = destructors_ran;
+  // See the top of this file: the threads of a pool are still there, the others have ended.
+  int have_left = pool ? now > 0 && now + (unsigned long)destructors == HOST_THREADS : now == 0 && destructors == HOST_THREADS;
+  int ok = sum == expected && have_left && ever == HOST_THREADS && shared_calls == HOST_THREADS * CALLS && image_threads_ok == IMAGE_THREADS &&
+           !strcmp(name_of_this_thread, "unset");
+  printf("adopt: mode=%s check=%s threads=%d calls=%lld sum=%lld expected=%lld adopted_now=%lu adopted_ever=%lu destructors=%d image_threads_ok=%d/%d main_tls=%s\n",
+         pool ? "pool" : "hosted", who, HOST_THREADS, shared_calls, sum, expected, now, ever, destructors, image_threads_ok, IMAGE_THREADS, name_of_this_thread);
   return ok ? 42 : 1;
 }

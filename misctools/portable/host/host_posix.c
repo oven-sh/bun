@@ -1334,12 +1334,38 @@ WIN64 static long long test_threads(TestThreadCallback *callback, void *context,
   }
   return started == threads ? result : -1;
 }
+/* test_submit(work, argument, environment): a thread of a pool runs work(instance, argument), as after
+   TrySubmitThreadpoolCallback of Windows. What a pool is to the image: the thread does not end when
+   the work returns, so it stays adopted. The pool of the tests has a thread for every work, which
+   stays until the process ends. The result is 1, and 0 when there is no thread. */
+typedef WIN64 void TestPoolWork(void *, void *);
+struct test_work { TestPoolWork *work; void *argument; };
+static void *test_pool_thread(void *p) {
+  struct test_work w = *(struct test_work *)p;
+  free(p);
+  slot_set(0);
+  w.work(0, w.argument);
+  for (;;) pause();
+}
+WIN64 static int test_submit(TestPoolWork *work, void *argument, void *environment) {
+  (void)environment;
+  struct test_work *w = malloc(sizeof *w);
+  pthread_t thread;
+  if (!w) return 0;
+  *w = (struct test_work){work, argument};
+  if (pthread_create(&thread, 0, test_pool_thread, w)) {
+    free(w);
+    return 0;
+  }
+  pthread_detach(thread);
+  return 1;
+}
 WIN64 static long long test_fill(void *buffer, long long bytes) { return kernel_fills(buffer, bytes); }
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   static const struct { const char *name; void *address; } symbols[] = {
     {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
     {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
-    {"test_threads", (void *)test_threads}, {"test_fill", (void *)test_fill},
+    {"test_threads", (void *)test_threads}, {"test_submit", (void *)test_submit}, {"test_fill", (void *)test_fill},
   };
   if (strcmp(library, "bun_host_test")) return 0;
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
@@ -1383,6 +1409,35 @@ __attribute__((used)) static long long test_threads(TestThreadCallback *callback
   return started == threads ? result : -1;
 }
 IMAGE_ENTRY(test_threads)
+/* test_submit as above: a thread for every work, which stays until the process ends. */
+typedef void TestPoolWork(void *, void *);
+/* The image function returns to the caller of call_image2. */
+__attribute__((naked)) static void call_image2(TestPoolWork *fn, void *a, void *b, void *x18) {
+  __asm__("mov x18, x3\n mov x16, x0\n mov x0, x1\n mov x1, x2\n br x16\n");
+}
+struct test_work { TestPoolWork *work; void *argument; };
+static void *test_pool_thread(void *p) {
+  struct test_work w = *(struct test_work *)p;
+  free(p);
+  slot_set(0);
+  call_image2(w.work, 0, w.argument, thread_x18());
+  for (;;) pause();
+}
+__attribute__((used)) static int test_submit(TestPoolWork *work, void *argument, void *environment) {
+  FORGET_X18();
+  (void)environment;
+  struct test_work *w = malloc(sizeof *w);
+  pthread_t thread;
+  if (!w) return 0;
+  *w = (struct test_work){work, argument};
+  if (pthread_create(&thread, 0, test_pool_thread, w)) {
+    free(w);
+    return 0;
+  }
+  pthread_detach(thread);
+  return 1;
+}
+IMAGE_ENTRY(test_submit)
 __attribute__((used)) static long long test_fill(void *buffer, long long bytes X18_AT_ENTRY_AFTER_TWO) {
   CHECK_X18("test_fill", 0l);
   FORGET_X18();
@@ -1393,6 +1448,7 @@ __attribute__((used)) static void *host_lookup(const char *library, const char *
   FORGET_X18();
   if (macos_tp || strcmp(library, "bun_host_test")) return 0;
   if (!strcmp(symbol, "test_threads")) return (void *)test_threads_entry;
+  if (!strcmp(symbol, "test_submit")) return (void *)test_submit_entry;
   if (!strcmp(symbol, "test_fill")) return (void *)test_fill_entry;
   return 0;
 }

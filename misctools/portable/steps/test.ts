@@ -44,7 +44,8 @@ const requests = (mode: string) => new RegExp(`^requests: mode=${mode} checks=[0
 const RAW_SYSCALL = /^raw_syscall: the kernel answered/m;
 /**
  * test/adopt.c. Who wrote the check of the callback: its source, or the compiler for a function of
- * test/adopt.list. Hosted, 8 threads of the host call into the image, 50 times each.
+ * test/adopt.list. Hosted, 8 threads of the host call into the image, 50 times each: threads that end
+ * after their calls, and threads of a pool, which are still there, and adopted, when the image counts.
  */
 const ADOPT: [string, string][] = [
   ["source", "the check is in the source"],
@@ -61,6 +62,11 @@ const adoptDirect = (who: string) =>
 const adoptHosted = (who: string) =>
   new RegExp(
     `^adopt: mode=hosted check=${who} threads=8 calls=400 sum=149800 expected=149800 adopted_now=0 adopted_ever=8 destructors=8 image_threads_ok=4/4 main_tls=unset$`,
+    "m",
+  );
+const adoptPool = (who: string) =>
+  new RegExp(
+    `^adopt: mode=pool check=${who} threads=8 calls=400 sum=149800 expected=149800 adopted_now=8 adopted_ever=8 destructors=0 image_threads_ok=4/4 main_tls=unset$`,
     "m",
   );
 /**
@@ -168,10 +174,23 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
       image("adopt"),
       who,
     ]);
+    await expect(
+      42,
+      adoptPool(who),
+      `${arch} adopt hosted: 8 threads of a pool of the host call into the image (${what})`,
+      [...emulator, host, image("adopt"), who, "pool"],
+    );
   }
   // 139 is SIGSEGV: without the check the first use of the thread pointer is an address near 0.
   for (const [who, what] of ADOPT_MUST_FAIL) {
     await expect(139, /(?:)/, `${arch} adopt hosted, must fail: ${what}`, [...emulator, host, image("adopt"), who]);
+    await expect(139, /(?:)/, `${arch} adopt hosted, threads of a pool, must fail: ${what}`, [
+      ...emulator,
+      host,
+      image("adopt"),
+      who,
+      "pool",
+    ]);
   }
 
   // The file that commit.img reads where the system call is pread is the image itself.

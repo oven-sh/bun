@@ -239,15 +239,14 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
   if (libDir === undefined) return;
   // libucrt.lib is the member that matters (static CRT); ucrt.lib comes along
   // for /MD-style links of tooling. Presence of both = done.
-  if (existsSync(join(libDir, "libucrt.lib")) && existsSync(join(libDir, "ucrt.lib"))) {
-    return;
-  }
+  const isComplete = (dir: string) => existsSync(join(dir, "libucrt.lib")) && existsSync(join(dir, "ucrt.lib"));
+  if (isComplete(libDir)) return;
   requireMicrosoftLicenses(cfg);
 
   const arch = msArchName(cfg.arch);
   const pkg = `microsoft.windows.sdk.cpp.${arch}`;
   const url = `https://api.nuget.org/v3-flatcontainer/${pkg}/${UCRT_SERVICING_VERSION}/${pkg}.${UCRT_SERVICING_VERSION}.nupkg`;
-  const stagingDir = join(cfg.cacheDir, `ucrt-servicing-${UCRT_SERVICING_VERSION}`, `${arch}-staging`);
+  const stagingDir = join(cfg.cacheDir, `ucrt-servicing-${UCRT_SERVICING_VERSION}`, `${arch}-staging-${process.pid}`);
   const nupkg = join(stagingDir, `${pkg}.nupkg`);
 
   console.log(`fetching serviced UCRT libs (${pkg} ${UCRT_SERVICING_VERSION})`);
@@ -262,13 +261,14 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
       hint: `Expected c/ucrt/${arch}/libucrt.lib inside the NuGet package — its layout may have changed.`,
     });
   }
-  rmSync(libDir, { recursive: true, force: true });
-  mkdirSync(libDir, { recursive: true });
+  const libs = join(stagingDir, "libs");
+  mkdirSync(libs);
   for (const file of readdirSync(extractedUcrt)) {
     if (file.toLowerCase().endsWith(".lib")) {
-      copyFileSync(join(extractedUcrt, file), join(libDir, file));
+      copyFileSync(join(extractedUcrt, file), join(libs, file));
     }
   }
+  publishToCache(libs, libDir, isComplete);
   rmSync(stagingDir, { recursive: true, force: true });
 }
 
@@ -377,16 +377,30 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
       hint: "The MSVC CRT / Windows SDK download from Microsoft's CDN failed — check network access, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
     });
   }
+  try {
+    if (!isCompleteWindowsSysroot(splat, cfg.arch)) {
+      throw new BuildError(`xwin splat finished but is missing expected SDK files`, {
+        hint: "Retry, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
+      });
+    }
+    publishToCache(splat, dest, dir => isCompleteWindowsSysroot(dir, cfg.arch));
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Move `staged`, which is finished, to `dest` in a cache that other builds
+ * share. A build that fetched the same thing meanwhile and published first is
+ * reading its own by now, so that one stays.
+ */
+export function publishToCache(staged: string, dest: string, isComplete: (dir: string) => boolean): void {
+  if (isComplete(dest)) return;
   rmSync(dest, { recursive: true, force: true });
   try {
-    renameSync(splat, dest);
-  } catch {
-    // Another build put its own there first, and the check below is of that one.
-  }
-  rmSync(staging, { recursive: true, force: true });
-  if (!isCompleteWindowsSysroot(dest, cfg.arch)) {
-    throw new BuildError(`xwin splat finished but ${dest} is missing expected SDK files`, {
-      hint: "Delete the directory and retry, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
-    });
+    renameSync(staged, dest);
+  } catch (cause) {
+    // Published between the check and here.
+    if (!isComplete(dest)) throw new BuildError(`Could not move ${staged} to ${dest}`, { cause });
   }
 }

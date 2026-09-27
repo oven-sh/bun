@@ -1427,6 +1427,8 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
     rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
     rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
   }
+  // Here as well as in .cargo/config.toml, whose `rustflags` the variable below replaces.
+  if (cfg.windows && cfg.winsysroot !== undefined) rustflags.push(`-Clink-arg=/winsysroot:${cfg.winsysroot}`);
 
   if (rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.

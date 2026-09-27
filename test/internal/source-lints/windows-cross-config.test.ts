@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { generateCargoConfig } from "../../../scripts/build/cargo-config.ts";
@@ -23,8 +23,10 @@ import { BuildError } from "../../../scripts/build/error.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { Ninja } from "../../../scripts/build/ninja.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
+import { registerDepRules, resolveDep } from "../../../scripts/build/source.ts";
 import {
   ensureWindowsSysroot,
+  publishToCache,
   UCRT_SERVICING_VERSION,
   windowsSysrootCachePath,
 } from "../../../scripts/build/winsysroot.ts";
@@ -270,6 +272,34 @@ describe("Microsoft's licenses", () => {
   });
 });
 
+describe("publishing a fetch to a cache other builds share", () => {
+  const isComplete = (dir: string) => existsSync(join(dir, "done"));
+  const publish = (dir: string) => publishToCache(join(dir, "staged"), join(dir, "dest"), isComplete);
+
+  test("puts it where there is nothing, or something unfinished", () => {
+    using dir = tempDir("publish", { "staged/done": "", "staged/from": "this build", "dest/half": "" });
+    publish(String(dir));
+    expect(readdirSync(join(String(dir), "dest")).sort()).toEqual(["done", "from"]);
+    expect(existsSync(join(String(dir), "staged"))).toBe(false);
+  });
+
+  test("leaves alone what a faster build published, which that build is reading by now", () => {
+    using dir = tempDir("publish", {
+      "staged/done": "",
+      "staged/from": "this build",
+      "dest/done": "",
+      "dest/from": "the faster build",
+    });
+    publish(String(dir));
+    expect(readFileSync(join(String(dir), "dest", "from"), "utf8")).toBe("the faster build");
+  });
+
+  test("says so when it cannot, and nobody else has", () => {
+    using dir = tempDir("publish", { "dest/half": "" });
+    expect(() => publish(String(dir))).toThrow(BuildError);
+  });
+});
+
 describe("Windows sysroot flags", () => {
   const on = (os: "windows" | "linux", root: string): Config => ({
     ...resolveWindowsCross(),
@@ -319,6 +349,31 @@ describe("Windows sysroot flags", () => {
     );
     expect(generated(on("linux", "/cache/"))).not.toContain("windows-msvc");
     expect(generated({ ...on("windows", "C:\\"), winsysroot: undefined })).not.toContain("windows-msvc");
+  });
+
+  test("a dependency cargo builds gets it in CARGO_ENCODED_RUSTFLAGS, which replaces that file's rustflags", () => {
+    const cargoEdge = (base: Config) => {
+      const cfg = { ...base, cargo: "/fake/bin/cargo" };
+      const n = new Ninja({ buildDir: cfg.buildDir });
+      registerDepRules(n, cfg);
+      resolveDep(
+        n,
+        cfg,
+        {
+          name: "lolhtml",
+          source: () => ({ kind: "github-archive", repo: "example/example", commit: "0".repeat(40) }),
+          build: () => ({ kind: "cargo", manifestDir: ".", libName: "example" }),
+          provides: () => ({ libs: [], includes: [] }),
+        },
+        new Map(),
+      );
+      return n.toString().replace(/ \$\n +/g, " ");
+    };
+    // CI's path remapping is what sets the variable, so that is when the file's flags are lost.
+    const withSysroot = cargoEdge(on("windows", "C:\\cache\\"));
+    expect(withSysroot).toContain("--remap-path-prefix=");
+    expect(withSysroot).toContain("-Clink-arg=/winsysroot:C:\\cache\\winsysroot");
+    expect(cargoEdge({ ...on("windows", "C:\\cache\\"), winsysroot: undefined })).not.toContain("winsysroot");
   });
 
   test("are absent from a build against the installed toolset", () => {

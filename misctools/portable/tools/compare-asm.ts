@@ -2,6 +2,7 @@
 // commit the work started from: every crate this tree changed, for one target.
 //
 //   bun compare-asm.ts --base <tree> --target <triple> [options]
+//       --branch <tree>     the tree that is compared with the base (default: the tree of this file)
 //       --mode asm          (default) release machine code and data, `rustc --emit=asm`
 //       --mode expanded     the source after `cfg` and macro expansion, `rustc -Zunpretty=expanded`,
 //                           with debug assertions and without. Needs no code generation, so it runs
@@ -14,8 +15,12 @@
 //       --dependents        also the crates of the workspace that depend on them: what they inline
 //                           and instantiate from the changed crates is compiled there
 //       --skip a,b          crates to leave out
-//       --work <dir>        cargo's directories and the results (default /tmp/portable/n2/compare)
-//       --codegen <dir>     BUN_CODEGEN_DIR, the same for both trees
+//       --work <dir>        cargo's directories and the results (default: build/portable/compare in
+//                           this tree)
+//       --codegen <dir>     BUN_CODEGEN_DIR, the same for both trees: the generated sources of this
+//                           tree for the OS of the target, which
+//                           `bun scripts/build.ts --mode=codegen --os=.. --arch=.. --build-dir=<dir>`
+//                           writes to <dir>/codegen (default: build/release/codegen in this tree)
 //       --jobs <n>          (default 8)
 //       --show <text>       print the lines that differ of every symbol whose name contains the text
 //   bun compare-asm.ts <before.s> <after.s> [--show <text>]
@@ -509,12 +514,12 @@ function expandedSource(text: string) {
 
 async function compareTrees(options: Record<string, string>) {
   const here = dirname(import.meta.path);
-  const branch = resolve(here, "../../..");
+  const branch = resolve(options.branch ?? join(here, "../../.."));
   const base = resolve(options.base);
   const target = options.target;
   const mode = options.mode ?? "asm";
-  const work = resolve(options.work ?? "/tmp/portable/n2/compare");
-  const codegen = resolve(options.codegen ?? "/tmp/portable/n2/codegen");
+  const work = resolve(options.work ?? join(branch, "build/portable/compare"));
+  const codegen = resolve(options.codegen ?? join(branch, "build/release/codegen"));
   const jobs = options.jobs ?? "8";
   const skip = new Set((options.skip ?? "").split(",").filter(Boolean));
   if (!target) throw new Error("--target <triple>");
@@ -673,6 +678,14 @@ async function compareTrees(options: Record<string, string>) {
           ["branch", branch],
         ] as const) {
           const log = join(work, "logs", `expanded-${side}-${target}-${name}-${assertions}.log`);
+          const kept = join(work, `expanded-${side}-${target}-${name}-${assertions}.rs`);
+          const stamp = `${kept}.of`;
+          const identity = `${baseCommit} ${codegen}`;
+          // The base is a commit: what it expands to is kept from one run to the next.
+          if (side === "base" && existsSync(kept) && existsSync(stamp) && readFileSync(stamp, "utf8") === identity) {
+            texts.push(kept);
+            continue;
+          }
           const expanded = run(
             [
               "cargo",
@@ -706,9 +719,9 @@ async function compareTrees(options: Record<string, string>) {
             continue;
           }
           const text = expandedSource(expanded.stdout.toString());
-          const path = join(work, `expanded-${side}-${target}-${name}-${assertions}.rs`);
-          writeFileSync(path, text + "\n");
-          texts.push(path);
+          writeFileSync(kept, text + "\n");
+          if (side === "base") writeFileSync(stamp, identity);
+          texts.push(kept);
         }
         if (!texts[0] || !texts[1]) continue;
         const same = readFileSync(texts[0], "utf8") === readFileSync(texts[1], "utf8");

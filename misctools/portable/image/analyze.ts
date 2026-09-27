@@ -4,7 +4,17 @@
  *
  *   bun image/analyze.ts <binary> <lld map> <out.json>
  *
- * Environment: OBJDUMP, READELF (default: llvm-objdump and llvm-readelf of $LLVM_BIN, or of the clang in PATH).
+ * The binary has to have its symbols (bun-profile): the names of the functions are read.
+ * Environment: OBJDUMP, READELF, NM, CXXFILT (default: the tools of $LLVM_BIN, or of the clang in PATH).
+ *
+ * Exit code 1: an instruction with fs or gs, a syscall or an access below the stack pointer is outside of
+ * the libc and is not one of what follows. The result has them as `errors`.
+ *   - An instruction that reads gs in code that only a Windows host runs: bun's code for Windows reads the
+ *     TEB. image/windows_code.ts has the three proofs; the result lists every such function with its reason
+ *     (`allowed_in_windows_code`).
+ *   - Data of JavaScriptCore's interpreter that the disassembler reads as an instruction: it is in the
+ *     object of the interpreter, behind an instruction that does not go on to the next one
+ *     (`data_of_the_interpreter`).
  *
  * Counted, each by origin:
  *   fs_gs     instructions with a %fs: or %gs: segment override (native thread-local access)
@@ -30,6 +40,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { llvmBin } from "../flags.ts";
+import { type Instruction, type Judged, Reader, byName } from "./windows_code.ts";
 
 const [binary, mapPath, outPath] = process.argv.slice(2);
 if (binary === undefined || mapPath === undefined || outPath === undefined) {
@@ -38,6 +49,50 @@ if (binary === undefined || mapPath === undefined || outPath === undefined) {
 }
 const objdump = process.env.OBJDUMP ?? join(llvmBin(), "llvm-objdump");
 const readelf = process.env.READELF ?? join(llvmBin(), "llvm-readelf");
+const nm = process.env.NM ?? join(llvmBin(), "llvm-nm");
+const cxxfilt = process.env.CXXFILT ?? join(llvmBin(), "llvm-cxxfilt");
+
+/** What a tool prints. */
+function output(command: string[], input?: string): string {
+  const r = Bun.spawnSync(command, { stdout: "pipe", stderr: "inherit", stdin: input === undefined ? "ignore" : Buffer.from(input), maxBuffer: 1 << 30 });
+  if (r.exitCode !== 0) {
+    console.error(`${command[0]} exited with ${r.exitCode}`);
+    process.exit(1);
+  }
+  return r.stdout.toString();
+}
+
+// ─── the image: its symbols, its memory, the addresses that its data holds ───
+const file = readFileSync(binary);
+const programHeaderLines = output([readelf, "-lW", binary]);
+const segments = [...programHeaderLines.matchAll(/^\s*LOAD\s+0x([0-9a-f]+)\s+0x([0-9a-f]+)\s+0x[0-9a-f]+\s+0x([0-9a-f]+)\s/gm)].map(m => ({
+  offset: parseInt(m[1]!, 16),
+  address: parseInt(m[2]!, 16),
+  size: parseInt(m[3]!, 16),
+}));
+function bytesAt(address: number, length: number): Buffer | undefined {
+  for (const s of segments) {
+    if (address >= s.address && address + length <= s.address + s.size) {
+      return file.subarray(s.offset + (address - s.address), s.offset + (address - s.address) + length);
+    }
+  }
+  return undefined;
+}
+const entryPoint = parseInt(/Entry point (?:address:\s*)?0x([0-9a-f]+)/.exec(programHeaderLines + output([readelf, "-hW", binary]))?.[1] ?? "0", 16);
+const symbolLines = output([nm, binary]).split("\n");
+const addressOfSymbol = (pattern: RegExp) => {
+  const line = symbolLines.find(l => pattern.test(l));
+  return line === undefined ? undefined : parseInt(line.split(" ")[0]!, 16);
+};
+const nativeByte = addressOfSymbol(/9bun_alloc4host3imp6NATIVE\b/);
+const readsNativeByte = addressOfSymbol(/9bun_alloc4host3imp20read_and_keep_native\b/);
+const reader = nativeByte === undefined ? undefined : new Reader(nativeByte, readsNativeByte ?? -1, bytesAt);
+if (reader === undefined) console.error("the image has no symbol of the byte of the host: no code is taken as code for Windows");
+/** Addresses that data of the image holds: a function that is among them is called from anywhere. */
+const inData = new Set<number>();
+for (const m of output([readelf, "-rW", binary]).matchAll(/R_X86_64_(?:RELATIVE|64)\s+(?:[0-9a-f]+\s+)?([0-9a-f]+)\s*$/gm)) {
+  inData.add(parseInt(m[1]!, 16));
+}
 
 // ─── link map: input sections by address ───
 interface Range {
@@ -128,6 +183,12 @@ export function originOf(input: string): string {
 
 interface Site {
   address: string;
+  /** The start of the function the instruction is in. */
+  function_at?: number;
+  /** The way to the instruction passes a branch that is taken when the host is Windows. */
+  behind_a_branch_for_windows?: boolean;
+  /** The instruction before it does not go on to the next one. */
+  after_an_end?: boolean;
   symbol: string;
   instruction: string;
   bytes: string;
@@ -200,6 +261,64 @@ const notJudgedInAssembly: { symbol: string; input: string; deepest_below_rbp: s
 const notJudgedCompiled: { symbol: string; input: string; deepest_below_rbp: string; constant_allocation: string }[] =
   [];
 let functionStart = "";
+
+// ─── per function: its instructions, for the reader of code for Windows ───
+let current: Instruction[] = [];
+let currentStart = -1;
+let currentSites: { site: Site; at: number }[] = [];
+const functionStarts: number[] = [];
+const functionNames = new Map<number, string>();
+const functionInputs = new Map<number, string>();
+/** References from a function to an address, the ones that a way for Windows does not lead to. */
+const windowsReferences = new Set<number>();
+let referencesFrom = new Float64Array(1 << 20);
+let referencesTo = new Float64Array(1 << 20);
+let references = 0;
+const judgedFunctions = { asked: 0, read: 0, not_readable: [] as string[], branches: 0 };
+function refer(from: number, to: number) {
+  if (references === referencesFrom.length) {
+    const bigger = (old: Float64Array) => {
+      const grown = new Float64Array(old.length * 2);
+      grown.set(old);
+      return grown;
+    };
+    referencesFrom = bigger(referencesFrom);
+    referencesTo = bigger(referencesTo);
+  }
+  referencesFrom[references] = from;
+  referencesTo[references] = to;
+  references++;
+}
+function endInstructions(nextStart: number) {
+  if (currentStart >= 0 && current.length > 0) {
+    let judged: Judged | undefined;
+    if (reader !== undefined && reader.asks(current)) {
+      judgedFunctions.asked++;
+      judged = reader.judge(currentStart, nextStart, current);
+      if (judged.readable) {
+        judgedFunctions.read++;
+        judgedFunctions.branches += judged.branches;
+      } else if (judgedFunctions.not_readable.length < 200) judgedFunctions.not_readable.push(symbol);
+    }
+    const inWindows = (at: number) => judged !== undefined && judged.readable && judged.windowsOnly[at] === true;
+    for (let at = 0; at < current.length; at++) {
+      const i = current[at]!;
+      const direct = /^(call|j)/.test(i.mnemonic) ? /^0x([0-9a-f]+)\b/.exec(i.operands) : null;
+      const to = direct !== null ? parseInt(direct[1]!, 16) : i.mnemonic.startsWith("lea") || i.mnemonic.startsWith("mov") ? i.named : undefined;
+      if (to === undefined || (to >= currentStart && to < nextStart)) continue;
+      if (inWindows(at)) windowsReferences.add(to);
+      else refer(currentStart, to);
+    }
+    for (const { site, at } of currentSites) {
+      site.function_at = currentStart;
+      site.behind_a_branch_for_windows = inWindows(at);
+    }
+  }
+  current = [];
+  currentSites = [];
+  currentStart = nextStart;
+}
+
 function endFunction() {
   if (frame.setsRbp) {
     functionsWithFramePointer++;
@@ -338,17 +457,23 @@ const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 const insn = /^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2} )+)\s*\t(.*)$/;
 const label = /^[0-9a-f]+ <(.*)>:$/;
 
+let endedBefore = false;
 for await (const line of lines) {
   const l = label.exec(line);
   if (l !== null) {
     endFunction();
+    const start = parseInt(line.slice(0, line.indexOf(" ")), 16);
+    endInstructions(start);
     symbol = l[1]!;
+    functionStarts.push(start);
+    functionNames.set(start, symbol);
     continue;
   }
   const m = insn.exec(line);
   if (m === null) continue;
   instructions++;
   const text = m[3]!.replace(/\s+/g, " ").trim();
+  const afterAnEnd = endedBefore;
   for (let i = pendingAfter.length - 1; i >= 0; i--) {
     const p = pendingAfter[i]!;
     p.site.after.push(`${m[1]}: ${text}`);
@@ -357,6 +482,15 @@ for await (const line of lines) {
   const space = text.indexOf(" ");
   const mnemonic = space < 0 ? text : text.slice(0, space);
   const operands = space < 0 ? "" : text.slice(space + 1).replace(/\s*#.*$/, "");
+  const named = /#\s*0x([0-9a-f]+)/.exec(text);
+  current.push({
+    address: parseInt(m[1]!, 16),
+    length: m[2]!.trim().split(" ").length,
+    mnemonic,
+    operands,
+    named: named === null ? undefined : parseInt(named[1]!, 16),
+  });
+  endedBefore = /^(jmp|jmpq|ret|retq|ud2|hlt)$/.test(mnemonic);
   trackFrame(m[1]!, mnemonic, operands, text, m[2]!.trim());
   let kind: Kind | undefined;
   if (segment.test(operands)) kind = "fs_gs";
@@ -379,6 +513,7 @@ for await (const line of lines) {
     if (!isMusl && sites[kind].length < MAX_SITES_KEPT) {
       const site: Site = {
         address: m[1]!,
+        after_an_end: afterAnEnd,
         symbol,
         instruction: text,
         bytes: m[2]!.trim(),
@@ -388,6 +523,7 @@ for await (const line of lines) {
         after: [],
       };
       sites[kind].push(site);
+      currentSites.push({ site, at: current.length - 1 });
       pendingAfter.push({ site, left: 2 });
     }
   }
@@ -395,10 +531,141 @@ for await (const line of lines) {
   if (recent.length > 3) recent.shift();
 }
 endFunction();
+endInstructions(Number.MAX_SAFE_INTEGER);
 const code = await exited;
 if (code !== 0) {
   console.error(`llvm-objdump exited with ${code}`);
   process.exit(1);
+}
+
+// ─── what the roots of the image reach without a way for Windows ───
+functionStarts.sort((a, b) => a - b);
+/** The function that an address is in, by its start. */
+function functionOf(address: number): number | undefined {
+  let lo = 0;
+  let hi = functionStarts.length - 1;
+  let found: number | undefined;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (functionStarts[mid]! <= address) {
+      found = functionStarts[mid]!;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return found;
+}
+const isStart = new Set(functionStarts);
+const referredTo = new Set<number>();
+const callees = new Map<number, number[]>();
+for (let i = 0; i < references; i++) {
+  const to = referencesTo[i]!;
+  // A jump into the middle of a function enters that function.
+  const target = isStart.has(to) ? to : /* c8 ignore next */ functionOf(to);
+  if (target === undefined || !functionNames.has(target)) continue;
+  const from = referencesFrom[i]!;
+  if (target === from) continue;
+  referredTo.add(target);
+  const list = callees.get(from);
+  if (list === undefined) callees.set(from, [target]);
+  else list.push(target);
+}
+const reachedWithoutWindows = new Set<number>();
+{
+  const stack: number[] = [];
+  const root = (start: number) => {
+    if (reachedWithoutWindows.has(start)) return;
+    reachedWithoutWindows.add(start);
+    stack.push(start);
+  };
+  const ofEntry = functionOf(entryPoint);
+  if (ofEntry !== undefined) root(ofEntry);
+  for (const start of functionStarts) if (inData.has(start)) root(start);
+  // A function that no instruction of the image refers to, in any code: how it is reached is not known.
+  const referredToAtAll = new Set<number>();
+  for (let i = 0; i < references; i++) referredToAtAll.add(isStart.has(referencesTo[i]!) ? referencesTo[i]! : (functionOf(referencesTo[i]!) ?? -1));
+  for (const start of functionStarts) if (!referredToAtAll.has(start) && !windowsReferences.has(start)) root(start);
+  while (stack.length > 0) {
+    const from = stack.pop()!;
+    for (const to of callees.get(from) ?? []) root(to);
+  }
+}
+
+// ─── every site outside of the libc: code for Windows, data, or an error ───
+interface Allowed {
+  function: string;
+  reason: string;
+  kind: "an arm of a dispatch" | "a flavour for Windows" | "bindings of Windows";
+  instructions: number;
+}
+const mangled = [...new Set(sites.fs_gs.map(site => site.symbol))];
+const demangled = new Map<string, string>();
+{
+  const names = output([cxxfilt], mangled.join("\n") + "\n").split("\n");
+  mangled.forEach((name, at) => demangled.set(name, names[at] ?? name));
+}
+const allowed = new Map<string, Allowed>();
+const dataOfTheInterpreter: Site[] = [];
+const errors: { kind: Kind; function: string; address: string; instruction: string; input: string; why: string }[] = [];
+const allow = (site: Site, kind: Allowed["kind"], reason: string) => {
+  const name = demangled.get(site.symbol) ?? site.symbol;
+  const known = allowed.get(site.symbol);
+  if (known === undefined) allowed.set(site.symbol, { function: name, reason, kind, instructions: 1 });
+  else {
+    known.instructions++;
+    if (!known.reason.includes(reason)) known.reason += `; ${reason}`;
+  }
+};
+for (const site of sites.fs_gs) {
+  const name = demangled.get(site.symbol) ?? site.symbol;
+  const readsGs = /^mov[a-z]* %gs:/.test(site.instruction);
+  if (/LowLevelInterpreter/.test(site.input) && site.after_an_end === true) {
+    dataOfTheInterpreter.push(site);
+    continue;
+  }
+  if (!readsGs) {
+    errors.push({ kind: "fs_gs", function: name, address: site.address, instruction: site.instruction, input: site.input, why: "not a read through gs" });
+    continue;
+  }
+  if (site.behind_a_branch_for_windows === true) {
+    allow(site, "an arm of a dispatch", "an arm of a dispatch: every way to the instruction passes a branch that is taken when the host is Windows");
+    continue;
+  }
+  if (site.function_at !== undefined && reader !== undefined && !reachedWithoutWindows.has(site.function_at)) {
+    allow(site, "an arm of a dispatch", "an arm of a dispatch: every call of the function, and every place that takes its address, is behind a branch that is taken when the host is Windows");
+    continue;
+  }
+  const named = byName(name, site.input);
+  if (named !== undefined) {
+    allow(site, named.kind === "flavour" ? "a flavour for Windows" : "bindings of Windows", named.reason);
+    continue;
+  }
+  errors.push({
+    kind: "fs_gs",
+    function: name,
+    address: site.address,
+    instruction: site.instruction,
+    input: site.input,
+    why: "a read through gs, and nothing proves that only a Windows host runs it",
+  });
+}
+for (const kind of ["syscall", "red_zone", "red_zone_rbp"] as const) {
+  for (const site of sites[kind]) {
+    errors.push({
+      kind,
+      function: site.symbol,
+      address: site.address,
+      instruction: site.instruction,
+      input: site.input,
+      why: "outside of the libc",
+    });
+  }
+}
+const kept = (kind: Kind) => sites[kind].length;
+const outsideOfTheLibc = (kind: Kind) => [...counts[kind].entries()].filter(([origin]) => !origin.startsWith("musl")).reduce((a, [, n]) => a + n, 0);
+for (const kind of ["fs_gs", "syscall", "red_zone", "red_zone_rbp"] as const) {
+  if (outsideOfTheLibc(kind) > kept(kind)) {
+    errors.push({ kind, function: "", address: "", instruction: "", input: "", why: `${outsideOfTheLibc(kind) - kept(kind)} more instructions outside of the libc than the ${kept(kind)} that were kept to be judged` });
+  }
 }
 
 const table = (map: Map<string, number>) =>
@@ -414,6 +681,19 @@ const result = {
   map: mapPath,
   instructions,
   sites_not_in_the_map: unattributed,
+  code_for_windows: {
+    byte_of_the_host_at: nativeByte === undefined ? null : "0x" + nativeByte.toString(16),
+    functions: functionStarts.length,
+    functions_that_ask_for_the_host: judgedFunctions.asked,
+    of_those_read: judgedFunctions.read,
+    not_readable: judgedFunctions.not_readable,
+    branches_with_a_way_for_windows: judgedFunctions.branches,
+    functions_that_a_root_reaches_without_such_a_branch: reachedWithoutWindows.size,
+    functions_that_only_such_branches_lead_to: functionStarts.length - reachedWithoutWindows.size,
+  },
+  allowed_in_windows_code: [...allowed.values()].sort((a, b) => a.function.localeCompare(b.function)),
+  data_of_the_interpreter: dataOfTheInterpreter.map(site => ({ function: site.symbol, address: site.address, bytes: site.bytes, read_as: site.instruction })),
+  errors,
   frame_pointer_check: {
     functions_that_set_rbp_from_rsp: functionsWithFramePointer,
     of_those_with_a_variable_frame_whose_accesses_stay_in_its_constant_part:
@@ -446,5 +726,19 @@ const result = {
 };
 writeFileSync(outPath, JSON.stringify(result, null, 1) + "\n");
 console.log(
-  JSON.stringify({ instructions, elf: result.elf, totals: result.totals, by_origin: result.by_origin }, null, 1),
+  JSON.stringify(
+    {
+      instructions,
+      elf: result.elf,
+      totals: result.totals,
+      by_origin: result.by_origin,
+      code_for_windows: result.code_for_windows,
+      allowed_in_windows_code: { functions: allowed.size, instructions: [...allowed.values()].reduce((n, a) => n + a.instructions, 0) },
+      data_of_the_interpreter: dataOfTheInterpreter.length,
+      errors,
+    },
+    null,
+    1,
+  ),
 );
+process.exit(errors.length > 0 ? 1 : 0);

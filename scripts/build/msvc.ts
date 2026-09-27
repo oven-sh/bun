@@ -16,9 +16,9 @@
  * What it computes is a handful of paths, so this file computes them:
  *
  *   Visual Studio   %ProgramData%\Microsoft\VisualStudio\Packages\_Instances\<id>\state.json,
- *                   the installer's own record (what vswhere reads). Newest first.
- *   MSVC toolset    <vs>\VC\Tools\MSVC\<version>. The newest that is complete for
- *                   this machine's architecture: side-by-side toolsets are often partial.
+ *                   the installer's own record (what vswhere reads).
+ *   MSVC toolset    <vs>\VC\Tools\MSVC\<version>. The newest of any Visual Studio that is
+ *                   complete for the architecture: side-by-side toolsets are often partial.
  *   Windows SDK     <root>\{Include,Lib,bin}\<version>. The newest that is complete.
  *
  * A developer shell the caller happens to be in is not consulted: what is
@@ -33,10 +33,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { BuildError } from "./error.ts";
 
-type MsvcArch = "x64" | "arm64";
+export type MsvcArch = "x64" | "arm64";
 
 export interface Msvc {
-  /** This machine's architecture, which is what the libraries are for. */
+  /** What the libraries are for, and the tools produce. */
   arch: MsvcArch;
   /** What the toolset's executables run as: x64, emulated, where an arm64 machine has no native ones. */
   toolsHostArch: MsvcArch;
@@ -54,9 +54,14 @@ export interface Msvc {
   sdkVersion: string;
 }
 
-/** Windows hosts only. Throws a BuildError naming what is missing. */
-export function findMsvc(): Msvc {
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
+/**
+ * Windows hosts only. Throws a BuildError naming what is missing.
+ *
+ * `arch` defaults to what this process runs as, which is what it compiles for
+ * when nothing says otherwise. A caller that knows its target names it: an x64
+ * bun emulated on an arm64 machine still builds for arm64 (resolveConfig).
+ */
+export function findMsvc(arch: MsvcArch = process.arch === "arm64" ? "arm64" : "x64"): Msvc {
   return { ...findToolset(arch), ...findSdk(arch) };
 }
 
@@ -65,19 +70,20 @@ function findToolset(arch: MsvcArch): Omit<Msvc, "sdkDir" | "sdkVersion"> {
   const instances = visualStudioInstances();
   if (instances.length === 0) throw new BuildError("Visual Studio is not installed", { hint: workload });
 
+  // By toolset before Visual Studio: a newer Build Tools or Preview may hold only an older side-by-side toolset.
+  const toolsets = instances
+    .flatMap(vs => versionsIn(join(vs.vsDir, "VC", "Tools", "MSVC")).map(toolsVersion => ({ ...vs, toolsVersion })))
+    .sort((a, b) => compareVersions(b.toolsVersion, a.toolsVersion) || compareVersions(b.vsVersion, a.vsVersion));
   const incomplete: string[] = [];
-  for (const { vsDir, vsVersion } of instances) {
-    const toolsets = join(vsDir, "VC", "Tools", "MSVC");
-    for (const toolsVersion of versionsIn(toolsets)) {
-      const toolsDir = join(toolsets, toolsVersion);
-      const complete = ["include/vcruntime.h", `lib/${arch}/msvcrt.lib`].every(f => existsSync(join(toolsDir, f)));
-      for (const toolsHostArch of complete ? ([arch, "x64"] as const) : []) {
-        if (existsSync(join(toolsDir, "bin", `Host${toolsHostArch}`, arch, "link.exe"))) {
-          return { arch, toolsHostArch, vsDir, vsVersion, toolsDir, toolsVersion };
-        }
+  for (const { vsDir, vsVersion, toolsVersion } of toolsets) {
+    const toolsDir = join(vsDir, "VC", "Tools", "MSVC", toolsVersion);
+    const complete = ["include/vcruntime.h", `lib/${arch}/msvcrt.lib`].every(f => existsSync(join(toolsDir, f)));
+    for (const toolsHostArch of complete ? ([arch, "x64"] as const) : []) {
+      if (existsSync(join(toolsDir, "bin", `Host${toolsHostArch}`, arch, "link.exe"))) {
+        return { arch, toolsHostArch, vsDir, vsVersion, toolsDir, toolsVersion };
       }
-      incomplete.push(toolsDir);
     }
+    incomplete.push(toolsDir);
   }
   throw new BuildError(`No installed MSVC toolset has the ${arch} compiler and libraries`, {
     hint: [workload, ...incomplete.map(dir => `incomplete: ${dir}`)].join("\n        "),
@@ -104,7 +110,7 @@ function visualStudioInstances(): { vsDir: string; vsVersion: string }[] {
       instances.push({ vsDir: state.installationPath, vsVersion: state.installationVersion });
     }
   }
-  return instances.sort((a, b) => compareVersions(b.vsVersion, a.vsVersion));
+  return instances;
 }
 
 function findSdk(arch: MsvcArch): Pick<Msvc, "sdkDir" | "sdkVersion"> {
@@ -213,8 +219,8 @@ export function msvcEnv(msvc: Msvc): { vars: Record<string, string>; path: strin
 }
 
 /** Put `msvcEnv()` in this process's environment, for it and everything it spawns. */
-export function loadMsvcEnv(): void {
-  const { vars, path } = msvcEnv(findMsvc());
+export function loadMsvcEnv(arch?: MsvcArch): void {
+  const { vars, path } = msvcEnv(findMsvc(arch));
   Object.assign(process.env, vars);
   const rest = (process.env.PATH ?? "").split(delimiter).filter(dir => !path.includes(dir));
   process.env.PATH = [...path, ...rest].join(delimiter);

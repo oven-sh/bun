@@ -480,7 +480,7 @@ async function generate<N extends string | undefined>(
     mark("ensureWindowsSysroot");
   } else if (cfg.host.os === "windows") {
     // Without one the tools find the installed toolset through this process's environment, which ninja inherits.
-    loadMsvcEnv();
+    loadMsvcEnv(cfg.windows ? (cfg.arch === "aarch64" ? "arm64" : "x64") : undefined);
   }
 
   // Generated `.cargo/config.toml` — written at configure time (not a ninja

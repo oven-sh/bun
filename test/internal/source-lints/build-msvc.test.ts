@@ -127,12 +127,47 @@ describe("findMsvc", () => {
     expect(findMsvc()).toMatchObject({ vsVersion: "17.0.0.0", toolsVersion: "14.44.35207" });
   });
 
-  test.skipIf(arch !== "arm64")("runs the x64 tools on an arm64 machine that has no native ones", () => {
+  test("takes the newest toolset whichever Visual Studio has it, and the newer Visual Studio's of two alike", () => {
     using _ = machine(root => [
-      visualStudio(root, "18", "18.0.0.0", [toolset("14.50.35717", "arm64", "x64")]),
+      visualStudio(root, "BuildTools", "18.0.0.0", [toolset("14.29.30133"), toolset("14.40.33807")]),
+      visualStudio(root, "Community", "17.0.0.0", [toolset("14.44.35207"), toolset("14.40.33807")]),
       sdk("10.0.26100.0"),
     ]);
-    expect(findMsvc()).toMatchObject({ arch: "arm64", toolsHostArch: "x64" });
+    expect(findMsvc()).toMatchObject({ vsVersion: "17.0.0.0", toolsVersion: "14.44.35207" });
+  });
+
+  test("of one toolset in two Visual Studios, takes the newer Visual Studio's", () => {
+    // Named so that the older one is listed first.
+    using _ = machine(root => [
+      visualStudio(root, "a", "17.0.0.0", [toolset("14.44.35207")]),
+      visualStudio(root, "b", "18.0.0.0", [toolset("14.44.35207")]),
+      sdk("10.0.26100.0"),
+    ]);
+    expect(findMsvc()).toMatchObject({ vsVersion: "18.0.0.0", toolsVersion: "14.44.35207" });
+  });
+
+  test("finds what the caller's target needs, whatever this process runs as", () => {
+    using dir = machine(root => [
+      visualStudio(root, "18", "18.0.0.0", [toolset("14.50.35717"), toolset("14.44.35207", otherArch)]),
+      sdk("10.0.26100.0"),
+      sdk("10.0.22621.0", otherArch),
+    ]);
+    const found = findMsvc(otherArch);
+    expect(found).toMatchObject({ arch: otherArch, toolsVersion: "14.44.35207", sdkVersion: "10.0.22621.0" });
+    expect(msvcEnv(found).vars.LIB!.split(delimiter)).toEqual([
+      join(String(dir), "vs", "18", "VC", "Tools", "MSVC", "14.44.35207", "lib", otherArch),
+      join(String(dir), "ProgramFilesX86", "Windows Kits", "10", "Lib", "10.0.22621.0", "ucrt", otherArch),
+      join(String(dir), "ProgramFilesX86", "Windows Kits", "10", "Lib", "10.0.22621.0", "um", otherArch),
+    ]);
+    expect(msvcEnv(found).vars.VSCMD_ARG_TGT_ARCH).toBe(otherArch);
+  });
+
+  test("runs the x64 tools for arm64 where there are no native ones", () => {
+    using _ = machine(root => [
+      visualStudio(root, "18", "18.0.0.0", [toolset("14.50.35717", "arm64", "x64")]),
+      sdk("10.0.26100.0", "arm64"),
+    ]);
+    expect(findMsvc("arm64")).toMatchObject({ arch: "arm64", toolsHostArch: "x64" });
   });
 
   test("ignores the developer shell it is run from", () => {

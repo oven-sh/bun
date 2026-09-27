@@ -26,10 +26,18 @@ $ArtifactList = $Artifacts -split ","
 $BuildStepList = $BuildSteps -split ","
 
 # smctl shells out to signtool.exe, which the Windows SDK installs but does not put in PATH.
-$sdkBin = Join-Path (Get-ItemPropertyValue "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" KitsRoot10) "bin"
-$signtool = Get-Item "$sdkBin\10.*\x64\signtool.exe" | Sort-Object { [version]$_.Directory.Parent.Name } | Select-Object -Last 1
+# The SDK's installer is 32-bit, so either view of the registry may be the one that says where it is.
+$sdkRoots = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots"
+) | ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).KitsRoot10 }
+$sdkRoots = @($sdkRoots) + "${env:ProgramFiles(x86)}\Windows Kits\10" | Where-Object { $_ } | Select-Object -Unique
+$signtool = $sdkRoots |
+    ForEach-Object { Get-Item (Join-Path $_ "bin\10.*\x64\signtool.exe") -ErrorAction SilentlyContinue } |
+    Sort-Object { [version]$_.Directory.Parent.Name } |
+    Select-Object -Last 1
 if (!$signtool) {
-    throw "signtool.exe not found in $sdkBin"
+    throw "signtool.exe not found in the Windows SDK (looked in: $($sdkRoots -join ', '))"
 }
 $env:PATH = "$($signtool.DirectoryName);$env:PATH"
 

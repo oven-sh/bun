@@ -5908,3 +5908,300 @@ describe.concurrent("end(data) whose tail is still queued when the peer's FIN is
     });
   });
 });
+
+// upgradeTLS: both halves keep what allowHalfOpen asked of the socket that was upgraded.
+describe.concurrent("upgradeTLS halves from a default Bun.connect socket and under node:tls", () => {
+  const TAIL_SIZE = 16 * 1024 * 1024;
+
+  function closeEvent(err: unknown) {
+    return err === undefined ? "close" : `close ${(err as any).code} ${(err as any).syscall}`;
+  }
+
+  // The other end of the TLS rows: a half-open TLS server socket that sends "request" and its FIN, then only reads.
+  function halfOpenPeer(onData: (chunk: Buffer) => void, paused = false) {
+    const closed = Promise.withResolvers<void>();
+    let socket: Socket<unknown> | undefined;
+    const handlers: SocketHandler = {
+      // Without a handshake handler, open() runs once the handshake is done.
+      open(s) {
+        socket = s;
+        if (paused) s.pause();
+        s.write("request");
+        s.shutdown();
+      },
+      data(_s, chunk) {
+        onData(chunk);
+      },
+      end(s) {
+        s.end();
+      },
+      close() {
+        closed.resolve();
+      },
+      error() {},
+    };
+    return { handlers, closed: closed.promise, resume: () => socket?.resume() };
+  }
+
+  function listen(peer: ReturnType<typeof halfOpenPeer>) {
+    return Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: tls.key, cert: tls.cert },
+      allowHalfOpen: true,
+      socket: peer.handlers,
+    });
+  }
+
+  type Upgraded = {
+    secure: Socket<unknown>;
+    peer: ReturnType<typeof halfOpenPeer>;
+    events: string[];
+    late: string[];
+    closedAtFin: boolean;
+    peerGotLate: Promise<void>;
+    closed: Promise<void>;
+  };
+
+  // The socket under test is the TLS half of an upgraded Bun.connect socket.
+  async function upgraded(
+    { allowHalfOpen, payload }: { allowHalfOpen: boolean; payload?: Buffer },
+    afterFin: (ctx: Upgraded) => unknown,
+  ) {
+    const events: string[] = [];
+    const late: string[] = [];
+    const finDispatched = Promise.withResolvers<boolean>();
+    const closed = Promise.withResolvers<void>();
+    const peerGotLate = Promise.withResolvers<void>();
+    let got = 0;
+    let mismatchAt = -1;
+    // A peer that is sent a payload starts paused: it reads after the socket under test has read the FIN.
+    const peer = halfOpenPeer(chunk => {
+      if (payload === undefined) {
+        late.push(chunk.toString());
+        return peerGotLate.resolve();
+      }
+      if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+      got += chunk.byteLength;
+    }, payload !== undefined);
+    using server = listen(peer);
+    const tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      // A default socket is given no allowHalfOpen at all.
+      ...(allowHalfOpen ? { allowHalfOpen: true } : {}),
+      socket: {
+        data() {},
+        close(_s, err) {
+          events.push(`raw ${closeEvent(err)}`);
+        },
+        error(_s, err: any) {
+          events.push(`raw error ${err.code}`);
+        },
+      },
+    });
+    const [, secure] = tcp.upgradeTLS({
+      tls: { ca: tls.cert },
+      socket: {
+        data(s: Socket, chunk: Buffer) {
+          events.push(`data ${chunk}`);
+          if (payload) events.push(`end ${s.end(payload)}`);
+        },
+        end() {
+          events.push("end");
+          // An immediate runs after the dispatch that read the FIN.
+          setImmediate(() => finDispatched.resolve(events.includes("close")));
+        },
+        close(_s: Socket, err: unknown) {
+          events.push(closeEvent(err));
+          closed.resolve();
+        },
+        error(_s: Socket, err: any) {
+          events.push(`error ${err.code}`);
+        },
+      },
+    } as any);
+    // A close that no end event announced counts too, so that the row reports its events.
+    const closedAtFin = await Promise.race([finDispatched.promise, closed.promise.then(() => true)]);
+    const extra = await afterFin({
+      secure,
+      peer,
+      events,
+      late,
+      closedAtFin,
+      peerGotLate: peerGotLate.promise,
+      closed: closed.promise,
+    });
+    await Promise.all([closed.promise, peer.closed]);
+    return { events, closedAtFin, got, mismatchAt, extra };
+  }
+
+  it("the TLS half sends the queued tail of end(data) after the peer's FIN", async () => {
+    const payload = randomFillSync(Buffer.allocUnsafe(TAIL_SIZE));
+    expect(await upgraded({ allowHalfOpen: false, payload }, ({ peer }) => void peer.resume())).toEqual({
+      events: ["data request", `end ${TAIL_SIZE}`, "end", "raw close", "close"],
+      closedAtFin: false,
+      got: TAIL_SIZE,
+      mismatchAt: -1,
+      extra: undefined,
+    });
+  });
+
+  it("the TLS half of a default socket ends at the peer's FIN", async () => {
+    expect(
+      await upgraded({ allowHalfOpen: false }, ({ secure, closedAtFin }) => {
+        // A socket that the FIN left open is ended here, so that the row reports its events.
+        if (!closedAtFin) secure.end();
+      }),
+    ).toEqual({
+      events: ["data request", "end", "raw close", "close"],
+      closedAtFin: true,
+      got: 0,
+      mismatchAt: -1,
+      extra: undefined,
+    });
+  });
+
+  it("the TLS half of an allowHalfOpen socket stays open until it calls end()", async () => {
+    expect(
+      await upgraded({ allowHalfOpen: true }, async ({ secure, events, late, peerGotLate, closed }) => {
+        const wrote = secure.write("still open");
+        // A socket that closed at the FIN delivers nothing.
+        await Promise.race([peerGotLate, closed]);
+        const whileOpen = { wrote, events: events.slice(), late: late.slice() };
+        secure.end();
+        return whileOpen;
+      }),
+    ).toEqual({
+      events: ["data request", "end", "raw close", "close"],
+      closedAtFin: false,
+      got: 0,
+      mismatchAt: -1,
+      extra: { wrote: 10, events: ["data request", "end"], late: ["still open"] },
+    });
+  });
+
+  it("the raw half's end(data) does one send and returns what it took", async () => {
+    const payload = randomFillSync(Buffer.allocUnsafe(TAIL_SIZE));
+    // A handshake record starts with 0x16: the payload must not.
+    payload[0] = 0;
+    const chunks: Buffer[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    // A plain TCP server: it reads the ClientHello, then what the raw half sent, then the FIN.
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(_s, chunk) {
+          chunks.push(Buffer.from(chunk));
+        },
+        close() {
+          serverClosed.resolve();
+        },
+        error() {},
+      },
+    });
+    const tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: { data() {}, close() {}, error() {} },
+    });
+    const [raw, secure] = tcp.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: { data() {}, close() {}, error() {} },
+    } as any);
+    const endReturned = raw.end(payload);
+    // The FIN follows what the kernel took: the server has read all of it when it closes.
+    secure.close();
+    await serverClosed.promise;
+
+    const all = Buffer.concat(chunks);
+    let hello = 0;
+    while (hello + 5 <= all.length && all[hello] === 0x16) hello += 5 + all.readUInt16BE(hello + 3);
+    const body = all.subarray(hello);
+    expect({
+      sawClientHello: hello > 0,
+      endReturned,
+      isPrefix: body.equals(payload.subarray(0, body.length)),
+    }).toEqual({
+      sawClientHello: true,
+      endReturned: body.length,
+      isPrefix: true,
+    });
+  });
+
+  type UnderNodeTls = {
+    client: ReturnType<typeof tlsConnect>;
+    events: string[];
+    late: string[];
+    peerGotLate: Promise<void>;
+    closed: Promise<void>;
+  };
+
+  // The socket under test is a node:tls socket over a connected net.Socket, whose native handle node:tls upgrades.
+  async function upgradedByNodeTls(allowHalfOpen: boolean, afterEnd: (ctx: UnderNodeTls) => unknown) {
+    const events: string[] = [];
+    const late: string[] = [];
+    const sawEnd = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const peerGotLate = Promise.withResolvers<void>();
+    const peer = halfOpenPeer(chunk => {
+      late.push(chunk.toString());
+      peerGotLate.resolve();
+    });
+    using server = listen(peer);
+    // node:net opens every native handle half-open, and a TLSSocket takes the allowHalfOpen of the socket it wraps.
+    const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen });
+    raw.on("error", (err: NodeJS.ErrnoException) => events.push(`raw error ${err.code}`));
+    await once(raw, "connect");
+    const client = tlsConnect({ socket: raw, ca: tls.cert, servername: "localhost" });
+    client.on("data", chunk => events.push(`data ${chunk}`));
+    client.on("end", () => {
+      events.push("end");
+      sawEnd.resolve();
+    });
+    client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    client.on("close", hadError => {
+      events.push(hadError ? "close after an error" : "close");
+      closed.resolve();
+    });
+    try {
+      await Promise.race([sawEnd.promise, closed.promise]);
+      const extra = await afterEnd({
+        client,
+        events,
+        late,
+        peerGotLate: peerGotLate.promise,
+        closed: closed.promise,
+      });
+      await Promise.all([closed.promise, peer.closed]);
+      return { events, extra };
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  }
+
+  it("under node:tls a default socket ends at the peer's FIN", async () => {
+    expect(await upgradedByNodeTls(false, () => {})).toEqual({
+      events: ["data request", "end", "close"],
+      extra: undefined,
+    });
+  });
+
+  it("under node:tls an allowHalfOpen socket stays open until it calls end()", async () => {
+    expect(
+      await upgradedByNodeTls(true, async ({ client, events, late, peerGotLate, closed }) => {
+        const wrote = client.write("still open");
+        // A native handle that closed at the FIN delivers nothing.
+        await Promise.race([peerGotLate, closed]);
+        const whileOpen = { wrote, events: events.slice(), late: late.slice() };
+        client.end();
+        return whileOpen;
+      }),
+    ).toEqual({
+      events: ["data request", "end", "close"],
+      extra: { wrote: true, events: ["data request", "end"], late: ["still open"] },
+    });
+  });
+});

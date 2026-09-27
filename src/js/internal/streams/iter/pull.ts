@@ -414,8 +414,8 @@ function* withFlushSync(source) {
   yield null;
 }
 
-function* applyStatefulSyncTransform(source, transform) {
-  const output = transform(withFlushSync(source));
+function* applyStatefulSyncTransform(source, transform, receiver) {
+  const output = transform.$call(receiver, withFlushSync(source));
   for (const item of output) {
     const batch: Uint8Array[] = [];
     for (const chunk of flattenTransformYieldSync(item)) {
@@ -445,7 +445,7 @@ function* createSyncPipeline(source, transforms) {
         current = applyFusedStatelessSyncTransforms(current, statelessRun);
         statelessRun = [];
       }
-      current = applyStatefulSyncTransform(current, transform.transform);
+      current = applyStatefulSyncTransform(current, transform.transform, transform);
     } else {
       statelessRun.push(transform);
     }
@@ -535,8 +535,8 @@ async function* withFlushAsync(source) {
   yield null;
 }
 
-async function* applyStatefulAsyncTransform(source, transform, options) {
-  const output = transform(withFlushAsync(source), options);
+async function* applyStatefulAsyncTransform(source, transform, receiver, options) {
+  const output = transform.$call(receiver, withFlushAsync(source), options);
   for await (const item of output) {
     // Fast path: item is already a Uint8Array[] batch (e.g. compression transforms)
     if (isUint8ArrayBatch(item)) {
@@ -567,8 +567,8 @@ async function* applyStatefulAsyncTransform(source, transform, options) {
  * skips isUint8ArrayBatch validation (transform guarantees valid output).
  * @yields {Uint8Array[]}
  */
-async function* applyValidatedStatefulAsyncTransform(source, transform, options) {
-  const output = transform(source, options);
+async function* applyValidatedStatefulAsyncTransform(source, transform, receiver, options) {
+  const output = transform.$call(receiver, source, options);
   for await (const batch of output) {
     if (batch.length > 0) {
       yield batch;
@@ -639,9 +639,9 @@ async function* createAsyncPipeline(source, transforms, signal) {
       }
       const opts = { __proto__: null, signal: transformSignal };
       if (transform[kValidatedTransform]) {
-        current = applyValidatedStatefulAsyncTransform(current, transform.transform, opts);
+        current = applyValidatedStatefulAsyncTransform(current, transform.transform, transform, opts);
       } else {
-        current = applyStatefulAsyncTransform(current, transform.transform, opts);
+        current = applyStatefulAsyncTransform(current, transform.transform, transform, opts);
       }
     } else {
       statelessRun.push(transform);

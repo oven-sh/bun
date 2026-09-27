@@ -1485,6 +1485,49 @@ describe("s3-server", () => {
     }
   });
 
+  it("signs for the region auto when the options and the environment have no region", async () => {
+    // Each other client of this file has a region. This one has the default of Bun for an endpoint that is not AWS.
+    const { S3_REGION, AWS_REGION, S3_SESSION_TOKEN, AWS_SESSION_TOKEN, ...env } = bunEnv;
+    const program = `
+      import { s3 } from "bun";
+      const file = s3.file("default-region.txt");
+      const outcome = error => error.code + ": " + error.message;
+      const presigned = await fetch(file.presign());
+      console.log(
+        JSON.stringify([
+          await file.text().catch(outcome),
+          await file.write("Hello Bun!").catch(outcome),
+          presigned.status,
+          await presigned.text(),
+        ]),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: {
+        ...env,
+        "S3_ENDPOINT": localCredentials.endpoint as string,
+        "S3_BUCKET": localCredentials.bucket as string,
+        "S3_ACCESS_KEY_ID": localCredentials.accessKeyId as string,
+        "S3_SECRET_ACCESS_KEY": localCredentials.secretAccessKey as string,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The server has the region us-east-1. Its error tells the region of the signature.
+    const refused =
+      "AuthorizationHeaderMalformed: The authorization header is malformed; the region 'auto' is wrong; expecting 'us-east-1'";
+    expect(JSON.parse(stdout)).toEqual([
+      refused,
+      refused,
+      400,
+      expect.stringContaining("the region &apos;auto&apos; is wrong; expecting &apos;us-east-1&apos;"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   describe.concurrent("should accept / or \\ in start and end of bucket name", () => {
     let bucketPrefixI = 0;
     for (let start of ["/", "\\", ""]) {

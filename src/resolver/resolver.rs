@@ -189,7 +189,10 @@ mod bun_sys {
         #[cfg(unix)]
         let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
         #[cfg(not(unix))]
-        let nofollow = { 0 };
+        let nofollow = {
+            let _ = opts;
+            0
+        };
         ::bun_sys::open(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY | nofollow, 0)
             .map_err(Into::into)
     }

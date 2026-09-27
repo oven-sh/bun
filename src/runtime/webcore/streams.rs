@@ -558,8 +558,6 @@ impl Pending {
     /// # Safety
     /// `this` must be a valid, uniquely-owned pointer previously produced by
     /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -2071,8 +2069,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim

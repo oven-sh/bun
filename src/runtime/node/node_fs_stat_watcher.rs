@@ -100,9 +100,6 @@ impl Drop for StatWatcherScheduler {
 impl StatWatcherScheduler {
     /// # Safety
     /// `this` must point to a live `StatWatcherScheduler`.
-    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
-    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
-    // opaque-token forwarding.
     #[inline]
     pub(crate) fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -111,9 +108,6 @@ impl StatWatcherScheduler {
     /// # Safety
     /// `this` must point to a live `StatWatcherScheduler` and the caller must
     /// own one outstanding ref, which is released.
-    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
-    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
-    // opaque-token forwarding.
     #[inline]
     pub(crate) fn deref(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -521,9 +515,6 @@ impl StatWatcher {
 
     /// # Safety
     /// `this` must point to a live `StatWatcher`.
-    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
-    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
-    // opaque-token forwarding.
     #[inline]
     fn ref_(this: *mut Self) {
         // SAFETY: per fn contract.
@@ -532,9 +523,6 @@ impl StatWatcher {
     /// # Safety
     /// `this` must point to a live `StatWatcher` and the caller must own one
     /// outstanding ref, which is released.
-    // Forwards `this` to the unsafe `ThreadSafeRefCount` helper without
-    // dereferencing; not_unsafe_ptr_arg_deref is a false positive on
-    // opaque-token forwarding.
     #[inline]
     fn deref(this: *mut Self) {
         // SAFETY: per fn contract.

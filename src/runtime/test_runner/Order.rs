@@ -39,10 +39,7 @@ impl Order {
         Ok(())
     }
 
-    pub(crate) fn generate_all_order(
-        &mut self,
-        entries: &[Box<ExecutionEntry>],
-    ) -> JsResult<AllOrderResult> {
+    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
@@ -58,24 +55,23 @@ impl Order {
             // the DescribeScope tree (see paragraph above); raw-ptr field writes avoid
             // materializing a long-lived `&mut`.
             unsafe {
-                if bun_core::Environment::CI_ASSERT
-                    && (*entry).added_in_phase != AddedInPhase::Preload
-                {
+                if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
                 }
                 (*entry).next = None;
                 (*entry).failure_skip_past = None;
             }
             let sequences_start = self.sequences.len();
-            self.sequences
-                .push(ExecutionSequence::init(NonNull::new(entry), None, 0, 0)); // add sequence to concurrentgroup
+            self.sequences.push(ExecutionSequence::init(
+                NonNull::new(entry),
+                None,
+                0,
+                0,
+            )); // add sequence to concurrentgroup
             let sequences_end = self.sequences.len();
             let failure_skip_to = self.groups.len() + 1;
-            self.groups.push(ConcurrentGroup::init(
-                sequences_start,
-                sequences_end,
-                failure_skip_to,
-            )); // add a new concurrentgroup to order
+            self.groups
+                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
             self.previous_group_was_concurrent = false;
         }
         let end = self.groups.len();
@@ -135,9 +131,7 @@ impl Order {
         // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
         // dereferences the pointer locally.
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see safety doc above); read-only field access.
-        debug_assert!(unsafe {
-            current.as_ref().base.has_callback == current.as_ref().callback.is_some()
-        });
+        debug_assert!(unsafe { current.as_ref().base.has_callback == current.as_ref().callback.is_some() });
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
         let use_each_hooks = unsafe { current.as_ref().base.has_callback };
         // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
@@ -161,8 +155,7 @@ impl Order {
                     // copy or the originals' Strong/Box fields would be freed twice.
                     // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
                     // (see ownership note above), so duplicated owning fields are not double-freed.
-                    let cloned =
-                        bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
                 }
@@ -183,8 +176,7 @@ impl Order {
                     let src: *const ExecutionEntry = &raw const **entry;
                     // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
                     // (see ownership note above), so duplicated owning fields are not double-freed.
-                    let cloned =
-                        bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
                 parent = p.base.parent;
@@ -244,11 +236,8 @@ impl Order {
             }
         }
         let failure_skip_to = self.groups.len() + 1;
-        self.groups.push(ConcurrentGroup::init(
-            sequences_start,
-            sequences_end,
-            failure_skip_to,
-        )); // otherwise, add a new concurrentgroup to order
+        self.groups
+            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
 }
@@ -360,8 +349,7 @@ impl EntryList {
         if let Some(last) = self.last {
             // SAFETY: `last` was stored by a prior prepend/append and is still live.
             let last_ref = unsafe { &mut *last };
-            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload
-            {
+            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload {
                 debug_assert!(last_ref.next.is_none());
             }
             last_ref.next = Some(current);

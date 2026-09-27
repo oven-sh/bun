@@ -41,8 +41,6 @@ impl ShellCondExprStatTask {
     /// # Safety
     /// `this` must be a live `heap::alloc` payload paired with the schedule
     /// site. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
     pub(crate) fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -97,8 +95,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by the `ShellTaskCtx` trait.
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
         let mut me = unsafe { bun_core::heap::take(this) };

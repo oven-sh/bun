@@ -5,8 +5,7 @@
     non_upper_case_globals,
     deprecated
 )]
-// The tests serialize on std's Mutex: bun_threading depends on bun_ptr, so
-// using its Mutex here would be a dependency cycle.
+// Tests lock std's Mutex: bun_threading depends on this crate.
 #![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.

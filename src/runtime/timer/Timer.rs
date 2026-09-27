@@ -41,8 +41,7 @@ impl All {
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
     // the raw pointer is intentional (avoids aliased-`&mut` across the
-    // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
-    // forwarding makes not_unsafe_ptr_arg_deref a false positive.
+    // jsc/runtime crate cycle — see DateHeaderTimer.rs).
     pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,

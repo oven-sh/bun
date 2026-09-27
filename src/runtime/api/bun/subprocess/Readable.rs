@@ -97,7 +97,6 @@ impl Readable {
     ) -> Readable {
         super::assert_stdio_result!(result);
 
-        // Taking the memfd out of it.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut stdio = stdio;
         #[cfg(unix)]

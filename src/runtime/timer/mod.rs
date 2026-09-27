@@ -939,8 +939,6 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn get_timeout(
         &mut self,
         spec: &mut Timespec,
@@ -1039,8 +1037,6 @@ impl All {
     /// # Safety
     /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
     /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →

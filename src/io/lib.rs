@@ -2028,7 +2028,7 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
+        // Defined in src/io/io_darwin.cpp. `mach_port_t` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
         fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> libc::mach_port_t;
         safe fn io_darwin_schedule_wakeup(port: libc::mach_port_t) -> bool;

@@ -498,6 +498,7 @@ mod wasm_impl {
         let woken_count = unsafe {
             core::arch::wasm32::memory_atomic_notify(ptr.cast::<i32>().cast_mut(), max_waiters)
         };
+        let _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
     }
 }
 

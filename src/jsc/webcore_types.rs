@@ -170,10 +170,7 @@ impl Default for Blob {
 }
 
 // Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`).
-// `*mut Blob` is opaque to C++ — only Rust dereferences it. The
-// `improper_ctypes` lint recurses through `Option<RefPtr<Store>>` → `NonNull<Store>`
-// and complains `Store` lacks `#[repr(C)]`, but `Store` never crosses FFI by
-// value, so silence it for the whole anon-const.
+// `*mut Blob` is opaque to C++ — only Rust dereferences it.
 const _: () = {
     use crate::generated::JSBlob;
 

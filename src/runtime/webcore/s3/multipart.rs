@@ -238,8 +238,6 @@ impl MultiPartUpload {
     /// `this` must be a live heap-allocated `MultiPartUpload` created via
     /// `heap::alloc` with a non-zero intrusive refcount.
     #[inline]
-    // Forwards `this` to the derived intrusive-rc decrement without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn deref_(this: *mut Self) {
         // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }

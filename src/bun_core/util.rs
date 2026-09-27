@@ -320,6 +320,7 @@ impl core::ops::Deref for ZStr {
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(not(any(unix, windows)))]
     {
+        let _ = key;
         return None;
     }
     #[cfg(unix)]
@@ -416,6 +417,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     }
     #[cfg(not(any(unix, windows)))]
     {
+        let _ = key;
         None
     }
 }
@@ -4106,6 +4108,7 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     }
     #[cfg(not(any(unix, windows)))]
     {
+        let _ = buf;
         Err(crate::CrateError::Unexpected)
     }
 }

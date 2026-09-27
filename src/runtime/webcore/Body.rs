@@ -597,8 +597,6 @@ pub enum Tag {
     Null,
 }
 
-// Constructed/matched across several modules; boxing `SystemError` would
-// ripple through those callers.
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),

@@ -77,7 +77,6 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
 /// # Safety
 /// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
-// Forwards `frames` to the C++-side remapper without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
 pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
     frames: *mut ZigStackFrame,

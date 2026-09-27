@@ -1956,8 +1956,6 @@ impl napi_async_work {
         }))
     }
 
-    // Forwards `this` to `heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
@@ -5519,8 +5517,6 @@ impl NapiFinalizerTask {
         }
     }
 
-    // Forwards `this` to `heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
         let mut this_box = unsafe { bun_core::heap::take(this) };

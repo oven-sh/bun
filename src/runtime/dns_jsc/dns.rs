@@ -2475,8 +2475,6 @@ pub(crate) mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
-        // is a false positive on opaque-token forwarding.
         pub(crate) fn notify_threadsafe(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2493,8 +2491,6 @@ pub(crate) mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
-        // is a false positive on opaque-token forwarding.
         pub(crate) fn notify(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.

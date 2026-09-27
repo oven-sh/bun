@@ -3572,7 +3572,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `scope_ref` (shared borrow of the `StoreRef` local) must end
                 // before the `DerefMut` write to `scope.generated` inside the
                 // loop; NLL drops it at last use (the snapshot block above).
-
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
 

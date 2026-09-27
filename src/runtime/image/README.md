@@ -12,9 +12,16 @@ off the JS thread.
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
+| `codec_raw.rs`                        | camera raw (NEF/CR2/ARW/DNG) decode on Linux via dlopen'd system LibRaw                                         | raw behaviour on Linux                   |
 | `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
 | `backend_wic.rs`                      | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
 | `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+
+`raw` in `codecs.rs` is a `#[cfg(target_os = "linux")]` re-export of `codec_raw`,
+tried for `Format::Tiff` when the system backend is absent or declines. Nothing links
+against LibRaw — it is resolved with `dlsym` at first use — and LibRaw answers
+`LIBRAW_FILE_UNSUPPORTED` for an ordinary TIFF, so both a missing library and a
+non-raw TIFF keep returning `UnsupportedOnPlatform`, as Linux does today.
 
 `system_backend` in `codecs.rs` is a cfg-gated module re-export — absent on Linux (callers gate on `HAS_SYSTEM_BACKEND`), so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns

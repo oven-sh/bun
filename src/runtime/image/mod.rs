@@ -32,6 +32,13 @@ pub(crate) mod codec_bmp;
 #[path = "codec_gif.rs"]
 pub(crate) mod codec_gif;
 
+// Camera raw (NEF/CR2/ARW/DNG) on Linux through a dlopen'd system LibRaw —
+// see `codec_raw.rs`. macOS and Windows decode these through their
+// `system_backend`.
+#[cfg(target_os = "linux")]
+#[path = "codec_raw.rs"]
+pub(crate) mod codec_raw;
+
 #[cfg(target_os = "macos")]
 #[path = "backend_coregraphics.rs"]
 pub(crate) mod backend_coregraphics;

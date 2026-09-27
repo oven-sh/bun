@@ -1674,9 +1674,53 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
   });
 
   if (!isMacOS && !isWindows) {
-    test("TIFF on Linux throws UnsupportedOnPlatform", async () => {
+    test("a TIFF that is not a camera raw still throws UnsupportedOnPlatform", async () => {
+      // Linux has no TIFF decoder. With LibRaw installed the bytes now reach
+      // it first, and it answers LIBRAW_FILE_UNSUPPORTED for anything that
+      // is not a raw — which is the same error, from one step further along.
       const tiff = Buffer.from("II*\x00\x08\x00\x00\x00", "binary");
       await expect(new Bun.Image(tiff).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_FORMAT_UNSUPPORTED" });
+      await expect(new Bun.Image(tiff).metadata()).rejects.toMatchObject({ code: "ERR_IMAGE_FORMAT_UNSUPPORTED" });
+    });
+
+    test("the raw path does not catch anything that already had a decoder", async () => {
+      expect((await new Bun.Image(cornersPng).metadata()).format).toBe("png");
+      const jpeg = await new Bun.Image(cornersPng).jpeg().bytes();
+      expect((await new Bun.Image(jpeg).metadata()).format).toBe("jpeg");
+      const webp = await new Bun.Image(cornersPng).webp().bytes();
+      expect((await new Bun.Image(webp).metadata()).format).toBe("webp");
+    });
+
+    // The smallest real camera raw is several megabytes and a synthetic DNG
+    // does not satisfy LibRaw, so the decode path has no committed fixture.
+    // Point this at any NEF/CR2/ARW/DNG to exercise it:
+    //   BUN_IMAGE_TEST_RAW=/path/to/DSC_0001.NEF bun bd test image.test.ts
+    const rawPath = process.env.BUN_IMAGE_TEST_RAW;
+    test.skipIf(!rawPath)("a camera raw decodes through LibRaw", async () => {
+      const bytes = await Bun.file(rawPath!).bytes();
+      const meta = await new Bun.Image(bytes).metadata();
+      // A NEF/CR2/ARW/DNG is a TIFF container, and that is what the sniffer
+      // reports; the developed size comes from LibRaw's identify step.
+      expect(meta.format).toBe("tiff");
+      expect(meta.width).toBeGreaterThan(0);
+      expect(meta.height).toBeGreaterThan(0);
+
+      // Developed, resized and re-encoded like any other source. No format
+      // setter gives PNG, the rule the other decode-only formats follow.
+      const out = await new Bun.Image(bytes).resize(64).bytes();
+      const png = await new Bun.Image(out).metadata();
+      expect(png).toEqual({
+        width: 64,
+        height: Math.max(1, Math.floor((64 * meta.height) / meta.width)),
+        format: "png",
+      });
+
+      // Truncated: the header still identifies, the sensor data runs out.
+      // LibRaw's default data-error callback prints to stderr here, so the
+      // decoder replaces it; the error arrives through the return value.
+      await expect(new Bun.Image(bytes.slice(0, 1 << 17)).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
     });
   }
 });

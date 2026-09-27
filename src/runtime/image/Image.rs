@@ -65,6 +65,9 @@ pub(crate) struct Image {
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
     max_pixels: u64,
+    /// Camera raw only: `{ raw: { brightness } }`. `None` leaves LibRaw's
+    /// automatic brightness stretch on, which is its own default.
+    raw_brightness: Option<f32>,
     /// Apply EXIF Orientation (JPEG) before any user ops, the way Sharp's
     /// `.rotate()`-with-no-args / `autoOrient` does.
     auto_orient: bool,
@@ -86,6 +89,7 @@ impl Default for Image {
             source: JsCell::new(Source::JsBuffer),
             pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
+            raw_brightness: None,
             auto_orient: true,
             last_width: Cell::new(-1),
             last_height: Cell::new(-1),
@@ -345,6 +349,23 @@ fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsRe
     }
     if let Some(v) = opt.get(global, "autoOrient")? {
         img.auto_orient = v.to_boolean();
+    }
+    if let Some(v) = opt.get(global, "raw")? {
+        if v.is_object() {
+            if let Some(b) = v.get(global, "brightness")? {
+                // Zero or less is not a darker picture, it is no picture, and
+                // a non-finite multiplier has nothing to mean. Both leave the
+                // default in place — the same shape `maxPixels` above uses.
+                // #40520 is converting this file's option handling to throw
+                // instead; this follows whatever that settles on.
+                if b.is_number() {
+                    let n = b.as_number();
+                    if n.is_finite() && n > 0.0 {
+                        img.raw_brightness = Some(n as f32);
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1133,6 +1154,7 @@ impl Image {
             input,
             kind,
             max_pixels: self.max_pixels,
+            raw_brightness: self.raw_brightness,
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
@@ -1207,6 +1229,7 @@ impl Image {
             input,
             kind: Kind::Encode(self.pipeline.get().output),
             max_pixels: self.max_pixels,
+            raw_brightness: self.raw_brightness,
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
@@ -1384,6 +1407,7 @@ pub(crate) struct PipelineTask {
     kind: Kind,
     max_pixels: u64,
     auto_orient: bool,
+    raw_brightness: Option<f32>,
     result: TaskResult,
 }
 // SAFETY: `input` borrows bytes that are pinned (`Pin`) or owned by the Image
@@ -1659,9 +1683,13 @@ impl PipelineTask {
             codecs::DecodeHint {
                 target_w: tw,
                 target_h: th,
+                raw_brightness: self.raw_brightness,
             }
         } else {
-            codecs::DecodeHint::default()
+            codecs::DecodeHint {
+                raw_brightness: self.raw_brightness,
+                ..Default::default()
+            }
         };
 
         let mut decoded = match codecs::decode(input, self.max_pixels, hint) {

@@ -28,6 +28,14 @@ pub(crate) use super::backend_coregraphics as system_backend;
 #[cfg(windows)]
 pub(crate) use super::backend_wic as system_backend;
 
+/// Camera raw decode on Linux via a dlopen'd system LibRaw. NEF, CR2, ARW
+/// and DNG are TIFF containers, so they arrive here as `Format::Tiff`; see
+/// `codec_raw.rs`. Nothing is linked, and a host without LibRaw — or an
+/// ordinary TIFF, which LibRaw declines — surfaces `UnsupportedOnPlatform`,
+/// which is what Linux returns for `Tiff` today.
+#[cfg(target_os = "linux")]
+pub(crate) use super::codec_raw as raw;
+
 /// `true` on platforms where `system_backend` is present.
 const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
@@ -239,8 +247,10 @@ pub enum Error {
     /// BEFORE allocating the full RGBA buffer.
     #[error("TooManyPixels")]
     TooManyPixels,
-    /// HEIC/AVIF on a platform with no system backend (Linux), or the system
-    /// backend declined and there's no static codec to fall back to.
+    /// HEIC/AVIF on a platform with no system backend (Linux), a TIFF that
+    /// is not a camera raw on Linux (or one there with no LibRaw installed),
+    /// or the system backend declined and there's no static codec to fall
+    /// back to.
     #[error("UnsupportedOnPlatform")]
     UnsupportedOnPlatform,
     #[error("OutOfMemory")]
@@ -263,6 +273,10 @@ pub(crate) struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
     pub(crate) target_w: u32,
     pub(crate) target_h: u32,
+    /// Camera raw only: exposure multiplier, and the request to turn
+    /// LibRaw's automatic brightness stretch off. `None` leaves both at
+    /// LibRaw's defaults, which is what `dcraw` has always produced.
+    pub(crate) raw_brightness: Option<f32>,
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
@@ -277,8 +291,18 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
-        Format::Heic | Format::Avif | Format::Tiff => match decode_via_system(bytes, max_pixels)? {
+        Format::Heic | Format::Avif => match decode_via_system(bytes, max_pixels)? {
             Some(d) => Ok(d),
+            None => Err(Error::UnsupportedOnPlatform),
+        },
+        // TIFF: ImageIO/WIC on macOS/Windows; on Linux a dlopen'd LibRaw,
+        // which accepts the TIFF-container raws (NEF, CR2, ARW, DNG) and
+        // declines everything else, leaving today's error in place.
+        Format::Tiff => match decode_via_system(bytes, max_pixels)? {
+            Some(d) => Ok(d),
+            #[cfg(target_os = "linux")]
+            None => raw::decode(bytes, max_pixels, hint),
+            #[cfg(not(target_os = "linux"))]
             None => Err(Error::UnsupportedOnPlatform),
         },
         // BMP/GIF have static decoders so Linux (and `backend == .bun`) work;
@@ -387,6 +411,14 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 as u32;
             h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
                 as u32;
+        }
+        // Linux gets the developed size from LibRaw's identify step, which
+        // reads no sensor data.
+        #[cfg(target_os = "linux")]
+        Format::Tiff => {
+            let (pw, ph) = raw::probe(bytes, max_pixels)?;
+            w = pw;
+            h = ph;
         }
         Format::Tiff | Format::Heic | Format::Avif => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().

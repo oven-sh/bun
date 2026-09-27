@@ -9353,6 +9353,23 @@ declare module "bun" {
        * @default true
        */
       autoOrient?: boolean;
+      /**
+       * Camera raw development. Only consulted for a camera raw input
+       * (NEF/CR2/ARW/DNG, decoded on Linux through the system LibRaw);
+       * ignored for every other format.
+       */
+      raw?: {
+        /**
+         * Exposure multiplier applied instead of LibRaw's automatic
+         * brightness stretch. Leaving it unset keeps that stretch, which is
+         * what `dcraw` produces and what most raw viewers show; setting it
+         * turns the stretch off and scales the recorded exposure by this
+         * factor, so `1` is the exposure as shot. Values that are not
+         * finite and greater than zero are ignored.
+         * @default undefined // LibRaw's automatic stretch
+         */
+        brightness?: number;
+      };
     }
 
     interface ResizeOptions {

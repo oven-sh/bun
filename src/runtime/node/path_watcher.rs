@@ -177,7 +177,7 @@ impl PathWatcherManager {
     }
 
     /// Remove `watcher` from the dedup map and the retired list. Caller holds
-    /// `mutex`. Returns whether it was in the dedup map.
+    /// `mutex`. Returns whether it was in either.
     fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) -> bool {
         // SAFETY: caller holds self.mutex; exclusive access to self.watchers and
         // self.retired for the duration of this block (nothing here re-enters).
@@ -185,6 +185,7 @@ impl PathWatcherManager {
             let retired = &mut *self.retired.get();
             if let Some(i) = retired.iter().position(|&w| w == watcher) {
                 retired.swap_remove(i);
+                return true;
             }
             let watchers = &mut *self.watchers.get();
             match watchers.values().iter().position(|&w| w == watcher) {
@@ -202,7 +203,8 @@ impl PathWatcherManager {
     /// is deleted or renamed away: those backends follow the inode, so the next
     /// `fs.watch(path)` must register the file now at that path instead of
     /// joining this watch. The watcher keeps its handlers and stays reachable
-    /// through `retired` until `detach()`. Caller holds `mutex`.
+    /// through `retired` until `detach()`. A second root event (rename, then
+    /// delete) finds it there and leaves it there. Caller holds `mutex`.
     #[cfg(not(windows))]
     fn retire_watcher_locked(&self, watcher: *mut PathWatcher) {
         if self.unlink_watcher_locked(watcher) {

@@ -691,4 +691,42 @@ export default function IndexPage() {
     expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
     expect(buildProc.exitCode).toBe(0);
   });
+
+  test("a page can read the global Response", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-response", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `export default function IndexPage() {
+  const response = new Response("x");
+  const redirect = Response.redirect("/login", 302);
+  let render;
+  try {
+    Response.render("/404");
+  } catch (error) {
+    render = error.message;
+  }
+  return <div>status={response.status} redirect={redirect.headers.get("location")} render={render}</div>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html"))
+      .text()
+      .catch(() => buildProc.stderr.toString());
+    expect(indexHtml).toContain(
+      "status=<!-- -->200<!-- --> redirect=<!-- -->/login<!-- --> render=<!-- -->Response.render() is only available in the Bun dev server",
+    );
+    expect(buildProc.exitCode).toBe(0);
+  });
 });

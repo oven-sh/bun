@@ -480,6 +480,17 @@ impl<'a> ImportScanner<'a> {
                             let name: LocRef = item.name;
                             let name_ref = name.ref_;
 
+                            // Only the linker gives an import item a namespace alias
+                            // here, because it also declares that namespace. An alias
+                            // from the parser prints a read of an undeclared name.
+                            debug_assert!(
+                                HOT_MODULE_RELOADING_TRANSFORMATIONS
+                                    || p.symbols[name_ref.inner_index() as usize]
+                                        .namespace_alias
+                                        .is_none(),
+                                "import clause item has a namespace alias before linking"
+                            );
+
                             p.named_imports.put_assume_capacity(
                                 name_ref,
                                 js_ast::NamedImport {

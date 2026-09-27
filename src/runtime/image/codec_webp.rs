@@ -212,9 +212,6 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         return Err(codecs::Error::DecodeFailed);
     }
     // Probe first, so the pixel guard fires before the canvas is allocated.
-    // The probe answers with the VP8X canvas even for input that cannot
-    // decode, so refuse an animation and a file that ends before its
-    // bitstream (`format` 0) here, before either costs a canvas.
     // SAFETY: bytes.ptr/len describe a valid readable slice; config.input is a valid out-param.
     let probed = unsafe {
         WebPGetFeaturesInternal(
@@ -225,17 +222,18 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         )
     };
     let (cw, ch) = (config.input.width, config.input.height);
-    if probed != VP8_STATUS_OK
-        || cw <= 0
-        || ch <= 0
-        || config.input.has_animation != 0
-        || config.input.format == 0
-    {
+    if probed != VP8_STATUS_OK || cw <= 0 || ch <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let w: u32 = u32::try_from(cw).expect("int cast");
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
+    // The probe answers with the VP8X canvas even for input that cannot
+    // decode: an animation, and a file that ends before its bitstream
+    // (`format` 0). Refuse both before they cost a canvas.
+    if config.input.has_animation != 0 || config.input.format == 0 {
+        return Err(codecs::Error::DecodeFailed);
+    }
 
     // `bytes` is a borrowed JS ArrayBuffer the user can still WRITE (the pin
     // only blocks detach), so every parse libwebp makes can see a different

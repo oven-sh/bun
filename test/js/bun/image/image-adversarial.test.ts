@@ -1605,9 +1605,113 @@ describe("WebP container walk", () => {
     }
     expect(got).toEqual(want);
   });
+
+  // A header that reports a canvas and cannot decode: an animation, and a
+  // file that ends before its picture. The pixel limit is checked first, so
+  // one that is also too large says so.
+  test.each([
+    ["an animation", riff([vp8x(ANIM, 64, 64), chunk("ANIM", profile(6))]), "ERR_IMAGE_DECODE_FAILED"],
+    ["a header alone", riff([vp8x(0, 64, 64)]), "ERR_IMAGE_DECODE_FAILED"],
+    [
+      "an animation over the pixel limit",
+      riff([vp8x(ANIM, 5000, 5000), chunk("ANIM", profile(6))]),
+      "ERR_IMAGE_TOO_MANY_PIXELS",
+    ],
+    ["a header alone over the pixel limit", riff([vp8x(0, 5000, 5000)]), "ERR_IMAGE_TOO_MANY_PIXELS"],
+  ])("%s is refused", async (_name, file, code) => {
+    const decode = new Bun.Image(file, { maxPixels: 4096 * 4096 }).png().bytes();
+    await expect(decode).rejects.toMatchObject({ code });
+  });
 });
 
-// ─── 10. random-byte fuzz (cheap, bounded) ───────────────────────────────────
+// The decoder writes into capacity that nothing initialised, so an accepted
+// decode must write all of it. ASAN fills every new allocation with a chosen
+// byte: a pixel libwebp never wrote then reads as that byte, whatever the
+// block held before. Same check as the JPEG one above.
+test.skipIf(!isASAN)("an accepted WebP decode commits no byte that libwebp did not write", async () => {
+  const FILL = 90;
+  // Alpha stays clear of the fill byte, so a match cannot be a coincidence.
+  const alphaOf = (x: number, y: number) => 100 + ((x * 7 + y * 3) % 100);
+  const sizes: [number, number][] = [
+    [1, 1],
+    [17, 13],
+    [129, 33],
+  ];
+  const cases: { name: string; w: number; h: number; alpha: boolean; webp: string }[] = [];
+  for (const [w, h] of sizes) {
+    for (const alpha of [false, true]) {
+      const src = makePng(w, h, (x, y) => [(x * 5) & 255, (y * 9) & 255, (x + y) & 255, alpha ? alphaOf(x, y) : 255]);
+      for (const [kind, opts] of [
+        ["lossless", { lossless: true }],
+        ["lossy", { quality: 80 }],
+      ] as const) {
+        const webp = await new Bun.Image(src).webp(opts).bytes();
+        cases.push({
+          name: `${kind} ${w}x${h}${alpha ? " with alpha" : ""}`,
+          w,
+          h,
+          alpha,
+          webp: Buffer.from(webp).toString("base64"),
+        });
+      }
+    }
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const cases = await Bun.stdin.json();
+        const out = {};
+        for (const c of cases) {
+          out[c.name] = await new Bun.Image(Buffer.from(c.webp, "base64")).png().bytes().then(
+            png => Buffer.from(png).toString("base64"),
+            e => "rejected: " + e.code,
+          );
+        }
+        console.log(JSON.stringify(out));
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `malloc_fill_byte=${FILL}`, "max_malloc_fill_size=1073741824"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdin: Buffer.from(JSON.stringify(cases)),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderr).toBe("");
+
+  const pngs: Record<string, string> = JSON.parse(stdout || "{}");
+  const got: Record<string, string> = {};
+  for (const { name, w, h, alpha } of cases) {
+    const png = pngs[name] ?? "missing";
+    if (png.startsWith("rejected") || png === "missing") {
+      got[name] = png;
+      continue;
+    }
+    const rgba = await rgbaOf(Buffer.from(png, "base64"));
+    let unwritten = rgba.length === w * h * 4 ? 0 : -1;
+    for (let y = 0; y < h && unwritten >= 0; y++) {
+      for (let x = 0; x < w; x++) {
+        if (rgba[(y * w + x) * 4 + 3] !== (alpha ? alphaOf(x, y) : 255)) unwritten++;
+      }
+    }
+    got[name] = unwritten === 0 ? "fully written" : `${unwritten} pixels with another alpha`;
+  }
+  expect(got).toEqual(Object.fromEntries(cases.map(c => [c.name, "fully written"])));
+  expect(exitCode).toBe(0);
+});
+
+// ─── 11. random-byte fuzz (cheap, bounded) ───────────────────────────────────
 
 describe("random-byte fuzz", () => {
   // Deterministic LCG so failures are reproducible from the seed.

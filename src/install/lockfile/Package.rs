@@ -379,7 +379,6 @@ impl PackageField {
         PackageField::Scripts,
     ];
 
-    #[allow(dead_code)]
     pub(crate) fn name(self) -> &'static [u8] {
         match self {
             PackageField::Name => b"name",
@@ -3194,15 +3193,12 @@ pub mod serializer {
                     &*sliced.column_bytes_mut(field as usize)
                 }
             };
-            #[cfg(debug_assertions)]
-            {
-                bun_output::scoped_log!(
-                    Lockfile,
-                    "save(\"{}\") = {} bytes",
-                    bstr::BStr::new(field.name()),
-                    bytes.len(),
-                );
-            }
+            bun_output::scoped_log!(
+                Lockfile,
+                "save(\"{}\") = {} bytes",
+                bstr::BStr::new(field.name()),
+                bytes.len(),
+            );
             // No uninitialized padding: `Package`'s field types are all
             // `#[repr(C)]` with explicit padding zeroed by their
             // `Default`/`init` paths.

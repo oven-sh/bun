@@ -930,9 +930,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * stream's 'finish' never happened - the FIN-terminated
                      * http response tests hung on every Linux target. The
                      * writable dispatch disables writable polling again once
-                     * the buffer is drained, so this does not busy-poll. */
-                    us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+                     * the buffer is drained, so this does not busy-poll.
+                     * on_end runs first: an owner that closes there needs no poll
+                     * change at all. */
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
+                    s = us_internal_socket_follow_adopted(s);
+                    if (s && !us_socket_is_closed(s) && !error) {
+                        us_poll_change(&s->p, loop, us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN ? 0 : LIBUS_SOCKET_WRITABLE);
+                    }
                 } else {
                     /* Half-open not allowed, or a hangup (both directions down, level-triggered):
                      * emit end unless a FIN already did, then close so EPOLLHUP stops re-firing. */

@@ -4,7 +4,12 @@ use bstr::BStr;
 use bun_core::{WStr, w};
 use bun_core::{ZStr, strings};
 #[cfg(not(bun_portable))]
-use bun_paths::SEP;
+#[cfg(not(windows))]
+use bun_paths::DELIMITER;
+#[cfg(bun_portable)]
+#[cfg(windows)]
+use bun_paths::resolve_path::PosixToWinNormalizer;
+#[cfg(not(bun_portable))]
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 #[cfg(windows)]
@@ -13,6 +18,9 @@ use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_paths::sep;
 #[cfg(windows)]
 use bun_paths::w_path_buffer_pool;
+#[cfg(not(bun_portable))]
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, is_absolute};
+#[cfg(bun_portable)]
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, is_absolute};
 #[cfg(windows)]
 use bun_paths::{WPathBuffer, path_buffer_pool};
@@ -213,11 +221,12 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
-        #[cfg(not(bun_portable))]
-        let delimiters: &[u8] = &[bun_paths::DELIMITER];
         #[cfg(bun_portable)]
         let delimiters: &[u8] = bun_paths::delimiter_str().as_bytes();
-        for segment in strings::tokenize(path, delimiters) {
+        for segment in cfg_select! {
+            bun_portable => strings::tokenize(path, delimiters),
+            _ => strings::tokenize(path, &[DELIMITER]),
+        } {
             // execvp resolves relative $PATH entries after the child's chdir.
             let cwd_prefix: &[u8] = if is_absolute(segment) {
                 b""

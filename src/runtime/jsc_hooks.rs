@@ -4538,8 +4538,16 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
+        #[cfg(bun_portable)]
         #[cfg(unix)]
         let ours = st.st_uid as libc::uid_t == uid && bun_sys::S::ISREG(st.st_mode as u32);
+        #[cfg(bun_portable)]
+        #[cfg(windows)]
+        let ours = true;
+        #[cfg(not(bun_portable))]
+        #[cfg(unix)]
+        let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
+        #[cfg(not(bun_portable))]
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {

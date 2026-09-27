@@ -212,6 +212,7 @@ pub mod dir_iterator {
     #[cfg(bun_portable)]
     #[allow(non_camel_case_types)]
     type OSPathChar__windows = u16;
+    #[cfg(bun_portable)]
     #[cfg(not(windows))]
     #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name, OSPathChar))]
     impl Name {
@@ -250,6 +251,7 @@ pub mod dir_iterator {
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
         }
     }
+    #[cfg(bun_portable)]
     #[cfg(any(windows, bun_portable))]
     #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name, OSPathChar))]
     impl Name {
@@ -277,6 +279,67 @@ pub mod dir_iterator {
         #[inline]
         pub fn slice_u8(&self) -> &[u8] {
             &self.utf8
+        }
+    }
+    #[cfg(not(bun_portable))]
+    impl Name {
+        #[cfg(not(windows))]
+        #[inline]
+        fn borrow(s: &[u8]) -> Name {
+            // SAFETY: `s` is a slice into a kernel-written dirent record; the
+            // byte at `s.as_ptr().add(s.len())` is the in-record NUL terminator
+            // and lies within the same `reclen`-sized allocation.
+            debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
+            Name {
+                ptr: core::ptr::NonNull::from(s).cast(),
+                len: s.len(),
+            }
+        }
+        #[cfg(windows)]
+        #[inline]
+        fn from_slice(s: &[OSPathChar]) -> Name {
+            let mut v = Vec::with_capacity(s.len() + 1);
+            v.extend_from_slice(s);
+            v.push(0);
+            // Trust that Windows gives us valid UTF-16LE.
+            let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
+            Name { native: v, utf8 }
+        }
+        /// Borrow the name as `&[OSPathChar]` (no NUL).
+        #[cfg(not(windows))]
+        #[inline]
+        pub fn slice(&self) -> &[OSPathChar] {
+            // SAFETY: `borrow()` was given a live slice into the iterator's
+            // `buf`; caller honours the streaming-iterator contract.
+            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+        #[cfg(windows)]
+        #[inline]
+        pub fn slice(&self) -> &[OSPathChar] {
+            &self.native[..self.native.len() - 1]
+        }
+        #[inline]
+        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
+            self.slice()
+        }
+        /// Borrow the entry name as UTF-8 bytes (no NUL). On POSIX this is the
+        /// native slice; on Windows it is the cached `fromWPath` transcode.
+        #[cfg(not(windows))]
+        #[inline]
+        pub fn slice_u8(&self) -> &[u8] {
+            self.slice()
+        }
+        #[cfg(windows)]
+        #[inline]
+        pub fn slice_u8(&self) -> &[u8] {
+            &self.utf8
+        }
+        #[cfg(not(windows))]
+        #[inline]
+        pub fn as_zstr(&self) -> &bun_core::ZStr {
+            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
+            // `borrow()` debug_assert.
+            unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
         }
     }
     /// The name of an entry in the portable image: the one of the host's iterator. The native
@@ -4558,12 +4621,15 @@ mod windows_impl {
         // SetFilePointerEx.
         let mut new: i64 = 0;
         let ok = unsafe {
-            w::SetFilePointerEx(
-                bun_core::fd_handle!(fd) as w::HANDLE,
-                offset,
-                &mut new,
-                whence as u32,
-            )
+            cfg_select! {
+                bun_portable => w::SetFilePointerEx(
+                    bun_core::fd_handle!(fd) as w::HANDLE,
+                    offset,
+                    &mut new,
+                    whence as u32,
+                ),
+                _ => w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32),
+            }
         };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
@@ -4576,12 +4642,15 @@ mod windows_impl {
         let mut new: i64 = 0;
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
         let ok = unsafe {
-            w::SetFilePointerEx(
-                bun_core::fd_handle!(fd) as w::HANDLE,
-                0,
-                &mut new,
-                w::FILE_END,
-            )
+            cfg_select! {
+                bun_portable => w::SetFilePointerEx(
+                    bun_core::fd_handle!(fd) as w::HANDLE,
+                    0,
+                    &mut new,
+                    w::FILE_END,
+                ),
+                _ => w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END),
+            }
         };
         if ok == w::FALSE {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
@@ -4624,12 +4693,15 @@ mod windows_impl {
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe {
-            w::ws2_32::recv(
-                bun_core::fd_handle!(fd) as _,
-                buf.as_mut_ptr().cast::<_>(),
-                len,
-                flags,
-            )
+            cfg_select! {
+                bun_portable => w::ws2_32::recv(
+                    bun_core::fd_handle!(fd) as _,
+                    buf.as_mut_ptr().cast::<_>(),
+                    len,
+                    flags,
+                ),
+                _ => w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags),
+            }
         };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
@@ -4641,12 +4713,15 @@ mod windows_impl {
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe {
-            w::ws2_32::send(
-                bun_core::fd_handle!(fd) as _,
-                buf.as_ptr().cast::<_>(),
-                len,
-                flags,
-            )
+            cfg_select! {
+                bun_portable => w::ws2_32::send(
+                    bun_core::fd_handle!(fd) as _,
+                    buf.as_ptr().cast::<_>(),
+                    len,
+                    flags,
+                ),
+                _ => w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags),
+            }
         };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));

@@ -7295,14 +7295,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
 /// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
-    let (name_to_use, separators): (&[u8], &[u8]) =
-        match strings::last_index_of(path.text, bun_paths::node_modules_needle()) {
-            Some(node_modules) => (
-                &path.text[node_modules + bun_paths::node_modules_needle().len()..],
-                if cfg!(windows) { b"/\\" } else { b"/" },
-            ),
-            None => (path.pretty, b"/"),
-        };
+    let (name_to_use, separators): (&[u8], &[u8]) = match strings::last_index_of(
+        path.text,
+        cfg_select! {
+            bun_portable => bun_paths::node_modules_needle(),
+            _ => bun_paths::NODE_MODULES_NEEDLE,
+        },
+    ) {
+        Some(node_modules) => (
+            &path.text[node_modules
+                + cfg_select! {
+                    bun_portable => bun_paths::node_modules_needle().len(),
+                    _ => bun_paths::NODE_MODULES_NEEDLE.len(),
+                }..],
+            if cfg!(windows) { b"/\\" } else { b"/" },
+        ),
+        None => (path.pretty, b"/"),
+    };
 
     let pkgname = {
         let str = name_to_use;

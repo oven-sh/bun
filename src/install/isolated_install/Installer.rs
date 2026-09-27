@@ -2132,10 +2132,27 @@ impl<'a> Installer<'a> {
         let mut hidden_hoisted_node_modules = AutoPath::init();
 
         // OOM/capacity: fire-and-forget
-        let _ = hidden_hoisted_node_modules.append(
-            // "node_modules" + sep + ".bun" + sep + "node_modules"
-            paths::path_literal!("node_modules/.bun/node_modules").as_bytes(),
-        );
+        let _ = cfg_select! {
+            bun_portable => {
+                hidden_hoisted_node_modules.append(
+                    // "node_modules" + sep + ".bun" + sep + "node_modules"
+                    paths::path_literal!("node_modules/.bun/node_modules").as_bytes(),
+                )
+            }
+            _ => {
+                hidden_hoisted_node_modules.append(
+                    // "node_modules" + sep + ".bun" + sep + "node_modules"
+                    const_format::concatcp!(
+                        "node_modules",
+                        paths::SEP_STR,
+                        ".bun",
+                        paths::SEP_STR,
+                        "node_modules"
+                    )
+                    .as_bytes(),
+                )
+            }
+        };
         let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: fire-and-forget
 
         let mut target = AutoRelPath::init();

@@ -2191,10 +2191,16 @@ mod _async_tasks {
                         let sd = src_dir_len as usize;
                         let dd = dest_dir_len as usize;
                         src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
-                        src_buf[sd] = paths::sep() as OSPathChar;
+                        src_buf[sd] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                         src_buf[sd + 1 + cname.len()] = 0;
                         dest_buf[dd + 1..dd + 1 + cname.len()].copy_from_slice(cname);
-                        dest_buf[dd] = paths::sep() as OSPathChar;
+                        dest_buf[dd] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                         dest_buf[dd + 1 + cname.len()] = 0;
 
                         let should_continue = Self::cp_async_directory(
@@ -2220,12 +2226,18 @@ mod _async_tasks {
                         let mut path_buf = vec![0 as OSPathChar; total].into_boxed_slice();
 
                         path_buf[..sd].copy_from_slice(&src_buf[..sd]);
-                        path_buf[sd] = paths::sep() as OSPathChar;
+                        path_buf[sd] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                         path_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
                         path_buf[sd + 1 + cname.len()] = 0;
                         let dest_off = sd + 1 + cname.len() + 1;
                         path_buf[dest_off..dest_off + dd].copy_from_slice(&dest_buf[..dd]);
-                        path_buf[dest_off + dd] = paths::sep() as OSPathChar;
+                        path_buf[dest_off + dd] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                         path_buf[dest_off + dd + 1..dest_off + dd + 1 + cname.len()]
                             .copy_from_slice(cname);
                         path_buf[dest_off + dd + 1 + cname.len()] = 0;
@@ -5819,12 +5831,20 @@ impl NodeFS {
                                         }
                                     }
                                 }
-                                working_mem[i as usize] = paths::sep() as OSPathChar;
+                                working_mem[i as usize] = cfg_select! {
+                                    bun_portable => paths::sep(),
+                                    _ => paths::SEP,
+                                }
+                                    as OSPathChar;
                                 // Handle race condition
                                 break;
                             }
                             E::ENOENT => {
-                                working_mem[i as usize] = paths::sep() as OSPathChar;
+                                working_mem[i as usize] = cfg_select! {
+                                    bun_portable => paths::sep(),
+                                    _ => paths::SEP,
+                                }
+                                    as OSPathChar;
                                 i -= 1;
                                 continue;
                             }
@@ -5853,7 +5873,10 @@ impl NodeFS {
                     Ok(_) => {
                         ctx.on_create_dir(parent);
                         // We found a parent that worked
-                        working_mem[i as usize] = paths::sep() as OSPathChar;
+                        working_mem[i as usize] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                         break;
                     }
                 }
@@ -5871,7 +5894,10 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        working_mem[i as usize] = paths::sep() as OSPathChar;
+                        working_mem[i as usize] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                         match err.get_errno() {
                             // handle the race condition
                             E::EEXIST => {}
@@ -5888,7 +5914,10 @@ impl NodeFS {
                     }
                     Ok(_) => {
                         ctx.on_create_dir(parent);
-                        working_mem[i as usize] = paths::sep() as OSPathChar;
+                        working_mem[i as usize] = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        } as OSPathChar;
                     }
                 }
             }
@@ -6920,10 +6949,19 @@ impl NodeFS {
                 #[cfg(windows)]
                 for b in name.iter_mut() {
                     if *b == b'/' {
-                        *b = paths::sep();
+                        *b = cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        };
                     }
                 }
-                let (base, parent) = match strings::last_index_of_char(&name, paths::sep()) {
+                let (base, parent) = match strings::last_index_of_char(
+                    &name,
+                    cfg_select! {
+                        bun_portable => paths::sep(),
+                        _ => paths::SEP,
+                    },
+                ) {
                     Some(i) => (&name[i + 1..], &name[..i]),
                     None => (&name[..], b"".as_slice()),
                 };
@@ -6932,7 +6970,10 @@ impl NodeFS {
                     joined.clear();
                     joined.extend_from_slice(input_path);
                     if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
-                        joined.push(paths::sep());
+                        joined.push(cfg_select! {
+                            bun_portable => paths::sep(),
+                            _ => paths::SEP,
+                        });
                     }
                     joined.extend_from_slice(parent);
                     joined_path = BunString::clone_utf8(&joined);
@@ -8327,11 +8368,17 @@ impl NodeFS {
             }
 
             src_buf[sd + 1..sd + 1 + name_slice.len()].copy_from_slice(name_slice);
-            src_buf[sd] = paths::sep() as OSPathChar;
+            src_buf[sd] = cfg_select! {
+                bun_portable => paths::sep(),
+                _ => paths::SEP,
+            } as OSPathChar;
             src_buf[sd + 1 + name_slice.len()] = 0;
 
             dest_buf[dd + 1..dd + 1 + name_slice.len()].copy_from_slice(name_slice);
-            dest_buf[dd] = paths::sep() as OSPathChar;
+            dest_buf[dd] = cfg_select! {
+                bun_portable => paths::sep(),
+                _ => paths::SEP,
+            } as OSPathChar;
             dest_buf[dd + 1 + name_slice.len()] = 0;
 
             match current.kind {
@@ -9054,7 +9101,13 @@ impl NodeFS {
                     // Create the parent directory if it doesn't exist
                     let bytes = dest.as_bytes();
                     let mut len = bytes.len();
-                    while len > 0 && bytes[len - 1] != paths::sep() {
+                    while len > 0
+                        && bytes[len - 1]
+                            != cfg_select! {
+                                bun_portable => paths::sep(),
+                                _ => paths::SEP,
+                            }
+                    {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {

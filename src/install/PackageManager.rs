@@ -23,6 +23,9 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
+#[cfg(not(bun_portable))]
+use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+#[cfg(bun_portable)]
 use bun_paths::{PathBuffer, delimiter, sep, sep_str};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
@@ -1241,11 +1244,23 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
     );
     path_var.extend_from_slice(existing_path);
-    if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != delimiter() {
-        path_var.push(delimiter());
+    if !existing_path.is_empty()
+        && existing_path[existing_path.len() - 1]
+            != cfg_select! {
+                bun_portable => delimiter(),
+                _ => DELIMITER,
+            }
+    {
+        path_var.push(cfg_select! {
+            bun_portable => delimiter(),
+            _ => DELIMITER,
+        });
     }
     path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
-    path_var.push(sep());
+    path_var.push(cfg_select! {
+        bun_portable => sep(),
+        _ => SEP,
+    });
     path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
     manager.env_mut().map.put(b"PATH", &path_var)?;
 
@@ -1255,11 +1270,17 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         cursor,
         "{}{}{}{}{}",
         bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
-        sep_str(),
+        cfg_select! {
+            bun_portable => sep_str(),
+            _ => SEP_STR,
+        },
         bstr::BStr::new(strings::without_trailing_slash(
             &manager.node_gyp_tempdir_name
         )),
-        sep_str(),
+        cfg_select! {
+            bun_portable => sep_str(),
+            _ => SEP_STR,
+        },
         FILE_NAME
     )?;
     let written = path_buf_len - cursor.len();
@@ -1663,7 +1684,10 @@ pub fn init(
             true,
         ));
         original_package_json_path_buf.truncate(this_cwd.len());
-        original_package_json_path_buf.push(sep());
+        original_package_json_path_buf.push(cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        });
         original_package_json_path_buf.extend_from_slice(b"package.json");
         original_package_json_path_buf.push(0);
 

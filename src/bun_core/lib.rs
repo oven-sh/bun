@@ -40,7 +40,9 @@ pub mod heap;
 
 pub mod debug;
 pub mod env;
+#[cfg(bun_portable)]
 pub mod host;
+#[cfg(bun_portable)]
 pub use bun_alloc::host_fn;
 #[cfg(bun_portable)]
 pub mod host_dispatch;
@@ -575,6 +577,9 @@ pub mod feature_flags;
 /// these as the canonical `is_sep_*` set.
 pub mod path_sep {
     use crate::strings_impl::PathByte;
+    #[cfg(not(bun_portable))]
+    pub use bun_alloc::{SEP, SEP_STR};
+    #[cfg(bun_portable)]
     pub use bun_alloc::{SEP, SEP_STR, sep, sep_str};
 
     // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
@@ -617,7 +622,10 @@ pub mod path_sep {
 
     #[inline(always)]
     pub fn is_sep_native_t<T: PathByte>(c: T) -> bool {
-        if crate::host::is_windows() {
+        if cfg_select! {
+            bun_portable => crate::host::is_windows(),
+            _ => cfg!(windows),
+        } {
             is_sep_any_t(c)
         } else {
             is_sep_posix_t(c)
@@ -2635,7 +2643,10 @@ pub(crate) mod strings_impl {
     /// elsewhere.
     #[inline]
     pub fn basename(path: &[u8]) -> &[u8] {
-        if crate::host::is_windows() {
+        if cfg_select! {
+            bun_portable => crate::host::is_windows(),
+            _ => cfg!(windows),
+        } {
             basename_windows(path)
         } else {
             basename_posix(path)
@@ -2647,7 +2658,12 @@ pub(crate) mod strings_impl {
     #[inline(always)]
     pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
         if slice.len() >= 2 {
-            if &slice[..2] == b"./" || (crate::host::is_windows() && &slice[..2] == b".\\") {
+            if &slice[..2] == b"./"
+                || cfg_select! {
+                    bun_portable => (crate::host::is_windows() && &slice[..2] == b".\\"),
+                    _ => (cfg!(windows) && &slice[..2] == b".\\"),
+                }
+            {
                 return &slice[2..];
             }
         }

@@ -785,6 +785,7 @@ mod fields {
     /// The portable image (`--cfg=bun_portable`) is one static executable: it has
     /// no dynamic loader to open a library with, and no TinyCC, which compiles
     /// the wrapper of every foreign function and callback.
+    #[cfg(bun_portable)]
     fn unavailable_in_portable_image(global: &JSGlobalObject, what: &str) -> JsResult<JSValue> {
         Err(global.throw(format_args!(
             "bun:ffi {what} is not available in this build of Bun: it is one static executable, which can neither load shared libraries nor compile the C wrappers of foreign calls"
@@ -800,8 +801,13 @@ mod fields {
     }
 
     pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if cfg!(bun_portable) {
-            return unavailable_in_portable_image(global, "dlopen()");
+        cfg_select! {
+            bun_portable => {
+                if cfg!(bun_portable) {
+                    return unavailable_in_portable_image(global, "dlopen()");
+                }
+            }
+            _ => {}
         }
         let mut iter = callframe.arguments().iter();
         let name = eat_string(global, &mut iter)?;
@@ -811,8 +817,13 @@ mod fields {
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
     pub(super) fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if cfg!(bun_portable) {
-            return unavailable_in_portable_image(global, "JSCallback");
+        cfg_select! {
+            bun_portable => {
+                if cfg!(bun_portable) {
+                    return unavailable_in_portable_image(global, "JSCallback");
+                }
+            }
+            _ => {}
         }
         let mut iter = callframe.arguments().iter();
         let interface = eat_required(global, &mut iter)?;
@@ -825,8 +836,13 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if cfg!(bun_portable) {
-            return unavailable_in_portable_image(global, "linkSymbols()");
+        cfg_select! {
+            bun_portable => {
+                if cfg!(bun_portable) {
+                    return unavailable_in_portable_image(global, "linkSymbols()");
+                }
+            }
+            _ => {}
         }
         let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
@@ -868,8 +884,13 @@ mod fields {
     }
 
     pub(super) fn cfunction(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        if cfg!(bun_portable) {
-            return unavailable_in_portable_image(global, "CFunction");
+        cfg_select! {
+            bun_portable => {
+                if cfg!(bun_portable) {
+                    return unavailable_in_portable_image(global, "CFunction");
+                }
+            }
+            _ => {}
         }
         let mut iter = callframe.arguments().iter();
         let options = eat_required(global, &mut iter)?;

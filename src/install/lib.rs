@@ -592,10 +592,17 @@ impl RunCommand {
             match bun_sys::mkdir(DIR_Z, 0o700) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                    #[cfg(bun_portable)]
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
                             && st.st_uid as u32 == bun_sys::c::getuid()
+                            && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
+                    #[cfg(not(bun_portable))]
+                    Ok(st)
+                        if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                            == bun_sys::FileKind::Directory
+                            && st.st_uid == bun_sys::c::getuid()
                             && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
                     _ => return Ok(()),
                 },
@@ -630,15 +637,27 @@ impl RunCommand {
                 }
             }
 
-            if !path.is_empty() && *path.last().unwrap() != bun_paths::delimiter() {
-                path.push(bun_paths::delimiter());
+            if !path.is_empty()
+                && *path.last().unwrap()
+                    != cfg_select! {
+                        bun_portable => bun_paths::delimiter(),
+                        _ => bun_paths::DELIMITER,
+                    }
+            {
+                path.push(cfg_select! {
+                    bun_portable => bun_paths::delimiter(),
+                    _ => bun_paths::DELIMITER,
+                });
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
-            path.push(bun_paths::delimiter());
+            path.push(cfg_select! {
+                bun_portable => bun_paths::delimiter(),
+                _ => bun_paths::DELIMITER,
+            });
             Ok(())
         }
 
@@ -740,15 +759,27 @@ impl RunCommand {
                 }
             }
 
-            if !path.is_empty() && *path.last().unwrap() != bun_paths::delimiter() {
-                path.push(bun_paths::delimiter());
+            if !path.is_empty()
+                && *path.last().unwrap()
+                    != cfg_select! {
+                        bun_portable => bun_paths::delimiter(),
+                        _ => bun_paths::DELIMITER,
+                    }
+            {
+                path.push(cfg_select! {
+                    bun_portable => bun_paths::delimiter(),
+                    _ => bun_paths::DELIMITER,
+                });
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
-            path.push(bun_paths::delimiter());
+            path.push(cfg_select! {
+                bun_portable => bun_paths::delimiter(),
+                _ => bun_paths::DELIMITER,
+            });
             let _ = optional_bun_path;
             Ok(())
         }

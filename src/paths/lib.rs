@@ -57,6 +57,7 @@ pub mod strings {
 pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
 // The same for the OS that runs this process: the constants themselves, except in the portable image.
+#[cfg(bun_portable)]
 pub use bun_alloc::{sep, sep_str};
 
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
@@ -64,6 +65,7 @@ pub use bun_alloc::{sep, sep_str};
 pub const NODE_MODULES_NEEDLE: &[u8] =
     const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
 
+#[cfg(bun_portable)]
 bun_core::host_fn!(
     /// [`NODE_MODULES_NEEDLE`] of the OS that runs this process.
     #[inline(always)]
@@ -131,6 +133,7 @@ mod path_char;
 pub use path_char::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 
+#[cfg(bun_portable)]
 bun_core::host_fn!(
     /// [`DELIMITER`] of the OS that runs this process: what separates the directories of `PATH`.
     #[inline(always)]
@@ -142,6 +145,7 @@ bun_core::host_fn!(
         }
     }
 );
+#[cfg(bun_portable)]
 bun_core::host_fn!(
     /// [`delimiter`] as a string.
     #[inline(always)]
@@ -311,7 +315,10 @@ fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
                 let prev_sep = is_sep_native(prev);
                 let this_sep = is_sep_native(p[0]);
                 if !prev_sep && !this_sep {
-                    out.push(sep());
+                    out.push(cfg_select! {
+                        bun_portable => sep(),
+                        _ => SEP,
+                    });
                 }
                 if prev_sep && this_sep { &p[1..] } else { *p }
             }
@@ -1045,7 +1052,13 @@ pub mod fs {
         /// Checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            crate::strings::contains(self.name().dir, crate::node_modules_needle())
+            crate::strings::contains(
+                self.name().dir,
+                cfg_select! {
+                    bun_portable => crate::node_modules_needle(),
+                    _ => crate::NODE_MODULES_NEEDLE,
+                },
+            )
         }
 
         /// Key used to identify this path in the incremental graph: the real

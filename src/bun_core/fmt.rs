@@ -686,7 +686,10 @@ impl PathSep {
         match self {
             PathSep::Windows => b'\\',
             PathSep::Posix => b'/',
+            #[cfg(bun_portable)]
             PathSep::Auto => crate::sep(),
+            #[cfg(not(bun_portable))]
+            PathSep::Auto => crate::SEP,
             PathSep::Any => found,
         }
     }

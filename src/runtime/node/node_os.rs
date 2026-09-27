@@ -1471,42 +1471,84 @@ mod _impl {
 
         result.put(global_this, b"homedir", home.into_js(global_this)?);
 
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows() {
-            result.put(
-                global_this,
-                b"username",
-                bun_string_jsc::create_utf8_for_js(
-                    global_this,
-                    env_var::USER.get().unwrap_or(b"unknown"),
-                )?,
-            );
-            result.put(global_this, b"uid", JSValue::js_number(-1.0));
-            result.put(global_this, b"gid", JSValue::js_number(-1.0));
-            result.put(global_this, b"shell", JSValue::NULL);
-            return Ok(result);
-        }
-        #[cfg(not(windows))]
-        {
-            let username = env_var::USER.get().unwrap_or(b"unknown");
+        cfg_select! {
+            bun_portable => {
+                #[cfg(any(windows, bun_portable))]
+                if bun_core::host::is_windows() {
+                    result.put(
+                        global_this,
+                        b"username",
+                        bun_string_jsc::create_utf8_for_js(
+                            global_this,
+                            env_var::USER.get().unwrap_or(b"unknown"),
+                        )?,
+                    );
+                    result.put(global_this, b"uid", JSValue::js_number(-1.0));
+                    result.put(global_this, b"gid", JSValue::js_number(-1.0));
+                    result.put(global_this, b"shell", JSValue::NULL);
+                    return Ok(result);
+                }
+                #[cfg(not(windows))]
+                {
+                    let username = env_var::USER.get().unwrap_or(b"unknown");
 
-            result.put(
-                global_this,
-                b"username",
-                bun_string_jsc::create_utf8_for_js(global_this, username)?,
-            );
-            result.put(
-                global_this,
-                b"shell",
-                bun_string_jsc::create_utf8_for_js(
-                    global_this,
-                    env_var::SHELL.get().unwrap_or(b"unknown"),
-                )?,
-            );
-            // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
-            // fail) — discharges the per-site proof the raw `libc` re-export needed.
-            result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));
-            result.put(global_this, b"gid", JSValue::js_number(c::getgid() as f64));
+                    result.put(
+                        global_this,
+                        b"username",
+                        bun_string_jsc::create_utf8_for_js(global_this, username)?,
+                    );
+                    result.put(
+                        global_this,
+                        b"shell",
+                        bun_string_jsc::create_utf8_for_js(
+                            global_this,
+                            env_var::SHELL.get().unwrap_or(b"unknown"),
+                        )?,
+                    );
+                    // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
+                    // fail) — discharges the per-site proof the raw `libc` re-export needed.
+                    result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));
+                    result.put(global_this, b"gid", JSValue::js_number(c::getgid() as f64));
+                }
+            }
+            _ => {
+                #[cfg(windows)]
+                {
+                    result.put(
+                        global_this,
+                        b"username",
+                        bun_string_jsc::create_utf8_for_js(
+                            global_this,
+                            env_var::USER.get().unwrap_or(b"unknown"),
+                        )?,
+                    );
+                    result.put(global_this, b"uid", JSValue::js_number(-1.0));
+                    result.put(global_this, b"gid", JSValue::js_number(-1.0));
+                    result.put(global_this, b"shell", JSValue::NULL);
+                }
+                #[cfg(not(windows))]
+                {
+                    let username = env_var::USER.get().unwrap_or(b"unknown");
+
+                    result.put(
+                        global_this,
+                        b"username",
+                        bun_string_jsc::create_utf8_for_js(global_this, username)?,
+                    );
+                    result.put(
+                        global_this,
+                        b"shell",
+                        bun_string_jsc::create_utf8_for_js(
+                            global_this,
+                            env_var::SHELL.get().unwrap_or(b"unknown"),
+                        )?,
+                    );
+                    // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
+                    // fail) — discharges the per-site proof the raw `libc` re-export needed.
+                    result.put(global_this, b"uid", JSValue::js_number(c::getuid() as f64));
+                    result.put(global_this, b"gid", JSValue::js_number(c::getgid() as f64));
+                }
+            }
         }
 
         Ok(result)

@@ -243,34 +243,69 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     if len == 0 {
         return Ok(cwd);
     }
-    if bun_core::host::is_windows() {
-        // Converts Windows' backslash path separators to POSIX forward slashes
-        // and truncates any drive indicator
+    cfg_select! {
+        bun_portable => {
+            if bun_core::host::is_windows() {
+                // Converts Windows' backslash path separators to POSIX forward slashes
+                // and truncates any drive indicator
 
-        // Translated from the following JS code:
-        //   const cwd = StringPrototypeReplace(process.cwd(), regexp, '/');
-        // cwd already aliases buf, so mutate in place.
-        for i in 0..len {
-            if cwd[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
-                cwd[i] = T::from_u8(CHAR_FORWARD_SLASH);
+                // Translated from the following JS code:
+                //   const cwd = StringPrototypeReplace(process.cwd(), regexp, '/');
+                // cwd already aliases buf, so mutate in place.
+                for i in 0..len {
+                    if cwd[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
+                        cwd[i] = T::from_u8(CHAR_FORWARD_SLASH);
+                    }
+                }
+                let normalized_cwd = &mut cwd[0..len];
+
+                // Translated from the following JS code:
+                //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
+                let index =
+                    strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
+                // Account for the -1 case of String#slice in JS land
+                if let Some(_index) = index {
+                    return Ok(&mut normalized_cwd[_index..len]);
+                }
+                return Ok(&mut normalized_cwd[len - 1..len]);
             }
+            // We're already on POSIX, no need for any transformations
+            Ok(cwd)
         }
-        let normalized_cwd = &mut cwd[0..len];
+        _ => {
+            #[cfg(windows)]
+            {
+                // Converts Windows' backslash path separators to POSIX forward slashes
+                // and truncates any drive indicator
 
-        // Translated from the following JS code:
-        //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
-        let index = strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
-        // Account for the -1 case of String#slice in JS land
-        if let Some(_index) = index {
-            return Ok(&mut normalized_cwd[_index..len]);
+                // Translated from the following JS code:
+                //   const cwd = StringPrototypeReplace(process.cwd(), regexp, '/');
+                // cwd already aliases buf, so mutate in place.
+                for i in 0..len {
+                    if cwd[i] == T::from_u8(CHAR_BACKWARD_SLASH) {
+                        cwd[i] = T::from_u8(CHAR_FORWARD_SLASH);
+                    }
+                }
+                let normalized_cwd = &mut cwd[0..len];
+
+                // Translated from the following JS code:
+                //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
+                let index =
+                    strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
+                // Account for the -1 case of String#slice in JS land
+                if let Some(_index) = index {
+                    return Ok(&mut normalized_cwd[_index..len]);
+                }
+                return Ok(&mut normalized_cwd[len - 1..len]);
+            }
+            // We're already on POSIX, no need for any transformations
+            #[cfg(not(windows))]
+            Ok(cwd)
         }
-        return Ok(&mut normalized_cwd[len - 1..len]);
     }
-
-    // We're already on POSIX, no need for any transformations
-    Ok(cwd)
 }
 
+#[cfg(bun_portable)]
 #[inline]
 fn without_trailing_slash(s: &[u8]) -> &[u8] {
     if bun_core::host::is_windows() {
@@ -278,6 +313,18 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
     } else {
         strings::without_trailing_slash(s)
     }
+}
+#[cfg(not(bun_portable))]
+#[cfg(windows)]
+#[inline]
+fn without_trailing_slash(s: &[u8]) -> &[u8] {
+    bun_paths::string_paths::without_trailing_slash_windows_path(s)
+}
+#[cfg(not(bun_portable))]
+#[cfg(not(windows))]
+#[inline]
+fn without_trailing_slash(s: &[u8]) -> &[u8] {
+    strings::without_trailing_slash(s)
 }
 
 pub(crate) fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
@@ -1357,11 +1404,18 @@ unsafe extern "C" fn Bun__Node__Path_joinWTF(
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
     let lhs = lhs.to_utf8();
+    #[cfg(bun_portable)]
     let joined = if bun_core::host::is_windows() {
         join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2)
     } else {
         join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2)
     };
+    #[cfg(not(bun_portable))]
+    #[cfg(windows)]
+    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    #[cfg(not(bun_portable))]
+    #[cfg(not(windows))]
+    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
     bun_core::String::clone_utf8(joined)
 }
 
@@ -3404,15 +3458,35 @@ fn resolve(
 
     #[cfg(unix)]
     {
-        // Not where the host is Windows: there the cwd of `path.posix` is not `process.cwd()`.
-        if !is_windows && !bun_core::host::is_windows() {
-            // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
-            // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
-                // Throws when `getcwd` fails (for example, a deleted cwd).
-                return crate::jsc::call_zero_is_throw(global_object, || {
-                    Process__getCachedCwd(global_object)
-                });
+        cfg_select! {
+            bun_portable => {
+                // Not where the host is Windows: there the cwd of `path.posix` is not `process.cwd()`.
+                if !is_windows && !bun_core::host::is_windows() {
+                    // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
+                    // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
+                    if paths.is_empty()
+                        || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./"))
+                    {
+                        // Throws when `getcwd` fails (for example, a deleted cwd).
+                        return crate::jsc::call_zero_is_throw(global_object, || {
+                            Process__getCachedCwd(global_object)
+                        });
+                    }
+                }
+            }
+            _ => {
+                if !is_windows {
+                    // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
+                    // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
+                    if paths.is_empty()
+                        || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./"))
+                    {
+                        // Throws when `getcwd` fails (for example, a deleted cwd).
+                        return crate::jsc::call_zero_is_throw(global_object, || {
+                            Process__getCachedCwd(global_object)
+                        });
+                    }
+                }
             }
         }
     }

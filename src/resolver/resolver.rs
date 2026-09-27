@@ -279,6 +279,9 @@ use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
+#[cfg(not(bun_portable))]
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+#[cfg(bun_portable)]
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, sep, sep_str};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
@@ -1781,7 +1784,10 @@ impl<'a> Resolver<'a> {
                     if len >= buf.len() {
                         return ResultUnion::NotFound;
                     }
-                    buf[len] = bun_paths::Platform::auto().separator();
+                    buf[len] = cfg_select! {
+                        bun_portable => bun_paths::Platform::auto().separator(),
+                        _ => bun_paths::Platform::AUTO.separator(),
+                    };
                     len += 1;
                 }
                 // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`
@@ -2181,15 +2187,23 @@ impl<'a> Resolver<'a> {
 
         // Re-append the separator the join stripped so "." resolves like "./".
         let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
-            && !strings::ends_with_char(abs_path, sep())
-        {
+            && !strings::ends_with_char(
+                abs_path,
+                cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                },
+            ) {
             let len = abs_path.len();
             let buf = bufs!(relative_abs_path);
             if len >= buf.len() {
                 self.extension_order = prev_extension_order;
                 return ResultUnion::NotFound;
             }
-            buf[len] = sep();
+            buf[len] = cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            };
             &buf[..=len]
         } else {
             abs_path
@@ -2450,7 +2464,10 @@ impl<'a> Resolver<'a> {
         if cfg!(debug_assertions) {
             if path.len() > 1
                 && strings::char_is_any_slash(path[path.len() - 1])
-                && !if bun_core::host::is_windows() {
+                && !if cfg_select! {
+                    bun_portable => bun_core::host::is_windows(),
+                    _ => cfg!(windows),
+                } {
                     path.len() == 3 && path[1] == b':'
                 } else {
                     path.len() == 1
@@ -2488,7 +2505,13 @@ impl<'a> Resolver<'a> {
         specifier: &[u8],
     ) -> bool {
         if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::auto());
+            let dir = bun_paths::dirname_platform(
+                specifier,
+                cfg_select! {
+                    bun_portable => bun_paths::Platform::auto(),
+                    _ => bun_paths::Platform::AUTO,
+                },
+            );
             let a = self.bust_dir_cache(dir);
             let b = self.bust_dir_cache(specifier);
             return a || b;
@@ -2502,11 +2525,26 @@ impl<'a> Resolver<'a> {
         }
 
         let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::auto()),
-            bun_paths::Platform::auto(),
+            bun_paths::dirname_platform(
+                import_source_file,
+                cfg_select! {
+                    bun_portable => bun_paths::Platform::auto(),
+                    _ => bun_paths::Platform::AUTO,
+                },
+            ),
+            cfg_select! {
+                bun_portable => bun_paths::Platform::auto(),
+                _ => bun_paths::Platform::AUTO,
+            },
             specifier,
         );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::auto());
+        let dir = bun_paths::dirname_platform(
+            joined,
+            cfg_select! {
+                bun_portable => bun_paths::Platform::auto(),
+                _ => bun_paths::Platform::AUTO,
+            },
+        );
 
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(joined);
@@ -2850,7 +2888,10 @@ impl<'a> Resolver<'a> {
             .and_then(|env| env.get(b"NODE_PATH"))
             .unwrap_or(b"");
         if !node_path.is_empty() {
+            #[cfg(bun_portable)]
             let delim = bun_paths::delimiter();
+            #[cfg(not(bun_portable))]
+            let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
                 let Some(abs_path) = self
                     .fs_ref()
@@ -3650,7 +3691,11 @@ impl<'a> Resolver<'a> {
             esm_resolution.status,
             Status::Inexact | Status::Exact | Status::ExactEndsWithStar
         )) && !esm_resolution.path.is_empty()
-            && esm_resolution.path[0] == sep())
+            && esm_resolution.path[0]
+                == cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                })
         {
             return MatchStatus::NotFound;
         }
@@ -3778,7 +3823,10 @@ impl<'a> Resolver<'a> {
                                                 "The import {} is missing the suffix {}",
                                                 bstr::BStr::new(ResolvePath::join(
                                                     &parts,
-                                                    bun_paths::Platform::auto()
+                                                    cfg_select! {
+                                                        bun_portable => bun_paths::Platform::auto(),
+                                                        _ => bun_paths::Platform::AUTO,
+                                                    }
                                                 )),
                                                 bstr::BStr::new(&ms)
                                             ));
@@ -4206,34 +4254,79 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows() {
-            let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
-            input_path = self
-                .fs_ref()
-                .normalize_buf(win32_normalized_dir_info_cache_buf, input_path);
-            // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
-            if (input_path.len() == 2 && input_path[1] == b':')
-                || (input_path.len() == 3 && input_path[1] == b':' && input_path[2] == b'.')
-            {
-                debug_assert!(input_path.as_ptr() == win32_normalized_dir_info_cache_buf.as_ptr());
-                win32_normalized_dir_info_cache_buf[2] = b'\\';
-                input_path = &win32_normalized_dir_info_cache_buf[..3];
-            }
+        cfg_select! {
+            bun_portable => {
+                #[cfg(any(windows, bun_portable))]
+                if bun_core::host::is_windows() {
+                    let win32_normalized_dir_info_cache_buf =
+                        bufs!(win32_normalized_dir_info_cache);
+                    input_path = self
+                        .fs_ref()
+                        .normalize_buf(win32_normalized_dir_info_cache_buf, input_path);
+                    // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
+                    if (input_path.len() == 2 && input_path[1] == b':')
+                        || (input_path.len() == 3 && input_path[1] == b':' && input_path[2] == b'.')
+                    {
+                        debug_assert!(
+                            input_path.as_ptr() == win32_normalized_dir_info_cache_buf.as_ptr()
+                        );
+                        win32_normalized_dir_info_cache_buf[2] = b'\\';
+                        input_path = &win32_normalized_dir_info_cache_buf[..3];
+                    }
 
-            // Filter out \\hello\, a UNC server path but without a share.
-            // When there isn't a share name, such path is not considered to exist.
-            if input_path.starts_with(b"\\\\") {
-                let first_slash = strings::index_of_char(&input_path[2..], b'\\')
-                    .ok_or(())
-                    .ok();
-                if first_slash.is_none() {
-                    return Ok(None);
+                    // Filter out \\hello\, a UNC server path but without a share.
+                    // When there isn't a share name, such path is not considered to exist.
+                    if input_path.starts_with(b"\\\\") {
+                        let first_slash = strings::index_of_char(&input_path[2..], b'\\')
+                            .ok_or(())
+                            .ok();
+                        if first_slash.is_none() {
+                            return Ok(None);
+                        }
+                        let first_slash = first_slash.unwrap();
+                        if strings::index_of_char(&input_path[2 + first_slash as usize..], b'\\')
+                            .is_none()
+                        {
+                            return Ok(None);
+                        }
+                    }
                 }
-                let first_slash = first_slash.unwrap();
-                if strings::index_of_char(&input_path[2 + first_slash as usize..], b'\\').is_none()
+            }
+            _ => {
+                #[cfg(windows)]
                 {
-                    return Ok(None);
+                    let win32_normalized_dir_info_cache_buf =
+                        bufs!(win32_normalized_dir_info_cache);
+                    input_path = self
+                        .fs_ref()
+                        .normalize_buf(win32_normalized_dir_info_cache_buf, input_path);
+                    // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
+                    if (input_path.len() == 2 && input_path[1] == b':')
+                        || (input_path.len() == 3 && input_path[1] == b':' && input_path[2] == b'.')
+                    {
+                        debug_assert!(
+                            input_path.as_ptr() == win32_normalized_dir_info_cache_buf.as_ptr()
+                        );
+                        win32_normalized_dir_info_cache_buf[2] = b'\\';
+                        input_path = &win32_normalized_dir_info_cache_buf[..3];
+                    }
+
+                    // Filter out \\hello\, a UNC server path but without a share.
+                    // When there isn't a share name, such path is not considered to exist.
+                    if input_path.starts_with(b"\\\\") {
+                        let first_slash = strings::index_of_char(&input_path[2..], b'\\')
+                            .ok_or(())
+                            .ok();
+                        if first_slash.is_none() {
+                            return Ok(None);
+                        }
+                        let first_slash = first_slash.unwrap();
+                        if strings::index_of_char(&input_path[2 + first_slash as usize..], b'\\')
+                            .is_none()
+                        {
+                            return Ok(None);
+                        }
+                    }
                 }
             }
         }
@@ -4598,8 +4691,19 @@ impl<'a> Resolver<'a> {
                     // `path` spans `input_path_len + 1` for the NUL-splice above; the
                     // logical input is `path[..input_path_len]`.
                     let input = &path[..input_path_len];
-                    if input[input.len() - 1] != sep() {
-                        let parts: [&[u8]; 2] = [input, sep_str().as_bytes()];
+                    if input[input.len() - 1]
+                        != cfg_select! {
+                            bun_portable => sep(),
+                            _ => SEP,
+                        }
+                    {
+                        let parts: [&[u8]; 2] = [
+                            input,
+                            cfg_select! {
+                                bun_portable => sep_str().as_bytes(),
+                                _ => SEP_STR.as_bytes(),
+                            },
+                        ];
                         _safe_path = Some(self.fs_ref().dirname_store.append_parts(&parts)?);
                     } else {
                         _safe_path = Some(self.fs_ref().dirname_store.append_slice(input)?);
@@ -4626,8 +4730,16 @@ impl<'a> Resolver<'a> {
                 end += usize::from(
                     safe_path.len() > end
                         && end > 0
-                        && safe_path[end - 1] != sep()
-                        && safe_path[end] == sep(),
+                        && safe_path[end - 1]
+                            != cfg_select! {
+                                bun_portable => sep(),
+                                _ => SEP,
+                            }
+                        && safe_path[end]
+                            == cfg_select! {
+                                bun_portable => sep(),
+                                _ => SEP,
+                            },
                 );
                 &safe_path[dir_path_i..end]
             };
@@ -5125,7 +5237,12 @@ impl<'a> Resolver<'a> {
         }
 
         if input_path.is_empty()
-            || (input_path.len() == 1 && (input_path[0] == b'.' || input_path[0] == sep()))
+            || cfg_select! {
+                bun_portable => {
+                    (input_path.len() == 1 && (input_path[0] == b'.' || input_path[0] == sep()))
+                }
+                _ => (input_path.len() == 1 && (input_path[0] == b'.' || input_path[0] == SEP)),
+            }
         {
             // No bundler supports remapping ".", so we don't either
             return None;
@@ -5470,9 +5587,18 @@ impl<'a> Resolver<'a> {
         // the `if` block without lifetime erasure; the field is not touched again in
         // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
         let path_buf = bufs!(remap_path_trailing_slash);
-        if !strings::ends_with_char(path_, sep()) {
+        if !strings::ends_with_char(
+            path_,
+            cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            },
+        ) {
             path_buf[..path.len()].copy_from_slice(path);
-            path_buf[path.len()] = sep();
+            path_buf[path.len()] = cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            };
             path_buf[path.len() + 1] = 0;
             path = &path_buf[..path.len() + 1];
         }
@@ -5555,13 +5681,21 @@ impl<'a> Resolver<'a> {
         // Is this a file?
         if let Some(file) = self.load_as_file(path, extension_order) {
             // Determine the package folder by looking at the last node_modules/ folder in the path
+            #[cfg(bun_portable)]
             let nm_seg: &[u8] = bun_paths::path_literal!(b"node_modules/");
+            // Determine the package folder by looking at the last node_modules/ folder in the path
+            #[cfg(not(bun_portable))]
+            let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
             if let Some(last_node_modules_folder) = strings::last_index_of(file.path, nm_seg) {
                 let node_modules_folder_offset = last_node_modules_folder + nm_seg.len();
                 // Determine the package name by looking at the next separator
-                if let Some(package_name_length) =
-                    strings::index_of_char(&file.path[node_modules_folder_offset..], sep())
-                {
+                if let Some(package_name_length) = strings::index_of_char(
+                    &file.path[node_modules_folder_offset..],
+                    cfg_select! {
+                        bun_portable => sep(),
+                        _ => SEP,
+                    },
+                ) {
                     if let Ok(Some(package_dir_info)) = self.dir_info_cached(
                         &file.path[0..node_modules_folder_offset + package_name_length as usize],
                     ) {
@@ -5976,8 +6110,11 @@ impl<'a> Resolver<'a> {
                                         // `&mut Entry` write below.
                                         let entry_dir = query.entry().dir;
                                         let new_abs = if !entry_dir.is_empty()
-                                            && entry_dir[entry_dir.len() - 1] == sep()
-                                        {
+                                            && entry_dir[entry_dir.len() - 1]
+                                                == cfg_select! {
+                                                    bun_portable => sep(),
+                                                    _ => SEP,
+                                                } {
                                             let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
                                             Interned::from_static(
                                                 self.fs_ref()
@@ -5987,8 +6124,14 @@ impl<'a> Resolver<'a> {
                                             )
                                             // the trailing path CAN be missing here
                                         } else {
-                                            let parts: [&[u8]; 3] =
-                                                [entry_dir, sep_str().as_bytes(), &buffer[..]];
+                                            let parts: [&[u8]; 3] = [
+                                                entry_dir,
+                                                cfg_select! {
+                                                    bun_portable => sep_str().as_bytes(),
+                                                    _ => SEP_STR.as_bytes(),
+                                                },
+                                                &buffer[..],
+                                            ];
                                             Interned::from_static(
                                                 self.fs_ref()
                                                     .filename_store
@@ -6154,7 +6297,13 @@ impl<'a> Resolver<'a> {
         let mut base = bun_paths::basename(path);
 
         // base must
-        if base.len() > 1 && base[base.len() - 1] == sep() {
+        if base.len() > 1
+            && base[base.len() - 1]
+                == cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                }
+        {
             base = &base[0..base.len() - 1];
         }
 
@@ -6554,7 +6703,10 @@ impl<'a> Resolver<'a> {
                             ts_dir_name,
                             bufs!(tsconfig_path_abs),
                             &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::auto(),
+                            cfg_select! {
+                                bun_portable => bun_paths::Platform::auto(),
+                                _ => bun_paths::Platform::AUTO,
+                            },
                         );
                         let parent_config_maybe: Option<*mut TSConfigJSON> =
                             match self.parse_tsconfig(abs_path, FD::INVALID) {
@@ -6715,12 +6867,24 @@ impl<'b> BrowserMapPath<'b> {
         // If that failed, try assuming this is a directory and looking for an "index" file
 
         let index_path: &[u8] = {
-            let trimmed = strings::trim_right(path_to_check, sep_str().as_bytes());
+            let trimmed = cfg_select! {
+                bun_portable => strings::trim_right(path_to_check, sep_str().as_bytes()),
+                _ => strings::trim_right(path_to_check, &[SEP]),
+            };
+            #[cfg(bun_portable)]
             let parts = [trimmed, bun_paths::path_literal!(b"/index") as &[u8]];
+            #[cfg(not(bun_portable))]
+            let parts = [
+                trimmed,
+                const_format::concatcp!(SEP_STR, "index").as_bytes(),
+            ];
             ResolvePath::join_string_buf(
                 bufs!(tsconfig_base_url),
                 &parts,
-                bun_paths::Platform::auto(),
+                cfg_select! {
+                    bun_portable => bun_paths::Platform::auto(),
+                    _ => bun_paths::Platform::AUTO,
+                },
             )
         };
 
@@ -6833,10 +6997,14 @@ impl Dirname {
     /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
     pub fn dirname(path: &[u8]) -> &[u8] {
         if path.is_empty() {
-            return sep_str().as_bytes();
+            return cfg_select! {
+                bun_portable => sep_str().as_bytes(),
+                _ => SEP_STR.as_bytes(),
+            };
         }
 
         let root: &[u8] = {
+            #[cfg(bun_portable)]
             #[cfg(any(windows, bun_portable))]
             let windows_root = || {
                 let root = ResolvePath::windows_filesystem_root(path);
@@ -6849,11 +7017,26 @@ impl Dirname {
                     root
                 }
             };
+            #[cfg(bun_portable)]
             #[cfg(windows)]
             {
                 windows_root()
             }
-            #[cfg(all(not(windows), not(bun_portable)))]
+            #[cfg(not(bun_portable))]
+            #[cfg(windows)]
+            {
+                let root = ResolvePath::windows_filesystem_root(path);
+                // Preserve the trailing slash for UNC paths.
+                // Going from `\\server\share\folder` should end up
+                // at `\\server\share\`, not `\\server\share`
+                if root.len() >= 5 && path.len() > root.len() {
+                    &path[0..root.len() + 1]
+                } else {
+                    root
+                }
+            }
+            #[cfg(not(bun_portable))]
+            #[cfg(not(windows))]
             {
                 b"/"
             }

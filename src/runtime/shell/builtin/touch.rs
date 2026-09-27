@@ -269,16 +269,20 @@ impl ShellTouchTask {
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
         // for it like for any other operand.
         let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::auto().is_absolute(&this.filepath) {
-            // Re-terminate (`filepath` is the bare argv bytes without the
-            // trailing NUL).
-            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&this.cwd_path, &this.filepath],
-            )
-        };
+        let filepath: &bun_core::ZStr =
+            if cfg_select! {
+                bun_portable => Platform::auto().is_absolute(&this.filepath),
+                _ => Platform::AUTO.is_absolute(&this.filepath),
+            } {
+                // Re-terminate (`filepath` is the bare argv bytes without the
+                // trailing NUL).
+                resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
+            } else {
+                resolve_path::join_z_spill::<platform::Auto>(
+                    &mut spill,
+                    &[&this.cwd_path, &this.filepath],
+                )
+            };
 
         // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
         // the heavyweight NodeFS state.

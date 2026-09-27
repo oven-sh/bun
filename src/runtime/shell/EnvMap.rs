@@ -17,22 +17,60 @@ struct EnvMapContext;
 
 impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {
-        if bun_core::host::is_windows() {
-            <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
-                &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
-                s.slice(),
-            )
-        } else {
-            array_hash_map::hash_string(s.slice())
+        cfg_select! {
+            bun_portable => {
+                if bun_core::host::is_windows() {
+                    <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
+                        &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
+                        s.slice(),
+                    )
+                } else {
+                    array_hash_map::hash_string(s.slice())
+                }
+            }
+            _ => {
+                #[cfg(windows)]
+                {
+                    return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
+                        &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
+                        s.slice(),
+                    );
+                }
+                #[cfg(not(windows))]
+                {
+                    array_hash_map::hash_string(s.slice())
+                }
+            }
         }
     }
 
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
-        if bun_core::host::is_windows() {
-            // Must be length-checked: "PATH" must NOT match "PATHEXT".
-            bun_core::strings::eql_case_insensitive_asciii_check_length(a.slice(), b.slice())
-        } else {
-            a.slice() == b.slice()
+        cfg_select! {
+            bun_portable => {
+                if bun_core::host::is_windows() {
+                    // Must be length-checked: "PATH" must NOT match "PATHEXT".
+                    bun_core::strings::eql_case_insensitive_asciii_check_length(
+                        a.slice(),
+                        b.slice(),
+                    )
+                } else {
+                    a.slice() == b.slice()
+                }
+            }
+            _ => {
+                #[cfg(windows)]
+                {
+                    // Must be length-checked: "PATH" must NOT match "PATHEXT".
+                    return bun_core::strings::eql_case_insensitive_asciii_check_length(
+                        a.slice(),
+                        b.slice(),
+                    );
+                }
+                #[cfg(not(windows))]
+                {
+                    a.slice() == b.slice()
+                }
+            }
         }
     }
 }

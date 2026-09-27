@@ -368,11 +368,38 @@ mod _impl {
         }
 
         // Per-platform path-separator literal suffixes.
+        #[cfg(bun_portable)]
         let eval_suffix: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        #[cfg(bun_portable)]
         let stdin_suffix: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
+        // Per-platform path-separator literal suffixes.
+        #[cfg(not(bun_portable))]
+        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
+            b"\\[eval]"
+        } else {
+            b"/[eval]"
+        };
+        #[cfg(not(bun_portable))]
+        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
+            b"\\[stdin]"
+        } else {
+            b"/[stdin]"
+        };
         if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), eval_suffix)
-            && !strings::ends_with(vm.main(), stdin_suffix)
+            && !strings::ends_with(
+                vm.main(),
+                cfg_select! {
+                    bun_portable => eval_suffix,
+                    _ => EVAL_SUFFIX,
+                },
+            )
+            && !strings::ends_with(
+                vm.main(),
+                cfg_select! {
+                    bun_portable => stdin_suffix,
+                    _ => STDIN_SUFFIX,
+                },
+            )
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));

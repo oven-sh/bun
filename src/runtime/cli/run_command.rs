@@ -22,6 +22,9 @@ use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
+#[cfg(not(bun_portable))]
+use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+#[cfg(bun_portable)]
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, delimiter, sep};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -1030,7 +1033,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
-            eval_path.extend_from_slice(eval_trigger());
+            eval_path.extend_from_slice(cfg_select! {
+                bun_portable => eval_trigger(),
+                _ => EVAL_TRIGGER,
+            });
             let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
 
             vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
@@ -1906,7 +1912,13 @@ impl RunCommand {
 
         {
             let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, sep()) {
+            while let Some(i) = strings::last_index_of_char(
+                remain,
+                cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                },
+            ) {
                 new_path_len += strings::without_trailing_slash(remain).len()
                     + b"node_modules.bin".len()
                     + 1
@@ -1960,17 +1972,29 @@ impl RunCommand {
         {
             if !package_json_dir.is_empty() {
                 new_path.extend_from_slice(package_json_dir);
-                new_path.push(delimiter());
+                new_path.push(cfg_select! {
+                    bun_portable => delimiter(),
+                    _ => DELIMITER,
+                });
             }
 
             let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, sep()) {
+            while let Some(i) = strings::last_index_of_char(
+                remain,
+                cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                },
+            ) {
                 new_path.extend_from_slice(strings::without_trailing_slash(remain));
                 new_path.extend_from_slice(path_literal!(
                     b"/node_modules/.bin",
                     b"\\node_modules\\.bin"
                 ));
-                new_path.push(delimiter());
+                new_path.push(cfg_select! {
+                    bun_portable => delimiter(),
+                    _ => DELIMITER,
+                });
                 remain = &remain[..i];
             }
             // final segment once the loop ends naturally
@@ -1979,7 +2003,10 @@ impl RunCommand {
                 b"/node_modules/.bin",
                 b"\\node_modules\\.bin"
             ));
-            new_path.push(delimiter());
+            new_path.push(cfg_select! {
+                bun_portable => delimiter(),
+                _ => DELIMITER,
+            });
 
             new_path.extend_from_slice(&path);
         }
@@ -2756,7 +2783,10 @@ impl RunCommand {
                 return false;
             };
             let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::sep();
+            cwd_buf[cwd_len] = cfg_select! {
+                bun_portable => paths::sep(),
+                _ => paths::SEP,
+            };
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
                 &cwd_buf[..cwd_len + 1],
                 &mut script_name_buf.0,
@@ -2846,8 +2876,14 @@ impl RunCommand {
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()]
-            .copy_from_slice(bun_paths::path_literal!("/[stdin]").as_bytes());
+        entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(cfg_select! {
+            bun_portable => {
+                bun_paths::path_literal!("/[stdin]").as_bytes()
+            }
+            _ => {
+                STDIN_TRIGGER
+            }
+        });
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
         // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
@@ -2909,7 +2945,12 @@ impl RunCommand {
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(eval_trigger());
+        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(cfg_select! {
+            bun_portable => {
+                eval_trigger()
+            }
+            _ => EVAL_TRIGGER,
+        });
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
@@ -2944,7 +2985,14 @@ impl RunCommand {
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
             entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(eval_trigger());
+            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(cfg_select! {
+                bun_portable => {
+                    eval_trigger()
+                }
+                _ => {
+                    EVAL_TRIGGER
+                }
+            });
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
@@ -3040,6 +3088,7 @@ const EVAL_TRIGGER: &[u8] = b"\\[eval]";
 const EVAL_TRIGGER: &[u8] = b"/[eval]";
 
 /// `EVAL_TRIGGER` of the OS that runs this process: the same length, the separator of the host.
+#[cfg(bun_portable)]
 #[inline]
 fn eval_trigger() -> &'static [u8] {
     bun_paths::path_literal!("/[eval]").as_bytes()
@@ -3608,8 +3657,13 @@ impl RunCommand {
                                 if !has_copied {
                                     path_buf[..value.dir.len()].copy_from_slice(value.dir);
                                     dir_slice_len = value.dir.len();
-                                    if !strings::ends_with_char_or_is_zero_length(value.dir, sep())
-                                    {
+                                    if !strings::ends_with_char_or_is_zero_length(
+                                        value.dir,
+                                        cfg_select! {
+                                            bun_portable => sep(),
+                                            _ => SEP,
+                                        },
+                                    ) {
                                         dir_slice_len = value.dir.len() + 1;
                                     }
                                     has_copied = true;

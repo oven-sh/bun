@@ -694,6 +694,9 @@ pub type OSPathChar = u8;
 
 pub type OSPathSlice<'a> = &'a [OSPathChar];
 
+#[cfg(not(bun_portable))]
+pub use bun_alloc::SEP;
+#[cfg(bun_portable)]
 pub use bun_alloc::{SEP, sep};
 
 /// `[u8; MAX_PATH_BYTES]` scratch buffer for path syscalls.
@@ -779,8 +782,10 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
         end -= 1;
     }
     // Windows: skip drive prefix `X:` so `C:\foo` → `C:\`, `C:foo` → None.
-    let root_end: usize = if crate::host::is_windows()
-        && end >= 2
+    let root_end: usize = if cfg_select! {
+        bun_portable => crate::host::is_windows(),
+        _ => cfg!(windows),
+    } && end >= 2
         && path[1] == b':'
         && path[0].is_ascii_alphabetic()
     {
@@ -4156,11 +4161,16 @@ pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
                 // Reject a dir that can't fit with its NUL (paths from
                 // /proc/self/exe are not bounded by MAX_PATH_BYTES).
                 .filter(|d| d.len() < buf.0.len())
-                .unwrap_or(if crate::host::is_windows() {
-                    b"C:\\"
-                } else {
-                    b"/"
-                });
+                .unwrap_or(
+                    if cfg_select! {
+                        bun_portable => crate::host::is_windows(),
+                        _ => cfg!(windows),
+                    } {
+                        b"C:\\"
+                    } else {
+                        b"/"
+                    },
+                );
             buf.0[..dir.len()].copy_from_slice(dir);
             buf.0[dir.len()] = 0;
             dir.len()

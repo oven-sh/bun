@@ -14,7 +14,11 @@ use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
+#[cfg(not(bun_portable))]
+#[cfg(not(windows))]
+use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
+#[cfg(bun_portable)]
 #[cfg(not(windows))]
 use bun_paths::sep_str;
 use bun_paths::{self as path, PathBuffer, strings};
@@ -2213,7 +2217,10 @@ pub(crate) fn inject<'a>(
                                 {
                                     let zname_z = bun_core::strings::concat(&[
                                         bun_bundler::bun_fs::RealFS::tmpdir_path(),
-                                        sep_str().as_bytes(),
+                                        cfg_select! {
+                                            bun_portable => sep_str().as_bytes(),
+                                            _ => SEP_STR.as_bytes(),
+                                        },
                                         zname.as_bytes(),
                                         &[0],
                                     ]);

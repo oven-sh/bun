@@ -835,7 +835,10 @@ impl TarballStream {
         if path.len() >= 2
             && path[0] == ('.' as OSPathChar)
             && path[1] == ('.' as OSPathChar)
-            && (path.len() == 2 || path[2] == bun_paths::sep() as OSPathChar)
+            && cfg_select! {
+                bun_portable => (path.len() == 2 || path[2] == bun_paths::sep() as OSPathChar),
+                _ => (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar),
+            }
         {
             self.phase = Phase::WantData;
             self.out_fd = None;

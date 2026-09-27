@@ -2,6 +2,9 @@ use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 
 use crate::fs as Fs;
+#[cfg(not(bun_portable))]
+use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
+#[cfg(bun_portable)]
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP_POSIX, SEP_WINDOWS, sep};
 use bun_core::{ZStr, strings};
 
@@ -80,11 +83,18 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
         parent = &parent[..parent.len() - 1];
     }
 
+    #[cfg(bun_portable)]
     let starts_with = if bun_core::host::is_linux() {
         strings::starts_with
     } else {
         strings::starts_with_case_insensitive_ascii
     };
+    #[cfg(not(bun_portable))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let starts_with = strings::starts_with_case_insensitive_ascii;
+    #[cfg(not(bun_portable))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let starts_with = strings::starts_with;
     if !starts_with(child, parent) {
         return ParentEqual::Unrelated;
     }
@@ -101,9 +111,15 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
 fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
-    let is_path_separator = P::platform().get_separator_func();
+    let is_path_separator = cfg_select! {
+        bun_portable => P::platform().get_separator_func(),
+        _ => P::P.get_separator_func(),
+    };
 
-    let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::platform() {
+    let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } {
         Platform::Windows => |n, i, inp| nql_at_index_case_insensitive_dyn(n, i, inp),
         _ => |n, i, inp| nql_at_index_dyn(n, i, inp),
     };
@@ -137,7 +153,11 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
             let mut string_index: usize = 1;
             while string_index < input.len() {
                 while index < min_length {
-                    if P::platform() == Platform::Windows {
+                    if cfg_select! {
+                        bun_portable => P::platform(),
+                        _ => P::P,
+                    } == Platform::Windows
+                    {
                         if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
                             last_common_separator?;
                             break;
@@ -162,7 +182,10 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     }
 
     if index == 0 {
-        return Some(P::platform().separator_string().as_bytes());
+        return Some(cfg_select! {
+            bun_portable => P::platform().separator_string().as_bytes(),
+            _ => P::P.separator_string().as_bytes(),
+        });
     }
 
     if last_common_separator.is_none() {
@@ -213,9 +236,15 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
 fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
-    let is_path_separator = P::platform().get_separator_func();
+    let is_path_separator = cfg_select! {
+        bun_portable => P::platform().get_separator_func(),
+        _ => P::P.get_separator_func(),
+    };
 
-    let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::platform() {
+    let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } {
         Platform::Windows => nql_at_index_case_insensitive_dyn,
         _ => nql_at_index_dyn,
     };
@@ -234,7 +263,11 @@ fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8]
         1 => return input[0],
         n @ 2..=8 => {
             // If volume IDs do not match on windows, we can't have a common path
-            if P::platform() == Platform::Windows {
+            if cfg_select! {
+                bun_portable => P::platform(),
+                _ => P::P,
+            } == Platform::Windows
+            {
                 let first_root = windows_filesystem_root(input[0]);
                 let mut i = 1;
                 while i < n {
@@ -258,7 +291,11 @@ fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8]
         }
         _ => {
             // If volume IDs do not match on windows, we can't have a common path
-            if P::platform() == Platform::Windows {
+            if cfg_select! {
+                bun_portable => P::platform(),
+                _ => P::P,
+            } == Platform::Windows
+            {
                 let first_root = windows_filesystem_root(input[0]);
                 let mut i: usize = 1;
                 while i < input.len() {
@@ -273,7 +310,11 @@ fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8]
             let mut string_index: usize = 1;
             while string_index < input.len() {
                 while index < min_length {
-                    if P::platform() == Platform::Windows {
+                    if cfg_select! {
+                        bun_portable => P::platform(),
+                        _ => P::P,
+                    } == Platform::Windows
+                    {
                         if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
                             break;
                         }
@@ -296,7 +337,10 @@ fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8]
     }
 
     if index == 0 {
-        return P::platform().separator_string().as_bytes();
+        return cfg_select! {
+            bun_portable => P::platform().separator_string().as_bytes(),
+            _ => P::P.separator_string().as_bytes(),
+        };
     }
 
     // The above won't work for a case like this:
@@ -394,7 +438,11 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
 ) -> &'a [u8] {
     let mut normalized_from = normalized_from_;
     let mut normalized_to = normalized_to_;
-    let win_root_len: Option<usize> = if P::platform() == Platform::Windows {
+    let win_root_len: Option<usize> = if cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } == Platform::Windows
+    {
         'k: {
             let from_root = windows_filesystem_root(normalized_from_);
             let to_root = windows_filesystem_root(normalized_to_);
@@ -432,9 +480,16 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
         None
     };
 
-    let separator = P::platform().separator();
+    let separator = cfg_select! {
+        bun_portable => P::platform().separator(),
+        _ => P::P.separator(),
+    };
 
-    let common_path = if P::platform() == Platform::Windows {
+    let common_path = if cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } == Platform::Windows
+    {
         &common_path_[win_root_len.unwrap()..]
     } else if crate::is_absolute_posix(common_path_) {
         &common_path_[1..]
@@ -447,7 +502,10 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     if shortest == common_path.len() {
         if normalized_to.len() >= normalized_from.len() {
             if common_path.is_empty() {
-                if P::platform() == Platform::Windows
+                if cfg_select! {
+                    bun_portable => P::platform(),
+                    _ => P::P,
+                } == Platform::Windows
                     && normalized_to.len() > 3
                     && normalized_to[normalized_to.len() - 1] == separator
                 {
@@ -467,7 +525,10 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
             if normalized_to[common_path.len() - 1] == separator {
                 let slice = &normalized_to[common_path.len()..];
 
-                let without_trailing_slash = if P::platform() == Platform::Windows
+                let without_trailing_slash = if cfg_select! {
+                    bun_portable => P::platform(),
+                    _ => P::P,
+                } == Platform::Windows
                     && slice.len() > 3
                     && slice[slice.len() - 1] == separator
                 {
@@ -489,7 +550,11 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     }
 
     let last_common_separator = strings::last_index_of_char_t(
-        if P::platform() == Platform::Windows {
+        if cfg_select! {
+            bun_portable => P::platform(),
+            _ => P::P,
+        } == Platform::Windows
+        {
             common_path
         } else {
             common_path_
@@ -506,7 +571,11 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
 
     if !normalized_from.is_empty() {
         let mut i: usize =
-            (P::platform().is_separator(normalized_from[0]) as usize) + 1 + last_common_separator;
+            cfg_select! {
+                bun_portable => (P::platform().is_separator(normalized_from[0]) as usize),
+                _ => (P::P.is_separator(normalized_from[0]) as usize),
+            } + 1
+                + last_common_separator;
 
         while i <= normalized_from.len() {
             if i == normalized_from.len()
@@ -531,15 +600,23 @@ fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
             && (last_common_separator == normalized_from.len()
                 || last_common_separator == normalized_from.len() - 1)
         {
-            if P::platform().is_separator(tail[0]) {
+            if cfg_select! {
+                bun_portable => P::platform().is_separator(tail[0]),
+                _ => P::P.is_separator(tail[0]),
+            } {
                 tail = &tail[1..];
             }
         }
 
         // avoid making non-absolute paths absolute
-        let insert_leading_slash = !P::platform().is_separator(tail[0])
-            && out_len > 0
-            && !P::platform().is_separator(buf[out_len - 1]);
+        let insert_leading_slash = !cfg_select! {
+            bun_portable => P::platform().is_separator(tail[0]),
+            _ => P::P.is_separator(tail[0]),
+        } && out_len > 0
+            && !cfg_select! {
+                bun_portable => P::platform().is_separator(buf[out_len - 1]),
+                _ => P::P.is_separator(buf[out_len - 1]),
+            };
 
         if insert_leading_slash {
             buf[out_len] = separator;
@@ -564,7 +641,11 @@ pub fn relative_normalized_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &'a [u8],
     to: &'a [u8],
 ) -> &'a [u8] {
-    let equal = if P::platform() == Platform::Windows {
+    let equal = if cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } == Platform::Windows
+    {
         strings::eql_case_insensitive_ascii(from, to, true)
     } else {
         from.len() == to.len() && strings::eql_long(from, to, false)
@@ -596,7 +677,10 @@ pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
 }
 
 pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
-    match P::platform() {
+    match cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } {
         Platform::Loose => {
             let Some(separator) = last_index_of_separator_loose(str) else {
                 return b"";
@@ -665,9 +749,20 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
     let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
 
-    let normalized_from: &[u8] = if P::platform().is_absolute(from) {
+    let normalized_from: &[u8] = if cfg_select! {
+        bun_portable => P::platform().is_absolute(from),
+        _ => P::P.is_absolute(from),
+    } {
         'brk: {
-            if P::platform() == Platform::Loose && bun_core::host::is_windows() {
+            if cfg_select! {
+                bun_portable => P::platform(),
+                _ => P::P,
+            } == Platform::Loose
+                && cfg_select! {
+                    bun_portable => bun_core::host::is_windows(),
+                    _ => cfg!(windows),
+                }
+            {
                 // we want to invoke the windows resolution behavior but end up with a
                 // string with forward slashes.
                 let normalized = normalize_string_buf::<true, platform::Windows, true>(
@@ -680,10 +775,17 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             // reshaped for borrowck — capture len, drop inner &mut, re-slice
             let path_len =
                 normalize_string_buf::<true, P, true>(from, &mut relative_from_buf[1..]).len();
-            if P::platform() == Platform::Windows {
+            if cfg_select! {
+                bun_portable => P::platform(),
+                _ => P::P,
+            } == Platform::Windows
+            {
                 break 'brk &relative_from_buf[1..1 + path_len];
             }
-            relative_from_buf[0] = P::platform().separator();
+            relative_from_buf[0] = cfg_select! {
+                bun_portable => P::platform().separator(),
+                _ => P::P.separator(),
+            };
             break 'brk &relative_from_buf[0..path_len + 1];
         }
     } else {
@@ -699,9 +801,20 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         )
     };
 
-    let normalized_to: &[u8] = if P::platform().is_absolute(to) {
+    let normalized_to: &[u8] = if cfg_select! {
+        bun_portable => P::platform().is_absolute(to),
+        _ => P::P.is_absolute(to),
+    } {
         'brk: {
-            if P::platform() == Platform::Loose && bun_core::host::is_windows() {
+            if cfg_select! {
+                bun_portable => P::platform(),
+                _ => P::P,
+            } == Platform::Loose
+                && cfg_select! {
+                    bun_portable => bun_core::host::is_windows(),
+                    _ => cfg!(windows),
+                }
+            {
                 let normalized = normalize_string_buf::<true, platform::Windows, true>(
                     to,
                     &mut relative_to_buf[1..],
@@ -712,10 +825,17 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             // reshaped for borrowck — capture len, drop inner &mut, re-slice
             let path_len =
                 normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..]).len();
-            if P::platform() == Platform::Windows {
+            if cfg_select! {
+                bun_portable => P::platform(),
+                _ => P::P,
+            } == Platform::Windows
+            {
                 break 'brk &relative_to_buf[1..1 + path_len];
             }
-            relative_to_buf[0] = P::platform().separator();
+            relative_to_buf[0] = cfg_select! {
+                bun_portable => P::platform().separator(),
+                _ => P::P.separator(),
+            };
             break 'brk &relative_to_buf[0..path_len + 1];
         }
     } else {
@@ -805,7 +925,10 @@ pub fn is_drive_letter_t<T: PathChar>(c: T) -> bool {
 }
 
 pub fn has_any_illegal_chars(maybe_path: &[u8]) -> bool {
-    if !bun_core::host::is_windows() {
+    if !cfg_select! {
+        bun_portable => bun_core::host::is_windows(),
+        _ => cfg!(windows),
+    } {
         return false;
     }
     let mut maybe_path_ = maybe_path;
@@ -818,7 +941,10 @@ pub fn has_any_illegal_chars(maybe_path: &[u8]) -> bool {
 }
 
 fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
-    if !bun_core::host::is_windows() {
+    if !cfg_select! {
+        bun_portable => bun_core::host::is_windows(),
+        _ => cfg!(windows),
+    } {
         return false;
     }
     if maybe_path.len() < 3 {
@@ -1125,8 +1251,12 @@ pub trait PlatformT: Copy + sealed::Sealed + 'static {
     /// The platform that the type names: a constant for every type in every build, except for
     /// `platform::Auto` in the portable image, which learns its platform when the program runs.
     /// A function that reads it more than once, or in a loop, keeps it in a local.
+    #[cfg(bun_portable)]
     fn platform() -> Platform;
+    #[cfg(not(bun_portable))]
+    const P: Platform;
 }
+#[cfg(bun_portable)]
 macro_rules! platform_variant {
     ($name:ident => $variant:ident) => {
         #[derive(Copy, Clone)]
@@ -1137,6 +1267,17 @@ macro_rules! platform_variant {
             fn platform() -> Platform {
                 Platform::$variant
             }
+        }
+    };
+}
+#[cfg(not(bun_portable))]
+macro_rules! platform_variant {
+    ($name:ident => $variant:ident) => {
+        #[derive(Copy, Clone)]
+        pub struct $name;
+        impl sealed::Sealed for $name {}
+        impl PlatformT for $name {
+            const P: Platform = Platform::$variant;
         }
     };
 }
@@ -1179,6 +1320,7 @@ impl Platform {
     #[cfg(all(not(windows), not(unix)))]
     pub const AUTO: Platform = Platform::Loose;
 
+    #[cfg(bun_portable)]
     bun_core::host_fn!(
         /// The platform of the OS that runs this process: `AUTO`, which the portable image does not have.
         #[inline(always)]
@@ -1348,9 +1490,15 @@ pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T
         return &mut buf[0..1];
     }
 
-    let is_absolute = P::platform().is_absolute_t::<T>(str);
+    let is_absolute = cfg_select! {
+        bun_portable => P::platform().is_absolute_t::<T>(str),
+        _ => P::P.is_absolute_t::<T>(str),
+    };
 
-    let trailing_separator = match P::platform() {
+    let trailing_separator = match cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } {
         Platform::Loose => last_index_of_separator_loose_t::<T>(str),
         Platform::Nt | Platform::Windows => last_index_of_separator_windows_t::<T>(str),
         Platform::Posix => last_index_of_separator_posix_t::<T>(str),
@@ -1390,7 +1538,10 @@ fn normalize_string_buf_t<
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
-    match P::platform() {
+    match cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } {
         Platform::Nt => unreachable!("not implemented"),
         Platform::Windows => {
             normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
@@ -1426,7 +1577,10 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     spill: &'a mut Vec<u8>,
     parts: &[&[u8]],
 ) -> &'a [u8] {
+    #[cfg(bun_portable)]
     debug_assert!(!matches!(P::platform(), Platform::Nt));
+    #[cfg(not(bun_portable))]
+    debug_assert!(!matches!(P::P, Platform::Nt));
     let needed = join_abs_needed(cwd.len(), parts);
     if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
         return join_abs_string::<P>(cwd, parts);
@@ -1581,7 +1735,10 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         }
 
         if written > 0 {
-            temp_buf[written].write(T::from_u8(P::platform().separator()));
+            temp_buf[written].write(T::from_u8(cfg_select! {
+                bun_portable => P::platform().separator(),
+                _ => P::P.separator(),
+            }));
             written += 1;
         }
 
@@ -1639,7 +1796,10 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
         }
 
         if written > 0 {
-            temp_buf[written].write(T::from_u8(P::platform().separator()));
+            temp_buf[written].write(T::from_u8(cfg_select! {
+                bun_portable => P::platform().separator(),
+                _ => P::P.separator(),
+            }));
             written += 1;
         }
 
@@ -1717,7 +1877,10 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> Option<&'a [u8]> {
+    #[cfg(bun_portable)]
     debug_assert!(!matches!(P::platform(), Platform::Nt));
+    #[cfg(not(bun_portable))]
+    debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
     let total = join_abs_needed(cwd.len(), parts);
@@ -1755,13 +1918,23 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     buf: &'a mut [u8],
     _parts: &[&[u8]],
 ) -> &'a [u8] {
-    if P::platform() == Platform::Windows
-        || (bun_core::host::is_windows() && P::platform() == Platform::Loose)
+    if cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } == Platform::Windows
+        || cfg_select! {
+            bun_portable => (bun_core::host::is_windows() && P::platform() == Platform::Loose),
+            _ => (cfg!(windows) && P::P == Platform::Loose),
+        }
     {
         return join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
     }
 
-    if P::platform() == Platform::Nt {
+    if cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } == Platform::Nt
+    {
         let end_path = join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
         let end_len = end_path.len();
         buf[0..4].copy_from_slice(b"\\\\?\\");
@@ -1779,8 +1952,13 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         return _cwd;
     }
 
-    if matches!(P::platform(), Platform::Loose | Platform::Posix)
-        && parts.len() == 1
+    if matches!(
+        cfg_select! {
+            bun_portable => P::platform(),
+            _ => P::P,
+        },
+        Platform::Loose | Platform::Posix
+    ) && parts.len() == 1
         && parts[0].len() == 1
         && parts[0][0] == SEP_POSIX
     {
@@ -1794,7 +1972,12 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         return &buf[0..1];
     }
 
-    let mut cwd = if bun_core::host::is_windows() && _cwd.len() >= 3 && _cwd[1] == b':' {
+    let mut cwd = if cfg_select! {
+        bun_portable => bun_core::host::is_windows(),
+        _ => cfg!(windows),
+    } && _cwd.len() >= 3
+        && _cwd[1] == b':'
+    {
         &_cwd[2..]
     } else {
         _cwd
@@ -1805,7 +1988,10 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         let mut part_len: u16 = parts.len() as u16;
 
         while part_i < part_len {
-            if P::platform().is_absolute(parts[part_i as usize]) {
+            if cfg_select! {
+                bun_portable => P::platform().is_absolute(parts[part_i as usize]),
+                _ => P::P.is_absolute(parts[part_i as usize]),
+            } {
                 cwd = parts[part_i as usize];
                 parts = &parts[part_i as usize + 1..];
 
@@ -1830,8 +2016,17 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
 
         let part = _part;
 
-        if out > 0 && temp_buf[out - 1] != P::platform().separator() {
-            temp_buf[out] = P::platform().separator();
+        if out > 0
+            && temp_buf[out - 1]
+                != cfg_select! {
+                    bun_portable => P::platform().separator(),
+                    _ => P::P.separator(),
+                }
+        {
+            temp_buf[out] = cfg_select! {
+                bun_portable => P::platform().separator(),
+                _ => P::P.separator(),
+            };
             out += 1;
         }
 
@@ -1843,18 +2038,25 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     // [u8; 8] (max len: NT prefix `\\?\` = 4) so we don't hold a borrow into
     // temp_buf across the normalize call below.
     let mut leading_buf = [0u8; 8];
-    let leading_len: usize =
-        if let Some(i) = P::platform().leading_separator_index::<u8>(&temp_buf[0..out]) {
-            let outdir = &mut temp_buf[0..i + 1];
-            if P::platform() == Platform::Loose {
-                slashes_to_posix_in_place(outdir);
-            }
-            leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
-            i + 1
-        } else {
-            leading_buf[0] = b'/';
-            1
-        };
+    let leading_len: usize = if let Some(i) =
+        cfg_select! {
+            bun_portable => P::platform().leading_separator_index::<u8>(&temp_buf[0..out]),
+            _ => P::P.leading_separator_index::<u8>(&temp_buf[0..out]),
+        } {
+        let outdir = &mut temp_buf[0..i + 1];
+        if cfg_select! {
+            bun_portable => P::platform(),
+            _ => P::P,
+        } == Platform::Loose
+        {
+            slashes_to_posix_in_place(outdir);
+        }
+        leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
+        i + 1
+    } else {
+        leading_buf[0] = b'/';
+        1
+    };
     // Copy leading separator into buf (order-independent with normalize,
     // which writes into buf[leading_len..]).
     buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
@@ -2060,20 +2262,36 @@ fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
         return &mut buf[0..1];
     }
 
-    let is_absolute = P::platform().is_absolute_t::<T>(str);
-    let trailing_separator = P::platform().is_separator_t::<T>(str[str.len() - 1]);
+    let is_absolute = cfg_select! {
+        bun_portable => P::platform().is_absolute_t::<T>(str),
+        _ => P::P.is_absolute_t::<T>(str),
+    };
+    let trailing_separator = cfg_select! {
+        bun_portable => P::platform().is_separator_t::<T>(str[str.len() - 1]),
+        _ => P::P.is_separator_t::<T>(str[str.len() - 1]),
+    };
 
     // `normalize_string_generic` handles absolute path cases for windows
     // we should not prefix with /
     // reshaped for borrowck — track an offset instead of reslicing.
-    let buf_off: usize = if P::platform() == Platform::Windows {
+    let buf_off: usize = if cfg_select! {
+        bun_portable => P::platform(),
+        _ => P::P,
+    } == Platform::Windows
+    {
         0
     } else {
         1
     };
 
-    let separator_t = T::from_u8(P::platform().separator());
+    let separator_t = T::from_u8(cfg_select! {
+        bun_portable => P::platform().separator(),
+        _ => P::P.separator(),
+    });
+    #[cfg(bun_portable)]
     let is_sep_fn = |c: T| P::platform().is_separator_t::<T>(c);
+    #[cfg(not(bun_portable))]
+    let is_sep_fn = |c: T| P::P.is_separator_t::<T>(c);
 
     let out_len = if !is_absolute {
         normalize_string_generic_t::<T, true, false>(
@@ -2101,7 +2319,10 @@ fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
         }
 
         if trailing_separator {
-            let sep = P::platform().trailing_separator();
+            let sep = cfg_select! {
+                bun_portable => P::platform().trailing_separator(),
+                _ => P::P.trailing_separator(),
+            };
             buf[0] = T::from_u8(sep[0]);
             buf[1] = T::from_u8(sep[1]);
             return &mut buf[0..2];
@@ -2112,14 +2333,21 @@ fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     }
 
     if trailing_separator {
-        if !P::platform().is_separator_t::<T>(buf[buf_off + out_len - 1]) {
+        if !cfg_select! {
+            bun_portable => P::platform().is_separator_t::<T>(buf[buf_off + out_len - 1]),
+            _ => P::P.is_separator_t::<T>(buf[buf_off + out_len - 1]),
+        } {
             buf[buf_off + out_len] = separator_t;
             out_len += 1;
         }
     }
 
     if is_absolute {
-        if P::platform() == Platform::Windows {
+        if cfg_select! {
+            bun_portable => P::platform(),
+            _ => P::P,
+        } == Platform::Windows
+        {
             return &mut buf[buf_off..buf_off + out_len];
         }
         buf[0] = separator_t;
@@ -2164,10 +2392,24 @@ pub(crate) fn last_index_of_sep(path: &[u8]) -> Option<usize> {
 }
 
 fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
-    if bun_core::host::is_windows() {
-        last_index_of_separator_windows_t::<T>(path)
-    } else {
-        strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'))
+    cfg_select! {
+        bun_portable => {
+            if bun_core::host::is_windows() {
+                last_index_of_separator_windows_t::<T>(path)
+            } else {
+                strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'))
+            }
+        }
+        _ => {
+            #[cfg(not(windows))]
+            {
+                return strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'));
+            }
+            #[cfg(windows)]
+            {
+                last_index_of_separator_windows_t::<T>(path)
+            }
+        }
     }
 }
 
@@ -2212,12 +2454,6 @@ type PosixToWinBuf = PathBuffer;
 type PosixToWinBuf = ();
 
 impl PosixToWinNormalizer {
-    #[cfg(not(bun_portable))]
-    #[inline]
-    fn buf(&mut self) -> &mut PosixToWinBuf {
-        &mut self._raw_bytes
-    }
-
     #[cfg(bun_portable)]
     #[inline]
     fn buf(&mut self) -> &mut PosixToWinBuf {
@@ -2231,7 +2467,10 @@ impl PosixToWinNormalizer {
         if !bun_core::host::is_windows() {
             return maybe_posix_path;
         }
-        Self::resolve_with_external_buf(self.buf(), source_dir, maybe_posix_path)
+        cfg_select! {
+            bun_portable => Self::resolve_with_external_buf(self.buf(), source_dir, maybe_posix_path),
+            _ => Self::resolve_with_external_buf(&mut self._raw_bytes, source_dir, maybe_posix_path),
+        }
     }
 
     #[inline]
@@ -2240,7 +2479,12 @@ impl PosixToWinNormalizer {
         if !bun_core::host::is_windows() {
             return maybe_posix_path;
         }
-        Self::resolve_with_external_buf_z(self.buf(), source_dir, maybe_posix_path)
+        cfg_select! {
+            bun_portable => {
+                Self::resolve_with_external_buf_z(self.buf(), source_dir, maybe_posix_path)
+            }
+            _ => Self::resolve_with_external_buf_z(&mut self._raw_bytes, source_dir, maybe_posix_path),
+        }
     }
 
     #[inline]
@@ -2249,7 +2493,10 @@ impl PosixToWinNormalizer {
         if !bun_core::host::is_windows() {
             return Ok(maybe_posix_path);
         }
-        Self::resolve_cwd_with_external_buf(self.buf(), maybe_posix_path)
+        cfg_select! {
+            bun_portable => Self::resolve_cwd_with_external_buf(self.buf(), maybe_posix_path),
+            _ => Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path),
+        }
     }
 
     // underlying implementation:
@@ -2260,37 +2507,83 @@ impl PosixToWinNormalizer {
         maybe_posix_path: &'a [u8],
     ) -> &'a [u8] {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows() {
-            let root = windows_filesystem_root(maybe_posix_path);
-            if root.len() == 1 {
-                debug_assert!(is_sep_any(root[0]));
-                if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    let source_root = windows_filesystem_root(source_dir);
-                    // The source root (arbitrarily long for UNC dirs) plus
-                    // the path must fit `buf` with one byte of headroom —
-                    // downstream normalization writes one past the input for
-                    // separator-less UNC roots. Such a join can't exist on NT
-                    // anyway, so fail safe to the un-joined input (which the
-                    // consuming lookup treats as nonexistent) instead of
-                    // writing past the buffer.
-                    if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
-                        return maybe_posix_path;
+        cfg_select! {
+            bun_portable => {
+                #[cfg(any(windows, bun_portable))]
+                if bun_core::host::is_windows() {
+                    let root = windows_filesystem_root(maybe_posix_path);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path,
+                        ) {
+                            let source_root = windows_filesystem_root(source_dir);
+                            // The source root (arbitrarily long for UNC dirs) plus
+                            // the path must fit `buf` with one byte of headroom —
+                            // downstream normalization writes one past the input for
+                            // separator-less UNC roots. Such a join can't exist on NT
+                            // anyway, so fail safe to the un-joined input (which the
+                            // consuming lookup treats as nonexistent) instead of
+                            // writing past the buffer.
+                            if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
+                                return maybe_posix_path;
+                            }
+                            buf[0..source_root.len()].copy_from_slice(source_root);
+                            buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
+                                .copy_from_slice(&maybe_posix_path[1..]);
+                            let res = &buf[0..source_root.len() + maybe_posix_path.len() - 1];
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                            );
+                            debug_assert!(crate::is_absolute_windows(res));
+                            return res;
+                        }
                     }
-                    buf[0..source_root.len()].copy_from_slice(source_root);
-                    buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
-                        .copy_from_slice(&maybe_posix_path[1..]);
-                    let res = &buf[0..source_root.len() + maybe_posix_path.len() - 1];
                     debug_assert!(
-                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path
+                        )
                     );
-                    debug_assert!(crate::is_absolute_windows(res));
-                    return res;
                 }
             }
-            debug_assert!(
-                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path)
-            );
+            _ => {
+                #[cfg(windows)]
+                {
+                    let root = windows_filesystem_root(maybe_posix_path);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path,
+                        ) {
+                            let source_root = windows_filesystem_root(source_dir);
+                            // The source root (arbitrarily long for UNC dirs) plus
+                            // the path must fit `buf` with one byte of headroom —
+                            // downstream normalization writes one past the input for
+                            // separator-less UNC roots. Such a join can't exist on NT
+                            // anyway, so fail safe to the un-joined input (which the
+                            // consuming lookup treats as nonexistent) instead of
+                            // writing past the buffer.
+                            if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
+                                return maybe_posix_path;
+                            }
+                            buf[0..source_root.len()].copy_from_slice(source_root);
+                            buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
+                                .copy_from_slice(&maybe_posix_path[1..]);
+                            let res = &buf[0..source_root.len() + maybe_posix_path.len() - 1];
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                            );
+                            debug_assert!(crate::is_absolute_windows(res));
+                            return res;
+                        }
+                    }
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path
+                        )
+                    );
+                }
+            }
         }
         let _ = (buf, source_dir);
         maybe_posix_path
@@ -2302,36 +2595,77 @@ impl PosixToWinNormalizer {
         maybe_posix_path: &'a ZStr,
     ) -> &'a ZStr {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path.as_bytes()));
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows() {
-            let mp = maybe_posix_path.as_bytes();
-            let root = windows_filesystem_root(mp);
-            if root.len() == 1 {
-                debug_assert!(is_sep_any(root[0]));
-                if strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp) {
-                    let source_root = windows_filesystem_root(source_dir);
-                    // See resolve_with_external_buf: over-long joins fail
-                    // safe to the un-joined input (+ NUL accounted for here).
-                    if source_root.len() + mp.len() > buf.len() {
-                        return maybe_posix_path;
+        cfg_select! {
+            bun_portable => {
+                #[cfg(any(windows, bun_portable))]
+                if bun_core::host::is_windows() {
+                    let mp = maybe_posix_path.as_bytes();
+                    let root = windows_filesystem_root(mp);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp) {
+                            let source_root = windows_filesystem_root(source_dir);
+                            // See resolve_with_external_buf: over-long joins fail
+                            // safe to the un-joined input (+ NUL accounted for here).
+                            if source_root.len() + mp.len() > buf.len() {
+                                return maybe_posix_path;
+                            }
+                            buf[0..source_root.len()].copy_from_slice(source_root);
+                            buf[source_root.len()..source_root.len() + mp.len() - 1]
+                                .copy_from_slice(&mp[1..]);
+                            buf[source_root.len() + mp.len() - 1] = 0;
+                            let len = source_root.len() + mp.len() - 1;
+                            // SAFETY: NUL written at buf[len]
+                            let res = ZStr::from_buf(&buf[..], len);
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                                    res.as_bytes()
+                                )
+                            );
+                            debug_assert!(crate::is_absolute_windows(res.as_bytes()));
+                            return res;
+                        }
                     }
-                    buf[0..source_root.len()].copy_from_slice(source_root);
-                    buf[source_root.len()..source_root.len() + mp.len() - 1]
-                        .copy_from_slice(&mp[1..]);
-                    buf[source_root.len() + mp.len() - 1] = 0;
-                    let len = source_root.len() + mp.len() - 1;
-                    // SAFETY: NUL written at buf[len]
-                    let res = ZStr::from_buf(&buf[..], len);
                     debug_assert!(
-                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                            res.as_bytes()
-                        )
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp)
                     );
-                    debug_assert!(crate::is_absolute_windows(res.as_bytes()));
-                    return res;
                 }
             }
-            debug_assert!(!strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp));
+            _ => {
+                #[cfg(windows)]
+                {
+                    let mp = maybe_posix_path.as_bytes();
+                    let root = windows_filesystem_root(mp);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp) {
+                            let source_root = windows_filesystem_root(source_dir);
+                            // See resolve_with_external_buf: over-long joins fail
+                            // safe to the un-joined input (+ NUL accounted for here).
+                            if source_root.len() + mp.len() > buf.len() {
+                                return maybe_posix_path;
+                            }
+                            buf[0..source_root.len()].copy_from_slice(source_root);
+                            buf[source_root.len()..source_root.len() + mp.len() - 1]
+                                .copy_from_slice(&mp[1..]);
+                            buf[source_root.len() + mp.len() - 1] = 0;
+                            let len = source_root.len() + mp.len() - 1;
+                            // SAFETY: NUL written at buf[len]
+                            let res = ZStr::from_buf(&buf[..], len);
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                                    res.as_bytes()
+                                )
+                            );
+                            debug_assert!(crate::is_absolute_windows(res.as_bytes()));
+                            return res;
+                        }
+                    }
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp)
+                    );
+                }
+            }
         }
         let _ = (buf, source_dir);
         maybe_posix_path
@@ -2343,42 +2677,97 @@ impl PosixToWinNormalizer {
     ) -> crate::Result<&'a [u8]> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows() {
-            let root = windows_filesystem_root(maybe_posix_path);
-            if root.len() == 1 {
-                debug_assert!(is_sep_any(root[0]));
-                if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — `getcwd` writes into
-                    // `buf` and returns a borrow of it; capture the lengths we
-                    // need, drop the borrow, then re-slice `buf`.
-                    let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
-                        windows_filesystem_root(cwd.as_bytes()).len()
-                    };
-                    // The cwd root (arbitrarily long for UNC cwds) plus the
-                    // path must fit `buf` with one byte of headroom: the
-                    // joined result feeds `normalize_buf`, whose UNC-root
-                    // handling writes one past the input when the cwd is a
-                    // bare share root with no trailing separator. Such a
-                    // combination can't exist on NT anyway, so error out
-                    // instead of writing past a buffer.
-                    if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        cfg_select! {
+            bun_portable => {
+                #[cfg(any(windows, bun_portable))]
+                if bun_core::host::is_windows() {
+                    let root = windows_filesystem_root(maybe_posix_path);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path,
+                        ) {
+                            // reshaped for borrowck — `getcwd` writes into
+                            // `buf` and returns a borrow of it; capture the lengths we
+                            // need, drop the borrow, then re-slice `buf`.
+                            let sr_len = {
+                                let cwd = bun_core::getcwd(buf)?;
+                                windows_filesystem_root(cwd.as_bytes()).len()
+                            };
+                            // The cwd root (arbitrarily long for UNC cwds) plus the
+                            // path must fit `buf` with one byte of headroom: the
+                            // joined result feeds `normalize_buf`, whose UNC-root
+                            // handling writes one past the input when the cwd is a
+                            // bare share root with no trailing separator. Such a
+                            // combination can't exist on NT anyway, so error out
+                            // instead of writing past a buffer.
+                            if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
+                                return Err(crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENAMETOOLONG,
+                                ));
+                            }
+                            buf[sr_len..sr_len + maybe_posix_path.len() - 1]
+                                .copy_from_slice(&maybe_posix_path[1..]);
+                            let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                            );
+                            debug_assert!(crate::is_absolute_windows(res));
+                            return Ok(res);
+                        }
                     }
-                    buf[sr_len..sr_len + maybe_posix_path.len() - 1]
-                        .copy_from_slice(&maybe_posix_path[1..]);
-                    let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
                     debug_assert!(
-                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path
+                        )
                     );
-                    debug_assert!(crate::is_absolute_windows(res));
-                    return Ok(res);
                 }
             }
-            debug_assert!(
-                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path)
-            );
+            _ => {
+                #[cfg(windows)]
+                {
+                    let root = windows_filesystem_root(maybe_posix_path);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path,
+                        ) {
+                            // reshaped for borrowck — `getcwd` writes into
+                            // `buf` and returns a borrow of it; capture the lengths we
+                            // need, drop the borrow, then re-slice `buf`.
+                            let sr_len = {
+                                let cwd = bun_core::getcwd(buf)?;
+                                windows_filesystem_root(cwd.as_bytes()).len()
+                            };
+                            // The cwd root (arbitrarily long for UNC cwds) plus the
+                            // path must fit `buf` with one byte of headroom: the
+                            // joined result feeds `normalize_buf`, whose UNC-root
+                            // handling writes one past the input when the cwd is a
+                            // bare share root with no trailing separator. Such a
+                            // combination can't exist on NT anyway, so error out
+                            // instead of writing past a buffer.
+                            if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
+                                return Err(crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENAMETOOLONG,
+                                ));
+                            }
+                            buf[sr_len..sr_len + maybe_posix_path.len() - 1]
+                                .copy_from_slice(&maybe_posix_path[1..]);
+                            let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(res)
+                            );
+                            debug_assert!(crate::is_absolute_windows(res));
+                            return Ok(res);
+                        }
+                    }
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path
+                        )
+                    );
+                }
+            }
         }
 
         let _ = buf;
@@ -2391,42 +2780,97 @@ impl PosixToWinNormalizer {
     ) -> crate::Result<&'a mut ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows() {
-            let root = windows_filesystem_root(maybe_posix_path);
-            if root.len() == 1 {
-                debug_assert!(is_sep_any(root[0]));
-                if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — see resolve_cwd above.
-                    let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
-                        windows_filesystem_root(cwd.as_bytes()).len()
-                    };
-                    // The cwd root (arbitrarily long for UNC cwds) plus the
-                    // path and its NUL must fit `buf`; such a combination
-                    // can't exist on NT anyway, so error out instead of
-                    // writing past it.
-                    if sr_len + maybe_posix_path.len() > buf.len() {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        cfg_select! {
+            bun_portable => {
+                #[cfg(any(windows, bun_portable))]
+                if bun_core::host::is_windows() {
+                    let root = windows_filesystem_root(maybe_posix_path);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path,
+                        ) {
+                            // reshaped for borrowck — see resolve_cwd above.
+                            let sr_len = {
+                                let cwd = bun_core::getcwd(buf)?;
+                                windows_filesystem_root(cwd.as_bytes()).len()
+                            };
+                            // The cwd root (arbitrarily long for UNC cwds) plus the
+                            // path and its NUL must fit `buf`; such a combination
+                            // can't exist on NT anyway, so error out instead of
+                            // writing past it.
+                            if sr_len + maybe_posix_path.len() > buf.len() {
+                                return Err(crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENAMETOOLONG,
+                                ));
+                            }
+                            buf[sr_len..sr_len + maybe_posix_path.len() - 1]
+                                .copy_from_slice(&maybe_posix_path[1..]);
+                            buf[sr_len + maybe_posix_path.len() - 1] = 0;
+                            let len = sr_len + maybe_posix_path.len() - 1;
+                            // SAFETY: NUL at buf[len]
+                            let res = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                                    res.as_bytes()
+                                )
+                            );
+                            debug_assert!(crate::is_absolute_windows(res.as_bytes()));
+                            return Ok(res);
+                        }
                     }
-                    buf[sr_len..sr_len + maybe_posix_path.len() - 1]
-                        .copy_from_slice(&maybe_posix_path[1..]);
-                    buf[sr_len + maybe_posix_path.len() - 1] = 0;
-                    let len = sr_len + maybe_posix_path.len() - 1;
-                    // SAFETY: NUL at buf[len]
-                    let res = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
                     debug_assert!(
                         !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
-                            res.as_bytes()
+                            maybe_posix_path
                         )
                     );
-                    debug_assert!(crate::is_absolute_windows(res.as_bytes()));
-                    return Ok(res);
                 }
             }
-            debug_assert!(
-                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path)
-            );
+            _ => {
+                #[cfg(windows)]
+                {
+                    let root = windows_filesystem_root(maybe_posix_path);
+                    if root.len() == 1 {
+                        debug_assert!(is_sep_any(root[0]));
+                        if strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path,
+                        ) {
+                            // reshaped for borrowck — see resolve_cwd above.
+                            let sr_len = {
+                                let cwd = bun_core::getcwd(buf)?;
+                                windows_filesystem_root(cwd.as_bytes()).len()
+                            };
+                            // The cwd root (arbitrarily long for UNC cwds) plus the
+                            // path and its NUL must fit `buf`; such a combination
+                            // can't exist on NT anyway, so error out instead of
+                            // writing past it.
+                            if sr_len + maybe_posix_path.len() > buf.len() {
+                                return Err(crate::Error::Sys(
+                                    bun_errno::SystemErrno::ENAMETOOLONG,
+                                ));
+                            }
+                            buf[sr_len..sr_len + maybe_posix_path.len() - 1]
+                                .copy_from_slice(&maybe_posix_path[1..]);
+                            buf[sr_len + maybe_posix_path.len() - 1] = 0;
+                            let len = sr_len + maybe_posix_path.len() - 1;
+                            // SAFETY: NUL at buf[len]
+                            let res = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) };
+                            debug_assert!(
+                                !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                                    res.as_bytes()
+                                )
+                            );
+                            debug_assert!(crate::is_absolute_windows(res.as_bytes()));
+                            return Ok(res);
+                        }
+                    }
+                    debug_assert!(
+                        !strings::is_windows_absolute_path_missing_drive_letter::<u8>(
+                            maybe_posix_path
+                        )
+                    );
+                }
+            }
         }
 
         if maybe_posix_path.len() + 1 > buf.len() {
@@ -2484,21 +2928,42 @@ pub fn slashes_to_windows_in_place<T: PathChar>(path: &mut [T]) {
 
 #[inline]
 pub fn platform_to_posix_in_place<T: PathChar>(path_buffer: &mut [T]) {
-    if sep() == b'/' {
+    if cfg_select! {
+        bun_portable => sep(),
+        _ => SEP,
+    } == b'/'
+    {
         return;
     }
     slashes_to_posix_in_place(path_buffer);
 }
 
 pub fn dangerously_convert_path_to_posix_in_place<T: PathChar>(path: &mut [T]) {
-    if bun_core::host::is_windows()
-        && path.len() > 2
-        && is_drive_letter_t::<T>(path[0])
-        && path[1] == T::from_u8(b':')
-        && is_sep_any_t::<T>(path[2])
-    {
-        // Uppercase drive letter (is_drive_letter_t guarantees [A-Za-z]).
-        path[0] = T::to_ascii_upper(path[0]);
+    cfg_select! {
+        bun_portable => {
+            if bun_core::host::is_windows()
+                && path.len() > 2
+                && is_drive_letter_t::<T>(path[0])
+                && path[1] == T::from_u8(b':')
+                && is_sep_any_t::<T>(path[2])
+            {
+                // Uppercase drive letter (is_drive_letter_t guarantees [A-Za-z]).
+                path[0] = T::to_ascii_upper(path[0]);
+            }
+        }
+        _ => {
+            #[cfg(windows)]
+            {
+                if path.len() > 2
+                    && is_drive_letter_t::<T>(path[0])
+                    && path[1] == T::from_u8(b':')
+                    && is_sep_any_t::<T>(path[2])
+                {
+                    // Uppercase drive letter (is_drive_letter_t guarantees [A-Za-z]).
+                    path[0] = T::to_ascii_upper(path[0]);
+                }
+            }
+        }
     }
     slashes_to_posix_in_place(path);
 }
@@ -2522,12 +2987,24 @@ pub fn path_to_posix_buf<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a m
 }
 
 pub fn platform_to_posix_buf<'a, T: PathChar>(path: &'a [T], buf: &'a mut [T]) -> &'a [T] {
+    #[cfg(bun_portable)]
     let sep = sep();
-    if sep == b'/' {
+    if cfg_select! {
+        bun_portable => sep,
+        _ => SEP,
+    } == b'/'
+    {
         return path;
     }
     let mut idx: usize = 0;
-    while let Some(index) = strings::index_of_scalar(&path[idx..], T::from_u8(sep)).map(|p| p + idx)
+    while let Some(index) = strings::index_of_scalar(
+        &path[idx..],
+        T::from_u8(cfg_select! {
+            bun_portable => sep,
+            _ => SEP,
+        }),
+    )
+    .map(|p| p + idx)
     {
         buf[idx..index].copy_from_slice(&path[idx..index]);
         buf[index] = T::from_u8(b'/');
@@ -2539,7 +3016,11 @@ pub fn platform_to_posix_buf<'a, T: PathChar>(path: &'a [T], buf: &'a mut [T]) -
 
 #[inline]
 pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
-    if sep() == b'/' {
+    if cfg_select! {
+        bun_portable => sep(),
+        _ => SEP,
+    } == b'/'
+    {
         return;
     }
     slashes_to_windows_in_place(path_buffer);

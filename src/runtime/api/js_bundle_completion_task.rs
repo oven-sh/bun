@@ -28,6 +28,9 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
+#[cfg(not(bun_portable))]
+use bun_paths::{self as paths, SEP};
+#[cfg(bun_portable)]
 use bun_paths::{self as paths, sep};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -527,7 +530,10 @@ impl JSBundleCompletionTask {
                     } else {
                         let mut v = Vec::with_capacity(dirname.len() + 1 + map_basename.len());
                         v.extend_from_slice(dirname);
-                        v.push(sep());
+                        v.push(cfg_select! {
+                            bun_portable => sep(),
+                            _ => SEP,
+                        });
                         v.extend_from_slice(map_basename);
                         v.into_boxed_slice()
                     };

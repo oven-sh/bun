@@ -407,22 +407,56 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     let base = without_trailing_slash(input);
     let mut buf = vec![0u8; base.len() + 2];
     debug_assert!(!base.is_empty());
-    if base[0] == crate::sep() {
-        buf[0] = crate::sep();
+    if base[0]
+        == cfg_select! {
+            bun_portable => crate::sep(),
+            _ => crate::SEP,
+        }
+    {
+        buf[0] = cfg_select! {
+            bun_portable => crate::sep(),
+            _ => crate::SEP,
+        };
     }
     // Reshaped for borrowck — track index instead of moving slice ptr.
-    let mut i: usize = (base[0] == crate::sep()) as usize;
+    let mut i: usize = cfg_select! {
+        bun_portable => (base[0] == crate::sep()),
+        _ => (base[0] == crate::SEP),
+    } as usize;
 
-    for token in base.split(|b| *b == crate::sep()).filter(|s| !s.is_empty()) {
-        if token.is_empty() {
-            continue;
+    cfg_select! {
+        bun_portable => {
+            for token in base.split(|b| *b == crate::sep()).filter(|s| !s.is_empty()) {
+                if token.is_empty() {
+                    continue;
+                }
+                buf[i..i + token.len()].copy_from_slice(token);
+                buf[i + token.len()] = crate::sep();
+                i += token.len() + 1;
+            }
         }
-        buf[i..i + token.len()].copy_from_slice(token);
-        buf[i + token.len()] = crate::sep();
-        i += token.len() + 1;
+        _ => {
+            for token in base.split(|b| *b == crate::SEP).filter(|s| !s.is_empty()) {
+                if token.is_empty() {
+                    continue;
+                }
+                buf[i..i + token.len()].copy_from_slice(token);
+                buf[i + token.len()] = crate::SEP;
+                i += token.len() + 1;
+            }
+        }
     }
-    if i >= 1 && buf[i - 1] != crate::sep() {
-        buf[i] = crate::sep();
+    if i >= 1
+        && buf[i - 1]
+            != cfg_select! {
+                bun_portable => crate::sep(),
+                _ => crate::SEP,
+            }
+    {
+        buf[i] = cfg_select! {
+            bun_portable => crate::sep(),
+            _ => crate::SEP,
+        };
         i += 1;
     }
     buf[i] = 0;
@@ -432,7 +466,14 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
 }
 
 pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
-    strings::index_of(path, crate::node_modules_needle()).is_some()
+    strings::index_of(
+        path,
+        cfg_select! {
+            bun_portable => crate::node_modules_needle(),
+            _ => crate::NODE_MODULES_NEEDLE,
+        },
+    )
+    .is_some()
 }
 
 pub use crate::is_sep_any as char_is_any_slash;
@@ -449,8 +490,17 @@ pub use crate::strings::without_trailing_slash;
 
 /// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
-    if !bun_core::host::is_windows() || input.len() < 3 || input[1] != b':' {
-        return without_trailing_slash(input);
+    cfg_select! {
+        bun_portable => {
+            if !bun_core::host::is_windows() || input.len() < 3 || input[1] != b':' {
+                return without_trailing_slash(input);
+            }
+        }
+        _ => {
+            if cfg!(unix) || input.len() < 3 || input[1] != b':' {
+                return without_trailing_slash(input);
+            }
+        }
     }
 
     let root_len = resolve_path::windows_filesystem_root(input).len() + 1;
@@ -472,7 +522,10 @@ pub fn without_leading_slash(this: &[u8]) -> &[u8] {
 }
 
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
-    strings::trim_left(this, crate::sep_str().as_bytes())
+    cfg_select! {
+        bun_portable => strings::trim_left(this, crate::sep_str().as_bytes()),
+        _ => strings::trim_left(this, &[crate::SEP]),
+    }
 }
 
 pub use bun_core::strings::remove_leading_dot_slash;

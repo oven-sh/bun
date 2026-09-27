@@ -901,7 +901,10 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        #[cfg(bun_portable)]
         debug_assert!(bun_core::fd_int!(fd) >= 0 && fd != INVALID_FD);
+        #[cfg(not(bun_portable))]
+        debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
         let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)

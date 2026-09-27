@@ -377,8 +377,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
                             // skip empty segments
+                            #[cfg(bun_portable)]
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::delimiter())
+                                .filter(|s| !s.is_empty());
+                            // skip empty segments
+                            #[cfg(not(bun_portable))]
+                            let mut path_iter = path
+                                .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
                                 if strings::eql(entry, output_path) {
@@ -889,9 +895,15 @@ fn print_node_modules_folder_structure(
             &mut possible_path,
             "{}{}{}{}node_modules",
             bstr::BStr::new(directory.relative_path.as_bytes()),
-            bun_paths::sep_str(),
+            cfg_select! {
+                bun_portable => bun_paths::sep_str(),
+                _ => bun_paths::SEP_STR,
+            },
             bstr::BStr::new(package_name),
-            bun_paths::sep_str(),
+            cfg_select! {
+                bun_portable => bun_paths::sep_str(),
+                _ => bun_paths::SEP_STR,
+            },
         )
         .expect("unreachable");
 

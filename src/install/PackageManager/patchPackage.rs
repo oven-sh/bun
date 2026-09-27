@@ -6,6 +6,9 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::platform;
 use bun_paths::resolve_path;
+#[cfg(not(bun_portable))]
+use bun_paths::{PathBuffer, Platform, SEP};
+#[cfg(bun_portable)]
 use bun_paths::{PathBuffer, Platform, sep};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
@@ -119,8 +122,10 @@ pub fn do_patch_commit(
     let mut argument_owned: Option<Box<[u8]>> = None;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && !Platform::auto().is_absolute(argument)
-    {
+        && !cfg_select! {
+            bun_portable => Platform::auto().is_absolute(argument),
+            _ => Platform::AUTO.is_absolute(argument),
+        } {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &lockfile,
             workspace_package_id,
@@ -716,8 +721,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && !Platform::auto().is_absolute(argument)
-    {
+        && !cfg_select! {
+            bun_portable => Platform::auto().is_absolute(argument),
+            _ => Platform::AUTO.is_absolute(argument),
+        } {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &manager.lockfile,
             workspace_package_id,
@@ -1060,7 +1067,10 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     let mut p = bun_paths::Path::<u8>::from(native).unwrap();
     let mut components: usize = 1;
     for &c in native {
-        if c == sep() {
+        if c == cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        } {
             components += 1;
         }
     }

@@ -29,6 +29,10 @@ use bun_jsc as jsc;
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
+#[cfg(not(bun_portable))]
+#[cfg(not(windows))]
+use bun_paths::SEP;
+#[cfg(bun_portable)]
 #[cfg(not(windows))]
 use bun_paths::sep;
 use bun_paths::{self, platform, resolve_path};
@@ -350,7 +354,10 @@ pub(crate) fn init_watch_trigger() {
                     &mut fresh,
                     "{}{}.bun-test-changed-{}.trigger",
                     BStr::new(strings::without_trailing_slash(tmpdir)),
-                    sep() as char,
+                    cfg_select! {
+                        bun_portable => sep(),
+                        _ => SEP,
+                    } as char,
                     bun_fmt::hex_lower(&rand),
                 )
                 .expect("unreachable");

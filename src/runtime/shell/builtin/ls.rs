@@ -438,7 +438,10 @@ impl ShellLsTask {
             let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
             v.extend_from_slice(parent);
             if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
-                v.push(bun_paths::sep());
+                v.push(cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                });
             }
             v.extend_from_slice(child);
             return ZBox::from_vec(v);

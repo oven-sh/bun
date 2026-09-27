@@ -10,6 +10,9 @@ use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
+#[cfg(not(bun_portable))]
+use bun_paths::{MAX_PATH_BYTES, SEP};
+#[cfg(bun_portable)]
 use bun_paths::{MAX_PATH_BYTES, sep};
 use bun_sys::{self as sys, Fd, O};
 
@@ -363,7 +366,10 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
                 let tmp = platform_tmp_dir();
                 let mut buf = Vec::with_capacity(tmp.len() + 20);
                 buf.extend_from_slice(tmp);
-                buf.push(sep());
+                buf.push(cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                });
                 buf.extend_from_slice(b"node-compile-cache");
                 default_buf = buf;
                 &default_buf
@@ -383,7 +389,13 @@ fn platform_tmp_dir() -> &'static [u8] {
         .or_else(env_var::TMP::get_not_empty)
         .or_else(env_var::TEMP::get_not_empty);
     if let Some(dir) = candidate {
-        if dir.len() > 1 && dir[dir.len() - 1] == sep() {
+        if dir.len() > 1
+            && dir[dir.len() - 1]
+                == cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                }
+        {
             return &dir[..dir.len() - 1];
         }
         return dir;
@@ -437,7 +449,10 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
 
     let mut tagged: Vec<u8> = Vec::with_capacity(abs.len() + 1 + tag.len());
     tagged.extend_from_slice(abs);
-    tagged.push(sep());
+    tagged.push(cfg_select! {
+        bun_portable => sep(),
+        _ => SEP,
+    });
     tagged.extend_from_slice(tag.as_bytes());
 
     cclog!(
@@ -474,8 +489,16 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     #[cfg(unix)]
     {
         let owned_private = sys::fstat(dir_handle.fd()).is_ok_and(|st| {
-            st.st_uid as libc::uid_t == sys::c::getuid()
-                && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            cfg_select! {
+                bun_portable => {
+                    st.st_uid as libc::uid_t == sys::c::getuid()
+                        && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+                }
+                _ => {
+                    st.st_uid == sys::c::getuid()
+                        && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+                }
+            }
         });
         if !owned_private {
             cclog!(
@@ -687,7 +710,10 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
         line = format!(
             "[compile cache] reading cache from {}{}{} for {} {}...",
             state.dir.as_bstr(),
-            sep() as char,
+            cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            } as char,
             core::str::from_utf8(&basename).expect("hex"),
             type_name(entry.is_cjs),
             display_name(&entry.filename, entry.is_cjs)
@@ -1047,7 +1073,10 @@ fn write_persist_job_locked(
         format!(
             "{}{}{}",
             state.dir.as_bstr(),
-            sep() as char,
+            cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            } as char,
             tmpname_zstr.as_bytes().as_bstr()
         )
     } else {
@@ -1090,7 +1119,10 @@ fn write_persist_job_locked(
         format!(
             "{}{}{}",
             state.dir.as_bstr(),
-            sep() as char,
+            cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            } as char,
             core::str::from_utf8(&basename).expect("hex")
         )
     } else {

@@ -5,6 +5,9 @@ use core::sync::atomic::Ordering;
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
+#[cfg(not(bun_portable))]
+use bun_paths::SEP;
+#[cfg(bun_portable)]
 use bun_paths::sep;
 use bun_sys::{self as sys, Dir, Fd};
 
@@ -423,7 +426,10 @@ pub(crate) fn install_hoisted_packages(
             };
         };
 
-        installer.node_modules.path.push(sep());
+        installer.node_modules.path.push(cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        });
 
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;

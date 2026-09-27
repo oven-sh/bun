@@ -5,6 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+#[cfg(not(bun_portable))]
+use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+#[cfg(bun_portable)]
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, platform, sep};
 use bun_semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
@@ -1534,8 +1537,16 @@ impl<'a> PackageInstaller<'a> {
                     let mut len = 0usize;
                     buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);
                     len += global_link_dir.len();
-                    if global_link_dir[global_link_dir.len() - 1] != sep() {
-                        buf[len] = sep();
+                    if global_link_dir[global_link_dir.len() - 1]
+                        != cfg_select! {
+                            bun_portable => sep(),
+                            _ => SEP,
+                        }
+                    {
+                        buf[len] = cfg_select! {
+                            bun_portable => sep(),
+                            _ => SEP,
+                        };
                         len += 1;
                     }
                     buf[len..len + folder.len()].copy_from_slice(folder);
@@ -2142,9 +2153,18 @@ impl<'a> PackageInstaller<'a> {
                                 // no preconditions), so no `unsafe` needed.
                                 // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
                                 let st_mode = stat.st_mode as u32;
+                                #[cfg(bun_portable)]
                                 let is_writable = if stat.st_uid as u32 == bun_sys::c::getuid() {
                                     st_mode & bun_sys::S::IWUSR > 0
                                 } else if stat.st_gid as u32 == bun_sys::c::getgid() {
+                                    st_mode & bun_sys::S::IWGRP > 0
+                                } else {
+                                    st_mode & bun_sys::S::IWOTH > 0
+                                };
+                                #[cfg(not(bun_portable))]
+                                let is_writable = if stat.st_uid == bun_sys::c::getuid() {
+                                    st_mode & bun_sys::S::IWUSR > 0
+                                } else if stat.st_gid == bun_sys::c::getgid() {
                                     st_mode & bun_sys::S::IWGRP > 0
                                 } else {
                                     st_mode & bun_sys::S::IWOTH > 0

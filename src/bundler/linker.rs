@@ -4,6 +4,9 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+#[cfg(not(bun_portable))]
+use bun_paths::{self, SEP};
+#[cfg(bun_portable)]
 use bun_paths::{self, sep};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -608,7 +611,12 @@ impl Linker {
                     pretty = dupe(relative_name);
                 } else {
                     if relative_name.len() > 1
-                        && !(relative_name[0] == sep() || relative_name[0] == b'.')
+                        && !(relative_name[0]
+                            == cfg_select! {
+                                bun_portable => sep(),
+                                _ => SEP,
+                            }
+                            || relative_name[0] == b'.')
                     {
                         text = dupe(&strings::concat(&[b"./", relative_name]));
                     } else {

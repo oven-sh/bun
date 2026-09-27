@@ -226,7 +226,12 @@ impl FileCopier {
                     };
                     // SAFETY: fchmod is safe to call with any fd + mode; errors are ignored (`_ =`).
                     unsafe {
-                        let _ = bun_sys::c::fchmod(dest.handle().native(), stat.st_mode as _);
+                        let _ = cfg_select! {
+                            bun_portable => {
+                                bun_sys::c::fchmod(dest.handle().native(), stat.st_mode as _)
+                            }
+                            _ => bun_sys::c::fchmod(dest.handle().native(), stat.st_mode),
+                        };
                     }
                 }
 

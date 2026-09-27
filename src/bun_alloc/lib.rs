@@ -280,8 +280,9 @@ pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
 /// Canonical tier-0 definition; re-exported by `bun_paths::SEP` / `bun_core::SEP`.
 pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
 
+#[cfg(bun_portable)]
 pub mod host;
-
+#[cfg(bun_portable)]
 crate::host_fn!(
     /// [`SEP`] of the OS that runs this process: `SEP` itself, except in the portable image.
     #[inline(always)]
@@ -289,6 +290,7 @@ crate::host_fn!(
         if host::is_windows() { b'\\' } else { b'/' }
     }
 );
+#[cfg(bun_portable)]
 crate::host_fn!(
     /// [`SEP_STR`] of the OS that runs this process: `SEP_STR` itself, except in the portable image.
     #[inline(always)]
@@ -2234,7 +2236,13 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     #[inline(always)]
     fn key_hash(denormalized_key: &[u8]) -> u64 {
         let key = if REMOVE_TRAILING_SLASHES {
-            trim_right(denormalized_key, sep_str().as_bytes())
+            trim_right(
+                denormalized_key,
+                cfg_select! {
+                    bun_portable => sep_str().as_bytes(),
+                    _ => SEP_STR.as_bytes(),
+                },
+            )
         } else {
             denormalized_key
         };

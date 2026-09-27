@@ -12,6 +12,9 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
 use bun_paths::strings;
+#[cfg(not(bun_portable))]
+use bun_paths::{self as path, AbsPath, SEP};
+#[cfg(bun_portable)]
 use bun_paths::{self as path, AbsPath, sep};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
@@ -889,8 +892,14 @@ impl<'a> Linker<'a> {
     ) {
         debug_assert!(path::is_absolute(abs_target.as_bytes()));
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
+        #[cfg(bun_portable)]
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != sep());
+        #[cfg(not(bun_portable))]
+        debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
+        #[cfg(bun_portable)]
         debug_assert!(abs_dest.as_bytes()[abs_dest.as_bytes().len() - 1] != sep());
+        #[cfg(not(bun_portable))]
+        debug_assert!(abs_dest.as_bytes()[abs_dest.as_bytes().len() - 1] != SEP);
 
         if let Some(seen) = self.seen.as_deref() {
             // Skip seen destinations for this tree
@@ -1346,7 +1355,10 @@ impl<'a> Linker<'a> {
         buf[off..off + dest_dir_without_trailing_slash.len()]
             .copy_from_slice(dest_dir_without_trailing_slash);
         off += dest_dir_without_trailing_slash.len();
-        buf[off] = sep();
+        buf[off] = cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        };
         off += 1;
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
@@ -1391,7 +1403,11 @@ impl<'a> Linker<'a> {
         let abs_target_bytes = abs_target.as_bytes();
         if abs_target_bytes.len() <= package_dir_bytes.len() + 1
             || !strings::starts_with(abs_target_bytes, package_dir_bytes)
-            || abs_target_bytes[package_dir_bytes.len()] != sep()
+            || abs_target_bytes[package_dir_bytes.len()]
+                != cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                }
         {
             return None;
         }
@@ -1536,12 +1552,18 @@ impl<'a> Linker<'a> {
         buf[off..off + dest_dir_without_trailing_slash.len()]
             .copy_from_slice(dest_dir_without_trailing_slash);
         off += dest_dir_without_trailing_slash.len();
-        buf[off] = sep();
+        buf[off] = cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        };
         off += 1;
 
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
-        buf[off] = sep();
+        buf[off] = cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        };
         off += 1;
 
         Some(off)
@@ -1565,12 +1587,18 @@ impl<'a> Linker<'a> {
         buf[off..off + dest_dir_without_trailing_slash.len()]
             .copy_from_slice(dest_dir_without_trailing_slash);
         off += dest_dir_without_trailing_slash.len();
-        buf[off] = sep();
+        buf[off] = cfg_select! {
+            bun_portable => sep(),
+            _ => SEP,
+        };
         off += 1;
         if !global {
             buf[off..off + b".bin".len()].copy_from_slice(b".bin");
             off += b".bin".len();
-            buf[off] = sep();
+            buf[off] = cfg_select! {
+                bun_portable => sep(),
+                _ => SEP,
+            };
             off += 1;
         }
 

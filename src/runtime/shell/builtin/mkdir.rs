@@ -299,18 +299,22 @@ impl ShellMkdirTask {
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::auto().is_absolute(&this.filepath) {
-            // Owned `Vec<u8>`; ensure NUL-terminated.
-            if this.filepath.last() != Some(&0) {
-                this.filepath.push(0);
-            }
-            bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&this.cwd_path, &this.filepath],
-            )
-        };
+        let filepath: &bun_core::ZStr =
+            if cfg_select! {
+                bun_portable => Platform::auto().is_absolute(&this.filepath),
+                _ => Platform::AUTO.is_absolute(&this.filepath),
+            } {
+                // Owned `Vec<u8>`; ensure NUL-terminated.
+                if this.filepath.last() != Some(&0) {
+                    this.filepath.push(0);
+                }
+                bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
+            } else {
+                resolve_path::join_z_spill::<platform::Auto>(
+                    &mut spill,
+                    &[&this.cwd_path, &this.filepath],
+                )
+            };
 
         // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
         // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.

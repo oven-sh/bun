@@ -7,6 +7,12 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
+#[cfg(not(bun_portable))]
+use crate::{
+    MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
+    resolve_path as path,
+};
+#[cfg(bun_portable)]
 use crate::{
     MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
     resolve_path as path, sep,
@@ -91,6 +97,7 @@ pub mod options {
     }
 
     impl PathSeparators {
+        #[cfg(bun_portable)]
         bun_core::host_fn!(
             pub(crate) fn char(self) -> u8 {
                 match self {
@@ -101,6 +108,15 @@ pub mod options {
                 }
             }
         );
+        #[cfg(not(bun_portable))]
+        pub(crate) const fn char(self) -> u8 {
+            match self {
+                PathSeparators::Any => panic!("use the existing slash"),
+                PathSeparators::Auto => SEP,
+                PathSeparators::Posix => SEP_POSIX,
+                PathSeparators::Windows => SEP_WINDOWS,
+            }
+        }
     }
 
     // Path units are modeled as a trait with an associated `Other` type; see
@@ -370,7 +386,10 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_u8(sep()),
+                PathSeparators::Any | PathSeparators::Auto => U::from_u8(cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                }),
                 PathSeparators::Posix => U::from_u8(SEP_POSIX),
                 PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
             };
@@ -401,7 +420,10 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_u8(sep()),
+                PathSeparators::Any | PathSeparators::Auto => U::from_u8(cfg_select! {
+                    bun_portable => sep(),
+                    _ => SEP,
+                }),
                 PathSeparators::Posix => U::from_u8(SEP_POSIX),
                 PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
             };
@@ -428,7 +450,10 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
 /// the `X:` drive designator at index 1.
 #[inline]
 fn basename_generic<U: PathUnit>(path: &[U]) -> &[U] {
-    if bun_core::host::is_windows() {
+    if cfg_select! {
+        bun_portable => bun_core::host::is_windows(),
+        _ => cfg!(windows),
+    } {
         bun_core::strings::basename_windows(path)
     } else {
         bun_core::strings::basename_posix(path)
@@ -1203,7 +1228,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     .slice()
                     .iter()
                     .rposition(|c| c.eq_ascii(SEP_POSIX) || c.eq_ascii(SEP_WINDOWS)),
+                #[cfg(bun_portable)]
                 PathSeparators::Auto => self.slice().iter().rposition(|c| c.eq_ascii(sep())),
+                #[cfg(not(bun_portable))]
+                PathSeparators::Auto => self.slice().iter().rposition(|c| c.eq_ascii(SEP)),
                 PathSeparators::Posix => self.slice().iter().rposition(|c| c.eq_ascii(SEP_POSIX)),
                 PathSeparators::Windows => {
                     self.slice().iter().rposition(|c| c.eq_ascii(SEP_WINDOWS))

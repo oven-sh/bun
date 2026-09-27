@@ -26,6 +26,7 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 //
 // Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`
 // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
+#[cfg(bun_portable)]
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         mod raw {
@@ -37,6 +38,51 @@ macro_rules! tcc_externs {
             }
             $(
                 #[cfg(any(target_os = "android", target_os = "freebsd", bun_portable))]
+                #[allow(unused_variables, clippy::missing_safety_doc)]
+                pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                    unreachable!(concat!(
+                        stringify!($name),
+                        " called but TinyCC is disabled on this target — keep the ",
+                        "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                    ));
+                }
+            )*
+        }
+        $(
+            unsafe fn $name($($arg: $ty),*) $(-> $ret)? {
+                let _lock = LIBTCC_LOCK.lock();
+                // SAFETY: same contract as the libtcc function; the caller upholds it.
+                unsafe { raw::$name($($arg),*) }
+            }
+        )*
+    };
+}
+// `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
+// not Android, not FreeBSD (the vendored fork doesn't support those targets).
+// On those platforms these `extern "C"` decls would be undefined at link:
+// `bun_runtime::ffi::ffi_body::{Source::add,
+// CompileC::compile}` are reachable from `extern "C"` JS bindings and the
+// monomorphized refs land in the link regardless of any
+// `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
+// stub *definitions* on those targets so the link resolves; the gated Rust
+// callers never reach them at runtime (they early-return with "not available
+// in this build"), and the `unreachable!()` makes any future gate regression
+// loud rather than silently UB.
+//
+// Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`
+// and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
+#[cfg(not(bun_portable))]
+macro_rules! tcc_externs {
+    ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
+        mod raw {
+            use super::*;
+
+            #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+            unsafe extern "C" {
+                $($(#[$attr])* pub(super) fn $name($($arg: $ty),*) $(-> $ret)?;)*
+            }
+            $(
+                #[cfg(any(target_os = "android", target_os = "freebsd"))]
                 #[allow(unused_variables, clippy::missing_safety_doc)]
                 pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
                     unreachable!(concat!(

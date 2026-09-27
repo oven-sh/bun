@@ -1025,7 +1025,10 @@ pub mod bv2_impl {
                             effective_source_dir, &mut **buf, &[specifier]
                         )?
                         .len();
-                        if bun_core::host::is_windows() {
+                        if cfg_select! {
+                            bun_portable => bun_core::host::is_windows(),
+                            _ => cfg!(windows),
+                        } {
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
                                 &mut buf[0..joined_len],
                             );
@@ -5729,11 +5732,22 @@ pub mod bv2_impl {
         fn should_add_watcher(&self, path: &[u8]) -> bool {
             if self.dev_server.is_some() {
                 strings::index_of(path, b"/node_modules/").is_none()
-                    && (if bun_core::host::is_windows() {
-                        strings::index_of(path, b"\\node_modules\\").is_none()
-                    } else {
-                        true
-                    })
+                    && cfg_select! {
+                        bun_portable => {
+                            (if bun_core::host::is_windows() {
+                                strings::index_of(path, b"\\node_modules\\").is_none()
+                            } else {
+                                true
+                            })
+                        }
+                        _ => {
+                            (if cfg!(windows) {
+                                strings::index_of(path, b"\\node_modules\\").is_none()
+                            } else {
+                                true
+                            })
+                        }
+                    }
             } else {
                 true // `bun build --watch` has always watched node_modules
             }

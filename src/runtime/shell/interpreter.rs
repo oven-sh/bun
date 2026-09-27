@@ -2283,7 +2283,10 @@ fn is_pollable(fd: Fd) -> bool {
     #[cfg(unix)]
     {
         let mode = match bun_sys::fstat(fd) {
+            #[cfg(bun_portable)]
             Ok(st) => st.st_mode as libc::mode_t,
+            #[cfg(not(bun_portable))]
+            Ok(st) => st.st_mode,
             Err(_) => return false,
         };
         let fmt = mode & libc::S_IFMT;

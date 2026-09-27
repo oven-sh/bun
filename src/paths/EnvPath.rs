@@ -1,14 +1,29 @@
 use bun_alloc::AllocError;
 use bun_core::strings;
 
+#[cfg(not(bun_portable))]
+use crate::DELIMITER;
+#[cfg(bun_portable)]
 use crate::delimiter;
 
 fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     let mut trimmed = input;
-    while !trimmed.is_empty() && trimmed[0] == delimiter() {
+    while !trimmed.is_empty()
+        && trimmed[0]
+            == cfg_select! {
+                bun_portable => delimiter(),
+                _ => DELIMITER,
+            }
+    {
         trimmed = &trimmed[1..];
     }
-    while !trimmed.is_empty() && trimmed[trimmed.len() - 1] == delimiter() {
+    while !trimmed.is_empty()
+        && trimmed[trimmed.len() - 1]
+            == cfg_select! {
+                bun_portable => delimiter(),
+                _ => DELIMITER,
+            }
+    {
         trimmed = &trimmed[0..trimmed.len() - 1];
     }
     trimmed
@@ -64,7 +79,10 @@ impl EnvPath {
 
         if !self.buf.is_empty() {
             self.buf.reserve(trimmed.len() + 1);
-            self.buf.push(delimiter());
+            self.buf.push(cfg_select! {
+                bun_portable => delimiter(),
+                _ => DELIMITER,
+            });
             self.buf.extend_from_slice(trimmed);
         } else {
             self.buf.extend_from_slice(trimmed);

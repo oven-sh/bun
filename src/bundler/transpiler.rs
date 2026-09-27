@@ -71,8 +71,10 @@ impl PluginRunner {
             return b"";
         };
         let colon = colon as usize;
-        if bun_core::host::is_windows()
-            && colon == 1
+        if cfg_select! {
+            bun_portable => bun_core::host::is_windows(),
+            _ => cfg!(windows),
+        } && colon == 1
             && specifier.len() > 3
             && bun_paths::resolve_path::is_sep_any(specifier[2])
             && ((specifier[0] > b'a' && specifier[0] < b'z')
@@ -490,7 +492,10 @@ impl<'a> Transpiler<'a> {
                             let buster_name = bun_paths::string_paths::normalize_slashes_only(
                                 &mut cache_bust_buf[..],
                                 dir,
-                                bun_paths::sep(),
+                                cfg_select! {
+                                    bun_portable => bun_paths::sep(),
+                                    _ => bun_paths::SEP,
+                                },
                             );
                             break 'name self.resolver.bust_dir_cache(
                                 bun_paths::string_paths::without_trailing_slash_windows_path(

@@ -5139,7 +5139,10 @@ impl VirtualMachine {
                             bun_paths::string_paths::normalize_slashes_only(
                                 buf,
                                 dir,
-                                bun_paths::sep(),
+                                cfg_select! {
+                                    bun_portable => bun_paths::sep(),
+                                    _ => bun_paths::SEP,
+                                },
                             )
                         } else {
                             // Absolute but root — fall through to join.
@@ -5667,8 +5670,16 @@ impl VirtualMachine {
         fs.top_level_dir =
             unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
         let len = fs.top_level_dir.len();
-        if fs.top_level_dir_buf[len - 1] != bun_paths::sep() {
-            fs.top_level_dir_buf[len] = bun_paths::sep();
+        if fs.top_level_dir_buf[len - 1]
+            != cfg_select! {
+                bun_portable => bun_paths::sep(),
+                _ => bun_paths::SEP,
+            }
+        {
+            fs.top_level_dir_buf[len] = cfg_select! {
+                bun_portable => bun_paths::sep(),
+                _ => bun_paths::SEP,
+            };
             fs.top_level_dir_buf[len + 1] = 0;
             // SAFETY: see above.
             fs.top_level_dir =

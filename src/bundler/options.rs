@@ -493,13 +493,41 @@ pub fn get_loader_and_virtual_source<'a>(
         let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
         // The eval/stdin entry path uses the platform path separator
         // (`/` becomes `\` on Windows), so the suffix is per-platform.
+        #[cfg(bun_portable)]
         let eval_suffix: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        #[cfg(bun_portable)]
         let stdin_suffix: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
-        if strings::ends_with(specifier, eval_suffix) {
+        // The eval/stdin entry path uses the platform path separator
+        // (`/` becomes `\` on Windows), so the suffix is per-platform.
+        #[cfg(not(bun_portable))]
+        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
+            b"\\[eval]"
+        } else {
+            b"/[eval]"
+        };
+        #[cfg(not(bun_portable))]
+        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
+            b"\\[stdin]"
+        } else {
+            b"/[stdin]"
+        };
+        if strings::ends_with(
+            specifier,
+            cfg_select! {
+                bun_portable => eval_suffix,
+                _ => EVAL_SUFFIX,
+            },
+        ) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
-        if strings::ends_with(specifier, stdin_suffix) {
+        if strings::ends_with(
+            specifier,
+            cfg_select! {
+                bun_portable => stdin_suffix,
+                _ => STDIN_SUFFIX,
+            },
+        ) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
@@ -2281,9 +2309,16 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
     loop {
         // On POSIX `\` is a legal filename byte, not a separator, so only split
         // on it under Windows (matches `write_replacing_slashes_on_windows`).
+        #[cfg(bun_portable)]
         let sep = rest
             .iter()
             .position(|&b| b == b'/' || (bun_core::host::is_windows() && b == b'\\'));
+        // On POSIX `\` is a legal filename byte, not a separator, so only split
+        // on it under Windows (matches `write_replacing_slashes_on_windows`).
+        #[cfg(not(bun_portable))]
+        let sep = rest
+            .iter()
+            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
         let seg = sep.map_or(rest, |i| &rest[..i]);
         PathTemplate::write_replacing_slashes_on_windows(
             writer,

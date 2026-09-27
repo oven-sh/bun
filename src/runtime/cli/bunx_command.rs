@@ -18,6 +18,9 @@ use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
+#[cfg(not(bun_portable))]
+use bun_paths::{self, DELIMITER};
+#[cfg(bun_portable)]
 use bun_paths::{self, delimiter};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
@@ -381,7 +384,10 @@ impl BunxCommand {
                 "{}",
                 format_args!(
                     "node_modules{sep}{pkg}{sep}package.json",
-                    sep = bun_paths::sep() as char,
+                    sep = cfg_select! {
+                        bun_portable => bun_paths::sep(),
+                        _ => bun_paths::SEP,
+                    } as char,
                     pkg = BStr::new(package_name),
                 ),
             )
@@ -409,7 +415,10 @@ impl BunxCommand {
                     cursor,
                     "{}{}package.json",
                     BStr::new(tempdir_name),
-                    bun_paths::sep() as char,
+                    cfg_select! {
+                        bun_portable => bun_paths::sep(),
+                        _ => bun_paths::SEP,
+                    } as char,
                 )
                 .expect("unreachable");
                 total - cursor.len()
@@ -477,7 +486,10 @@ impl BunxCommand {
                 cursor,
                 "{tmp}{sep}node_modules{sep}{pkg}{sep}package.json",
                 tmp = BStr::new(tempdir_name),
-                sep = bun_paths::sep() as char,
+                sep = cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                } as char,
                 pkg = BStr::new(package_name),
             )
             .expect("unreachable");
@@ -543,16 +555,33 @@ impl BunxCommand {
     #[cfg(unix)]
     fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
         let lstat_ok = |st: &bun_sys::Stat| {
+            #[cfg(bun_portable)]
             let kind = st.st_mode as libc::mode_t & libc::S_IFMT;
-            st.st_uid as libc::uid_t == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
+            #[cfg(not(bun_portable))]
+            let kind = st.st_mode & libc::S_IFMT;
+            cfg_select! {
+                bun_portable => {
+                    st.st_uid as libc::uid_t == uid
+                        && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
+                }
+                _ => st.st_uid == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK),
+            }
         };
+        #[cfg(bun_portable)]
         let stat_ok = |st: &bun_sys::Stat| {
             st.st_uid as libc::uid_t == uid
                 && (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFREG
         };
+        #[cfg(not(bun_portable))]
+        let stat_ok =
+            |st: &bun_sys::Stat| st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
         match bun_sys::lstat(destination) {
             Ok(st) if lstat_ok(&st) => {
-                if (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFLNK {
+                if cfg_select! {
+                    bun_portable => (st.st_mode as libc::mode_t & libc::S_IFMT),
+                    _ => (st.st_mode & libc::S_IFMT),
+                } == libc::S_IFLNK
+                {
                     matches!(bun_sys::stat(destination), Ok(target) if stat_ok(&target))
                 } else {
                     true
@@ -576,13 +605,29 @@ impl BunxCommand {
         }
         buf[..cache_root.len()].copy_from_slice(cache_root);
         let is_trusted_dir = |st: &bun_sys::Stat| {
-            (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid as libc::uid_t == uid
-                && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            cfg_select! {
+                bun_portable => {
+                    (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR
+                        && st.st_uid as libc::uid_t == uid
+                        && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+                }
+                _ => {
+                    (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                        && st.st_uid == uid
+                        && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+                }
+            }
         };
         let mut start = temp_dir_len + 1;
         loop {
-            let end = match strings::index_of_char_pos(cache_root, bun_paths::sep(), start) {
+            let end = match strings::index_of_char_pos(
+                cache_root,
+                cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                },
+                start,
+            ) {
                 Some(i) => i,
                 None => cache_root.len(),
             };
@@ -602,7 +647,10 @@ impl BunxCommand {
             if end == cache_root.len() {
                 return true;
             }
-            buf[end] = bun_paths::sep();
+            buf[end] = cfg_select! {
+                bun_portable => bun_paths::sep(),
+                _ => bun_paths::SEP,
+            };
             start = end + 1;
         }
     }
@@ -621,9 +669,18 @@ impl BunxCommand {
         uid: libc::uid_t,
     ) -> bool {
         let dir_ok = |st: &bun_sys::Stat| {
-            (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid as libc::uid_t == uid
-                && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            cfg_select! {
+                bun_portable => {
+                    (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR
+                        && st.st_uid as libc::uid_t == uid
+                        && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+                }
+                _ => {
+                    (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                        && st.st_uid == uid
+                        && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+                }
+            }
         };
         let opened = match bun_sys::fstat(dir) {
             Ok(st) if dir_ok(&st) => st,
@@ -647,7 +704,13 @@ impl BunxCommand {
                 _ => return false,
             }
             is_leaf = false;
-            match strings::last_index_of_char(&cache_dir[..end], bun_paths::sep()) {
+            match strings::last_index_of_char(
+                &cache_dir[..end],
+                cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                },
+            ) {
                 Some(idx) if idx > temp_dir_len => end = idx,
                 _ => return true,
             }
@@ -907,7 +970,11 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = strings::tokenize(&path, bun_paths::delimiter_str().as_bytes());
+            let mut path_iter =
+                cfg_select! {
+                    bun_portable => strings::tokenize(&path, bun_paths::delimiter_str().as_bytes()),
+                    _ => strings::tokenize(&path, &[DELIMITER]),
+                };
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
@@ -923,7 +990,10 @@ impl BunxCommand {
                     strings::without_trailing_slash(&ignore_cwd),
                     true,
                 ) {
-                    new_path.push(delimiter());
+                    new_path.push(cfg_select! {
+                        bun_portable => delimiter(),
+                        _ => DELIMITER,
+                    });
                     new_path.extend_from_slice(segment);
                 }
             }
@@ -959,13 +1029,19 @@ impl BunxCommand {
                 &mut v,
                 "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
                 tmp = BStr::new(temp_dir),
-                sep = bun_paths::sep() as char,
+                sep = cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                } as char,
                 uid = uid,
                 pkg = BStr::new(&package_fmt),
             )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if path_is_nonzero {
-                v.push(delimiter());
+                v.push(cfg_select! {
+                    bun_portable => delimiter(),
+                    _ => DELIMITER,
+                });
                 v.extend_from_slice(&path);
             }
             v
@@ -993,7 +1069,10 @@ impl BunxCommand {
                 cursor,
                 "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                 cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::sep() as char,
+                sep = cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                } as char,
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
@@ -1184,7 +1263,10 @@ impl BunxCommand {
                                         cursor,
                                         "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                                         cache = BStr::new(bunx_cache_dir),
-                                        sep = bun_paths::sep() as char,
+                                        sep = cfg_select! {
+                                            bun_portable => bun_paths::sep(),
+                                            _ => bun_paths::SEP,
+                                        } as char,
                                         bin = BStr::new(&package_name_for_bin),
                                         exe = EXE_SUFFIX,
                                     )
@@ -1465,7 +1547,10 @@ impl BunxCommand {
                 cursor,
                 "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                 cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::sep() as char,
+                sep = cfg_select! {
+                    bun_portable => bun_paths::sep(),
+                    _ => bun_paths::SEP,
+                } as char,
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )

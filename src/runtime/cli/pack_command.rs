@@ -20,6 +20,9 @@ use bun_parsers::json as JSON;
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+#[cfg(not(bun_portable))]
+use bun_paths::{self as path, SEP_STR};
+#[cfg(bun_portable)]
 use bun_paths::{self as path, sep_str};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
@@ -3052,7 +3055,10 @@ fn tarball_destination<'a>(
         let res = write!(
             &mut cursor,
             "{}{}\x00",
-            sep_str(),
+            cfg_select! {
+                bun_portable => sep_str(),
+                _ => SEP_STR,
+            },
             fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize),
         );
         if res.is_err() {
@@ -3684,6 +3690,7 @@ enum IgnoreFileFailReason {
 }
 
 impl IgnorePatterns {
+    #[cfg(bun_portable)]
     fn ignore_file_fail(
         dir: &Dir,
         ignore_kind: IgnorePatternsKind,
@@ -3703,6 +3710,31 @@ impl IgnorePatterns {
                 <&str>::from(ignore_kind),
                 bstr::BStr::new(strings::without_trailing_slash(dir_path)),
                 sep_str(),
+                <&str>::from(ignore_kind),
+            ),
+        );
+        Global::crash();
+    }
+    #[cfg(not(bun_portable))]
+    fn ignore_file_fail(
+        dir: &Dir,
+        ignore_kind: IgnorePatternsKind,
+        reason: IgnoreFileFailReason,
+        err: crate::Error,
+    ) -> ! {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
+            Ok(p) => &*p,
+            Err(_) => b"",
+        };
+        Output::err(
+            err,
+            "failed to {} {} at: \"{}{}{}\"",
+            (
+                <&str>::from(reason),
+                <&str>::from(ignore_kind),
+                bstr::BStr::new(strings::without_trailing_slash(dir_path)),
+                SEP_STR,
                 <&str>::from(ignore_kind),
             ),
         );

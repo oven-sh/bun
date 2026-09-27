@@ -415,7 +415,7 @@ describe.skipIf(skip)("send() stalls after the client's FIN", () => {
   }
 
   async function bodyOfHalfClosedClient(socket: net.Socket) {
-    const out = { body: 0, ended: false };
+    const out: { body: number; ended: boolean; error?: string } = { body: 0, ended: false };
     let head = "";
     let gotHead = false;
     socket.on("data", chunk => {
@@ -431,10 +431,13 @@ describe.skipIf(skip)("send() stalls after the client's FIN", () => {
       }
     });
     socket.on("end", () => (out.ended = true));
-    socket.on("error", () => {});
+    // Recorded, so a failure shows the errno next to the byte count.
+    socket.on("error", (error: NodeJS.ErrnoException) => (out.error = error.code ?? error.message));
+    const closed = Promise.withResolvers<void>();
+    socket.once("close", () => closed.resolve());
     await once(socket, socket instanceof tls.TLSSocket ? "secureConnect" : "connect");
     socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-    await once(socket, "close");
+    await closed.promise;
     return out;
   }
 

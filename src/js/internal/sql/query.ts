@@ -10,8 +10,25 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _nextStarted = Symbol("nextStarted");
 
 const PublicPromise = Promise;
+
+/// For a close() that waits: gives the queries that started and did not reach the pool yet to the pool, in start order.
+function handOffStartedQueries(adapter: DatabaseAdapter<any, any, any>) {
+  for (let query = adapter.firstStarted; query !== undefined; query = query[_nextStarted]) {
+    if (query[_queryStatus] & SQLQueryStatus.handedOff) {
+      continue;
+    }
+    query[_queryStatus] |= SQLQueryStatus.handedOff;
+    try {
+      query[_handler](query, query[_handle]!);
+    } catch (err) {
+      query[_queryStatus] |= SQLQueryStatus.error;
+      query.reject(err as Error);
+    }
+  }
+}
 
 export interface BaseQueryHandle<Connection> {
   done?(): void;
@@ -31,6 +48,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_strings]: QueryStrings;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
+  public [_nextStarted]: Query<any, any> | undefined;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -150,7 +168,35 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return this;
     }
 
-    await Promise.$resolve();
+    // A query of a transaction or of a reserved connection runs on that connection, not through the pool.
+    const adapter = this[_flags] & SQLQueryFlags.allowUnsafeTransaction ? undefined : this[_adapter];
+    if (adapter !== undefined) {
+      const last = adapter.lastStarted;
+      if (last === undefined) {
+        adapter.firstStarted = this;
+      } else {
+        last[_nextStarted] = this;
+      }
+      adapter.lastStarted = this;
+    }
+
+    // Not a promise: to await a promise reads its `constructor`, and code of the caller can run there.
+    await undefined;
+
+    if (adapter !== undefined) {
+      // Promise jobs run in the order in which they were queued, so this query is the first one in the list.
+      $assert(adapter.firstStarted === this, "a started query leaves the list in start order");
+      const next = this[_nextStarted];
+      adapter.firstStarted = next;
+      if (next === undefined) {
+        adapter.lastStarted = undefined;
+      } else {
+        this[_nextStarted] = undefined;
+      }
+      if (this[_queryStatus] & SQLQueryStatus.handedOff) {
+        return;
+      }
+    }
 
     try {
       return handler(this, handle);
@@ -349,10 +395,13 @@ const enum SQLQueryStatus {
   error = 1 << 3,
   executed = 1 << 4,
   invalidHandle = 1 << 5,
+  /// close() gave the query to the pool before the start of the query did.
+  handedOff = 1 << 6,
 }
 
 export default {
   Query,
+  handOffStartedQueries,
   SQLQueryFlags,
   SQLQueryResultMode,
 

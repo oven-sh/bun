@@ -12,7 +12,7 @@ type SQLQueryResultMode = import("./query").SQLQueryResultMode;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray, normalizeQuery, pushBindParam } = require("internal/sql/shared");
-const { SQLQueryResultMode } = require("internal/sql/query");
+const { SQLQueryResultMode, handOffStartedQueries } = require("internal/sql/query");
 const { SQLiteError } = require("internal/sql/errors");
 
 let lazySQLiteModule: typeof BunSQLiteModule;
@@ -300,6 +300,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
+  public firstStarted: Query<any, any> | undefined = undefined;
+  public lastStarted: Query<any, any> | undefined = undefined;
+  /// One entry per begin() whose callback is still running.
+  private closeHandlers: Set<(err: Error) => void> = new Set();
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -456,9 +460,37 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     // so we can just no-op here
   }
 
-  async close(_options?: { timeout?: number }) {
+  /// False while a begin() has its transaction open: the statement would run in it, and close() rolls it back.
+  #canRunStartedQueries() {
+    if (this.firstStarted === undefined) {
+      return false;
+    }
+    const db = this.db;
+    if (db === null) {
+      // The database did not open. connect() rejects each query with the error of the open.
+      return true;
+    }
+    try {
+      return !(db.inTransaction && this.closeHandlers.size > 0);
+    } catch {
+      return false;
+    }
+  }
+
+  async close(options?: { timeout?: number }) {
+    // A getter can run code of the caller here, and that code can call close(). So this read comes before `_closed`.
+    const timeout = options?.timeout;
     if (this._closed) {
       return;
+    }
+
+    // `!=`: "0" closes at once too, as it does for the other adapters.
+    if (timeout != 0 && this.#canRunStartedQueries()) {
+      handOffStartedQueries(this);
+      // A hand-off can run code of the caller, and that code can close the database.
+      if (this._closed) {
+        return;
+      }
     }
 
     this._closed = true;
@@ -499,6 +531,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
     return connection;
   }
+
+  attachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+    this.closeHandlers.add(handler);
+  }
+
+  detachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+    this.closeHandlers.delete(handler);
+  }
+
   array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
     throw new Error("SQLite doesn't support arrays");
   }

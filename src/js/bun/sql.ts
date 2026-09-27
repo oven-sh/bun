@@ -993,7 +993,8 @@ const SQL = function SQL(
     }
 
     const sqlQuery = pool.getRollbackDistributedSQL(name);
-    return await sql.unsafe(sqlQuery);
+    // then() starts the query in this call. `await` alone starts it one promise job later.
+    return await sql.unsafe(sqlQuery).then();
   };
 
   sql.commitDistributed = async function (name: string) {
@@ -1006,7 +1007,8 @@ const SQL = function SQL(
     }
 
     const sqlQuery = pool.getCommitDistributedSQL(name);
-    return await sql.unsafe(sqlQuery);
+    // then() starts the query in this call. `await` alone starts it one promise job later.
+    return await sql.unsafe(sqlQuery).then();
   };
 
   sql.beginDistributed = (name: string, fn: TransactionCallback) => {

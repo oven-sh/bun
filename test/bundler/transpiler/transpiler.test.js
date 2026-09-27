@@ -2453,6 +2453,20 @@ export default class {
         [replace({ a: ["default", 1] }), `using r = null; export { a, b } from "./x.mjs"`, { b: "b", default: 1 }],
       ];
 
+      // [options, source, message of the error]. An import of the name is a collision for both loaders.
+      const rowsThatThrow = [
+        [
+          replace({ a: 1 }),
+          `import { a } from "x"; export { a, b } from "x"; export const t = a`,
+          `"a" has already been declared`,
+        ],
+        [
+          replace({ ns: 1 }),
+          `import { ns } from "y"; export * as ns from "x"; export const t = ns`,
+          `"ns" has already been declared`,
+        ],
+      ];
+
       // [options, source, exports of the printed module]. The comment of a row is what it does today.
       const rowsThatCannotBind = [
         // prints: export var class = 1;
@@ -2472,7 +2486,7 @@ export default class {
           using dir = tempDir("exports-replace-reexport", {
             "x.mjs": `export const a = "a", b = "b"; export default "x";`,
           });
-          const print = async (rows, rowsWithUsing, rowsThatCannotBind, dir) => {
+          const print = async (rows, rowsWithUsing, rowsThatThrow, rowsThatCannotBind, dir) => {
             const modules = [];
             for (const [options, source] of rows) {
               const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
@@ -2486,6 +2500,15 @@ export default class {
               await Bun.write(file, new Bun.Transpiler({ loader: "ts", ...options }).transformSync(source));
               modules.push({ ...(await import(file)) });
             }
+            for (const loader of ["ts", "js"]) {
+              for (const [options, source] of rowsThatThrow) {
+                try {
+                  modules.push([new Bun.Transpiler({ loader, ...options }).transformSync(source)]);
+                } catch (error) {
+                  modules.push(error.message);
+                }
+              }
+            }
             console.log(JSON.stringify(modules));
 
             const names = rowsThatCannotBind.map(([options, source]) => {
@@ -2498,16 +2521,17 @@ export default class {
             });
             console.log(JSON.stringify(names));
           };
-          const args = [rows, rowsWithUsing, rowsThatCannotBind, String(dir)];
+          const args = [rows, rowsWithUsing, rowsThatThrow, rowsThatCannotBind, String(dir)];
           return await bunRun(["-e", `await (${print})(...${JSON.stringify(args)})`]);
         })());
 
       it("prints the export under its exported name", async () => {
         const modules = rows.map(([, , module, names]) => [module, names]);
         const exported = rowsWithUsing.map(([, , exported]) => exported);
+        const messages = rowsThatThrow.map(([, , message]) => message);
         const result = await run();
         expect({ ...result, stdout: result.stdout.split("\n")[0] }).toEqual(
-          printed(JSON.stringify([...modules, rows[0][2], rows[0][2], ...exported])),
+          printed(JSON.stringify([...modules, rows[0][2], rows[0][2], ...exported, ...messages, ...messages])),
         );
       });
 

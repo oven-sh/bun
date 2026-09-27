@@ -290,12 +290,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 );
-                p.is_visiting_replaced_export = true;
+                // No entry applies to the export that an entry made, so the visitor sees no entries.
+                let replace_exports = core::mem::take(&mut p.options.features.replace_exports);
                 p.visit_and_append_stmt(stmts, &mut export_default)
                     .expect("unreachable");
-                p.is_visiting_replaced_export = false;
+                p.options.features.replace_exports = replace_exports;
             }
             ReplaceableExport::Replace(_) => {
+                // TypeScript lets a declaration take the place of an import of its name. This export is not one.
+                if TYPESCRIPT
+                    && let Some(import) = p
+                        .current_scope()
+                        .get_member_with_hash(alias, js_ast::Scope::get_member_hash(alias))
+                    && p.symbols[import.ref_.inner_index() as usize].kind
+                        == js_ast::symbol::Kind::Import
+                {
+                    p.log().add_symbol_already_declared_error(
+                        p.source,
+                        alias,
+                        bun_ast::Loc::EMPTY,
+                        import.loc,
+                    );
+                    return;
+                }
                 let declared = p
                     .declare_symbol(js_ast::symbol::Kind::Other, bun_ast::Loc::EMPTY, alias)
                     .expect("unreachable");
@@ -417,7 +434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut mark_for_replace: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
-        if p.options.features.replace_exports.count() > 0 && !p.is_visiting_replaced_export {
+        if p.options.features.replace_exports.count() > 0 {
             if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
                 p.is_control_flow_dead =
                     p.options.features.dead_code_elimination && !entry.is_replace();

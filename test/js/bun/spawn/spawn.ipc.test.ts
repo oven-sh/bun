@@ -265,9 +265,11 @@ it.concurrent.skipIf(isWindows)("delivers a message sent right before exit on th
 // nested tick sees the child's hangup and closes the channel; it must leave the socket for the
 // outermost tick to free, as the drain still holds it. The parent waits until the child is reaped
 // (its /proc entry is gone), so the exit task is queued before the loop runs again.
-it.skipIf(!isLinux)("a synchronous wait inside the ipc callback during the exit-time drain", async () => {
-  using dir = tempDir("ipc-exit-drain-reenter", {
-    "reenter.test.ts": `
+it.skipIf(!isLinux)(
+  "a synchronous wait inside the ipc callback during the exit-time drain",
+  async () => {
+    using dir = tempDir("ipc-exit-drain-reenter", {
+      "reenter.test.ts": `
       import { expect, test } from "bun:test";
       import { existsSync } from "node:fs";
 
@@ -300,18 +302,20 @@ it.skipIf(!isLinux)("a synchronous wait inside the ipc callback during the exit-
         expect({ received, exitCode }).toEqual({ received: ["hello"], exitCode: 0 });
       });
     `,
-  });
-  await using proc = spawn({
-    cmd: [bunExe(), "test", "reenter.test.ts"],
-    cwd: String(dir),
-    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(" 1 pass");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "reenter.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // A grandchild that keeps writing to the inherited channel after the child exits cannot keep
 // the exit-time drain going: the drain stops after a bounded number of reads, the channel

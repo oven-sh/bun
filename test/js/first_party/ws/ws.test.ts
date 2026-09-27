@@ -495,6 +495,67 @@ describe("WebSocketServer", () => {
       }
     });
 
+    // Adapters of frameworks upgrade through a Bun.serve() of their own, and pass its websocket
+    // events to the server socket of this module. They pass what those handlers get.
+    it("takes the events of Bun.serve() from a bridge that is not node:http's", async () => {
+      const wss = new WebSocketServer({ port: 0 });
+      const connected = Promise.withResolvers<WebSocket>();
+      wss.on("connection", connected.resolve);
+      const first = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      first.on("error", connected.reject);
+      // The class of a server socket is not exported.
+      const ServerSocket = (await connected.promise).constructor as new (...args: unknown[]) => WebSocket;
+      first.terminate();
+      wss.close();
+
+      const internals = Symbol.for("::bunternal::");
+      const socket = new ServerSocket("/", "", {});
+      const received: Promise<Received>[] = [];
+      const all = Promise.withResolvers<void>();
+      socket.on("open", () => (socket.binaryType = "arraybuffer"));
+      socket.on("error", all.reject);
+      socket.on("ping", data => received.push(describeReceived("ping", data)));
+      socket.on("message", (data, isBinary) => {
+        received.push(describeReceived("message", data, isBinary));
+        if (received.length === 3) all.resolve();
+      });
+
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request, server) {
+          return server.upgrade(request, { data: socket[internals] })
+            ? undefined
+            : new Response("no upgrade", { status: 400 });
+        },
+        websocket: {
+          open: ws => ws.data.open(ws),
+          message: (ws, message) => ws.data.message(ws, message),
+          close: (ws, code, reason) => ws.data.close(ws, code, reason),
+          drain: ws => ws.data.drain(ws),
+          ping: (ws, data) => ws.data.ping(ws, data),
+          pong: (ws, data) => ws.data.pong(ws, data),
+        },
+      });
+      const client = new WebSocket("ws://127.0.0.1:" + server.port);
+      client.on("error", all.reject);
+      client.on("open", () => {
+        client.ping(Buffer.from([4]));
+        client.send("text");
+        client.send(Buffer.from([1, 2, 3]));
+      });
+      try {
+        await all.promise;
+        expect(await Promise.all(received)).toEqual([
+          { event: "ping", shape: "Buffer", bytes: [4] },
+          { event: "message", shape: "Buffer", bytes: [...Buffer.from("text")], isBinary: false },
+          { event: "message", shape: "ArrayBuffer", bytes: [1, 2, 3], isBinary: true },
+        ]);
+      } finally {
+        client.terminate();
+      }
+    });
+
     it("defaults to nodebuffer and applies a new value to the next frame", async () => {
       const binaryTypesSeen: string[] = [];
       const received = await receiveOnServer(
@@ -1362,6 +1423,16 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
         typeof data === "string" ? "string" : Buffer.isBuffer(data) ? "Buffer" : Object.prototype.toString.call(data);
       let port;
 
+      // Under --hot an error leaves the process alive, in wait for the next edit.
+      process.on("uncaughtException", error => {
+        console.error(error);
+        process.exit(1);
+      });
+      process.on("unhandledRejection", error => {
+        console.error(error);
+        process.exit(1);
+      });
+
       if (generation < 2) {
         const server = createServer();
         const wss = new WebSocketServer({ server });
@@ -1390,6 +1461,8 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
       globalThis.firstPort ??= port;
       const client = new WebSocket("ws://127.0.0.1:" + port);
       client.onopen = () => client.send("text");
+      client.onerror = () => received.reject(new Error("the client of generation " + generation + " failed"));
+      client.onclose = event => received.reject(new Error("the client closed with " + event.code));
       console.log(JSON.stringify({ generation, samePort: port === globalThis.firstPort, ...(await received.promise) }));
       client.close();
 
@@ -1406,20 +1479,24 @@ it("--hot reload from node:http to Bun.serve gives each message handler its own 
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(
-    stdout
+  expect({
+    generations: stdout
       .split(/\r?\n/)
       .filter(line => line.startsWith("{"))
       .map(line => JSON.parse(line)),
-  ).toEqual([
-    { generation: 0, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
-    { generation: 1, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
-    { generation: 2, samePort: true, handler: "Bun.serve", data: "string", arguments: 2 },
-  ]);
+    stderr: stderr.replaceAll(/^DEBUG:.*\r?\n/gm, ""),
+  }).toEqual({
+    generations: [
+      { generation: 0, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
+      { generation: 1, samePort: true, handler: "ws", data: "Buffer", isBinary: false },
+      { generation: 2, samePort: true, handler: "Bun.serve", data: "string", arguments: 2 },
+    ],
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 

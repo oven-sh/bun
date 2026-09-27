@@ -144,7 +144,7 @@ function normalizeData(data, opts) {
 
 // npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
 function controlPayload(binaryType, data) {
-  return binaryType === "arraybuffer" ? Buffer.from(data) : data;
+  return binaryType === "arraybuffer" && !$isTypedArrayView(data) ? Buffer.from(data) : data;
 }
 
 // https://github.com/oven-sh/bun/issues/11866
@@ -1251,20 +1251,26 @@ class BunWebSocketMocked extends EventEmitter {
     };
   }
 
-  // The ServerWebSocket built each payload as npm ws emits it: a Buffer, or for a binary frame
-  // the Buffer, ArrayBuffer or Blob that binaryType selects.
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", data);
+    this.emit("ping", controlPayload(this.#binaryType, data));
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", data);
+    this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
+  // node:http hands over what npm ws emits: a Buffer for a text frame, and the frame type. A
+  // bridge over the handlers of a Bun.serve() of its own hands over a string and no frame type.
   #message(ws, message, isBinary) {
     this.#ws = ws;
+
+    if (isBinary === undefined) {
+      isBinary = typeof message !== "string";
+      if (!isBinary) message = Buffer.from(message);
+    }
+
     this.emit("message", message, isBinary);
   }
 

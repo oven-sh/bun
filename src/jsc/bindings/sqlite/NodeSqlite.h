@@ -18,6 +18,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/StringHash.h>
 #include <array>
 
@@ -412,10 +413,12 @@ public:
     // object's inline storage, we precompute one null-prototype Structure
     // with a slot per distinct column name and then fill each row via
     // putDirectOffset instead of running the generic put machinery per
-    // cell. Built lazily on the first step() that yields columns;
-    // invalidated when the statement is reset with a different shape.
+    // cell. Built lazily on the first step() that yields columns and
+    // kept until SQLite re-prepares the statement with different
+    // column names.
     JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
     void invalidateRowStructure();
+    bool cachedRowNamesMatch();
     // Per-result-column index into the structure's inline slots.
     // Duplicate column names share the first occurrence's slot so the
     // later column overwrites it — last-wins, matching Node's V8
@@ -438,13 +441,18 @@ private:
     // JSSQLStatement).
     size_t m_extraMemorySize = 0;
     int m_rowColumnCount = -1;
-    // Reset-generation the cached row structure was built at. Column
-    // *count* alone isn't a sufficient shape key: sqlite3_prepare_v2
+    // Column names (UTF-8, in result-column order) the cached row
+    // structure was built from, and the statement's
+    // SQLITE_STMTSTATUS_REPREPARE count at that time. Column *count*
+    // alone isn't a sufficient shape key: sqlite3_prepare_v2
     // transparently re-prepares on SQLITE_SCHEMA, so after an ALTER
     // TABLE … RENAME COLUMN the same statement returns the same
-    // count with different names. Keying on reset-generation rebuilds
-    // once per run/get/all/iterate — still O(1) per .all() — instead
-    // of serving stale property names forever.
+    // count with different names. ensureRowStructure() validates the
+    // cache once per reset cycle (m_rowResetGeneration) against the
+    // re-prepare count, and against the name bytes only when that
+    // count moved.
+    WTF::Vector<WTF::CString> m_rowColumnNames;
+    int m_rowReprepareCount = -1;
     unsigned m_rowResetGeneration = 0;
     // Open-generation this statement was prepared on. After db.close()
     // + db.open() the JSDatabaseSync may even get the *same* sqlite3*

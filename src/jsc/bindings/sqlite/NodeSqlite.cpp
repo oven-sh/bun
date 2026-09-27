@@ -39,6 +39,7 @@ static_assert(BUN_SQLITE_BUNDLED_VERSION_NUMBER == SQLITE_VERSION_NUMBER,
     "update BUN_SQLITE_BUNDLED_VERSION to match sqlite3_local.h");
 static inline int lazyLoadSQLite() { return 0; }
 static constexpr bool lazy_sqlite3_has_session = true;
+static constexpr bool lazy_sqlite3_has_stmt_status_reprepare = true;
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() true
 #endif
 
@@ -2512,7 +2513,33 @@ void JSStatementSync::invalidateRowStructure()
 {
     m_rowStructure.clear();
     m_columnOffsets.clear();
+    m_rowColumnNames.clear();
     m_rowColumnCount = -1;
+    m_rowReprepareCount = -1;
+}
+
+// The column names of a prepared statement change only when SQLite
+// re-prepares it (sqlite3VdbeSwap, which also bumps the statement's
+// SQLITE_STMTSTATUS_REPREPARE counter). That happens inside
+// sqlite3_step() on SQLITE_SCHEMA (after ALTER TABLE … RENAME COLUMN,
+// from this or another connection) and when a bound parameter that
+// affects the query plan changes (LIMIT ?, LIKE ?). Called after step():
+// true when the cached names still match the statement.
+bool JSStatementSync::cachedRowNamesMatch()
+{
+    int reprepares = -1;
+    if (lazy_sqlite3_has_stmt_status_reprepare) {
+        reprepares = sqlite3_stmt_status(m_stmt, SQLITE_STMTSTATUS_REPREPARE, 0);
+        if (reprepares == m_rowReprepareCount)
+            return true;
+    }
+    for (size_t i = 0; i < m_rowColumnNames.size(); ++i) {
+        const char* name = sqlite3_column_name(m_stmt, static_cast<int>(i));
+        if (!name || strcmp(name, m_rowColumnNames[i].data()) != 0)
+            return false;
+    }
+    m_rowReprepareCount = reprepares;
+    return true;
 }
 
 // Build (and cache) a null-prototype Structure whose inline slots map
@@ -2520,23 +2547,23 @@ void JSStatementSync::invalidateRowStructure()
 // the column set is too wide for JSFinalObject's inline capacity —
 // callers fall back to the generic rowToObject() in that case.
 //
-// The cache is keyed on m_resetGeneration rather than just the
-// column count. sqlite3_prepare_v2 transparently re-prepares on
-// SQLITE_SCHEMA, so after `ALTER TABLE … RENAME COLUMN` the same
-// statement can return the *same* column count with *different*
-// names — a count-only key would serve a stale {oldName: value}
-// structure forever (bun:sqlite defends the same technique with a
-// per-db write-version; keying on reset-generation gives the same
-// correctness for the simpler cost of rebuilding once per
-// run/get/all/iterate rather than once per schema change). Within
+// The cache is validated once per reset cycle (m_rowResetGeneration
+// changes on every run/get/all/iterate) with cachedRowNamesMatch(),
+// so rows 2..N of one .all() / .iterate() and every later call that
+// did not re-prepare the statement reuse the same Structure. Within
 // a single .all() / .iterate() the generation is constant, so the
 // hot loop still hits the cache for every row after the first.
 Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);
     int count = sqlite3_column_count(m_stmt);
-    if (m_rowResetGeneration == m_resetGeneration && m_rowColumnCount == count && m_rowStructure) {
-        return m_rowStructure.get();
+    if (m_rowColumnCount == count && m_rowStructure) {
+        if (m_rowResetGeneration == m_resetGeneration)
+            return m_rowStructure.get();
+        if (cachedRowNamesMatch()) {
+            m_rowResetGeneration = m_resetGeneration;
+            return m_rowStructure.get();
+        }
     }
     invalidateRowStructure();
     m_rowColumnCount = count;
@@ -2554,12 +2581,14 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
     // columns in order, so the later putDirectOffset overwrites the
     // earlier one just as the generic rowToObject()'s putDirect would.
     m_columnOffsets.reserveCapacity(static_cast<size_t>(count));
+    m_rowColumnNames.reserveCapacity(static_cast<size_t>(count));
     WTF::Vector<Identifier, JSFinalObject::maxInlineCapacity> names;
     for (int i = 0; i < count; ++i) {
         const char* name = sqlite3_column_name(m_stmt, i);
         if (!name || name[0] == '\0') {
             // Pathological — give up on the fast path for this stmt.
             m_columnOffsets.clear();
+            m_rowColumnNames.clear();
             return nullptr;
         }
         auto id = Identifier::fromString(vm, sqliteText(name));
@@ -2569,8 +2598,10 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
         // it via putDirectMayBeIndex().
         if (parseIndex(id)) {
             m_columnOffsets.clear();
+            m_rowColumnNames.clear();
             return nullptr;
         }
+        m_rowColumnNames.append(WTF::CString(name));
         int8_t off = -1;
         for (size_t j = 0; j < names.size(); ++j) {
             if (names[j] == id) {
@@ -2598,6 +2629,8 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
         structure = Structure::addPropertyTransition(vm, structure, id, 0, offset);
     }
     m_rowStructure.set(vm, this, structure);
+    if (lazy_sqlite3_has_stmt_status_reprepare)
+        m_rowReprepareCount = sqlite3_stmt_status(m_stmt, SQLITE_STMTSTATUS_REPREPARE, 0);
     return structure;
 }
 

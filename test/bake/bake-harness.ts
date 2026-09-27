@@ -1084,10 +1084,11 @@ export class Client extends EventEmitter {
   /**
    * Node on Windows sometimes aborts inside its own teardown after the exit the
    * harness requested (a `uv_async_send` on a closing handle). The fixture never
-   * exits with 3 or 9 itself, so that abort is a clean exit.
+   * exits with 3 or STATUS_STACK_BUFFER_OVERRUN (what `abort()` ends a process
+   * with) itself, so that abort is a clean exit.
    */
   async #abortedInTeardown(exitWasRequested: boolean): Promise<boolean> {
-    if (!isWindows || !exitWasRequested || (this.exitCode !== 3 && this.exitCode !== 9)) return false;
+    if (!isWindows || !exitWasRequested || (this.exitCode !== 3 && this.exitCode !== 0xc0000409)) return false;
     // The assertion is on stderr; let both pipes drain before reading the lines.
     if (this.output.closes < 2) await EventEmitter.once(this.output, "close");
     return this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));

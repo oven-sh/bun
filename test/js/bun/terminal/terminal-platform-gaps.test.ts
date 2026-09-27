@@ -370,13 +370,12 @@ describe("Bun.Terminal platform behaviour", () => {
        process.stdin.setRawMode(true);
        const raw = mode();
        process.stdin.setRawMode(false);
-       process.stdout.write("MODES=" + JSON.stringify({ found, untouched, lineInputWhileRaw: raw & 0x2, lineInputAfter: mode() & 0x2 }) + " DONE");
+       // Short enough not to be wrapped: ENABLE_LINE_INPUT is what raw mode takes away.
+       process.stdout.write("MODES=" + JSON.stringify([found, untouched, raw & 0x2, mode() & 0x2]) + " DONE");
        process.exit(0);`,
       { readyMarker: " DONE", done: o => o.includes(" DONE") },
     );
-    expect(Bun.stripANSI(output)).toContain(
-      'MODES={"found":231,"untouched":231,"lineInputWhileRaw":0,"lineInputAfter":2} DONE',
-    );
+    expect(Bun.stripANSI(output)).toContain("MODES=[231,231,0,2] DONE");
   });
 
   // The key that ends input is Ctrl-Z at the start of a line on Windows and Ctrl-D on POSIX.

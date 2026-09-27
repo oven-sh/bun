@@ -6201,3 +6201,96 @@ describe.concurrent("upgradeTLS halves from a default Bun.connect socket and und
     });
   });
 });
+
+// Only the socket keeps the child running: a test in this process cannot see a keep-alive that was dropped.
+it.concurrent("end(data) without an end handler keeps the process alive until the queued tail is sent", async () => {
+  const N = 4 * 1024 * 1024;
+  const child = /* js */ `
+    const { getEventLoopStats } = require("bun:internal-for-testing");
+    const N = ${N};
+    const STEP = 256 * 1024;
+    const payload = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
+    let accepted;
+    let kernelFull;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: Number(process.env.PEER_PORT),
+      socket: {
+        data(socket) {
+          if (accepted !== undefined) return;
+          // write() fills the kernel first, so that end() has to queue its chunk.
+          let sent = 0;
+          let wrote = STEP;
+          while (wrote === STEP && sent + 2 * STEP <= N) {
+            wrote = socket.write(payload.subarray(sent, sent + STEP));
+            sent += Math.max(wrote, 0);
+          }
+          kernelFull = wrote !== STEP;
+          accepted = sent + socket.end(payload.subarray(sent));
+          // Nothing reports the FIN here: it is read at most one loop iteration after the request.
+          const at = getEventLoopStats().iteration;
+          const poll = () => (getEventLoopStats().iteration < at + 2 ? setImmediate(poll) : console.log("fin read"));
+          poll();
+        },
+        close(_socket, error) {
+          console.log("close " + error + " accepted " + accepted + " kernelFull " + kernelFull);
+        },
+      },
+    });
+  `;
+  const expected = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
+  const accepted = Promise.withResolvers<Socket<unknown>>();
+  const peerClosed = Promise.withResolvers<unknown>();
+  let got = 0;
+  let mismatchAt = -1;
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      open(socket) {
+        socket.pause();
+        socket.write("request");
+        socket.shutdown();
+        accepted.resolve(socket);
+      },
+      data(_socket, chunk) {
+        if (mismatchAt === -1 && !chunk.equals(expected.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+        got += chunk.byteLength;
+      },
+      end() {},
+      close: (_socket, error) => peerClosed.resolve(error),
+      error() {},
+    },
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", child],
+    env: { ...bunEnv, PEER_PORT: String(listener.port) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderrText = proc.stderr.text();
+  void proc.exited.then(code => accepted.reject(new Error(`the child exited with ${code} before it connected`)));
+  const peer = await accepted.promise;
+
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    // The peer reads only after the child has read the FIN.
+    if (stdout.includes("fin read\n")) peer.resume();
+  }
+  const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+  // A child that exited early left the peer paused.
+  peer.resume();
+  const peerCloseError = await peerClosed.promise;
+
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr.slice(-2000), peerCloseError, got, mismatchAt }).toEqual({
+    stdout: `fin read\nclose undefined accepted ${N} kernelFull true\n`,
+    stderr: "",
+    peerCloseError: undefined,
+    got: N,
+    mismatchAt: -1,
+  });
+  expect(exitCode).toBe(0);
+});

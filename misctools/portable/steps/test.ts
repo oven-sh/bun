@@ -18,6 +18,12 @@
  * x86_64 run that passes issued none. The "must fail" run of raw_syscall.img shows that the filter is real.
  * The hosted x86_64 tests run three times: as they are, with the memory model of the Windows host
  * (BUN_HOST_TEST=winmem) and with MADV_DONTNEED done the way of the macOS branch (BUN_HOST_TEST=overlay).
+ *
+ * commit.img (test/commit.c) hands memory that no code has touched to the system by itself, as bun's code
+ * for Windows does. It runs by itself, hosted, and hosted with the memory of Windows, where the allocator
+ * has to commit what it hands out. Its "must fail" run is the same memory with a host that does not tell
+ * the image (BUN_HOST_TEST=winmem-quiet): the allocator maps as on Linux, the system call fails, and that
+ * shows that the test sees it.
  */
 
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
@@ -27,7 +33,7 @@ import { TREE } from "../flags.ts";
 import { rewrite } from "../test/rewrite_insn.ts";
 import { check } from "./check.ts";
 import { type Context, inOut } from "./context.ts";
-import { X18_CLOBBER, hostName, imageFile } from "./images.ts";
+import { COMMIT, X18_CLOBBER, hostName, imageFile } from "./images.ts";
 import { BuildError } from "./run.ts";
 
 const THREADS =
@@ -57,6 +63,16 @@ const adoptHosted = (who: string) =>
     `^adopt: mode=hosted check=${who} threads=8 calls=400 sum=149800 expected=149800 adopted_now=0 adopted_ever=8 destructors=8 image_threads_ok=4/4 main_tls=unset$`,
     "m",
   );
+/**
+ * test/commit.c: its first line, and a line after it. `memory` is what the host said of its memory
+ * (AT_BUN_HOST_MEMORY), `call` the system call that wrote into the memory of the image.
+ */
+const commit = (call: string, memory: number, later: string) =>
+  new RegExp(`^commit: os=1 memory=${memory} call=${call}$[^]*^${later}$`, "m");
+/** Every counted case passed. Reported and not counted: the cases that hand over a page of a lazy mapping. */
+const commitPassed = (reported: number) => `commit: failures=0 reported=${reported}`;
+/** The allocator handed out a page that is not committed: the kernel answered EFAULT. */
+const COMMIT_FAILED = "mi_malloc of 8 MiB, never touched: ok=0 error=14";
 
 /** A run that no test needs longer than. One that hangs is a failure, not the end of the tests. */
 const TIME_LIMIT_MS = 600_000;
@@ -156,6 +172,27 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
   // 139 is SIGSEGV: without the check the first use of the thread pointer is an address near 0.
   for (const [who, what] of ADOPT_MUST_FAIL) {
     await expect(139, /(?:)/, `${arch} adopt hosted, must fail: ${what}`, [...emulator, host, image("adopt"), who]);
+  }
+
+  // The file that commit.img reads where the system call is pread is the image itself.
+  const commitImage = image(COMMIT);
+  if (existsSync(commitImage)) {
+    const direct = [...emulator, commitImage, commitImage];
+    const hosted = [...emulator, host, commitImage, commitImage];
+    await expect(42, commit("pread", 0, commitPassed(0)), `${arch} commit direct`, direct);
+    await expect(42, commit("test_fill", 0, commitPassed(0)), `${arch} commit hosted`, hosted);
+    await expect(42, commit("test_fill", 1, commitPassed(2)), `${arch} commit hosted, winmem`, hosted, {
+      BUN_HOST_TEST: "winmem",
+    });
+    await expect(
+      43,
+      commit("test_fill", 0, COMMIT_FAILED),
+      `${arch} must fail: commit hosted, winmem and the host does not tell the image`,
+      hosted,
+      { BUN_HOST_TEST: "winmem-quiet" },
+    );
+  } else {
+    console.log("commit.img: not run, the image is not built (command: sysroot, then test-image)");
   }
 
   let checked = await check(ctx, false);

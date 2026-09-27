@@ -8,10 +8,11 @@
  *   aarch64   test/check_aarch64.ts: x18 is never written, no svc that is not behind __bun_host, the thread
  *             register in the three ways of __get_tp only, no TLS segment. test/check_signature.ts: the
  *             Apple code signature of every image.
- *             The images of JavaScriptCore (jsc*.img) are read by test/check_aarch64_jsc.ts, which knows
- *             the reads of x18 that JavaScriptCore has, the registers of the system and the data between
- *             its instructions. And the control: that check reports variants/x18_clobber.img, the image
- *             that writes x18.
+ *             The images that link more than the libc are read by test/check_aarch64_jsc.ts, which knows
+ *             the reads of x18 that are not "mov xN, x18" (the unwinder of the C++ runtime keeps x18 in
+ *             its context), the registers of the system and the data between the instructions of
+ *             JavaScriptCore: jsc*.img, and commit.img, which links mimalloc. And the control: that
+ *             check reports variants/x18_clobber.img, the image that writes x18.
  *
  * Checked are the libc, musl's crt objects, the builtins and every image of the output directory. The
  * command `check` also reads every other library of the sysroot that is built: none of them may have any
@@ -25,7 +26,7 @@ import { checkAarch64 } from "../test/check_aarch64.ts";
 import { SignatureError, checkSignature } from "../test/check_signature.ts";
 import { checkX86_64 } from "../test/check_x86_64.ts";
 import { type Context, inOut } from "./context.ts";
-import { X18_CLOBBER, imageFile } from "./images.ts";
+import { COMMIT, X18_CLOBBER, imageFile } from "./images.ts";
 
 /** The image whose only purpose is to break the rules. */
 const MUST_FAIL = "raw_syscall.img";
@@ -111,8 +112,10 @@ export async function check(ctx: Context, wholeSysroot: boolean): Promise<boolea
 
   const builtins = [ctx.sysroot.builtins];
   const archives = wholeSysroot ? otherArchives(ctx).filter(path => path !== ctx.sysroot.builtins) : [];
-  const ofJavaScriptCore = images.filter(path => /^jsc(\.|$)/.test(path.slice(ctx.out.length + 1)));
-  const small = images.filter(path => !ofJavaScriptCore.includes(path));
+  const withRuntime = images.filter(
+    path => /^jsc(\.|$)/.test(path.slice(ctx.out.length + 1)) || path === imageFile(ctx, COMMIT),
+  );
+  const small = images.filter(path => !withRuntime.includes(path));
   const result = await checkAarch64({ out: ctx.out, sysroot, builtins, archives, images: small, llvm: ctx.llvm });
   const output = [...result.lines, ...result.errors.map(error => `ERROR ${error}`)];
   const rest = wholeSysroot ? `, ${archives.length} more archives and objects of the sysroot,` : "";
@@ -132,7 +135,7 @@ export async function check(ctx: Context, wholeSysroot: boolean): Promise<boolea
     const name = `aarch64 static checks of ${small.length} images, every instruction that names x18`;
     passed = report(name, all.code === 0, all.lines) && passed;
   }
-  for (const path of ofJavaScriptCore) {
+  for (const path of withRuntime) {
     const one = read([
       "--image",
       path,

@@ -214,6 +214,7 @@ describe("portable image config", () => {
     expect(spec.cflags!.filter(f => f.startsWith("-ftls-model"))).toBeEmpty();
     expect((mimalloc.patches as (cfg: Config) => string[])(cfg)).toEqual([
       "patches/mimalloc/portable-theap-null-in-new.patch",
+      "patches/mimalloc/portable-host-commits.patch",
     ]);
   });
 

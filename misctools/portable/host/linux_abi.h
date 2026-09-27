@@ -16,6 +16,17 @@
 /* The number of entries of the host table that the host filled. The libc of the image takes a host
    that does not say for one with the first five. */
 #define AT_BUN_HOST_ENTRIES 0x62756e10
+/* How the memory of the host behaves, as bits. A host that sends nothing, and the kernel of Linux,
+   have the value 0: memory is usable after it was mapped, and a page is accounted when it is touched.
+   BUN_HOST_MEMORY_COMMITS    memory is usable after it was committed, and what is committed is
+                              accounted. An allocator reserves with PROT_NONE, commits with
+                              mprotect, and decommits with mprotect(PROT_NONE) followed by
+                              madvise(MADV_DONTNEED). What is mapped with MAP_NORESERVE and a
+                              protection that allows access is committed when code of the process
+                              faults on a page, which a system call of the host OS does not do
+                              (memory.h). The image reads the entry with getauxval() */
+#define AT_BUN_HOST_MEMORY 0x62756e11
+#define BUN_HOST_MEMORY_COMMITS 1
 /* Requests of the image that are not Linux syscalls. They arrive through the
    syscall entry of the host table like the others.
    N_set_tp(tp)               make tp the thread pointer of this thread (aarch64 images.

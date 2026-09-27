@@ -14,6 +14,12 @@
  * others and the allocators of its optimizing compilers hand it out. The image is Linux inside and runs
  * on all of them, so its build takes the first list: one line of ARM64Registers.h asks for the definition
  * JSC_ARM64_RESERVE_X18 (patches/webkit-arm64-registers-reserve-x18.diff), and the build defines it.
+ *
+ * Memory: where the host says that memory is usable after it was committed (AT_BUN_HOST_MEMORY of
+ * host/linux_abi.h: the Windows host), JavaScriptCore does what its OSAllocator for Windows does, in the
+ * calls of Linux (patches/webkit-osallocator-host-commits.diff), and mimalloc does the same
+ * (patches/mimalloc/portable-host-commits.patch of the repository).
+ *
  * $JSC_VARIANT builds another image of the same sources, in a build directory of its own:
  *   x18-allocatable   WITHOUT the definition: <out>/jsc.x18-allocatable.img, the negative control of the
  *                     x18 tests. Never run that image under a host that keeps something in x18.
@@ -24,7 +30,7 @@
  * An aarch64 image ends with an ad-hoc Apple code signature (tools/apple_sign.ts).
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MEMORY_FUNCTIONS,
@@ -43,14 +49,62 @@ import { BuildError, type GitSource, fetchGit, run, sha256File } from "./run.ts"
 import { cmakeToolchain } from "./sysroot.ts";
 
 /**
- * mi_new, mi_new_n and mi_mallocn hand the default heap of the thread to mi_theap_malloc, which does not
- * take the NULL that a thread has there before its first allocation in the pthreads model.
+ * What the image changes in mimalloc: the files patches/mimalloc/portable-* of the repository, which bun's
+ * own build of the image applies too (scripts/build/deps/mimalloc.ts). They are applied in the order in
+ * which that script names them, and it has to name every one of them: the two builds link one allocator.
  */
-const MIMALLOC_PATCH = join(TREE, "patches", "mimalloc-theap-null-in-new.diff");
+export function mimallocPatches(): string[] {
+  const dir = join(REPOSITORY, "patches", "mimalloc");
+  const script = join(REPOSITORY, "scripts", "build", "deps", "mimalloc.ts");
+  if (!existsSync(dir) || !existsSync(script)) {
+    throw new BuildError(`${dir} or ${script} is not there: build.ts has to run from bun's repository`);
+  }
+  const files = readdirSync(dir)
+    .filter(name => name.startsWith("portable-"))
+    .sort();
+  const named = [...readFileSync(script, "utf8").matchAll(/"patches\/mimalloc\/(portable-[^"]+)"/g)].map(
+    match => match[1]!,
+  );
+  if (files.length === 0 || [...named].sort().join() !== files.join()) {
+    throw new BuildError(
+      `${dir} has ${files.join(", ") || "no file portable-*"}, ${script} names ${named.join(", ") || "none"}`,
+      { hint: "both builds of the image apply the same patches of mimalloc" },
+    );
+  }
+  return named.map(name => join(dir, name));
+}
+
+/** A patch of WebKit, and what shows that a checkout has it: a file, and a word that the patch puts there. */
+interface WebkitPatch {
+  patch: string;
+  file: string;
+  has: string;
+}
 
 /** aarch64: the list of registers of JavaScriptCore that keeps x18 free can be asked for by a definition. */
-const RESERVE_X18_PATCH = join(TREE, "patches", "webkit-arm64-registers-reserve-x18.diff");
+const RESERVE_X18_PATCH: WebkitPatch = {
+  patch: join(TREE, "patches", "webkit-arm64-registers-reserve-x18.diff"),
+  file: "Source/JavaScriptCore/assembler/ARM64Registers.h",
+  has: "JSC_ARM64_RESERVE_X18",
+};
 const RESERVE_X18 = "-DJSC_ARM64_RESERVE_X18=1";
+
+/**
+ * Under a host that commits memory, OSAllocator reserves with PROT_NONE, commits with mprotect and
+ * decommits with mprotect(PROT_NONE) and madvise(MADV_DONTNEED). A block of the heap keeps the pages that
+ * hold no live cell: on Linux it gives them back by a decommit after which it reads them.
+ */
+const HOST_COMMITS_PATCH: WebkitPatch = {
+  patch: join(TREE, "patches", "webkit-osallocator-host-commits.diff"),
+  file: "Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp",
+  has: "AT_BUN_HOST_MEMORY",
+};
+
+/** The patches of WebKit for the image, in the order in which they are applied. */
+function webkitPatches(ctx: Context): WebkitPatch[] {
+  return [HOST_COMMITS_PATCH, ...(ctx.arch === "aarch64" ? [RESERVE_X18_PATCH] : [])];
+}
+
 const JIT_PERMISSIONS_HEADER = join(TREE, "jsc", "bun_jit_permissions.h");
 
 /** Which image of JavaScriptCore is built, see the top of this file. "" is the image. */
@@ -141,11 +195,12 @@ function tlsModel(): string {
 // mimalloc
 // ───────────────────────────────────────────────────────────────────────────
 
-function mimallocObject(ctx: Context): string {
+export function mimallocObject(ctx: Context): string {
   return inOut(ctx, "build", `mimalloc-${tlsModel()}`, "mimalloc.o");
 }
 
 function mimalloc(ctx: Context, before: string): Step {
+  const patches = mimallocPatches();
   const source: GitSource = {
     url: "https://github.com/oven-sh/mimalloc",
     urlVariable: "MIMALLOC_GIT",
@@ -196,11 +251,11 @@ function mimalloc(ctx: Context, before: string): Step {
   const object = mimallocObject(ctx);
   return {
     name: `mimalloc-${tlsModel()}`,
-    inputs: [before, source.commit, sha256File(MIMALLOC_PATCH), flags],
+    inputs: [before, source.commit, patches.map(sha256File), flags],
     outputs: [object],
     make() {
       const dir = inOut(ctx, "src", "mimalloc");
-      fetchGit("mimalloc", source, dir, [MIMALLOC_PATCH], inOut(ctx, "logs"));
+      fetchGit("mimalloc", source, dir, patches, inOut(ctx, "logs"));
       mkdirSync(join(object, ".."), { recursive: true });
       run(
         [tool(ctx, "clang++"), ...flags, `-I${join(dir, "include")}`, "-c", join(dir, "src", "static.c"), "-o", object],
@@ -220,14 +275,14 @@ function mimalloc(ctx: Context, before: string): Step {
 /** The checkout that is compiled, and the commit it is at. $BUN_WEBKIT_PATH is read and never written. */
 export function webkitSource(ctx: Context): { dir: string; commit: string; fetch: () => void } {
   const given = process.env.BUN_WEBKIT_PATH;
-  const patches = ctx.arch === "aarch64" ? [RESERVE_X18_PATCH] : [];
+  const patches = webkitPatches(ctx);
   if (given !== undefined && given !== "") {
     if (!existsSync(join(given, "Source", "JavaScriptCore"))) {
       throw new BuildError(`BUN_WEBKIT_PATH=${given}: no checkout of WebKit (Source/JavaScriptCore is not there)`);
     }
-    const registers = join(given, "Source", "JavaScriptCore", "assembler", "ARM64Registers.h");
-    if (patches.length > 0 && !readFileSync(registers, "utf8").includes("JSC_ARM64_RESERVE_X18")) {
-      throw new BuildError(`BUN_WEBKIT_PATH=${given}: the checkout does not have ${RESERVE_X18_PATCH}`, {
+    for (const { patch, file, has } of patches) {
+      if (existsSync(join(given, file)) && readFileSync(join(given, file), "utf8").includes(has)) continue;
+      throw new BuildError(`BUN_WEBKIT_PATH=${given}: the checkout does not have ${patch}`, {
         hint: "it is read and never written. Without BUN_WEBKIT_PATH the build clones WebKit and applies the patch",
       });
     }
@@ -247,7 +302,14 @@ export function webkitSource(ctx: Context): { dir: string; commit: string; fetch
   return {
     dir,
     commit: source.commit,
-    fetch: () => void fetchGit("webkit", source, dir, patches, inOut(ctx, "logs")),
+    fetch: () =>
+      void fetchGit(
+        "webkit",
+        source,
+        dir,
+        patches.map(({ patch }) => patch),
+        inOut(ctx, "logs"),
+      ),
   };
 }
 
@@ -292,10 +354,10 @@ function webkit(ctx: Context, before: string): Step {
     ...(ctx.arch === hostArch() ? [] : cmakeToolchain(ctx).filter(option => option.startsWith("-DCMAKE_SYSTEM_"))),
   ];
   const build = webkitBuild(ctx, variant);
-  const inputs =
-    ctx.arch === "aarch64"
-      ? [sha256File(RESERVE_X18_PATCH), ...(variant === "jit-permissions" ? [sha256File(JIT_PERMISSIONS_HEADER)] : [])]
-      : [];
+  const inputs = [
+    ...webkitPatches(ctx).map(({ patch }) => sha256File(patch)),
+    ...(variant === "jit-permissions" ? [sha256File(JIT_PERMISSIONS_HEADER)] : []),
+  ];
   return {
     name: `webkit${suffixOf(variant)}`,
     inputs: [before, source.commit, source.dir, options, ...inputs],
@@ -403,6 +465,14 @@ function link(ctx: Context, before: string): Step {
       console.log(JSON.stringify(facts, null, 1));
     },
   };
+}
+
+/**
+ * The allocator of the image, for an image that is not the one of JavaScriptCore (test/commit.c). `sysroot`
+ * is the identity of the whole sysroot, as for `buildJsc`. Returns the identity of the allocator.
+ */
+export async function buildMimalloc(ctx: Context, sysroot: string): Promise<string> {
+  return await runStep(ctx, mimalloc(ctx, sysroot));
 }
 
 /** `sysroot` is the identity of the sysroot that everything here is compiled and linked against. */

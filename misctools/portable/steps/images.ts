@@ -12,6 +12,11 @@
  *   <out>/variants/x18_clobber.img   aarch64: an image that writes x18 on purpose. The tests show that the
  *                           host ends it and that the static checks report it (test/x18_clobber.c). It is
  *                           not next to the others: what is there has to pass the static checks
+ *   <out>/commit.img        memory that no code has touched, handed to the system by the image itself
+ *                           (test/commit.c). It links the allocator of the image, mimalloc, which is
+ *                           compiled against the whole sysroot: the image is built when every step of
+ *                           `sysroot` is current, and then mimalloc is built here if it has to be (one
+ *                           file, the step of `jsc`). With less of a sysroot there is no commit.img
  *   <out>/memory_model      test of host/memory.h by itself, a program of this machine (test/memory_model.c)
  *   <out>/host-linux        the POSIX host in hosted mode, for testing the host path on linux
  *
@@ -22,8 +27,10 @@ import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { IMAGE_LINK_FLAGS, TREE, abiFlags, hostArch, targetOf } from "../flags.ts";
 import { sign } from "../tools/apple_sign.ts";
-import { type Context, type Step, inOut, runStep } from "./context.ts";
+import { type Context, type Step, forgetStep, inOut, runStep } from "./context.ts";
+import { buildMimalloc, mimallocObject } from "./jsc.ts";
 import { run, sha256File } from "./run.ts";
+import { sysrootSteps } from "./sysroot.ts";
 
 /** The images of an architecture, by the name of their source in test/. */
 export function testImages(ctx: Context): string[] {
@@ -72,22 +79,30 @@ function libraries(ctx: Context): string[] {
 /** The image of the tests that breaks a rule on purpose, aarch64. */
 export const X18_CLOBBER = "x18_clobber";
 
+/** The image of the tests that links the allocator of the image. */
+export const COMMIT = "commit";
+
 export function imageFile(ctx: Context, name: string): string {
   return name === X18_CLOBBER ? inOut(ctx, "variants", `${name}.img`) : inOut(ctx, `${name}.img`);
 }
 
-function image(ctx: Context, name: string, before: string): Step {
+/**
+ * `before` is the identity of what the image links against. `allocator` is the object of mimalloc, for the
+ * image that links it: it is compiled as C++, and its operator new asks the C++ runtime for the handler.
+ */
+function image(ctx: Context, name: string, before: string, allocator?: string): Step {
   const more = MORE[name] ?? { sources: [], flags: [] };
   const sources = [`${name}.c`, ...more.sources].map(source => join(TREE, "test", source));
   const file = imageFile(ctx, name);
   const flags = [...abiFlags(ctx.arch), ...more.flags];
   const link = ["-static", "-pie", "--no-dynamic-linker", "-z", "noexecstack", ...IMAGE_LINK_FLAGS];
+  const runtime = allocator === undefined ? [] : ["-lc++", "-lc++abi", "-lunwind"];
   const lists = more.flags
     .filter(flag => flag.startsWith("-fsanitize-coverage-allowlist="))
     .map(flag => sha256File(flag.slice(flag.indexOf("=") + 1)));
   return {
     name: `image-${name}`,
-    inputs: [before, sources.map(sha256File), flags, lists, link],
+    inputs: [before, sources.map(sha256File), flags, lists, link, ...(allocator === undefined ? [] : [runtime])],
     outputs: [file],
     make() {
       mkdirSync(inOut(ctx, "build", "images"), { recursive: true });
@@ -107,6 +122,7 @@ function image(ctx: Context, name: string, before: string): Step {
         crt("rcrt1.o"),
         crt("crti.o"),
         ...objects,
+        ...(allocator === undefined ? [] : [allocator, `-L${ctx.sysroot.lib}`, ...runtime]),
         ...libraries(ctx),
         crt("crtn.o"),
       ]);
@@ -114,6 +130,26 @@ function image(ctx: Context, name: string, before: string): Step {
       if (ctx.arch === "aarch64") sign(file);
     },
   };
+}
+
+/**
+ * commit.img and, if it has to be built, the allocator that it links. Without a whole sysroot that is
+ * current there is no commit.img, and one that an earlier sysroot left is taken away: the tests run what
+ * is there.
+ */
+async function buildCommitImage(ctx: Context): Promise<void> {
+  const steps = sysrootSteps(ctx);
+  const missing = steps.filter(step => !step.current).map(step => step.name);
+  if (missing.length > 0) {
+    forgetStep(ctx, image(ctx, COMMIT, "", mimallocObject(ctx)));
+    console.log(
+      `[image-${COMMIT}] not built: it links mimalloc, which takes the whole sysroot. ` +
+        `Not built or not current: ${missing.join(", ")} (command: sysroot)`,
+    );
+    return;
+  }
+  const allocator = await buildMimalloc(ctx, steps.at(-1)!.identity);
+  await runStep(ctx, image(ctx, COMMIT, allocator, mimallocObject(ctx)));
 }
 
 function memoryModel(ctx: Context): Step {
@@ -195,6 +231,7 @@ function host(ctx: Context, before: string): Step {
 export async function buildTestImages(ctx: Context, libc: string): Promise<void> {
   for (const name of testImages(ctx)) await runStep(ctx, image(ctx, name, libc));
   if (ctx.arch === "aarch64") await runStep(ctx, image(ctx, X18_CLOBBER, libc));
+  await buildCommitImage(ctx);
   await runStep(ctx, memoryModel(ctx));
 }
 

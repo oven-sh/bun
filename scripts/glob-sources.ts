@@ -34,7 +34,7 @@ interface SourcePattern {
 const patterns = {
   /** `packages/bun-error/*` — error overlay page */
   bunError: {
-    paths: ["packages/bun-error/*.{json,ts,tsx,css}", "packages/bun-error/img/*"],
+    paths: ["packages/bun-error/*.{json,ts,tsx,css}"],
   },
   /** `*.string-map.ts` — input to generate-string-map codegen */
   stringMaps: {
@@ -77,8 +77,7 @@ const patterns = {
   },
   /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
-   * `rust-toolchain.toml` is included so a nightly bump invalidates the
-   * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   * `rust-toolchain.toml` is included so a nightly bump re-plans the crate graph.
    * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
    * dev error page template), so edits to it must re-run cargo too.
    */
@@ -123,7 +122,6 @@ const patterns = {
       "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/*.c",
       "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },

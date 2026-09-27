@@ -21,7 +21,7 @@ pub mod w_path_buffer_pool {
         PathBufferPoolT::<WPathBuffer>::get()
     }
     #[inline]
-    pub(crate) fn put(buf: Box<WPathBuffer>) {
+    pub fn put(buf: Box<WPathBuffer>) {
         PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }
@@ -332,13 +332,13 @@ pub mod path_buffer_pool;
 // or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
 // compile; the convenience wrappers don't yet. Gate the module; expose Platform.
 pub mod resolve_path;
-pub use resolve_path::{Platform, PlatformT, platform};
+pub use resolve_path::{Platform, platform};
 pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
 };
 pub mod classify;
-pub use classify::{RelPathFacts, classify_rel_t};
+pub use classify::classify_rel_t;
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
@@ -347,7 +347,6 @@ pub use resolve_path::{
     dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
     is_sep_native_t, join_abs_string_buf, join_abs_string_buf_z, path_to_posix_buf,
     relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
-    windows_volume_name_len,
 };
 // Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
@@ -426,7 +425,7 @@ pub fn dirname(p: &[u8]) -> Option<&[u8]> {
 }
 #[path = "EnvPath.rs"]
 pub mod env_path;
-pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
+pub use env_path::EnvPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
@@ -492,14 +491,10 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
     debug_assert!(!non_absolute_path.starts_with(b"/"));
 
     let p = non_absolute_path;
-    if p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b".." {
-        return false;
-    }
+    let dot_relative = p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b"..";
     #[cfg(windows)]
-    if p.starts_with(b".\\") || p.starts_with(b"..\\") {
-        return false;
-    }
-    true
+    let dot_relative = dot_relative || p.starts_with(b".\\") || p.starts_with(b"..\\");
+    !dot_relative
 }
 
 // ──────────────────────────────────────────────────────────────────────────

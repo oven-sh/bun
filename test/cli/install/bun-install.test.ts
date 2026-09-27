@@ -17,7 +17,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { join, resolve, sep } from "path";
+import { basename, join, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -448,6 +448,64 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  describe.each([
+    // The proxy would refuse the retry too.
+    { status: "407 Proxy Authentication Required", code: 407, connects: 1 },
+    // Its upstream may be back by the retry: 1 attempt + 5 retries.
+    { status: "502 Bad Gateway", code: 502, connects: 6 },
+  ])("a proxy that answers CONNECT with $code", ({ status, code, connects }) => {
+    it(`is reported with its status after ${connects} attempt(s)`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        const seen: string[] = [];
+        const proxy = listen<{ head: string }>({
+          socket: {
+            open(socket) {
+              socket.data = { head: "" };
+            },
+            data(socket, data) {
+              socket.data.head += data.toString();
+              const end = socket.data.head.indexOf("\r\n\r\n");
+              if (end === -1) return;
+              seen.push(socket.data.head.slice(0, socket.data.head.indexOf("\r\n")));
+              socket.end(`HTTP/1.1 ${status}\r\nContent-Length: 0\r\n\r\n`);
+            },
+          },
+          hostname: "127.0.0.1",
+          port: 0,
+        });
+        try {
+          await writeFile(
+            join(ctx.package_dir, "bunfig.toml"),
+            Bun.TOML.stringify({ install: { cache: false, registry: "https://registry.invalid/" } }),
+          );
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+          );
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: {
+              ...env,
+              HTTPS_PROXY: `http://127.0.0.1:${proxy.port}`,
+              https_proxy: undefined,
+              NO_PROXY: undefined,
+              no_proxy: undefined,
+            },
+          });
+          const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(err).toContain(`error: ProxyConnectFailed (${code}) downloading package manifest bar`);
+          expect(seen).toEqual(Array(connects).fill("CONNECT registry.invalid:443 HTTP/1.1"));
+          expect(exitCode).toBe(1);
+        } finally {
+          proxy.stop(true);
+        }
+      });
+    });
+  });
+
   it("should support --registry CLI flag", async () => {
     await withContext(defaultOpts, async ctx => {
       const connected = jest.fn();
@@ -852,6 +910,247 @@ describe.concurrent("bun-install", () => {
     });
     expect(stdout).toContain("2 packages installed");
     expect(exitCode).toBe(0);
+  });
+
+  // A tarball URL with credentials in it is downloaded the way npm downloads
+  // it: the userinfo becomes `Authorization: Basic base64(user:pass)` and the
+  // request goes to the URL without it (`NetworkTask::for_tarball`).
+  describe.concurrent("credentials embedded in a tarball URL", () => {
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+    const tarballPath = "/cdn/no-deps-1.0.0.tgz";
+    const basic = (userPass: string) => `Basic ${Buffer.from(userPass).toString("base64")}`;
+    const installed = {
+      stdout: expect.stringContaining("1 package installed"),
+      stderr: expect.stringContaining("Saved lockfile"),
+      exitCode: 0,
+    };
+
+    type Received = { url: string; authorization: string | null };
+
+    function recording(received: Received[], handler: (req: Request, server: { port: number }) => Response) {
+      return (req: Request, server: { port: number }) => {
+        received.push({ url: req.url, authorization: req.headers.get("authorization") });
+        return handler(req, server);
+      };
+    }
+
+    // Serves `tgz` to `.tgz` requests carrying exactly `authorization` and
+    // answers 401 to the others. A request under `/redirect/` is first
+    // redirected to `redirectTo`, or to the same file under `/cdn/`.
+    function serveTarball(received: Received[], authorization: string | null, redirectTo?: string) {
+      return Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: recording(received, (req, server) => {
+          const { pathname } = new URL(req.url);
+          if (pathname.startsWith("/redirect/")) {
+            const name = pathname.slice("/redirect/".length);
+            return Response.redirect(redirectTo ?? `http://127.0.0.1:${server.port}/cdn/${name}`, 302);
+          }
+          if (req.headers.get("authorization") !== authorization) {
+            return new Response("unauthorized", { status: 401 });
+          }
+          return new Response(file(tgz));
+        }),
+      });
+    }
+
+    // `bun install` of a project whose only dependency `no-deps` is `dependency`.
+    async function install(dependency: string, files: Record<string, string> = {}, args: string[] = []) {
+      using dir = tempDir("tarball-url-credentials", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": dependency } }),
+        ...files,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // Each row is the userinfo of the dependency URL and the `user:pass` the
+    // header must encode. It is sent as written: like npm (checked with npm
+    // 11), a missing password is sent as an empty one and percent-encoding is
+    // left alone. npm would percent-encode the second colon of the last row
+    // because it serializes the URL first.
+    it.each([
+      ["a username and a password", "carol:s3cret", "carol:s3cret", []],
+      ["a username and a password, isolated linker", "carol:s3cret", "carol:s3cret", ["--linker", "isolated"]],
+      ["a username only", "carol", "carol:", []],
+      ["a password only", ":s3cret", ":s3cret", []],
+      ["a percent-encoded password", "carol:s3%40cret", "carol:s3%40cret", []],
+      ["a password containing a colon", "carol:s3:cret", "carol:s3:cret", []],
+    ])("sends %s as Basic authorization", async (_, userinfo, userPass, args) => {
+      const authorization = basic(userPass);
+      const received: Received[] = [];
+      await using server = serveTarball(received, authorization);
+
+      const result = await install(`http://${userinfo}@127.0.0.1:${server.port}${tarballPath}`, {}, args);
+
+      expect({ received, ...result }).toEqual({
+        received: [{ url: `http://127.0.0.1:${server.port}${tarballPath}`, authorization }],
+        ...installed,
+      });
+    });
+
+    it("does not take the @ of a scoped package path for credentials", async () => {
+      const received: Received[] = [];
+      await using server = serveTarball(received, null);
+      const scopedPath = "/@scope/no-deps/-/no-deps-1.0.0.tgz";
+
+      const result = await install(`http://127.0.0.1:${server.port}${scopedPath}`);
+
+      expect({ received, ...result }).toEqual({
+        received: [{ url: `http://127.0.0.1:${server.port}${scopedPath}`, authorization: null }],
+        ...installed,
+      });
+    });
+
+    it("sends the credentials to the host in front of a backslash, not the one behind it", async () => {
+      // `new URL("http://u:p@first\\x@second/pkg.tgz")` reads the host as `first` and the
+      // credentials as `u:p`, because a `\` ends the authority of an http URL. npm reads it the
+      // same way. The path of the request is not compared: Windows turns the `\` into a `/`.
+      const firstReceived: Received[] = [];
+      const secondReceived: Received[] = [];
+      await using first = serveTarball(firstReceived, basic("u:p"));
+      await using second = serveTarball(secondReceived, null);
+
+      const result = await install(
+        String.raw`http://u:p@127.0.0.1:${first.port}\x@127.0.0.1:${second.port}${tarballPath}`,
+      );
+
+      expect({
+        first: firstReceived.map(({ url, authorization }) => ({ host: new URL(url).host, authorization })),
+        secondReceived,
+        ...result,
+      }).toEqual({
+        first: [{ host: `127.0.0.1:${first.port}`, authorization: basic("u:p") }],
+        secondReceived: [],
+        ...installed,
+      });
+    });
+
+    it("keeps the credentials across a redirect within the host", async () => {
+      const received: Received[] = [];
+      await using server = serveTarball(received, basic("carol:s3cret"));
+
+      const result = await install(`http://carol:s3cret@127.0.0.1:${server.port}/redirect/no-deps-1.0.0.tgz`);
+
+      expect({ received, ...result }).toEqual({
+        received: [
+          { url: `http://127.0.0.1:${server.port}/redirect/no-deps-1.0.0.tgz`, authorization: basic("carol:s3cret") },
+          { url: `http://127.0.0.1:${server.port}${tarballPath}`, authorization: basic("carol:s3cret") },
+        ],
+        ...installed,
+      });
+    });
+
+    it("drops the credentials on a redirect to another host", async () => {
+      // The same machine, reached under a hostname other than the one the
+      // credentials were written for. This host serves the tarball regardless.
+      const otherHostReceived: Received[] = [];
+      await using otherHost = Bun.serve({
+        port: 0,
+        fetch: recording(otherHostReceived, () => new Response(file(tgz))),
+      });
+      const received: Received[] = [];
+      await using server = serveTarball(received, null, `http://localhost:${otherHost.port}${tarballPath}`);
+
+      const result = await install(`http://carol:s3cret@127.0.0.1:${server.port}/redirect/no-deps-1.0.0.tgz`);
+
+      expect({ received, otherHostReceived, ...result }).toEqual({
+        received: [
+          { url: `http://127.0.0.1:${server.port}/redirect/no-deps-1.0.0.tgz`, authorization: basic("carol:s3cret") },
+        ],
+        otherHostReceived: [{ url: `http://localhost:${otherHost.port}${tarballPath}`, authorization: null }],
+        ...installed,
+      });
+    });
+
+    it("reports a rejected download by the URL without the credentials", async () => {
+      const received: Received[] = [];
+      await using server = serveTarball(received, basic("carol:s3cret"));
+
+      const result = await install(`http://carol:wrong@127.0.0.1:${server.port}${tarballPath}`);
+
+      expect({ received, ...result }).toEqual({
+        received: [{ url: `http://127.0.0.1:${server.port}${tarballPath}`, authorization: basic("carol:wrong") }],
+        stdout: expect.stringContaining("bun install v1."),
+        stderr: expect.stringContaining(`error: GET http://127.0.0.1:${server.port}${tarballPath} - 401`),
+        exitCode: 1,
+      });
+    });
+
+    // A registry whose manifest puts credentials into `dist.tarball`. As with
+    // npm, the credentials configured for the registry take precedence; the
+    // URL's are used when the registry has none.
+    describe.concurrent("in the dist.tarball URL of a registry manifest", () => {
+      const token = "registry-token";
+      const distPath = "/no-deps/-/no-deps-1.0.0.tgz";
+
+      function serveRegistry(received: Received[], tarballAuthorization: string | null) {
+        return Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch: recording(received, (req, server) => {
+            const { pathname } = new URL(req.url);
+            if (pathname === "/no-deps") {
+              return Response.json({
+                name: "no-deps",
+                "dist-tags": { latest: "1.0.0" },
+                versions: {
+                  "1.0.0": {
+                    name: "no-deps",
+                    version: "1.0.0",
+                    dist: { tarball: `http://dist:d1st@127.0.0.1:${server.port}${distPath}` },
+                  },
+                },
+              });
+            }
+            if (pathname === distPath && req.headers.get("authorization") === tarballAuthorization) {
+              return new Response(file(tgz));
+            }
+            return new Response("unauthorized", { status: 401 });
+          }),
+        });
+      }
+
+      it("sends the registry's credentials when it has some", async () => {
+        const received: Received[] = [];
+        await using registry = serveRegistry(received, `Bearer ${token}`);
+
+        const result = await install("1.0.0", {
+          ".npmrc": `registry=http://127.0.0.1:${registry.port}/\n//127.0.0.1:${registry.port}/:_authToken=${token}\n`,
+        });
+
+        expect({ received, ...result }).toEqual({
+          received: [
+            { url: `http://127.0.0.1:${registry.port}/no-deps`, authorization: `Bearer ${token}` },
+            { url: `http://127.0.0.1:${registry.port}${distPath}`, authorization: `Bearer ${token}` },
+          ],
+          ...installed,
+        });
+      });
+
+      it("sends the URL's credentials when the registry has none", async () => {
+        const received: Received[] = [];
+        await using registry = serveRegistry(received, basic("dist:d1st"));
+
+        const result = await install("1.0.0", { ".npmrc": `registry=http://127.0.0.1:${registry.port}/\n` });
+
+        expect({ received, ...result }).toEqual({
+          received: [
+            { url: `http://127.0.0.1:${registry.port}/no-deps`, authorization: null },
+            { url: `http://127.0.0.1:${registry.port}${distPath}`, authorization: basic("dist:d1st") },
+          ],
+          ...installed,
+        });
+      });
+    });
   });
 
   it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {
@@ -2412,6 +2711,39 @@ describe.concurrent("bun-install", () => {
         version: "0.0.2",
       });
       await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  it("records an 8-byte non-ASCII version range from a manifest", async () => {
+    // 8 bytes whose last byte has the high bit set cannot be stored inline in
+    // the lockfile's small-string encoding; it has to be copied like a longer
+    // string. "1.0.0-é" is 6 ASCII bytes + 0xC3 0xA9.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { peerDependencies: { quux: "1.0.0-é" }, peerDependenciesMeta: { quux: { optional: true } } },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [, err] = await Promise.all([stdout.text(), stderr.text()]);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      const lock = await file(join(ctx.package_dir, "bun.lock")).text();
+      expect(lock).toContain(`"peerDependencies": { "quux": "1.0.0-é" }`);
+      expect(await exited).toBe(0);
     });
   });
 
@@ -7699,7 +8031,8 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited2).toBe(0);
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+      // the lockfile matched, so nothing was resolved and no cache dir was created
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -9193,7 +9526,8 @@ describe.concurrent("bun-install", () => {
       expect(await exited2).toBe(0);
       expect(urls.sort()).toBeEmpty();
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
+      // the lockfile matched, so nothing was resolved and no cache dir was created
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(
         join("..", "packages", "bar"),
       );
@@ -9990,56 +10324,203 @@ it("does not extract a tarball for a dependency alias containing '..' path segme
   });
 });
 
-it("does not install transitive file: dependencies that point outside their package", async () => {
-  // A dependency declared by a non-workspace package (here: a folder dependency
-  // of the project) uses a file: specifier pointing at an absolute path outside
-  // of that package and outside the project. That directory must not be linked
-  // into node_modules.
-  using dir = tempDir("transitive-file-dep", {
-    "secret/credentials.txt": "do-not-link-me",
+it("does not install a registry package's transitive file: dependency that points outside its package", async () => {
+  // A dependency declared by a registry package uses a file: specifier
+  // pointing at an absolute path outside of that package and outside the
+  // project. Registry content is not written by the user, so that directory
+  // must not be resolved or linked into node_modules. (file: dependencies
+  // declared by the project's own local file: packages are user authored and
+  // are allowed to point outside the project; see the tests below.)
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    using dir = tempDir("registry-transitive-file-dep", {
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const secretDir = join(String(dir), "secret");
+    setContextHandler(
+      ctx,
+      dummyRegistryForContext(ctx, urls, {
+        "0.0.3": {
+          dependencies: {
+            loot: "file:" + secretDir.replaceAll("\\", "/"),
+          },
+        },
+      }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          baz: "0.0.3",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    // The directory outside the package must not appear under node_modules,
+    // neither hoisted nor nested under the declaring package.
+    expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+    expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+    // The dependency is reported as unresolvable instead of silently linking local files.
+    expect(err).toContain("Could not find package.json");
+    expect(out).not.toContain("2 packages installed");
+    expect(exitCode).toBe(1);
+  });
+});
+
+it("refuses to install an escaping file: dependency that a registry package's own folder declares in the lockfile", async () => {
+  // Bun's resolver records no dependencies for a folder that a registry package
+  // ships, but a lockfile written elsewhere (a migration) can. Trust for a
+  // folder parent is anchored at the root or a workspace, so the installer still
+  // refuses the escaping path.
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    using dir = tempDir("registry-folder-declares-file-dep", {
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const secretDir = join(String(dir), "secret").replaceAll("\\", "/");
+    setContextHandler(
+      ctx,
+      dummyRegistryForContext(ctx, urls, {
+        "0.0.3": {
+          dependencies: {
+            inner: "file:./inner",
+          },
+        },
+      }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          baz: "0.0.3",
+        },
+      }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "my-app",
+            dependencies: {
+              baz: "0.0.3",
+            },
+          },
+        },
+        packages: {
+          "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { inner: "file:./inner" } }, ""],
+          "baz/inner": ["inner@file:node_modules/baz/inner", { dependencies: { loot: "file:" + secretDir } }],
+          "baz/inner/loot": ["loot@file:" + secretDir, {}],
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+    expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+    expect(
+      await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "inner", "node_modules", "loot")),
+    ).toBe(false);
+    expect(out).not.toContain("3 packages installed");
+    expect(exitCode).toBe(1);
+  });
+});
+
+it("installs transitive file: dependencies of a local file: package that point outside the project", async () => {
+  // A file: package referenced by the root package.json lives outside the
+  // project and declares its own relative folder dependencies that also land
+  // outside the project. The declaring package is local (not from a registry),
+  // so its file: paths are user authored and must not be rejected by the
+  // escape check that constrains registry packages.
+  using dir = tempDir("local-file-dep-outside", {
+    "packages/plugin/package.json": JSON.stringify({
+      name: "plugin",
+      version: "1.0.0",
+      dependencies: {
+        "shared-lib": "../shared-lib",
+      },
+      devDependencies: {
+        "shared-dev-lib": "file:../shared-dev-lib",
+      },
+    }),
+    "packages/plugin/index.js": "module.exports = 'plugin';",
+    "packages/shared-lib/package.json": JSON.stringify({ name: "shared-lib", version: "1.0.0" }),
+    "packages/shared-dev-lib/package.json": JSON.stringify({ name: "shared-dev-lib", version: "1.0.0" }),
     "project/package.json": JSON.stringify({
       name: "my-app",
       version: "1.0.0",
       dependencies: {
-        "evil-folder-dep": "file:./evil-folder-dep",
+        plugin: "file:../packages/plugin",
       },
     }),
-    "project/evil-folder-dep/index.js": "module.exports = 1;",
   });
   const projectDir = join(String(dir), "project");
-  const secretDir = join(String(dir), "secret");
 
-  await write(
-    join(projectDir, "evil-folder-dep", "package.json"),
-    JSON.stringify({
-      name: "evil-folder-dep",
-      version: "1.0.0",
-      dependencies: {
-        loot: "file:" + secretDir.replaceAll("\\", "/"),
-      },
-    }),
+  // 1) `bun install` with no lockfile and 2) `bun update` exercise the
+  // resolve/enqueue path; 3) `bun install` with the saved lockfile and an
+  // empty node_modules exercises the package installer path.
+  for (const [i, cmd] of ["install", "update", "install"].entries()) {
+    if (i === 2) {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+    }
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), cmd],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("Could not find package.json");
+    expect(err).not.toContain("failed to resolve");
+    expect(err).not.toContain("unsafe folder path");
+    expect(err).not.toContain("refusing to install");
+    expect(out).toContain("plugin");
+    expect(exitCode).toBe(0);
+  }
+
+  // Both transitive folder dependencies resolve, relative to the project root.
+  // On Windows the stored folder path uses backslashes (JSON-escaped in the
+  // lockfile); normalize them before asserting.
+  const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
+  expect(lock).toContain('"plugin/shared-lib"');
+  expect(lock).toContain("shared-lib@file:../packages/shared-lib");
+  expect(lock).toContain('"plugin/shared-dev-lib"');
+  expect(await exists(join(projectDir, "node_modules", "plugin", "package.json"))).toBe(true);
+  // And both are linked under the declaring package.
+  expect(await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-lib", "package.json"))).toBe(
+    true,
   );
-
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: projectDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await stderr.text();
-  const out = await stdout.text();
-  const exitCode = await exited;
-
-  // The directory outside the package must not appear under node_modules,
-  // neither hoisted nor nested under the declaring package.
-  expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
-  expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
-  // The dependency is reported as unresolvable instead of silently linking local files.
-  expect(err).toContain("Could not find package.json");
-  expect(out).not.toContain("2 packages installed");
-  expect(exitCode).toBe(1);
+  expect(
+    await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-dev-lib", "package.json")),
+  ).toBe(true);
 });
 
 it("does not install transitive file: dependencies with overlong folder targets", async () => {
@@ -10228,55 +10709,212 @@ for (const field of ["resolutions", "overrides"]) {
     expect(await exists(join(projectDir, "node_modules", "shared", "package.json"))).toBe(true);
   });
 
-  it(`still rejects transitive file: dependencies that escape their package when a different name is in "${field}"`, async () => {
+  it(`still rejects a registry package's transitive file: dependency that escapes when a different name is in "${field}"`, async () => {
     // An override for a different name must not whitelist an unrelated
-    // transitive file: dependency that points outside its package.
-    using dir = tempDir("override-file-dep-unrelated", {
-      "secret/credentials.txt": "do-not-link-me",
-      "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
-      "project/package.json": JSON.stringify({
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {
-          "evil-folder-dep": "file:./evil-folder-dep",
-        },
-        [field]: {
-          shared: "file:../shared",
-        },
-      }),
-      "project/evil-folder-dep/index.js": "module.exports = 1;",
-      "project/evil-folder-dep/package.json": JSON.stringify({
-        name: "evil-folder-dep",
-        version: "1.0.0",
-        dependencies: {
-          loot: "file:../../secret",
-        },
-      }),
-    });
-    const projectDir = join(String(dir), "project");
+    // transitive file: dependency of a registry package that points outside
+    // its package. The target exists and is installable, so a bypassed check
+    // would link it.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      using dir = tempDir("registry-transitive-file-dep-unrelated-override", {
+        "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+        "secret/credentials.txt": "do-not-link-me",
+      });
+      const secretDir = join(String(dir), "secret");
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            dependencies: {
+              loot: "file:" + secretDir.replaceAll("\\", "/"),
+            },
+          },
+        }),
+      );
+      await write(
+        join(ctx.package_dir, "shared", "package.json"),
+        JSON.stringify({ name: "shared", version: "1.0.0" }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+          [field]: {
+            shared: "file:./shared",
+          },
+        }),
+      );
 
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: projectDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-    expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
-    expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
-    expect(err).toContain("Could not find package.json");
-    expect(out).not.toContain("2 packages installed");
-    expect(exitCode).toBe(1);
+      expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+      expect(err).toContain("Could not find package.json");
+      expect(out).not.toContain("2 packages installed");
+      expect(exitCode).toBe(1);
+    });
   });
 
-  const nestedRule = (value: string) =>
-    field === "overrides" ? { "pkg-a": { shared: value } } : { "pkg-a/shared": value };
+  it(`applies a root "${field}" file: path to a registry package's dependency`, async () => {
+    // overrides/resolutions are declared in the root package.json, so a file:
+    // path applied through them is trusted even for a dependency declared by a
+    // registry package (which is otherwise constrained; see the test above).
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      using dir = tempDir(`override-registry-file-dep-${field}`, {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "shared/index.js": "module.exports = 'shared';",
+      });
+      const sharedDir = join(String(dir), "shared");
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            dependencies: {
+              shared: "1.0.0",
+            },
+          },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+          [field]: {
+            shared: "file:" + sharedDir.replaceAll("\\", "/"),
+          },
+        }),
+      );
 
-  it(`rejects a nested "${field}" rule pointing at a file: path outside the project`, async () => {
-    using dir = tempDir("nested-override-file-dep-outside", {
+      // The first install resolves the override (enqueue path); the second
+      // starts from the saved lockfile with an empty node_modules (installer path).
+      for (let i = 0; i < 2; i++) {
+        if (i === 1) {
+          await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+        }
+        const { stdout, stderr, exited } = spawn({
+          cmd: i === 0 ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+        expect(err).not.toContain("Could not find package.json");
+        expect(err).not.toContain("failed to resolve");
+        expect(err).not.toContain("unsafe folder path");
+        expect(err).not.toContain("refusing to install");
+        expect(out).toContain("baz");
+        expect(exitCode).toBe(0);
+      }
+
+      // The registry package's dependency resolved to the override's file: path
+      // (no registry request for it was made) and is linked under baz, since
+      // transitive folder dependencies are not hoisted.
+      expect(urls.filter(url => url.includes("shared"))).toEqual([]);
+      const lock = (await file(join(ctx.package_dir, "bun.lock")).text()).replaceAll("\\\\", "/");
+      expect(lock).toContain('"baz/shared"');
+      expect(lock).toContain("shared@file:");
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "shared", "index.js"))).toBe(
+        true,
+      );
+    });
+  });
+
+  const nestedRule = (parent: string, value: string) =>
+    field === "overrides" ? { [parent]: { shared: value } } : { [`${parent}/shared`]: value };
+
+  it(`rejects a nested "${field}" rule pointing at a file: path outside the project for a registry package's dependency`, async () => {
+    // A nested rule only replaces one parent -> child edge, so it does not
+    // make every edge of that name root authored. The trust checks therefore
+    // only consult plain rules, and a nested file: path that escapes the
+    // project is still rejected when the parent is a registry package.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            dependencies: {
+              shared: "1.0.0",
+            },
+          },
+        }),
+      );
+      // The project is a subdirectory so that `../shared` exists and is outside it.
+      const projectDir = join(ctx.package_dir, "project");
+      await write(
+        join(ctx.package_dir, "shared", "package.json"),
+        JSON.stringify({ name: "shared", version: "1.0.0" }),
+      );
+      await write(join(ctx.package_dir, "shared", "index.js"), "module.exports = 'shared';");
+      await write(
+        join(projectDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+registry = "${ctx.registry_url}"
+`,
+      );
+      await write(
+        join(projectDir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+          [field]: nestedRule("baz", "file:../shared"),
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      // stderr also carries the progress lines of the registry fetch of `baz`.
+      expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
+        'error: Could not find package.json for "file:../shared" dependency "shared"',
+        "error: shared@1.0.0 failed to resolve",
+      ]);
+      expect(out).not.toContain("packages installed");
+      expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
+      expect(await exists(join(projectDir, "node_modules", "baz", "node_modules", "shared"))).toBe(false);
+      expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
+      expect(urls.filter(url => url.includes("shared"))).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it(`installs a nested "${field}" rule pointing at a file: path outside the project for a local file: package's dependency`, async () => {
+    // The parent is a file: package of the root, so its dependencies' file:
+    // paths are trusted like root dependencies (see the transitive file: tests
+    // above), nested rule or not.
+    using dir = tempDir("nested-override-file-dep-outside-local", {
       "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
       "shared/index.js": "module.exports = 'shared';",
       "project/package.json": JSON.stringify({
@@ -10285,7 +10923,7 @@ for (const field of ["resolutions", "overrides"]) {
         dependencies: {
           "pkg-a": "file:./pkg-a",
         },
-        [field]: nestedRule("file:../shared"),
+        [field]: nestedRule("pkg-a", "file:../shared"),
       }),
       "project/pkg-a/package.json": JSON.stringify({
         name: "pkg-a",
@@ -10298,25 +10936,44 @@ for (const field of ["resolutions", "overrides"]) {
     });
     const projectDir = join(String(dir), "project");
 
-    await using proc = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: projectDir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
-    });
-    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    // The first pass resolves the rule (enqueue path); the second installs
+    // from the lockfile it wrote (package installer path).
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
-    expect(normalizeBunSnapshot(err, projectDir)).toMatchInlineSnapshot(`
-      "error: Could not find package.json for "file:../shared" dependency "shared"
-      error: shared@1.0.0 failed to resolve"
-    `);
-    expect(out).not.toContain("packages installed");
-    expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
-    expect(await exists(join(projectDir, "node_modules", "pkg-a", "node_modules", "shared"))).toBe(false);
-    expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
-    expect(exitCode).toBe(1);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      expect(exitCode).toBe(0);
+
+      await using runProc = spawn({
+        cmd: [bunExe(), "-e", "console.log(require('pkg-a'))"],
+        cwd: projectDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([
+        runProc.stdout.text(),
+        runProc.stderr.text(),
+        runProc.exited,
+      ]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe("shared\n");
+      expect(runExit).toBe(0);
+    }
+
+    const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
+    expect(lock).toContain('"pkg-a/shared": ["shared@file:../shared", {}]');
   });
 
   it(`installs a nested "${field}" rule pointing at a file: path inside the project`, async () => {
@@ -10327,7 +10984,7 @@ for (const field of ["resolutions", "overrides"]) {
         dependencies: {
           "pkg-a": "file:./pkg-a",
         },
-        [field]: nestedRule("file:./vendor/shared"),
+        [field]: nestedRule("pkg-a", "file:./vendor/shared"),
       }),
       "vendor/shared/package.json": JSON.stringify({ name: "shared", version: "2.0.0" }),
       "vendor/shared/index.js": "module.exports = 'vendored shared';",
@@ -10642,6 +11299,111 @@ it("fails when a transitive file: dependency's folder does not exist", async () 
   expect(err.replaceAll(sep, "/")).toContain('Could not find folder "file:vendor/nested" for dependency "nested"');
   expect(out).not.toContain("2 packages installed");
   expect(exitCode).toBe(1);
+});
+
+describe.concurrent("file: tarball declared by a file: folder dependency", () => {
+  // `bar-0.0.2.tgz` is planted at the path the declaration means and
+  // `baz-0.0.3.tgz` at the other candidate path, so reading the tarball
+  // relative to the wrong directory installs `baz` instead of failing with ENOENT.
+  const expected = readFileSync(join(import.meta.dir, "bar-0.0.2.tgz"));
+  const decoy = readFileSync(join(import.meta.dir, "baz-0.0.3.tgz"));
+
+  const fixture = (root: object, lib: object, tarballs: Record<string, Buffer>) => ({
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: { lib: "file:./vendor/lib" },
+      ...root,
+    }),
+    "vendor/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "index.js", ...lib }),
+    "vendor/lib/index.js": `const pkg = require("tool/package.json"); module.exports = pkg.name + "@" + pkg.version;`,
+    ...tarballs,
+  });
+
+  // The first install resolves `tool` from vendor/lib/package.json and reads
+  // the tarball in the process. The second one starts from the lockfile with
+  // an empty cache, so it has to read the tarball again from the path recorded
+  // there; both have to pick the same file.
+  async function installAndRequireLib(projectDir: string, linker: "hoisted" | "isolated") {
+    const cacheDir = join(projectDir, ".bun-cache");
+    const installed: string[] = [];
+
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await Promise.all([
+        rm(join(projectDir, "node_modules"), { recursive: true, force: true }),
+        rm(cacheDir, { recursive: true, force: true }),
+      ]);
+
+      await using install = spawn({
+        cmd: [bunExe(), ...args, `--linker=${linker}`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      });
+      const [installErr, installOut, installExit] = await Promise.all([
+        install.stderr.text(),
+        install.stdout.text(),
+        install.exited,
+      ]);
+      expect(installErr).not.toContain("error:");
+      expect(installOut).toContain("2 packages installed");
+      expect(installExit).toBe(0);
+
+      await using run = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("lib"))`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [runErr, runOut, runExit] = await Promise.all([run.stderr.text(), run.stdout.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runExit).toBe(0);
+      installed.push(runOut.trim());
+    }
+
+    return { installed, lockfile: await file(join(projectDir, "bun.lock")).text() };
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    it(`is read relative to the folder (${linker} linker)`, async () => {
+      using dir = tempDir(
+        "folder-dep-tarball",
+        fixture(
+          {},
+          { dependencies: { tool: "file:./tool.tgz" } },
+          { "vendor/lib/tool.tgz": expected, "tool.tgz": decoy },
+        ),
+      );
+
+      const { installed, lockfile } = await installAndRequireLib(String(dir), linker);
+      expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
+      // The lockfile records the path as declared; the name in front of it is
+      // read from the tarball that was extracted.
+      expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "file:./tool.tgz" } }]');
+      expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+    });
+  }
+
+  it("is read relative to the project when a root override supplies the path", async () => {
+    // `overrides` can only be written in the root package.json, so the path it
+    // contains means the project directory even though the dependency it is
+    // applied to is declared by vendor/lib/package.json.
+    using dir = tempDir(
+      "folder-dep-tarball-override",
+      fixture(
+        { overrides: { tool: "file:./tool.tgz" } },
+        { dependencies: { tool: "^1.0.0" } },
+        { "tool.tgz": expected, "vendor/lib/tool.tgz": decoy },
+      ),
+    );
+
+    const { installed, lockfile } = await installAndRequireLib(String(dir), "hoisted");
+    expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
+    expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "^1.0.0" } }]');
+    expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+  });
 });
 
 it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
@@ -11021,5 +11783,145 @@ it.each([
     expect(tarballRequests).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+// A registry response is remote data, so none of these shapes breaks an invariant. The release build
+// tolerates each one. A build with debug assertions used to abort on each one.
+describe.concurrent("registry manifest with an unexpected shape", () => {
+  function manifestOf(ctx: TestContext, name: string, version: string, fields: object = {}) {
+    return {
+      name,
+      "dist-tags": { latest: version },
+      versions: {
+        [version]: { name, version, dist: { tarball: `${ctx.registry_url}${name}-${version}.tgz` }, ...fields },
+      },
+    };
+  }
+
+  // Serves `manifests[name]` for a package and the fixture tarball of the same file name for a `.tgz` URL.
+  async function installFrom(ctx: TestContext, manifests: Record<string, object>, args = ["install"]) {
+    const urls: string[] = [];
+    setContextHandler(ctx, request => {
+      urls.push(request.url);
+      const pathname = new URL(request.url).pathname;
+      if (pathname.endsWith(".tgz")) {
+        return new Response(file(join(import.meta.dir, basename(pathname))));
+      }
+      const manifest = manifests[pathname.slice(`/${ctx.id}/`.length)];
+      return manifest ? Response.json(manifest) : new Response("Not Found", { status: 404 });
+    });
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const installed = (await readdirSorted(join(ctx.package_dir, "node_modules"))).filter(name => name !== ".cache");
+    return { err, exitCode, urls: urls.sort(), installed };
+  }
+
+  it("skips a dependency whose value is not a string", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const { err, exitCode, urls, installed } = await installFrom(ctx, {
+        bar: manifestOf(ctx, "bar", "0.0.2", {
+          dependencies: { "null-value": null, baz: "0.0.3", "number-value": 1 },
+          optionalDependencies: { "boolean-value": false },
+          peerDependencies: { "object-value": {} },
+        }),
+        baz: manifestOf(ctx, "baz", "0.0.3"),
+      });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(installed).toEqual(["bar", "baz"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.each([
+    ["no dist", {}],
+    ["an empty dist", { dist: {} }],
+    ["a dist that is not an object", { dist: "bar-0.0.2.tgz" }],
+    ["a dist.tarball that is not a string", { dist: { tarball: null } }],
+  ])("downloads from the default tarball URL for a version with %s", async (_name, fields) => {
+    await withContext(defaultOpts, async ctx => {
+      const manifest = manifestOf(ctx, "bar", "0.0.2");
+      manifest.versions["0.0.2"] = { name: "bar", version: "0.0.2", ...fields } as any;
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar/-/bar-0.0.2.tgz`]);
+      expect(installed).toEqual(["bar"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `Version::parse` rejects each of these keys. npm skips such a key and prints nothing.
+  const invalidVersionKeys = ["not-a-version", "1.0.0.1", "", "latest"];
+  const skipWarnings = invalidVersionKeys.map(
+    key => `warn: Skipping version ${JSON.stringify(key)} of "bar": not a valid semver version`,
+  );
+
+  it.each<[string, string, string[]]>([
+    ["install", "nothing", []],
+    ["add bar", "nothing", []],
+    ["install --verbose", "a warning for each key", skipWarnings],
+  ])("bun %s skips versions keys that are not versions and logs %s", async (command, _logs, logged) => {
+    await withContext(defaultOpts, async ctx => {
+      const manifest = manifestOf(ctx, "bar", "0.0.2");
+      for (const key of invalidVersionKeys) manifest.versions[key] = manifest.versions["0.0.2"];
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest }, command.split(" "));
+      expect({
+        logged: err.split(/\r?\n/).filter(line => /^(error|warn): /.test(line)),
+        urls,
+        installed,
+        exitCode,
+      }).toEqual({
+        logged,
+        urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`],
+        installed: ["bar"],
+        exitCode: 0,
+      });
+    });
+  });
+
+  it("installs from a manifest with two keys for one version", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const manifest = manifestOf(ctx, "bar", "0.0.2");
+      manifest.versions["00.0.2"] = manifest.versions["0.0.2"];
+      const { err, exitCode, urls, installed } = await installFrom(ctx, { bar: manifest });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+      expect(installed).toEqual(["bar"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("installs from a manifest with dependencies, no dist-tags and no tarball URL", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const { err, exitCode, urls, installed } = await installFrom(ctx, {
+        bar: { name: "bar", versions: { "0.0.2": { name: "bar", version: "0.0.2", dependencies: { baz: "0.0.3" } } } },
+        baz: manifestOf(ctx, "baz", "0.0.3"),
+      });
+      expect(err).not.toContain("error:");
+      expect(urls).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar/-/bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(installed).toEqual(["bar", "baz"]);
+      expect(exitCode).toBe(0);
+    });
   });
 });

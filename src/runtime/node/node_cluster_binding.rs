@@ -12,7 +12,7 @@ use crate::api::bun::subprocess::Subprocess;
 // Struct lives in `crate::ipc` —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub use crate::ipc::InternalMsgHolder;
+pub(crate) use crate::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
 
@@ -121,7 +121,8 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
             let peer_pid = subprocess.pid() as u32;
             let Some(hex) = crate::ipc_host::attach_windows_socket_payload(
                 global, message, native_fd, peer_pid,
-            ) else {
+            )?
+            else {
                 return Ok(JSValue::NULL);
             };
             let mut h = crate::ipc::Handle::init(native_fd, handle);
@@ -232,6 +233,7 @@ pub(crate) fn handle_internal_message_primary(
             });
             if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
+                    subprocess.context,
                     cb,
                     global,
                     worker,
@@ -249,6 +251,7 @@ pub(crate) fn handle_internal_message_primary(
         (q.cb.get().unwrap(), q.worker.get().unwrap())
     };
     event_loop.run_callback(
+        subprocess.context,
         cb,
         global,
         worker,
@@ -287,7 +290,7 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
+pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
@@ -295,7 +298,7 @@ pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
 }
 
 // HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
@@ -313,7 +316,7 @@ pub(crate) fn channel_ignore_one_disconnect_event_listener(
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
-pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
+pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
@@ -334,8 +337,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let atype = address_type.to_int32();
 
         let host_owned: Vec<u8> = if address.is_string() {
-            let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
-            let mut v = s.slice().to_vec();
+            let mut v = address.to_js_string_view(global)?.to_owned_slice();
             v.push(0);
             v
         } else {
@@ -422,9 +424,12 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let mut is_udp = false;
         let atype: i32;
         if address_type.is_string() {
-            let s = bun_jsc::JSString::opaque_ref(address_type.as_string()).to_slice(global);
             is_udp = true;
-            atype = if s.slice() == b"udp6" { 6 } else { 4 };
+            atype = if address_type.to_js_string_view(global)?.eq_ascii(b"udp6") {
+                6
+            } else {
+                4
+            };
         } else {
             atype = address_type.to_int32();
         }
@@ -447,7 +452,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             if !address.is_string() {
                 return Err(global.throw_invalid_argument_type_value("address", "string", address));
             }
-            let path_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let path_view = address.to_js_string_view(global)?;
+            let path_slice = path_view.to_utf8();
             let path_bytes = path_slice.slice();
             // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
             let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
@@ -599,7 +605,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let fd: c_int;
         let bound_family: c_int;
         if address.is_string() {
-            let addr_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let addr_view = address.to_js_string_view(global)?;
+            let addr_slice = addr_view.to_utf8();
             let addr_bytes = addr_slice.slice();
             let mut addr_z: [u8; 256] = [0; 256];
             if addr_bytes.len() >= addr_z.len() {
@@ -607,13 +614,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            unsafe extern "C" {
-                fn ares_inet_pton(
-                    af: c_int,
-                    src: *const core::ffi::c_char,
-                    dst: *mut core::ffi::c_void,
-                ) -> c_int;
-            }
+            use bun_cares_sys::ares_inet_pton;
             // SAFETY: `ss` is a zeroed sockaddr_storage large enough for
             let parsed = unsafe {
                 if family == libc::AF_INET6 {

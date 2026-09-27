@@ -165,7 +165,7 @@ unsafe extern "C" {
 // single-byte scans, a <16-byte scalar prologue — see `SCALAR_CUTOFF`); inlining
 // them puts the FFI call directly at the hot lexer/printer call site so that
 // (a) the Rust-side frame disappears unconditionally, and (b) cross-language
-// LTO (`--profile=btg`, crossLangLto=true) can fold the C dispatch shim
+// LTO (release builds, crossLangLto=true) can fold the C dispatch shim
 // straight into the caller. Without this the profile shows the C shim as a
 // distinct hot leaf (e.g. `highway_index_of_newline_or_non_ascii` self-samples
 // in lint/create-vue benches).
@@ -662,8 +662,9 @@ pub fn decode_hex(src: &[u8], dst: &mut [u8]) -> usize {
     written
 }
 
-/// UTF-16 variant of [`decode_hex`]. Code units above 0xFF are treated as
-/// invalid characters (they stop decoding), never truncated to a byte.
+/// UTF-16 variant of [`decode_hex`]. Each code unit is decoded by its low
+/// byte, as Node's `Buffer` hex decoder does: U+FF41 decodes as `'A'`, and a
+/// unit whose low byte is not a hex digit stops decoding.
 #[inline(always)]
 pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
     let pairs = (src.len() / 2).min(dst.len());

@@ -1189,3 +1189,196 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(exitCode).toBe(0);
   });
 });
+
+// TinyCC keeps its parser and code generator in process globals, and bun builds
+// it without its own locks. The lock cc() holds around every TinyCC call is the
+// only thing that stops Workers that compile at the same time from corrupting
+// that state.
+describe("cc() called by several Workers at once", () => {
+  const workers = 8;
+  const files: Record<string, string> = {
+    "fixture.mjs": /* js */ `
+      import { cc } from "bun:ffi";
+      import { join } from "node:path";
+      import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+      const workers = ${workers};
+      if (isMainThread) {
+        // gate[0]: set when every Worker is up. gate[1]: Workers that woke up.
+        const gate = new Int32Array(new SharedArrayBuffer(8));
+        const results = [];
+        let ready = 0;
+        let exited = 0;
+        for (let index = 0; index < workers; index++) {
+          const worker = new Worker(import.meta.filename, { workerData: { gate, index } });
+          worker.on("message", message => {
+            if (message !== "ready") results[index] = message;
+            else if (++ready === workers) {
+              Atomics.store(gate, 0, 1);
+              Atomics.notify(gate, 0);
+            }
+          });
+          worker.on("exit", () => {
+            if (++exited === workers) console.log(JSON.stringify(results));
+          });
+        }
+      } else {
+        const { gate, index } = workerData;
+        const name = "add" + index;
+        const options = {
+          source: join(import.meta.dirname, name + ".c"),
+          symbols: { [name]: { args: ["int", "int"], returns: "int" } },
+        };
+        parentPort.postMessage("ready");
+        Atomics.wait(gate, 0, 0);
+        // The wake-ups arrive microseconds apart. Spin until the last one, so
+        // that every Worker starts to compile together.
+        Atomics.add(gate, 1, 1);
+        while (Atomics.load(gate, 1) < workers);
+        const sums = [];
+        for (let i = 0; i < 2; i++) {
+          const lib = cc(options);
+          sums.push(lib.symbols[name](i, 100));
+          lib.close();
+        }
+        parentPort.postMessage(sums);
+      }
+    `,
+  };
+  for (let index = 0; index < workers; index++) {
+    files[`add${index}.c`] = `int add${index}(int a, int b) { return a + b + ${index}; }\n`;
+  }
+  const expected = JSON.stringify(Array.from({ length: workers }, (_, index) => [100 + index, 101 + index]));
+
+  it("compiles every source correctly", async () => {
+    using dir = tempDir("bun-ffi-cc-workers", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The gate runs before any option is read or any C is compiled, so these do
+// not need a working TinyCC and run under ASan too. Without the gate, the
+// empty `symbols` object makes cc() fail with a plain validation error, which
+// is the control for "cc() was not blocked".
+describe.concurrent("disabling cc()", () => {
+  // `report` receives one string: the error code, or the message for an
+  // error without a code, or "no-error".
+  const probeWith = (report: string) => /* js */ `
+    const { cc } = require("bun:ffi");
+    try {
+      cc({ source: "does-not-exist.c", symbols: {} });
+      ${report}("no-error");
+    } catch (e) {
+      ${report}(e.code ?? e.message);
+    }
+  `;
+  const probe = probeWith("console.log");
+
+  async function run(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it("cc() is allowed by default", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", probe);
+    expect(stdout).toBe("Expected at least one exported symbol\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the error message names the disabled compiler", async () => {
+    const [stdout, stderr, exitCode] = await run(
+      "--no-ffi-cc",
+      "-p",
+      'require("bun:ffi").cc({ source: "does-not-exist.c", symbols: {} })',
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: Cannot compile C code because the bun:ffi C compiler is disabled.");
+    expect(stderr).toContain('code: "ERR_FFI_CC_DISABLED"');
+    expect(exitCode).toBe(1);
+  });
+
+  it("BUN_OPTIONS=--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", probe],
+      env: { ...bunEnv, BUN_OPTIONS: "--no-ffi-cc" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The Worker runs the probe and posts its one line back to the parent. A
+  // worker that fails before it posts is reported on stdout instead of
+  // hanging the process.
+  const workerHost = (execArgv: string) => /* js */ `
+    const { Worker } = require("node:worker_threads");
+    const source = ${JSON.stringify(probeWith("require('node:worker_threads').parentPort.postMessage"))};
+    const worker = new Worker(source, { eval: true, execArgv: ${execArgv} });
+    let reported = false;
+    worker.on("message", msg => {
+      reported = true;
+      console.log(msg);
+      worker.terminate();
+    });
+    worker.on("error", e => {
+      reported = true;
+      console.log("worker error: " + (e.code ?? e.message));
+      worker.terminate();
+    });
+    worker.on("exit", code => {
+      if (!reported) console.log("worker exited with " + code + " before posting");
+    });
+  `;
+
+  it("--no-ffi-cc stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker can disable cc() for itself with execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", workerHost('["--no-ffi-cc"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker cannot re-enable cc() that its parent disabled", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost('["--smol"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+});

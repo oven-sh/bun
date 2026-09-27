@@ -155,7 +155,10 @@ fn lower_block_statement_inner(
         while h < hoist.len() && hoist[h].0 == i {
             let (_, target, loc, kind) = hoist[h];
             h += 1;
-            if builder.is_context_identifier(target) {
+            if builder
+                .environment()
+                .is_hoisted_identifier(target.inner_index())
+            {
                 continue;
             }
             let id_loc = convert_loc(loc);

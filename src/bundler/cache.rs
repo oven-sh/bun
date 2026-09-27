@@ -87,7 +87,11 @@ impl JavaScript {
         };
 
         let result = match parser.parse() {
-            Ok(r) => r,
+            Ok(r) => {
+                // The parser halts on every logged error.
+                debug_assert_eq!(temp_log.errors, 0);
+                r
+            }
             Err(err) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
                 // arm. The `&'a mut temp_log` it held is released, so read

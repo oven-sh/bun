@@ -37,8 +37,6 @@ static Structure* sqlErrorStructure(VM& vm, Zig::GlobalObject* realm, bool isMyS
     return structure;
 }
 
-// Calls no JavaScript. The error info is filled here, with no frames: JSC fills it on the first
-// read of `stack`, `line` or `column`, and then overwrites PostgreSQL's `line` and `column`.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__create(JSC::JSGlobalObject* globalObject, bool isMySQL, const char* messagePtr, size_t messageLength)
 {
     auto& vm = getVM(globalObject);
@@ -58,6 +56,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__crea
     }
 
     auto* error = ErrorInstance::create(vm, structure, message, JSValue());
+    // Filled now, so that a later fill cannot overwrite the server's `line` and `column`.
     error->setErrorInfoForEmbedderError({}, {}, WTF::move(stack));
     error->materializeErrorInfoIfNeeded(vm);
     // The position of no source. The caller writes the server's `line` and `column`, if any.

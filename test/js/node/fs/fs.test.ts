@@ -8236,16 +8236,19 @@ describe("fs.close() that is not waited for", () => {
     "fs.read(0, Buffer.alloc(1), 0, 1, null, () => {})",
     "fs.readv(0, [Buffer.alloc(1)], () => {})",
     "fs.readFile(0, () => {})",
+    "fs.read(0, Buffer.alloc(1), 0, 1, null, () => {}); fs.read(0, Buffer.alloc(1), 0, 1, null, () => {})",
   ])("does not wait for %s on a pipe nothing is written to, nor does the next file's", async read => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const fs = require("fs");
+           const say = what => err => console.log(what, err ? err.code : null);
            ${read};
-           fs.close(0, err => {
-             console.log("closed", err ? err.code : null);
-             fs.close(fs.openSync(process.execPath, "r"), err => console.log("closed the next", err ? err.code : null));
+           fs.close(0, say("closed"));
+           fs.fstat(0, () => {
+             console.log("used after it");
+             fs.close(fs.openSync(process.execPath, "r"), say("closed the next"));
            });`,
       ],
       env: bunEnv,
@@ -8261,7 +8264,10 @@ describe("fs.close() that is not waited for", () => {
       // Ends the read, and with it the child.
       if (stdout.includes("closed the next")) proc.stdin.end();
     }
-    expect({ stdout, stderr: await stderr }).toEqual({ stdout: "closed null\nclosed the next null\n", stderr: "" });
+    expect({ stdout, stderr: await stderr }).toEqual({
+      stdout: "closed null\nused after it\nclosed the next null\n",
+      stderr: "",
+    });
     expect(await proc.exited).toBe(0);
   });
 

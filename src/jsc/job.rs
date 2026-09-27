@@ -342,51 +342,94 @@ impl FdUse {
     }
 }
 
-#[derive(Default)]
+/// Where a job that went to the pool through a descriptor's line is counted.
+#[derive(Clone, Copy)]
+struct FdPlace {
+    fd: Fd,
+    /// [`FdLine::stretch`] when it went.
+    stretch: u64,
+}
+
+/// A job in line: its task, and where its [`FdPlace`] goes.
+type InLine = (*mut WorkPoolTask, FdUse, *mut Option<FdPlace>);
+
 struct FdLine {
+    /// What `running` counts: the jobs that went to the pool since the last
+    /// close, or since a close stopped waiting for those before them.
+    stretch: u64,
     /// Handed to the pool and not back yet.
     running: u32,
     /// The one that is running closes the descriptor.
     closing: bool,
-    waiting: VecDeque<(*mut WorkPoolTask, FdUse)>,
+    waiting: VecDeque<InLine>,
 }
 
-/// A VM's live jobs on the descriptors of regular files (JS thread only).
-///
-/// Those jobs come back by themselves. On a pipe, a console or a device one can
-/// be out for as long as the other end likes, past the close of its descriptor
-/// and into the life of the next file to get the number: such jobs go straight
-/// to the pool, and a close does not wait for them.
+/// A VM's live jobs on file descriptors (JS thread only, and without a system
+/// call: one on a network file system can take as long as the server likes).
 #[derive(Default)]
 pub struct FdJobs {
     lines: HashMap<Fd, FdLine>,
+    stretches: u64,
 }
 
 impl FdJobs {
-    /// Hands `task` to the pool, now or when its turn comes.
-    fn enter(&mut self, task: *mut WorkPoolTask, fd_use: FdUse) {
-        let line = self.lines.entry(fd_use.fd()).or_default();
-        if line.waiting.is_empty() && line.admits(fd_use) {
-            line.start(task, fd_use);
-        } else {
-            line.waiting.push_back((task, fd_use));
+    /// Hands the job to the pool, now or when its turn comes. For a close that
+    /// waits for jobs that are out, the stretch to ask [`FdKind`] about.
+    ///
+    /// # Safety
+    /// The job is live until it has been to the pool.
+    unsafe fn enter(&mut self, job: InLine) -> Option<u64> {
+        let line = self.lines.entry(job.1.fd()).or_insert_with(|| {
+            self.stretches += 1;
+            FdLine {
+                stretch: self.stretches,
+                running: 0,
+                closing: false,
+                waiting: VecDeque::new(),
+            }
+        });
+        if line.waiting.is_empty() && line.admits(job.1) {
+            line.start(job);
+            return None;
         }
+        let waits_for_uses = line.waiting.is_empty() && !line.closing;
+        line.waiting.push_back(job);
+        waits_for_uses.then_some(line.stretch)
     }
 
     /// A job that [`enter`](Self::enter)ed is back from the pool.
-    fn leave(&mut self, fd: Fd) {
-        let line = self.lines.get_mut(&fd).expect("job entered");
+    fn leave(&mut self, place: FdPlace) {
+        let Some(line) = self.lines.get_mut(&place.fd) else {
+            return;
+        };
+        if line.stretch != place.stretch {
+            return;
+        }
         line.running -= 1;
-        line.closing = false;
-        while let Some(&(task, fd_use)) = line.waiting.front()
-            && line.admits(fd_use)
-        {
-            line.waiting.pop_front();
-            line.start(task, fd_use);
+        if core::mem::take(&mut line.closing) {
+            self.stretches += 1;
+            line.stretch = self.stretches;
         }
+        line.advance();
         if line.running == 0 {
-            self.lines.remove(&fd);
+            self.lines.remove(&place.fd);
         }
+    }
+
+    /// The close at the head of `fd`'s line goes ahead of the jobs of `stretch`
+    /// that are out. They are not counted any more: they can outlive the
+    /// descriptor, into the life of the next file to get the number.
+    fn stop_waiting(&mut self, fd: Fd, stretch: u64) {
+        let Some(line) = self.lines.get_mut(&fd) else {
+            return;
+        };
+        if line.stretch != stretch || line.closing {
+            return;
+        }
+        self.stretches += 1;
+        line.stretch = self.stretches;
+        line.running = 0;
+        line.advance();
     }
 }
 
@@ -396,10 +439,26 @@ impl FdLine {
         !self.closing && (self.running == 0 || matches!(fd_use, FdUse::Uses(_)))
     }
 
-    fn start(&mut self, task: *mut WorkPoolTask, fd_use: FdUse) {
+    fn start(&mut self, (task, fd_use, place): InLine) {
         self.closing = matches!(fd_use, FdUse::Closes(_));
         self.running += 1;
+        // SAFETY: `enter`'s contract; the job is this thread's until scheduled.
+        unsafe {
+            *place = Some(FdPlace {
+                fd: fd_use.fd(),
+                stretch: self.stretch,
+            });
+        }
         WorkPool::schedule(task);
+    }
+
+    fn advance(&mut self) {
+        while let Some(&job) = self.waiting.front()
+            && self.admits(job.1)
+        {
+            self.waiting.pop_front();
+            self.start(job);
+        }
     }
 }
 
@@ -411,6 +470,34 @@ fn is_regular_file(fd: Fd) -> bool {
 #[cfg(unix)]
 fn is_regular_file(fd: Fd) -> bool {
     bun_sys::fstat(fd).is_ok_and(|stat| bun_sys::is_regular_file(stat.st_mode as _))
+}
+
+/// Whether a close has to wait for the jobs that are out on its descriptor.
+/// Those on a regular file come back by themselves. On a pipe, a console or a
+/// device one can be out for as long as the other end likes.
+enum FdKind {}
+
+struct FdKindQuery {
+    fd: Fd,
+    stretch: u64,
+    regular: bool,
+}
+
+impl JobContext for FdKind {
+    type OffThread = FdKindQuery;
+    type Js = ();
+    fn run(query: &mut FdKindQuery, done: Completion<Self>) -> Option<Completion<Self>> {
+        query.regular = is_regular_file(query.fd);
+        Some(done)
+    }
+    fn then(query: FdKindQuery, _: (), cx: &JsThread<'_>) -> JsResult<()> {
+        if !query.regular {
+            cx.vm()
+                .fd_jobs
+                .with_mut(|jobs| jobs.stop_waiting(query.fd, query.stretch));
+        }
+        Ok(())
+    }
 }
 
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
@@ -425,8 +512,8 @@ pub struct Job<C: JobContext> {
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     keep_alive: KeepAlive,
-    /// Its place in the VM's [`FdJobs`].
-    fd: Option<Fd>,
+    /// Its place in the VM's [`FdJobs`], from when it goes to the pool.
+    place: Option<FdPlace>,
     off: C::OffThread,
     js: C::Js,
 }
@@ -456,7 +543,6 @@ impl<C: JobContext> Job<C> {
     /// descriptor of script's.
     #[track_caller]
     pub fn schedule_on_fd(cx: &JsThread<'_>, off: C::OffThread, js: C::Js, fd_use: Option<FdUse>) {
-        let fd_use = fd_use.filter(|fd_use| is_regular_file(fd_use.fd()));
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -481,7 +567,7 @@ impl<C: JobContext> Job<C> {
                 callback: Self::run_on_pool,
             },
             keep_alive,
-            fd: fd_use.map(FdUse::fd),
+            place: None,
             off,
             js,
         }));
@@ -492,9 +578,17 @@ impl<C: JobContext> Job<C> {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
             let task = &raw mut (*job).task;
-            match fd_use {
-                Some(fd_use) => cx.vm().fd_jobs.with_mut(|jobs| jobs.enter(task, fd_use)),
-                None => WorkPool::schedule(task),
+            let Some(fd_use) = fd_use else {
+                return WorkPool::schedule(task);
+            };
+            let in_line = (task, fd_use, &raw mut (*job).place);
+            if let Some(stretch) = cx.vm().fd_jobs.with_mut(|jobs| jobs.enter(in_line)) {
+                let query = FdKindQuery {
+                    fd: fd_use.fd(),
+                    stretch,
+                    regular: true,
+                };
+                Job::<FdKind>::schedule(cx, query, ());
             }
         }
     }
@@ -546,13 +640,13 @@ impl<C: JobContext> Job<C> {
         // SAFETY: fn contract.
         let Job {
             mut keep_alive,
-            fd,
+            place,
             off,
             js,
             ..
         } = unsafe { *Box::from_raw(this) };
-        if let Some(fd) = fd {
-            vm.fd_jobs.with_mut(|jobs| jobs.leave(fd));
+        if let Some(place) = place {
+            vm.fd_jobs.with_mut(|jobs| jobs.leave(place));
         }
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)

@@ -9367,7 +9367,9 @@ declare module "bun" {
          * what `dcraw` produces and what most raw viewers show; setting it
          * turns the stretch off and scales the recorded exposure by this
          * factor, so `1` is the exposure as shot. Values that are not
-         * finite and greater than zero are ignored.
+         * finite and greater than zero are ignored, and so are values
+         * that stop being either when narrowed to the 32-bit float
+         * LibRaw takes — `1e300` and `1e-300` among them.
          * @default undefined // LibRaw's automatic stretch
          */
         brightness?: number;

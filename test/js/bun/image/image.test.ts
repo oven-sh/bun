@@ -1723,6 +1723,16 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
         expect(await new Bun.Image(bytes, { raw: { brightness } }).resize(64).bytes()).toEqual(out);
       }
 
+      // And one that survives it develops a different frame. Asking for
+      // any multiplier turns the automatic stretch off, so even `1` — the
+      // exposure as shot — differs from the frame above; `2` differs from
+      // `1` in turn, which is the multiplier itself arriving rather than
+      // just the flag that switches the stretch.
+      const asShot = await new Bun.Image(bytes, { raw: { brightness: 1 } }).resize(64).bytes();
+      const doubled = await new Bun.Image(bytes, { raw: { brightness: 2 } }).resize(64).bytes();
+      expect(asShot).not.toEqual(out);
+      expect(doubled).not.toEqual(asShot);
+
       // Truncated: the header still identifies, the sensor data runs out.
       // LibRaw's default data-error callback prints to stderr here, so the
       // decoder replaces it; the error arrives through the return value.

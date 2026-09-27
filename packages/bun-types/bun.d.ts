@@ -3730,6 +3730,10 @@ declare module "bun" {
      * relative path under `$bunfs`, so `import(join(import.meta.dirname, "plugins/a.js"))`
      * finds `plugins/a.js`.
      *
+     * Requires `compile` and does not combine with `target: "browser"`. It is
+     * independent of `assets`: use `assets` for data you read and `include`
+     * for code you load on demand.
+     *
      * Equivalent CLI flag: `--include` (repeatable)
      *
      * @example

@@ -338,12 +338,12 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
-                if !ctx.bundler_options.compile_include.is_empty() {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --include"
-                    );
-                    Global::exit(1);
-                }
+                // Note: no `--include` check is needed here. This branch only runs when
+                // `user_requested_browser_target` is true, but the guard above (around
+                // `user_requested_browser_target { ... Global::exit(1) }`, before
+                // `expand_compile_includes`) already exits whenever `--include` is
+                // non-empty and the user requested `--target=browser`, so
+                // `compile_include` is always empty by the time we get here.
 
                 // This is not a bun executable compile - clear compile flags
                 this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;

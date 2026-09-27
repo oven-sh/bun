@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { abbreviatedAccept, jsonHeaders, pack, publishBody, request, type Manifest } from "./fixtures.ts";
-import { TestRegistry, toml } from "./test-registry.ts";
+import { TestRegistry, toml } from "../test-registry.ts";
+import { abbreviatedAccept, jsonHeaders, pack, publishBody, request, type Manifest } from "./helpers.ts";
 
 /** A project that installs from and publishes to the registry, as `user` when one is given. */
 function project(registry: TestRegistry, manifest: Record<string, unknown>, user?: string) {
@@ -296,7 +296,7 @@ describe("cli.ts", () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
-        join(import.meta.dir, "cli.ts"),
+        join(import.meta.dir, "..", "cli.ts"),
         "--port=0",
         `--storage=${registry.packagesPath}`,
         "--user=someone:secret",

@@ -1,4 +1,4 @@
-export { Advisories, type Advisory } from "./advisories.ts";
+export { Advisories, type Advisory } from "./src/advisories.ts";
 export {
   Auth,
   type Credentials,
@@ -8,8 +8,8 @@ export {
   type User,
   type UserOptions,
   type WebSession,
-} from "./auth.ts";
-export { RegistryError } from "./http.ts";
+} from "./src/auth.ts";
+export { RegistryError } from "./src/http.ts";
 export {
   isValidRange,
   isValidTag,
@@ -17,7 +17,7 @@ export {
   parsePackageName,
   validateNewPackageName,
   type PackageName,
-} from "./names.ts";
+} from "./src/names.ts";
 export {
   Packages,
   type Access,
@@ -27,6 +27,12 @@ export {
   type ReadPolicy,
   type StoredPackage,
   type WritePolicy,
-} from "./packages.ts";
-export { abbreviatedContentType, type Dist, type Human, type Packument, type VersionDocument } from "./packument.ts";
-export { Registry, type RecordedRequest, type RegistryOptions } from "./registry.ts";
+} from "./src/packages.ts";
+export {
+  abbreviatedContentType,
+  type Dist,
+  type Human,
+  type Packument,
+  type VersionDocument,
+} from "./src/packument.ts";
+export { Registry, type RecordedRequest, type RegistryOptions } from "./src/registry.ts";

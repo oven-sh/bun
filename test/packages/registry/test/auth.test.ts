@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { jsonHeaders, pack, publishBody, request } from "./fixtures.ts";
-import { Registry } from "./index.ts";
+import { Registry } from "../index.ts";
+import { jsonHeaders, pack, publishBody, request } from "./helpers.ts";
 
 const otpMessage = "You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.";
 

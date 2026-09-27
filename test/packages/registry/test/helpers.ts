@@ -1,6 +1,6 @@
 import { tempDir, type DirectoryTree } from "harness";
 import { brotliDecompressSync } from "node:zlib";
-import type { Packument, VersionDocument } from "./index.ts";
+import type { Packument, VersionDocument } from "../index.ts";
 
 /** What bun and npm send to ask for the abbreviated packument. */
 export const abbreviatedAccept = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";

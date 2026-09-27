@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { Registry } from "./registry.ts";
+import { Registry } from "./src/registry.ts";
 
 const usage = `Usage: bun cli.ts [options]
 

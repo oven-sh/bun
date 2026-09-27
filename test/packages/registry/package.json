@@ -1,5 +1,5 @@
 {
-  "name": "@bun-test/registry",
+  "name": "registry",
   "version": "0.0.0",
   "private": true,
   "description": "An npm registry on Bun.serve, for the tests of a package manager.",
@@ -9,6 +9,6 @@
     ".": "./index.ts"
   },
   "bin": {
-    "bun-registry": "./cli.ts"
+    "registry": "./cli.ts"
   }
 }

@@ -1120,25 +1120,25 @@ impl BufferedReader {
         }
     }
 
-    /// Dispatches what is in `_buffer`. Returns what the parent's
-    /// `on_read_chunk` did, and `true` when there was nothing to give it.
-    fn on_read_chunk(&mut self, has_more: ReadState) -> bool {
+    /// Dispatches what is in `_buffer`.
+    fn on_read_chunk(&mut self, has_more: ReadState) {
         if has_more == ReadState::Eof {
             self.flags.insert(ReaderFlags::RECEIVED_EOF);
         }
         if !self.vtable.is_streaming_enabled() {
-            return true;
+            return;
         }
         // `on_read_chunk` re-enters JS, which can reach this reader through its parent; go raw across the dispatch so nothing of `self` is cached over it.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` aliases the live `&mut self`; the reader is an inline field of its parent (never freed mid-call). Borrows end at each `;`.
         let (vtable, mut buffer) = unsafe { ((*this).vtable, mem::take(&mut (*this)._buffer)) };
-        let result = if buffer.is_empty() {
-            true
-        } else if has_more == ReadState::Eof {
-            vtable.on_read_chunk(Chunk::Owned(buffer), has_more)
-        } else {
-            let result = vtable.on_read_chunk(Chunk::Buffer(&mut buffer), has_more);
+        // Parents that want the reader paused call `reader().pause()` themselves: what they return is for the POSIX read loop.
+        if has_more == ReadState::Eof {
+            if !buffer.is_empty() {
+                vtable.on_read_chunk(Chunk::Owned(buffer), has_more);
+            }
+        } else if !buffer.is_empty() {
+            vtable.on_read_chunk(Chunk::Buffer(&mut buffer), has_more);
             buffer.clear();
             // SAFETY: `this` is still live (see above).
             unsafe {
@@ -1146,10 +1146,8 @@ impl BufferedReader {
                     (*this)._buffer = buffer;
                 }
             }
-            result
-        };
+        }
         core::hint::black_box(this);
-        result
     }
 
     fn finish(&mut self) {
@@ -1350,8 +1348,8 @@ impl BufferedReader {
         } else {
             has_more
         };
-        // Parents that want the reader paused call `reader().pause()` themselves; stopping here could free a parent whose caller still holds `this` (FileResponseStream on abort).
-        let _ = self.on_read_chunk(has_more);
+        // Stopping here on the parent's say-so could free a parent whose caller still holds `this` (FileResponseStream on abort).
+        self.on_read_chunk(has_more);
 
         if has_more == ReadState::Eof {
             self.close();
@@ -1375,23 +1373,6 @@ impl BufferedReader {
             }
             _ => {}
         }
-    }
-
-    pub fn stop_reading(&mut self) -> sys::Result<()> {
-        if self.flags.contains(ReaderFlags::IS_DONE) || self.flags.contains(ReaderFlags::IS_PAUSED)
-        {
-            return sys::Result::Ok(());
-        }
-        self.flags.insert(ReaderFlags::IS_PAUSED);
-        match self.source.as_mut() {
-            Some(Source::Pipe(pipe)) => pipe.read_stop(),
-            Some(Source::Tty(tty)) => tty.read_stop(),
-            Some(Source::File(file)) => {
-                let _ = file.cancel();
-            }
-            None => {}
-        }
-        sys::Result::Ok(())
     }
 
     fn close_impl<const CALL_DONE: bool>(&mut self) {
@@ -1422,7 +1403,19 @@ impl BufferedReader {
     }
 
     pub fn pause(&mut self) {
-        let _ = self.stop_reading();
+        if self.flags.contains(ReaderFlags::IS_DONE) || self.flags.contains(ReaderFlags::IS_PAUSED)
+        {
+            return;
+        }
+        self.flags.insert(ReaderFlags::IS_PAUSED);
+        match self.source.as_mut() {
+            Some(Source::Pipe(pipe)) => pipe.read_stop(),
+            Some(Source::Tty(tty)) => tty.read_stop(),
+            Some(Source::File(file)) => {
+                let _ = file.cancel();
+            }
+            None => {}
+        }
     }
 
     pub fn unpause(&mut self) {

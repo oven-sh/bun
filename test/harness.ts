@@ -509,6 +509,50 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+/** Whether {@link tempVolume} can work: attaching a virtual disk takes an elevated process. */
+export function canCreateVolumes(): boolean {
+  return isWindows && spawnSync({ cmd: ["fltmc"], stdio: ["ignore", "ignore", "ignore"] }).success;
+}
+
+/**
+ * Windows: a small, empty volume with the given file system, mounted on a
+ * temporary directory and thrown away when disposed. FAT32 and exFAT have no
+ * POSIX delete or rename, no links and no ACLs. Takes a few seconds: make one
+ * in `beforeAll`, under `describe.skipIf(!canCreateVolumes())`.
+ */
+export function tempVolume(fileSystem: "FAT32" | "exFAT" | "NTFS"): { path: string } & Disposable {
+  const base = tmpdirSync("volume-");
+  const disk = join(base, "disk.vhdx");
+  const path = join(base, "mount");
+  fs.mkdirSync(path);
+  const diskpart = (...commands: string[]) => {
+    const script = join(base, "diskpart.txt");
+    fs.writeFileSync(script, commands.join("\r\n") + "\r\n");
+    const { exitCode, stdout } = spawnSync({ cmd: ["diskpart", "/s", script], stdio: ["ignore", "pipe", "ignore"] });
+    if (exitCode !== 0) throw new Error(`diskpart failed with ${exitCode}:\n${commands.join("\n")}\n${stdout}`);
+  };
+  const discard = () => {
+    diskpart(`select vdisk file="${disk}"`, "detach vdisk");
+    rmSync(base, { recursive: true, force: true });
+  };
+  try {
+    diskpart(
+      `create vdisk file="${disk}" maximum=64 type=expandable`,
+      "attach vdisk",
+      "create partition primary",
+      `format fs=${fileSystem} quick`,
+      `assign mount="${path}"`,
+    );
+  } catch (error) {
+    // However far it got, the disk must not stay attached.
+    try {
+      discard();
+    } catch {}
+    throw error;
+  }
+  return { path, [Symbol.dispose]: discard };
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);

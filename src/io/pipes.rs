@@ -96,7 +96,7 @@ impl PollOrFd {
             *self = PollOrFd::Closed;
 
             if close_async && close_fd {
-                crate::closer::Closer::close(fd, ());
+                crate::closer::Closer::close(fd);
             } else if close_fd {
                 let _ = fd.close_allowing_bad_file_descriptor(None);
             }

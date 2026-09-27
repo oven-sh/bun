@@ -923,11 +923,6 @@ impl Default for DeleteFileOptions {
     }
 }
 
-use bun_windows_sys::{
-    FILE_DISPOSITION_DELETE, FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
-    FILE_DISPOSITION_POSIX_SEMANTICS,
-};
-
 // Copy-paste of the standard library function except without unreachable.
 pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys::Result<()> {
     let create_options_flags: ULONG = if options.remove_dir {
@@ -973,7 +968,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut tmp_handle: HANDLE = ptr::null_mut();
     // SAFETY: all out-params are valid
-    let mut rc = unsafe {
+    let rc = unsafe {
         ntdll::NtCreateFile(
             &mut tmp_handle,
             windows::SYNCHRONIZE | windows::DELETE,
@@ -1010,75 +1005,23 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         let _ = externs::CloseHandle(h);
     });
 
-    // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
-    // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
-    // like FAT32, we need to fallback to FileDispositionInformation if the usage of FileDispositionInformationEx gives
-    // us INVALID_PARAMETER.
-    // The same reasoning for win10_rs5 as in os.renameatW() applies (FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5).
-    let mut need_fallback = true;
-    // Deletion with posix semantics if the filesystem supports it.
-    let mut info = windows::FILE_DISPOSITION_INFORMATION_EX {
-        Flags: FILE_DISPOSITION_DELETE
-            | FILE_DISPOSITION_POSIX_SEMANTICS
-            | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
-    };
-
-    // SAFETY: tmp_handle and io are valid
-    rc = unsafe {
-        ntdll::NtSetInformationFile(
-            tmp_handle,
-            &mut io,
-            core::ptr::from_mut(&mut info).cast::<c_void>(),
-            size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
-            windows::FileInformationClass::FileDispositionInformationEx,
-        )
-    };
+    let deleted = fs::delete_by_handle(tmp_handle);
     bun_sys::syslog!(
         "NtSetInformationFile({}, DELETE) = {:?}",
         bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
-        rc
+        deleted
     );
-    match rc {
-        x if x == windows::ntstatus::SUCCESS => return bun_sys::Result::success(),
-        // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
-        x if x == windows::ntstatus::INVALID_PARAMETER => {}
-        // For all other statuses, fall down to the switch below to handle them.
-        _ => need_fallback = false,
+    match deleted {
+        Ok(()) => bun_sys::Result::success(),
+        // Another handle already set the delete disposition; the file is on
+        // its way out, which is what the caller asked for.
+        Err(rc)
+            if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED =>
+        {
+            bun_sys::Result::success()
+        }
+        Err(rc) => bun_sys::Result::errno(rc, bun_sys::Tag::NtSetInformationFile),
     }
-    if need_fallback {
-        // Deletion with file pending semantics, which requires waiting or moving
-        // files to get them removed (from here).
-        let mut file_dispo = windows::FILE_DISPOSITION_INFORMATION {
-            DeleteFile: TRUE as BOOLEAN,
-        };
-
-        // SAFETY: tmp_handle and io are valid
-        rc = unsafe {
-            ntdll::NtSetInformationFile(
-                tmp_handle,
-                &mut io,
-                core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
-                size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
-                windows::FileInformationClass::FileDispositionInformation,
-            )
-        };
-        bun_sys::syslog!(
-            "NtSetInformationFile({}, DELETE) = {:?}",
-            bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
-            rc
-        );
-    }
-    // Another handle already set the delete disposition; the file is on its
-    // way out, which is what the caller asked for. Checked here so it covers
-    // both the FileDispositionInformationEx result and the legacy fallback.
-    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
-        return bun_sys::Result::success();
-    }
-    if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::NtSetInformationFile) {
-        return err;
-    }
-
-    bun_sys::Result::success()
 }
 
 pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
@@ -1777,16 +1720,46 @@ pub fn move_opened_file_at(
             new_file_name.len(),
         );
     }
-    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
-        ntdll::NtSetInformationFile(
-            src_fd.native(),
-            &mut io_status_block,
-            rename_info.cast::<c_void>(),
-            u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
-            win32::FileInformationClass::FileRenameInformationEx,
-        )
+    let rename_info_bytes = rename_info.cast::<c_void>();
+    let mut set_rename_information = |class| {
+        // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
+        unsafe {
+            ntdll::NtSetInformationFile(
+                src_fd.native(),
+                &mut io_status_block,
+                rename_info_bytes,
+                u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
+                class,
+            )
+        }
     };
+    let mut rc = set_rename_information(win32::FileInformationClass::FileRenameInformationEx);
+    // What a file system without POSIX rename (FAT, exFAT, some redirectors)
+    // says. `FILE_RENAME_INFORMATION` is the same struct with a BOOLEAN where
+    // the flags are.
+    if matches!(
+        Win32Error::from_ntstatus(rc),
+        Win32Error::NOT_SUPPORTED | Win32Error::INVALID_PARAMETER | Win32Error::INVALID_FUNCTION
+    ) {
+        // Unlike the POSIX one, this rename lets a directory replace a file.
+        let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        let mut standard = MaybeUninit::<win32::FILE_STANDARD_INFORMATION>::zeroed();
+        // SAFETY: src_fd valid; `standard` is writable for its size, and all
+        // zeroes is a value of it. The class takes no particular access.
+        let is_directory = unsafe {
+            ntdll::NtQueryInformationFile(
+                src_fd.native(),
+                &mut io,
+                standard.as_mut_ptr().cast::<c_void>(),
+                size_of::<win32::FILE_STANDARD_INFORMATION>() as u32,
+                win32::FileInformationClass::FileStandardInformation,
+            ) == win32::ntstatus::SUCCESS
+                && standard.assume_init().Directory != 0
+        };
+        // SAFETY: `rename_info` was initialized above.
+        unsafe { (*rename_info).Flags = ULONG::from(replace_if_exists && !is_directory) };
+        rc = set_rename_information(win32::FileInformationClass::FileRenameInformation);
+    }
     bun_sys::syslog!(
         "moveOpenedFileAt({} ->> {} '{}', {}) = {}",
         src_fd,

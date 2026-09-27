@@ -42,6 +42,7 @@ pub(crate) type ReaderImpl = bun_io::BufferedReader;
 #[derive(Clone, Copy)]
 enum Made {
     Elsewhere,
+    ForThisReader,
     SynchronousPipe,
     #[cfg(windows)]
     OverlappedPipe,
@@ -52,6 +53,9 @@ struct State {
     /// What `fd` is, as far as whoever made this reader knows.
     #[cfg(windows)]
     origin: bun_io::windows::PipeOrigin,
+    /// [`IOReader::init_opened`].
+    #[cfg(windows)]
+    fd_is_private: bool,
     readers: Readers,
     /// What the reader has failed with since it was last started; an
     /// `on_reader_done` after it carries it.
@@ -133,6 +137,12 @@ impl IOReader {
         Self::new(fd, interp, Made::Elsewhere)
     }
 
+    /// [`init`](Self::init) for an `fd` opened for this reader: nothing else
+    /// asks for it, and it is read to its end once.
+    pub(crate) fn init_opened(fd: Fd, interp: &Interpreter) -> std::sync::Arc<IOReader> {
+        Self::new(fd, interp, Made::ForThisReader)
+    }
+
     /// [`init`](Self::init) for the read end of a `bun_sys::pipe()`.
     pub(crate) fn init_created_pipe(fd: Fd, interp: &Interpreter) -> std::sync::Arc<IOReader> {
         Self::new(fd, interp, Made::SynchronousPipe)
@@ -154,10 +164,12 @@ impl IOReader {
                 fd,
                 #[cfg(windows)]
                 origin: match made {
-                    Made::Elsewhere => bun_io::windows::PipeOrigin::Foreign,
+                    Made::Elsewhere | Made::ForThisReader => bun_io::windows::PipeOrigin::Foreign,
                     Made::SynchronousPipe => bun_io::windows::PipeOrigin::CreatedSynchronous,
                     Made::OverlappedPipe => bun_io::windows::PipeOrigin::Created,
                 },
+                #[cfg(windows)]
+                fd_is_private: matches!(made, Made::ForThisReader),
                 readers: Readers::new(),
                 raw_err: None,
                 evtloop: interp.event_loop,
@@ -224,7 +236,7 @@ impl IOReader {
             #[cfg(not(windows))]
             let started = Self::start_reader(r, s.fd);
             #[cfg(windows)]
-            let started = Self::start_reader(r, s.fd, &mut s.origin);
+            let started = Self::start_reader(r, s);
             if let Err(e) = started {
                 self.on_reader_error(&e);
             }
@@ -240,18 +252,21 @@ impl IOReader {
     /// A Windows source releases its HANDLE only once the loop has collected
     /// its last operation, which can be after this `IOReader` (and `fd`) is
     /// gone, so it reads through a HANDLE of its own: the same file object,
-    /// so what `origin` says of `fd` holds for it.
+    /// so what `origin` says of `fd` holds for it. A private `fd` becomes that
+    /// HANDLE, and is closed when the source has reached its end: a listener
+    /// that hears of the end hears it of a file that is no longer open.
     #[cfg(windows)]
-    fn start_reader(
-        r: &mut ReaderImpl,
-        fd: Fd,
-        origin: &mut bun_io::windows::PipeOrigin,
-    ) -> sys::Result<()> {
+    fn start_reader(r: &mut ReaderImpl, s: &mut State) -> sys::Result<()> {
         use bun_io::windows::PipeOrigin;
         use bun_sys::FdExt as _;
+        let origin = &mut s.origin;
         // Lets go of a source that ended with an error.
         r.deinit();
-        let own = sys::dup(fd)?;
+        let own = if s.fd_is_private {
+            core::mem::replace(&mut s.fd, Fd::INVALID)
+        } else {
+            sys::dup(s.fd)?
+        };
         let source = match r.open_source(own, *origin) {
             Ok(source) => source,
             Err(e) => {
@@ -416,7 +431,9 @@ impl Drop for IOReader {
         if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
             r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
         }
-        let _ = sys::close(s.fd);
+        if s.fd.is_valid() {
+            let _ = sys::close(s.fd);
+        }
         r.disable_keeping_process_alive(());
         // `reader` Drop handles its own deinit.
     }

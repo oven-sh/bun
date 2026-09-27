@@ -239,7 +239,7 @@ impl Cat {
                 },
             };
 
-            let reader = IOReader::init(fd, interp);
+            let reader = IOReader::init_opened(fd, interp);
             if let CatState::ExecFilepathArgs { reader: slot, .. } =
                 &mut Self::state_mut(interp, cmd).state
             {

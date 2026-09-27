@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { canCreateVolumes, isPosix, tempVolume } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -8,6 +8,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -234,4 +235,43 @@ describe("mv", async () => {
       }
     });
   });
+
+  describe.skipIf(!canCreateVolumes()).each(["FAT32", "exFAT"] as const)(
+    "on %s, which has no POSIX rename",
+    fileSystem => {
+      let volume: ReturnType<typeof tempVolume>;
+      // Formatting a disk is seconds on an idle machine and many on a busy one.
+      beforeAll(() => {
+        volume = tempVolume(fileSystem);
+      }, 60_000);
+      afterAll(() => volume?.[Symbol.dispose](), 60_000);
+
+      test("moves a file, over another one too, and a directory", async () => {
+        const cwd = join(volume.path, "moves");
+        mkdirSync(join(cwd, "dir"), { recursive: true });
+        writeFileSync(join(cwd, "a"), "a");
+        writeFileSync(join(cwd, "existing"), "old");
+        writeFileSync(join(cwd, "dir", "inside"), "inside");
+
+        const r = await $`mv a b && mv b existing && mv dir moved`.cwd(cwd).quiet();
+        expect(r.stderr.toString()).toBe("");
+        expect(readdirSync(cwd).sort()).toEqual(["existing", "moved"]);
+        expect(readFileSync(join(cwd, "existing"), "utf8")).toBe("a");
+        expect(readFileSync(join(cwd, "moved", "inside"), "utf8")).toBe("inside");
+        expect(r.exitCode).toBe(0);
+      });
+
+      test("a directory does not take the place of a file", async () => {
+        const cwd = join(volume.path, "dir-over-file");
+        mkdirSync(join(cwd, "dir"), { recursive: true });
+        writeFileSync(join(cwd, "file"), "kept");
+
+        const r = await $`mv dir file`.cwd(cwd).quiet();
+        expect(r.stderr.toString()).toStartWith("mv: ");
+        expect(readFileSync(join(cwd, "file"), "utf8")).toBe("kept");
+        expect(statSync(join(cwd, "dir")).isDirectory()).toBe(true);
+        expect(r.exitCode).not.toBe(0);
+      });
+    },
+  );
 });

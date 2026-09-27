@@ -634,7 +634,7 @@ impl Drop for FileResponseStream {
         // field — closes the poll handle. `bun.destroy(this)` is owned by
         // `heap::take` in `deref`, not here.
         if self.auto_close.get() {
-            Closer::close(self.fd.get(), ());
+            Closer::close(self.fd.get());
         }
     }
 }

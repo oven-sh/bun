@@ -126,7 +126,12 @@ impl Dir {
             name: Vec<u8>,
             parent_dir: Fd,
             iter: dir_iterator::WrappedIterator,
+            /// How often the directory was found not empty after all of it was deleted.
+            rescans: u8,
         }
+        // Where deletes lack POSIX semantics (FAT, exFAT), a file that is open
+        // elsewhere stays listed until it is closed.
+        const MAX_RESCANS: u8 = 50;
         // Ensure every still-open iterator dir is closed on early return.
         let mut stack = scopeguard::guard(Vec::<StackItem>::with_capacity(16), |mut s| {
             for item in s.drain(..) {
@@ -137,6 +142,7 @@ impl Dir {
             name: sub_path.to_vec(),
             parent_dir: self.fd,
             iter: dir_iterator::iterate(initial),
+            rescans: 0,
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
@@ -172,6 +178,7 @@ impl Dir {
                             name: entry.name.slice_u8().to_vec(),
                             parent_dir: parent,
                             iter: dir_iterator::iterate(new_dir),
+                            rescans: 0,
                         });
                         continue 'process_stack;
                     } else {
@@ -201,6 +208,7 @@ impl Dir {
             let dir_fd = top.iter.dir();
             let parent_dir = top.parent_dir;
             let name = core::mem::take(&mut top.name);
+            let rescans = top.rescans;
             // Pop before closing so the cleanup guard doesn't double-close on
             // an error from `unlinkat_a`.
             stack.pop();
@@ -211,7 +219,7 @@ impl Dir {
                 Ok(()) => {}
                 Err(e) => match e.get_errno() {
                     E::ENOENT => {}
-                    E::ENOTEMPTY => need_to_retry = true,
+                    E::ENOTEMPTY if rescans < MAX_RESCANS => need_to_retry = true,
                     _ => return Err(e),
                 },
             }
@@ -245,6 +253,7 @@ impl Dir {
                     name,
                     parent_dir,
                     iter: dir_iterator::iterate(new_dir),
+                    rescans: rescans + 1,
                 });
                 continue 'process_stack;
             }

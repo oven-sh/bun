@@ -9,7 +9,7 @@ import {
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -2553,6 +2553,39 @@ it("Bun.file().stream() read text from large file", async () => {
   } finally {
     unlinkSync(tmpfile);
   }
+});
+
+// Windows does not let a directory be renamed while a file in it is open.
+describe("Bun.file().stream() has closed the file", () => {
+  const files = { "d/big": Buffer.alloc(300_000, "x").toString(), "d/small": "hello", "d/empty": "" };
+  for (const name of ["big", "small", "empty"]) {
+    it(`when ${name} has been read to its end`, async () => {
+      using dir = tempDir("file-stream-closed", files);
+      let length = 0;
+      for await (const chunk of Bun.file(join(String(dir), "d", name)).stream()) length += chunk.length;
+      renameSync(join(String(dir), "d"), join(String(dir), "renamed"));
+      expect(length).toBe(files["d/" + name].length);
+    });
+  }
+
+  it("when the loop over it stops at the first chunk", async () => {
+    using dir = tempDir("file-stream-closed", files);
+    for await (const chunk of Bun.file(join(String(dir), "d", "big")).stream()) {
+      expect(chunk.length).toBeLessThan(files["d/big"].length);
+      break;
+    }
+    renameSync(join(String(dir), "d"), join(String(dir), "renamed"));
+  });
+
+  it("when it has been cancelled after the first chunk", async () => {
+    using dir = tempDir("file-stream-closed", files);
+    const reader = Bun.file(join(String(dir), "d", "big"))
+      .stream()
+      .getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel();
+    renameSync(join(String(dir), "d"), join(String(dir), "renamed"));
+  });
 });
 
 // A POSIX file is read synchronously inside the stream's pull, so a failing

@@ -1584,12 +1584,155 @@ fn open_directory_for_delete(path: &[u8]) -> Win32Result<OwnedHandle> {
     Ok(OwnedHandle(handle))
 }
 
+/// A second handle to what `handle` is open on. `ReOpenFile` is this for a
+/// file; it refuses a directory.
+fn reopen(handle: HANDLE, access: u32) -> core::result::Result<OwnedHandle, win32::NTSTATUS> {
+    const FILE_OPEN_FOR_BACKUP_INTENT: u32 = 0x0000_4000;
+    let mut name = win32::UNICODE_STRING {
+        Length: 0,
+        MaximumLength: 0,
+        Buffer: ptr::null_mut(),
+    };
+    let mut attributes = win32::OBJECT_ATTRIBUTES {
+        Length: core::mem::size_of::<win32::OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: handle,
+        ObjectName: &mut name,
+        Attributes: 0,
+        SecurityDescriptor: ptr::null_mut(),
+        SecurityQualityOfService: ptr::null_mut(),
+    };
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut reopened: HANDLE = ptr::null_mut();
+    // SAFETY: every pointer is to a live local; `handle` is live.
+    let status = unsafe {
+        win32::ntdll::NtCreateFile(
+            &mut reopened,
+            access | win32::SYNCHRONIZE,
+            &mut attributes,
+            &mut io,
+            ptr::null_mut(),
+            0,
+            SHARE_ALL,
+            win32::FILE_OPEN,
+            win32::FILE_OPEN_REPARSE_POINT
+                | FILE_OPEN_FOR_BACKUP_INTENT
+                | win32::FILE_SYNCHRONOUS_IO_NONALERT,
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if !win32::NT_SUCCESS(status) {
+        return Err(status);
+    }
+    Ok(OwnedHandle(reopened))
+}
+
+/// Deletes the file or directory `handle` is open on with `DELETE` access.
+pub(crate) fn delete_by_handle(handle: HANDLE) -> core::result::Result<(), win32::NTSTATUS> {
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    // POSIX delete: the name disappears at once even while other handles are
+    // open, and a read-only file needs no attribute change.
+    let mut disposition_ex = win32::FILE_DISPOSITION_INFORMATION_EX {
+        Flags: win32::FILE_DISPOSITION_DELETE
+            | win32::FILE_DISPOSITION_POSIX_SEMANTICS
+            | win32::FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+    // SAFETY: `handle` is live; the info struct matches the class.
+    let status = unsafe {
+        win32::ntdll::NtSetInformationFile(
+            handle,
+            &mut io,
+            ptr::from_mut(&mut disposition_ex).cast(),
+            core::mem::size_of::<win32::FILE_DISPOSITION_INFORMATION_EX>() as u32,
+            win32::FILE_INFORMATION_CLASS::FileDispositionInformationEx,
+        )
+    };
+    if win32::NT_SUCCESS(status) {
+        return Ok(());
+    }
+    // The errors libuv takes to mean that the file system (FAT, exFAT, some
+    // redirectors) has no POSIX delete.
+    if !matches!(
+        Win32Error::from_ntstatus(status),
+        Win32Error::NOT_SUPPORTED | Win32Error::INVALID_PARAMETER | Win32Error::INVALID_FUNCTION
+    ) {
+        return Err(status);
+    }
+
+    let mut classic_delete = || {
+        let mut disposition = win32::FILE_DISPOSITION_INFORMATION { DeleteFile: 1 };
+        // SAFETY: `handle` is live; the info struct matches the class.
+        unsafe {
+            win32::ntdll::NtSetInformationFile(
+                handle,
+                &mut io,
+                ptr::from_mut(&mut disposition).cast(),
+                core::mem::size_of::<win32::FILE_DISPOSITION_INFORMATION>() as u32,
+                win32::FILE_INFORMATION_CLASS::FileDispositionInformation,
+            )
+        }
+    };
+    let status = classic_delete();
+    if win32::NT_SUCCESS(status) {
+        return Ok(());
+    }
+    if status != win32::NTSTATUS::CANNOT_DELETE {
+        return Err(status);
+    }
+
+    // What a classic delete says of something read-only, among others.
+    let attributes_handle = reopen(
+        handle,
+        win32::FILE_READ_ATTRIBUTES | win32::FILE_WRITE_ATTRIBUTES,
+    )?;
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut basic: win32::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: `attributes_handle` is live; `basic` is writable for its size.
+    let queried = unsafe {
+        win32::ntdll::NtQueryInformationFile(
+            attributes_handle.0,
+            &mut io,
+            ptr::from_mut(&mut basic).cast(),
+            core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
+            win32::FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if !win32::NT_SUCCESS(queried) || basic.FileAttributes & win32::FILE_ATTRIBUTE_READONLY == 0 {
+        return Err(status);
+    }
+    let attributes = basic.FileAttributes & !win32::FILE_ATTRIBUTE_READONLY;
+    // Zeroed times are left as they are; zeroed attributes would be too.
+    basic = bun_core::ffi::zeroed();
+    basic.FileAttributes = if attributes == 0 {
+        win32::FILE_ATTRIBUTE_NORMAL
+    } else {
+        attributes
+    };
+    // SAFETY: `attributes_handle` is live; the info struct matches the class.
+    let cleared = unsafe {
+        win32::ntdll::NtSetInformationFile(
+            attributes_handle.0,
+            &mut io,
+            ptr::from_mut(&mut basic).cast(),
+            core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
+            win32::FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if !win32::NT_SUCCESS(cleared) {
+        return Err(cleared);
+    }
+    let status = classic_delete();
+    if win32::NT_SUCCESS(status) {
+        Ok(())
+    } else {
+        Err(status)
+    }
+}
+
 fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
     let to_e = |e: Win32Error| e.to_e();
-    // `unlink` needs the attributes to tell a link to a directory from a
-    // directory; `rmdir` only if it comes to the classic delete below.
-    let (handle, attributes) = if is_rmdir {
-        (open_directory_for_delete(path).map_err(to_e)?, None)
+    let handle = if is_rmdir {
+        open_directory_for_delete(path).map_err(to_e)?
     } else {
         let wpath = WPath::new(path).map_err(to_e)?;
         // Never follows a link: the link itself is what gets removed.
@@ -1616,95 +1759,9 @@ fn unlink_or_rmdir(path: &[u8], is_rmdir: bool) -> core::result::Result<(), E> {
                 });
             }
         }
-        (handle, Some(attributes))
+        handle
     };
-
-    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
-    // POSIX delete: the name disappears at once even while other handles are
-    // open, and a read-only file needs no attribute change.
-    let mut disposition_ex = win32::FILE_DISPOSITION_INFORMATION_EX {
-        Flags: win32::FILE_DISPOSITION_DELETE
-            | win32::FILE_DISPOSITION_POSIX_SEMANTICS
-            | win32::FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
-    };
-    // SAFETY: `handle` is live; the info struct matches the class.
-    let status = unsafe {
-        win32::ntdll::NtSetInformationFile(
-            handle.0,
-            &mut io,
-            ptr::from_mut(&mut disposition_ex).cast(),
-            core::mem::size_of::<win32::FILE_DISPOSITION_INFORMATION_EX>() as u32,
-            win32::FILE_INFORMATION_CLASS::FileDispositionInformationEx,
-        )
-    };
-    if win32::NT_SUCCESS(status) {
-        return Ok(());
-    }
-    let error = Win32Error::from_ntstatus(status);
-    // The errors libuv takes to mean that the file system or the OS has no
-    // POSIX delete.
-    if !matches!(
-        error,
-        Win32Error::NOT_SUPPORTED | Win32Error::INVALID_PARAMETER | Win32Error::INVALID_FUNCTION
-    ) {
-        return Err(error.to_e());
-    }
-
-    let attributes = match attributes {
-        Some(attributes) => attributes,
-        None => file_attributes(handle.0).map_err(to_e)?,
-    };
-    if attributes & win32::FILE_ATTRIBUTE_READONLY != 0 {
-        // A classic delete refuses read-only files. The first handle was
-        // opened without FILE_WRITE_ATTRIBUTES because asking for it up front
-        // fails under Wine (https://bugs.winehq.org/show_bug.cgi?id=50771).
-        // SAFETY: `handle` is live.
-        let write_attributes = unsafe {
-            win32::ReOpenFile(
-                handle.0,
-                win32::FILE_WRITE_ATTRIBUTES,
-                SHARE_ALL,
-                win32::FILE_FLAG_OPEN_REPARSE_POINT | win32::FILE_FLAG_BACKUP_SEMANTICS,
-            )
-        };
-        if write_attributes == INVALID_HANDLE_VALUE {
-            return Err(Win32Error::get().to_e());
-        }
-        let write_attributes = OwnedHandle(write_attributes);
-        let mut basic: win32::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
-        basic.FileAttributes =
-            (attributes & !win32::FILE_ATTRIBUTE_READONLY) | win32::FILE_ATTRIBUTE_ARCHIVE;
-        // SAFETY: `write_attributes` is live; the info struct matches the class.
-        let status = unsafe {
-            win32::ntdll::NtSetInformationFile(
-                write_attributes.0,
-                &mut io,
-                ptr::from_mut(&mut basic).cast(),
-                core::mem::size_of::<win32::FILE_BASIC_INFORMATION>() as u32,
-                win32::FILE_INFORMATION_CLASS::FileBasicInformation,
-            )
-        };
-        if !win32::NT_SUCCESS(status) {
-            return Err(Win32Error::from_ntstatus(status).to_e());
-        }
-    }
-
-    let mut disposition = win32::FILE_DISPOSITION_INFORMATION { DeleteFile: 1 };
-    // SAFETY: `handle` is live; the info struct matches the class.
-    let status = unsafe {
-        win32::ntdll::NtSetInformationFile(
-            handle.0,
-            &mut io,
-            ptr::from_mut(&mut disposition).cast(),
-            core::mem::size_of::<win32::FILE_DISPOSITION_INFORMATION>() as u32,
-            win32::FILE_INFORMATION_CLASS::FileDispositionInformation,
-        )
-    };
-    if win32::NT_SUCCESS(status) {
-        Ok(())
-    } else {
-        Err(Win32Error::from_ntstatus(status).to_e())
-    }
+    delete_by_handle(handle.0).map_err(|status| Win32Error::from_ntstatus(status).to_e())
 }
 
 /// `mode` is ignored: a Windows directory has no permission bits to set.

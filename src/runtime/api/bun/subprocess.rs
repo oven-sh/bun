@@ -1482,9 +1482,7 @@ pub(crate) mod testing_apis {
         // stopped the source on Windows) so the teardown exercised is identical.
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
         #[cfg(windows)]
-        {
-            let _ = Readable::pipe_reader_mut(pipe).reader.stop_reading();
-        }
+        Readable::pipe_reader_mut(pipe).reader.pause();
         let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
         // SAFETY: live pipe reader; `on_error` is the raw entry so the
         // (maybe-freeing) error dispatch runs under no receiver protector.

@@ -2059,7 +2059,7 @@ pub mod closer {
     }
 
     impl Closer {
-        pub fn close(fd: Fd, _compat: ()) {
+        pub fn close(fd: Fd) {
             debug_assert!(fd.is_valid());
             WorkPool::schedule_owned(Box::new(Closer {
                 fd,

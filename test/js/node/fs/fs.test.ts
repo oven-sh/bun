@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  canCreateVolumes,
   gc,
   getMaxFD,
   isBroken,
@@ -13,6 +14,7 @@ import {
   isWindows,
   tempDir,
   tempDirWithFiles,
+  tempVolume,
   tmpdirSync,
 } from "harness";
 import fs, {
@@ -4216,6 +4218,83 @@ describe("rmdirSync", () => {
     expect(() => rmdirSync(a, { recursive: true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 });
+
+describe.skipIf(!canCreateVolumes()).each(["FAT32", "exFAT"] as const)(
+  "on %s, which has no POSIX delete",
+  fileSystem => {
+    let volume: ReturnType<typeof tempVolume>;
+    // Formatting a disk is seconds on an idle machine and many on a busy one.
+    beforeAll(() => {
+      volume = tempVolume(fileSystem);
+    }, 60_000);
+    afterAll(() => volume?.[Symbol.dispose](), 60_000);
+
+    // A deleted file stays listed until its last handle is closed. Below 16
+    // levels and beyond them are two implementations.
+    it.each([1, 20])("rm of a tree %d deep with an open file at the bottom fails with ENOTEMPTY", async depth => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fs = require("fs"), { join } = require("path");
+          const [root, depth] = [process.argv[1], +process.argv[2]];
+          const bottom = join(root, ...Array(depth).fill("d"));
+          fs.mkdirSync(bottom, { recursive: true });
+          fs.writeFileSync(join(bottom, "f"), "x");
+          const fd = fs.openSync(join(bottom, "f"), "r");
+          try { fs.rmSync(root, { recursive: true }); console.log("removed"); } catch (e) { console.log(e.code); }
+          try { await fs.promises.rm(root, { recursive: true }); console.log("removed"); } catch (e) { console.log(e.code); }
+          fs.closeSync(fd);
+          fs.rmSync(root, { recursive: true });
+          console.log(fs.existsSync(root));
+          `,
+          join(volume.path, "open-" + depth),
+          String(depth),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "ENOTEMPTY\nENOTEMPTY\nfalse\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("what is read-only is removed all the same", async () => {
+      const root = join(volume.path, "read-only");
+      const make = (name: string) => {
+        const tree = join(root, name);
+        mkdirSync(join(tree, "dir"), { recursive: true });
+        writeFileSync(join(tree, "dir", "file"), "x");
+        writeFileSync(join(tree, "file"), "x");
+        for (const entry of ["dir/file", "file", "dir"]) fs.chmodSync(join(tree, entry), 0o444);
+        return tree;
+      };
+
+      rmSync(make("rmSync"), { recursive: true });
+      await promises.rm(make("promises.rm"), { recursive: true });
+      rmdirSync(make("rmdirSync"), { recursive: true });
+
+      const one = make("one at a time");
+      unlinkSync(join(one, "file"));
+      rmSync(join(one, "dir", "file"));
+      rmdirSync(join(one, "dir"));
+      rmdirSync(one);
+
+      expect(readdirSync(root)).toEqual([]);
+    });
+
+    it("a directory that is not empty is not removed, read-only or not", () => {
+      const dir = join(volume.path, "not-empty");
+      mkdirSync(dir);
+      writeFileSync(join(dir, "file"), "x");
+      expect(() => rmdirSync(dir)).toThrow(expect.objectContaining({ code: "ENOTEMPTY" }));
+      fs.chmodSync(dir, 0o444);
+      expect(() => rmdirSync(dir)).toThrow(expect.objectContaining({ code: "ENOTEMPTY" }));
+      expect(readdirSync(dir)).toEqual(["file"]);
+    });
+  },
+);
 
 describe("createReadStream", () => {
   it("works (1 chunk)", async () => {

@@ -615,7 +615,7 @@ impl Builtin {
 
                 if redirect.stdin() {
                     Self::of_mut(interp, cmd).stdin =
-                        BuiltinInput::Fd(IOReader::init(redirfd, interp));
+                        BuiltinInput::Fd(IOReader::init_opened(redirfd, interp));
                 }
 
                 if !redirect.stdout() && !redirect.stderr() {

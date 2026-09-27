@@ -284,7 +284,7 @@ impl FileRoute {
         // which branch ran.
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
-                Closer::close(fd, ());
+                Closer::close(fd);
                 route.on_response_complete(resp);
             }
             Serve::Stream {

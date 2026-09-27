@@ -22,7 +22,8 @@ use super::pipe::ReadEvent;
 use super::{Callback, Link, Port, ReadCallback};
 
 /// The owner's handle to a file. Dropping it lets an operation that is already
-/// running finish unobserved, then closes the fd if it is owned.
+/// running finish unobserved, then closes the fd if it is owned; with nothing
+/// running, an fd that was only read from is closed by the time `drop` returns.
 pub struct File {
     inner: NonNull<Inner>,
 }
@@ -67,6 +68,8 @@ struct Inner {
     task: Task,
     fd: Fd,
     close_fd: bool,
+    /// A write was asked for.
+    wrote: bool,
     port: Arc<Port>,
     state: AtomicU32,
     /// After the request was orphaned, the owner and the pool thread each let
@@ -110,6 +113,7 @@ impl File {
             },
             fd,
             close_fd,
+            wrote: false,
             port,
             state: AtomicU32::new(IDLE),
             released: AtomicBool::new(false),
@@ -248,6 +252,7 @@ impl File {
             if (*this).state.load(Ordering::Acquire) != IDLE {
                 return Err(sys::Error::from_code(E::EBUSY, request.tag()).with_fd((*this).fd));
             }
+            (*this).wrote |= matches!(request, Request::Write { .. });
             (*this).request = request;
             (*this).state.store(QUEUED, Ordering::Release);
             if (*this).completing {
@@ -283,8 +288,13 @@ impl Drop for File {
                 Inner::release(this);
                 return;
             }
-            if (*this).state.load(Ordering::Acquire) == IDLE && !(*this).completing {
-                Inner::destroy(this);
+            if (*this).state.load(Ordering::Acquire) == IDLE {
+                if (*this).completing {
+                    // `complete` frees it once the owner's callback returns.
+                    (*this).close();
+                } else {
+                    Inner::destroy(this);
+                }
                 return;
             }
             let _ = self.cancel();
@@ -387,9 +397,23 @@ impl Inner {
         // SAFETY: caller contract; `remove` is idempotent.
         unsafe { Link::remove(&raw mut (*this).link) };
         // SAFETY: caller contract.
-        let inner = unsafe { bun_core::heap::take(this) };
-        if inner.close_fd {
-            crate::closer::Closer::close(inner.fd, ());
+        let mut inner = unsafe { bun_core::heap::take(this) };
+        inner.close();
+    }
+
+    /// No operation is out and none will be. What was only read from is closed
+    /// here and now: an owner that goes on to say the file has ended says so of
+    /// a file that is no longer open, which on Windows is what lets it be
+    /// replaced and its directory renamed. Closing what was written to is when
+    /// filter drivers (virus scanners) look at it, so that is not waited for.
+    fn close(&mut self) {
+        if !core::mem::take(&mut self.close_fd) {
+            return;
+        }
+        if self.wrote {
+            crate::closer::Closer::close(self.fd);
+        } else {
+            self.fd.close();
         }
     }
 

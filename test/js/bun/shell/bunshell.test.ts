@@ -739,6 +739,36 @@ describe("bunshell", () => {
       return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
     };
 
+    // Windows does not let a directory be renamed while a file in it is open.
+    describe("has closed the files it opened by the time the command is done", () => {
+      for (const command of ["cat f", "cat f f", "cat < f", "cat f > g", "cat f | cat", "cat missing f", "cat empty"]) {
+        test.concurrent(command, async () => {
+          using dir = tempDir("builtin-cat-closed", { "d/f": "hello\n", "d/empty": "" });
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              /* ts */ `
+              import { $ } from "bun";
+              import { renameSync } from "node:fs";
+              await $\`\${{ raw: process.env.COMMAND }}\`.cwd("d").nothrow().quiet();
+              renameSync("d", "renamed");
+              console.log("renamed");
+              `,
+            ],
+            env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", COMMAND: command },
+            cwd: String(dir),
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr }).toEqual({ stdout: "renamed\n", stderr: "" });
+          expect(exitCode).toBe(0);
+        });
+      }
+    });
+
     // Every `$` has one stdin reader, which each cat without file arguments listens to in turn.
     // Once the first has read it to its end, the later ones find it at its end too, wherever they
     // sit in the script.

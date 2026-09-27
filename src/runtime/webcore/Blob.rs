@@ -4381,73 +4381,43 @@ pub(crate) fn write_file_internal(
                         && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
                             if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
         if fast_path_ok {
-            if data.is_string() {
-                let len = data.get_length(cx.global())?;
-                if len < 256 * 1024 {
-                    let str = data.to_bun_string(cx.global())?;
-                    let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
-                        PathOrBlob::Path(p) => p,
-                        PathOrBlob::Blob(b) => {
-                            &b.store()
-                                .expect("infallible: store present")
-                                .data
-                                .as_file()
-                                .pathlike
-                        }
-                    };
-                    let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                        write_string_to_file_fast::<true>(
-                            cx.global(),
-                            pathlike,
-                            &str,
-                            &mut needs_async,
-                            &mut opened_destination,
-                        )
-                    } else {
-                        write_string_to_file_fast::<false>(
-                            cx.global(),
-                            pathlike,
-                            &str,
-                            &mut needs_async,
-                            &mut opened_destination,
-                        )
-                    };
-                    if !needs_async {
-                        return Ok(result);
-                    }
+            let str;
+            let utf8;
+            let buffer_view;
+            let small: Option<&[u8]> = if data.is_string() {
+                if data.get_length(cx.global())? < 256 * 1024 {
+                    str = data.to_bun_string(cx.global())?;
+                    utf8 = str.to_utf8();
+                    Some(utf8.slice())
+                } else {
+                    None
                 }
-            } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
-                if buffer_view.byte_len < 256 * 1024 {
-                    let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
-                        PathOrBlob::Path(p) => p,
-                        PathOrBlob::Blob(b) => {
-                            &b.store()
-                                .expect("infallible: store present")
-                                .data
-                                .as_file()
-                                .pathlike
-                        }
-                    };
-                    let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                        write_bytes_to_file_fast::<true>(
-                            cx.global(),
-                            pathlike,
-                            buffer_view.byte_slice(),
-                            &mut needs_async,
-                            &mut opened_destination,
-                        )
-                    } else {
-                        write_bytes_to_file_fast::<false>(
-                            cx.global(),
-                            pathlike,
-                            buffer_view.byte_slice(),
-                            &mut needs_async,
-                            &mut opened_destination,
-                        )
-                    };
-                    if !needs_async {
-                        return Ok(result);
+            } else if let Some(view) = data.as_array_buffer(cx.global()) {
+                buffer_view = view;
+                (buffer_view.byte_len < 256 * 1024).then(|| buffer_view.byte_slice())
+            } else {
+                None
+            };
+            if let Some(bytes) = small {
+                let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
+                    PathOrBlob::Path(p) => p,
+                    PathOrBlob::Blob(b) => {
+                        &b.store()
+                            .expect("infallible: store present")
+                            .data
+                            .as_file()
+                            .pathlike
                     }
+                };
+                let result = write_bytes_to_file_fast(
+                    cx.global(),
+                    pathlike,
+                    bytes,
+                    &mut needs_async,
+                    &mut opened_destination,
+                );
+                if !needs_async {
+                    return Ok(result);
                 }
             }
         }
@@ -4854,103 +4824,6 @@ const FAST_WRITE_OPEN_FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_
 /// Whether a path the fast path opened is cut to what was written afterwards.
 const FAST_WRITE_TRUNCATES_AFTER: bool = cfg!(not(windows));
 
-fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
-    global_this: &JSGlobalObject,
-    pathlike: &PathOrFileDescriptor,
-    str: &BunString,
-    needs_async: &mut bool,
-    opened_destination: &mut Option<bun_sys::CloseOnDrop>,
-) -> JSValue {
-    #[cfg(not(windows))]
-    let _ = opened_destination;
-    let fd: Fd = if !NEEDS_OPEN {
-        #[cfg(windows)]
-        if !windows_write_returns_promptly(pathlike.fd()) {
-            *needs_async = true;
-            return JSValue::ZERO;
-        }
-        pathlike.fd()
-    } else {
-        let mut file_path = bun_paths::path_buffer_pool::get();
-        match bun_sys::open(
-            pathlike.path().slice_z_as_written(&mut file_path),
-            FAST_WRITE_OPEN_FLAGS,
-            WRITE_PERMISSIONS,
-        ) {
-            bun_sys::Result::Ok(result) => result,
-            bun_sys::Result::Err(err) => {
-                if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
-                    return JSValue::ZERO;
-                }
-                return JSPromise::rejected_promise(
-                    global_this,
-                    err.with_path(pathlike.path().slice()).to_js(global_this),
-                )
-                .to_js();
-            }
-        }
-    };
-
-    // Declared before the truncate guard so it drops *after* it (close runs last).
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
-    #[cfg(windows)]
-    if NEEDS_OPEN && !str.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
-        *opened_destination = _close;
-        *needs_async = true;
-        return JSValue::ZERO;
-    }
-
-    // scopeguard's closure captures borrows at construction, conflicting
-    // with later `written += ...` / `truncate = false`. Route through `Cell`
-    // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new(if NEEDS_OPEN {
-        FAST_WRITE_TRUNCATES_AFTER
-    } else {
-        str.is_empty()
-    });
-    let written = core::cell::Cell::new(0usize);
-
-    // we only truncate if it's a path
-    // if it's a file descriptor, we assume they want manual control over that behavior
-    scopeguard::defer! {
-        if truncate.get() {
-            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).expect("int cast"));
-        }
-    }
-
-    if !str.is_empty() {
-        let decoded = str.to_utf8();
-        let mut remain = decoded.slice();
-        while !remain.is_empty() {
-            match bun_sys::write(fd, remain) {
-                bun_sys::Result::Ok(res) => {
-                    written.set(written.get() + res);
-                    remain = &remain[res..];
-                    if res == 0 {
-                        break;
-                    }
-                }
-                bun_sys::Result::Err(err) => {
-                    truncate.set(false);
-                    if err.get_errno() == bun_sys::E::EAGAIN {
-                        *needs_async = true;
-                        return JSValue::ZERO;
-                    }
-                    let err_js = if !NEEDS_OPEN {
-                        err.to_js(global_this)
-                    } else {
-                        err.with_path(pathlike.path().slice()).to_js(global_this)
-                    };
-                    return JSPromise::rejected_promise(global_this, err_js).to_js();
-                }
-            }
-        }
-    }
-
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
-}
-
 /// Whether a `write` to `fd` on the calling thread is over once the call
 /// returns and cannot wait on this process: a disk file, or the process's own
 /// stdout or stderr, which `console.log` writes the same way. Any other pipe
@@ -4963,7 +4836,7 @@ fn windows_write_returns_promptly(fd: Fd) -> bool {
     (own_stdio || fs::is_disk_file(fd)) && fs::is_synchronous(fd)
 }
 
-fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
+fn write_bytes_to_file_fast(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
@@ -4972,7 +4845,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 ) -> JSValue {
     #[cfg(not(windows))]
     let _ = opened_destination;
-    let fd: Fd = if !NEEDS_OPEN {
+    let needs_open = matches!(pathlike, PathOrFileDescriptor::Path(_));
+    let fd: Fd = if !needs_open {
         #[cfg(windows)]
         if !windows_write_returns_promptly(pathlike.fd()) {
             *needs_async = true;
@@ -5001,15 +4875,15 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    let truncate = if NEEDS_OPEN {
+    let truncate = if needs_open {
         FAST_WRITE_TRUNCATES_AFTER
     } else {
         bytes.is_empty()
     };
     let mut written: usize = 0;
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    let _close = needs_open.then(|| bun_sys::CloseOnDrop::new(fd));
     #[cfg(windows)]
-    if NEEDS_OPEN && !bytes.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
+    if needs_open && !bytes.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
         *opened_destination = _close;
         *needs_async = true;
         return JSValue::ZERO;
@@ -5030,7 +4904,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                     *needs_async = true;
                     return JSValue::ZERO;
                 }
-                let err_js = if !NEEDS_OPEN {
+                let err_js = if !needs_open {
                     err.to_js(global_this)
                 } else {
                     err.with_path(pathlike.path().slice()).to_js(global_this)

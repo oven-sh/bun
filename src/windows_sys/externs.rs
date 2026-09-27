@@ -465,6 +465,7 @@ pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
+    pub const FileStandardInformation: Self = Self(5);
     pub const FileDispositionInformation: Self = Self(13);
     #[cfg(windows)]
     pub const FilePositionInformation: Self = Self(14);
@@ -638,6 +639,7 @@ pub struct GetFinalPathNameByHandleFormat {
 }
 
 impl FILE_INFORMATION_CLASS {
+    pub const FileRenameInformation: Self = Self(10);
     pub const FileRenameInformationEx: Self = Self(65);
 }
 

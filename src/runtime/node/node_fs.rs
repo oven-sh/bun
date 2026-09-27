@@ -8749,7 +8749,15 @@ struct DeleteTreeStackItem {
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
     iter: DirIterator::WrappedIterator,
+    /// How often the directory was found not empty after all of it was deleted.
+    rescans: u8,
 }
+
+/// A directory that is not empty after everything in it was deleted is gone
+/// through again: something may have been added meanwhile. Not for ever:
+/// where deletes lack POSIX semantics (FAT, exFAT), a file that is open
+/// elsewhere stays listed until it is closed.
+const DELETE_TREE_MAX_RESCANS: u8 = 50;
 
 pub(crate) fn zig_delete_tree(
     self_: &sys::Dir,
@@ -8780,6 +8788,7 @@ pub(crate) fn zig_delete_tree(
         name_is_borrowed: true,
         parent_dir: self_.fd,
         iter: DirIterator::WrappedIterator::init(initial_iterable_dir.into_raw()),
+        rescans: 0,
     });
 
     'process_stack: while !stack.is_empty() {
@@ -8810,6 +8819,7 @@ pub(crate) fn zig_delete_tree(
                                     iter: DirIterator::WrappedIterator::init(
                                         iterable_dir.into_raw(),
                                     ),
+                                    rescans: 0,
                                 });
                                 continue 'process_stack;
                             }
@@ -8941,6 +8951,9 @@ pub(crate) fn zig_delete_tree(
         }
 
         if need_to_retry {
+            if top.rescans == DELETE_TREE_MAX_RESCANS {
+                return Err(dt_err(E::ENOTEMPTY));
+            }
             // Since we closed the handle that the previous iterator used, we
             // need to re-open the dir and re-create the iterator.
             let mut treat_as_dir = true;
@@ -8984,6 +8997,7 @@ pub(crate) fn zig_delete_tree(
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
                 iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
+                rescans: top.rescans + 1,
             });
             continue 'process_stack;
         }
@@ -9025,6 +9039,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
+    let mut rescans = 0;
     'start_over: loop {
         let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
@@ -9109,8 +9124,12 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
-                    Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
-                        // These two things can happen due to file system race conditions.
+                    Ok(()) | Err(E::ENOENT) => {
+                        rescans = 0;
+                        continue 'start_over;
+                    }
+                    Err(E::ENOTEMPTY) | Err(E::EEXIST) if rescans < DELETE_TREE_MAX_RESCANS => {
+                        rescans += 1;
                         continue 'start_over;
                     }
                     Err(e) => {
@@ -9120,7 +9139,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
-                    Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
+                    Err(E::ENOTEMPTY) | Err(E::EEXIST) if rescans < DELETE_TREE_MAX_RESCANS => {
+                        rescans += 1;
+                        continue 'start_over;
+                    }
                     Err(e) => return Err(dt_err(e)),
                 }
             }

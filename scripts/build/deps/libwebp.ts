@@ -75,11 +75,15 @@ const UTILS = [
   "rescaler_utils", "thread_utils", "utils",
 ];
 
-// RIFF container read/write — extracts/attaches the ICCP chunk so a
-// non-sRGB source (Display P3, Adobe RGB, Jpegli XYB) keeps its colour
-// meaning through a WebP re-encode. `anim_decode.c`/`anim_encode.c`
-// (WebPAnimDecoder/WebPAnimEncoder) are omitted: they layer ON TOP of
-// demux/mux, not the reverse, and Bun has no animated-WebP support.
+// RIFF container read/write — attaches the ICCP chunk so a non-sRGB source
+// (Display P3, Adobe RGB, Jpegli XYB) keeps its colour meaning through a
+// WebP re-encode. `anim_decode.c`/`anim_encode.c` (WebPAnimDecoder/
+// WebPAnimEncoder) are omitted: they layer ON TOP of demux/mux, not the
+// reverse, and Bun has no animated-WebP support.
+//
+// Nothing calls demux today: its lookups re-read the caller's buffer, which
+// `codec_webp.rs` cannot allow, so that file reads the ICCP chunk out of an
+// input itself. It stays linked for the EXIF/XMP plumbing (the TU is tiny).
 const DEMUX = ["demux"];
 const MUX = ["muxedit", "muxinternal", "muxread"];
 

@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isDebug, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -1221,6 +1221,246 @@ describe("concurrent terminals on one Image", () => {
     expect(out[0]).toBe(0xff);
     expect(out[1]).toBe(0xd8); // still JPEG
   });
+
+  // An input over ~1 KB is BORROWED, not copied, so a caller that refills one
+  // buffer with the next picture while a terminal is pending has the pool
+  // thread read bytes the JS thread is still writing. That is documented as
+  // not allowed, and the result must be a rejection or a wrong picture — never
+  // bytes from outside the decoder's own buffer.
+  //
+  // libwebp decodes in two passes over the input: `WebPDecodeRGBA` reports the
+  // dimensions its first header parse found, then allocates the output by the
+  // dimensions a later parse finds. A rewrite between the two leaves the
+  // decoder with a 16x16 allocation while the reported size is still 200x211,
+  // so `w * h * 4` bytes came out of a 1024-byte buffer: 167776 bytes of heap
+  // left the process inside a fulfilled output. The marker below is the pixels
+  // of OTHER pictures that the same process decoded, found in that output.
+  //
+  // A child process runs the fixture because the ASAN build stops on the read.
+  // That build needs seconds per round, hence the explicit timeout.
+  test("an input rewritten while a WebP pipeline is pending cannot leak heap bytes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // BMP is the cheapest format to write by hand, and Bun.Image turns it
+        // into the flat-colour WebP files the race needs. Every file is under
+        // 200 bytes, so the input can change inside one decode's header parses.
+        const bmp = (w, h, px) => {
+          const b = Buffer.alloc(54 + w * h * 4);
+          b.write("BM");
+          b.writeUInt32LE(b.length, 2);
+          b.writeUInt32LE(54, 10);
+          b.writeUInt32LE(40, 14);
+          b.writeInt32LE(w, 18);
+          b.writeInt32LE(-h, 22);
+          b.writeUInt16LE(1, 26);
+          b.writeUInt16LE(32, 28);
+          for (let i = 0; i < w * h; i++) b.set(px(i), 54 + i * 4);
+          return b;
+        };
+        const MARK = Buffer.from("SECRET-PIXELS-OF-ANOTHER-PICTURE"); // 8 pixels; BMP stores B,G,R,X
+        const secrets = [16, 64, 100].map(s =>
+          bmp(s, s, i => [MARK[(i % 8) * 4 + 2], MARK[(i % 8) * 4 + 1], MARK[(i % 8) * 4], 255]),
+        );
+        // The marker as the RGBA bytes an output would carry.
+        const want = Buffer.from([...MARK].map((c, i) => (i % 4 === 3 ? 255 : c))).subarray(0, 12);
+
+        // One 16x16 and one 200x211 file per bitstream: VP8L and VP8 size
+        // their output in different branches of the decoder.
+        const n = 2048; // over fastSizeLimit elements, so Bun.Image borrows instead of copying
+        const pairs = [];
+        for (const opts of [{ lossless: true }, { quality: 80 }]) {
+          const pair = [];
+          for (const [w, h, c] of [[16, 16, 1], [200, 211, 2]]) {
+            const padded = new Uint8Array(n);
+            padded.set(await new Bun.Image(bmp(w, h, () => [c, c, c, 255])).webp(opts).bytes());
+            pair.push(padded);
+          }
+          pairs.push(pair);
+        }
+        const buf = new Uint8Array(n);
+
+        let outputs = 0, leaked = 0, rejected = 0, rounds = 0;
+        // Every round is an independent try. Keep going past the minimum only
+        // while no decode has seen the rewrite at all, so a slow box cannot
+        // pass this on "nothing raced".
+        const minRounds = Number(process.env.WEBP_RACE_ROUNDS);
+        const withMarker = process.env.WEBP_RACE_MARKER === "1";
+        for (let round = 0; round < minRounds * 3 && (round < minRounds || rejected === 0); round++) {
+          rounds++;
+          const [small, large] = pairs[round % pairs.length];
+          buf.set(large);
+          const jobs = [];
+          for (let i = 0; i < 32; i++) {
+            // compressionLevel 0 keeps the decoded bytes readable in the output.
+            jobs.push(new Bun.Image(buf).png({ compressionLevel: 0 }).bytes().catch(() => (rejected++, null)));
+            // Pictures of the marker, decoded and encoded on the same pool, so
+            // the heap around the victim's output buffer holds their pixels.
+            if (withMarker) {
+              jobs.push(
+                new Bun.Image(secrets[i % 3])
+                  .webp({ lossless: true })
+                  .bytes()
+                  .then(w => new Bun.Image(w).resize(2, 2).png().bytes())
+                  .then(() => null, () => null),
+              );
+            }
+          }
+          let done = false;
+          const all = Promise.all(jobs).then(r => ((done = true), r));
+          while (!done) {
+            // Bursts by the clock, so a slow build still settles its jobs.
+            const until = performance.now() + 4;
+            do {
+              for (let k = 0; k < 64; k++) {
+                buf.set(large);
+                buf.set(small);
+              }
+            } while (performance.now() < until);
+            await new Promise(r => setImmediate(r));
+          }
+          for (const out of await all) {
+            if (!out) continue;
+            outputs++;
+            if (Buffer.from(out).includes(want)) leaked++;
+          }
+        }
+
+        // With the writer stopped, the same buffer decodes to its own picture.
+        const calm = [];
+        for (const [, large] of pairs) {
+          buf.set(large);
+          const png = Buffer.from(await new Bun.Image(buf).png().bytes());
+          calm.push(png.readUInt32BE(16) + "x" + png.readUInt32BE(20));
+        }
+        console.log(JSON.stringify({ rounds, outputs, leaked, rejected, calm }));
+      `,
+      ],
+      // ASAN stops on the over-read itself, in the first rounds. Without it the
+      // marker is the only witness, and it takes more tries to catch.
+      env: { ...bunEnv, WEBP_RACE_ROUNDS: isASAN || isDebug ? "4" : "12", WEBP_RACE_MARKER: isASAN ? "0" : "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A sanitizer stop on the over-read leaves no summary line behind.
+    const summary = stdout.trim().split("\n").at(-1) ?? "";
+    expect({ summary, stderr: stderr.slice(-3000), exitCode }).toMatchObject({ exitCode: 0 });
+    const { leaked, rejected, calm } = JSON.parse(summary);
+    expect({ leaked, sawTheRewrite: rejected > 0, calm }).toEqual({
+      leaked: 0,
+      sawTheRewrite: true,
+      calm: ["200x211", "200x211"],
+    });
+  }, 60_000);
+
+  // The same rewrite, against the part of the decode that reads the colour
+  // profile out of the RIFF container. The writer here only changes the ICCP
+  // chunk's four-character tag, so the picture is byte-identical throughout
+  // and every pipeline must fulfil.
+  //
+  // libwebp's demuxer cannot survive that: it records chunk OFFSETS and
+  // re-reads the tag from the caller's buffer on every lookup, so
+  // `WebPDemuxGetChunk` counts the matching chunks in one walk and finds the
+  // Nth in a second walk. A tag that changes in between leaves the count
+  // non-zero and the lookup NULL, and libwebp dereferences that
+  // (`SetChunk`, demux.c:938).
+  test("an input whose ICCP tag is rewritten mid-pipeline cannot crash the decode", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const bmp = (w, h, c) => {
+          const b = Buffer.alloc(54 + w * h * 4);
+          b.write("BM");
+          b.writeUInt32LE(b.length, 2);
+          b.writeUInt32LE(54, 10);
+          b.writeUInt32LE(40, 14);
+          b.writeInt32LE(w, 18);
+          b.writeInt32LE(-h, 22);
+          b.writeUInt16LE(1, 26);
+          b.writeUInt16LE(32, 28);
+          for (let i = 0; i < w * h; i++) b.set([c, c, c, 255], 54 + i * 4);
+          return b;
+        };
+        const chunk = (tag, payload) => {
+          const h = Buffer.alloc(8);
+          h.write(tag, 0, "latin1");
+          h.writeUInt32LE(payload.length, 4);
+          return Buffer.concat([h, payload, Buffer.alloc(payload.length & 1)]);
+        };
+        const le24 = v => Buffer.from([v & 255, (v >> 8) & 255, (v >> 16) & 255]);
+
+        // A colour profile only lives in a VP8X container, so wrap a bare
+        // VP8L encode in one: VP8X (ICCP flag, canvas size) + ICCP + VP8L.
+        // The chunks after ICCP are filler: a long list puts libwebp's two
+        // walks far apart in time, which is the window this test needs.
+        const W = 32, H = 32;
+        const bare = Buffer.from(await new Bun.Image(bmp(W, H, 9)).webp({ lossless: true }).bytes());
+        const profile = Buffer.alloc(512, 7);
+        const body = Buffer.concat([
+          Buffer.from("WEBP"),
+          chunk("VP8X", Buffer.concat([Buffer.from([0x20, 0, 0, 0]), le24(W - 1), le24(H - 1)])),
+          chunk("ICCP", profile),
+          ...Array.from({ length: 1024 }, () => chunk("FILL", Buffer.alloc(2))),
+          bare.subarray(12), // the "VP8L" chunk, header and all
+        ]);
+        const head = Buffer.alloc(8);
+        head.write("RIFF");
+        head.writeUInt32LE(body.length, 4);
+        const file = Buffer.concat([head, body]);
+        const at = file.indexOf("ICCP");
+
+        const buf = new Uint8Array(Math.max(file.length, 2048)); // borrowed, not copied
+        buf.set(file);
+        const input = buf.subarray(0, file.length);
+        const ICCP = Buffer.from("ICCP");
+        const JUNK = Buffer.from("JUNK");
+
+        let ok = 0, rejected = 0;
+        for (let round = 0; round < Number(process.env.WEBP_RACE_ROUNDS); round++) {
+          const jobs = [];
+          for (let i = 0; i < 32; i++) {
+            jobs.push(new Bun.Image(input).resize(4, 4).png().bytes().then(() => ok++, () => rejected++));
+          }
+          let done = false;
+          const all = Promise.all(jobs).then(() => (done = true));
+          while (!done) {
+            const until = performance.now() + 4;
+            do {
+              for (let k = 0; k < 64; k++) {
+                buf.set(JUNK, at);
+                buf.set(ICCP, at);
+              }
+            } while (performance.now() < until);
+            await new Promise(r => setImmediate(r));
+          }
+          await all;
+        }
+
+        // With the writer stopped, the profile still travels into the output.
+        buf.set(file);
+        const out = Buffer.from(await new Bun.Image(input).webp({ lossless: true }).bytes());
+        const back = out.indexOf("ICCP");
+        const carried = back >= 0 && out.readUInt32LE(back + 4) === profile.length;
+        console.log(JSON.stringify({ ok, rejected, carried }));
+      `,
+      ],
+      env: { ...bunEnv, WEBP_RACE_ROUNDS: "8" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A crash in the chunk lookup leaves no summary line behind.
+    const summary = stdout.trim().split("\n").at(-1) ?? "";
+    expect({ summary, stderr: stderr.slice(-3000), exitCode }).toMatchObject({ exitCode: 0 });
+    const { ok, rejected, carried } = JSON.parse(summary);
+    // The picture bytes never change, so nothing may reject either.
+    expect({ ok: ok > 0, rejected, carried }).toEqual({ ok: true, rejected: 0, carried: true });
+  }, 60_000);
 });
 
 // ─── 10. random-byte fuzz (cheap, bounded) ───────────────────────────────────

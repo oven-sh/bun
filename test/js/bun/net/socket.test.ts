@@ -5147,3 +5147,129 @@ it.skipIf(!socketFaultInjection.available())(
     expect(exitCode).toBe(0);
   },
 );
+
+// TLS took all of end(data), so the wrapper is detached and only usockets holds the unsent ciphertext.
+it.concurrent.skipIf(!socketFaultInjection.available()).each([
+  ["TLSv1.2", "close_notify and FIN"],
+  ["TLSv1.3", "close_notify and FIN"],
+  ["TLSv1.2", "bare FIN"],
+  ["TLSv1.3", "bare FIN"],
+] as const)(
+  "%s end(data) held in the TLS ciphertext spill reaches a peer that already sent its %s",
+  async (version, fin) => {
+    // 8 records is the most one TLS write takes whole while each send() takes 16 KiB.
+    const N = 8 * 16384;
+    const src = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const { TLS_VERSION: version, KEY: key, CERT: cert } = process.env;
+      const N = ${N};
+      const payload = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
+      const events = [];
+      let got = 0;
+      let mismatchAt = -1;
+      let negotiated;
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+      function verify(chunk) {
+        if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+        got += chunk.byteLength;
+      }
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key, cert },
+        socket: {
+          data(s) {
+            fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1 });
+            events.push("server end() " + s.end(payload));
+          },
+          end() { events.push("server end"); },
+          close(_, err) { events.push(err ? "server close " + err.code : "server close"); serverClosed.resolve(); },
+        },
+      });
+      // Both ends share one loop: the client's FIN is out before the server reads the request.
+      if (process.env.BARE_FIN) {
+        // TLS over a plain socket this script owns, so the FIN leaves without a close_notify.
+        const raw = require("node:net").connect({ host: "127.0.0.1", port: server.port, allowHalfOpen: true });
+        let finWithNextRecord = false;
+        const transport = new (require("node:stream").Duplex)({
+          read() {},
+          write(chunk, _encoding, callback) {
+            if (raw.writableEnded) return callback();
+            if (finWithNextRecord) return raw.end(chunk, callback);
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => transport.push(chunk));
+        raw.on("end", () => transport.push(null));
+        raw.on("error", e => events.push("client error " + e.message));
+        const client = require("node:tls").connect({
+          socket: transport,
+          ca: cert,
+          servername: "localhost",
+          minVersion: version,
+          maxVersion: version,
+        });
+        client.on("secureConnect", () => {
+          negotiated = client.getProtocol();
+          finWithNextRecord = true;
+          client.write("request");
+        });
+        client.on("data", verify);
+        const ended = Promise.withResolvers();
+        client.on("end", () => ended.resolve("client end"));
+        client.on("error", e => ended.resolve("client error " + e.message));
+        raw.on("close", async () => {
+          events.push(await ended.promise, "client close");
+          clientClosed.resolve();
+        });
+      } else {
+        const { SSL_OP_NO_TLSv1_2, SSL_OP_NO_TLSv1_3 } = require("node:crypto").constants;
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: { ca: cert, secureOptions: version === "TLSv1.2" ? SSL_OP_NO_TLSv1_3 : SSL_OP_NO_TLSv1_2 },
+          socket: {
+            handshake(s) {
+              negotiated = s.getTLSVersion();
+              s.write("request");
+              s.shutdown();
+            },
+            data: (_, chunk) => verify(chunk),
+            end() { events.push("client end"); },
+            close(_, err) { events.push(err ? "client close " + err.code : "client close"); clientClosed.resolve(); },
+            error(_, e) { events.push("client error " + e.message); },
+          },
+        });
+      }
+      await Promise.all([serverClosed.promise, clientClosed.promise]);
+      fault.clear();
+      server.stop(true);
+      console.log(JSON.stringify({ negotiated, events, got, mismatchAt }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        KEY: tls.key,
+        CERT: tls.cert,
+        TLS_VERSION: version,
+        BARE_FIN: fin === "bare FIN" ? "1" : "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout.trim(), stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({
+      result: JSON.stringify({
+        negotiated: version,
+        // No "server end": end() detached the wrapper before the FIN was read.
+        events: ["server end() " + N, "server close", "client end", "client close"],
+        got: N,
+        mismatchAt: -1,
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

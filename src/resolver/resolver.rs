@@ -1316,14 +1316,8 @@ impl<'a> Resolver<'a> {
             Ok(None) => {}
         }
 
-        // `bun build --compile`: the embedded module graph first, then the current working directory.
-        //
-        // A relative specifier between embedded modules, or an absolute `/$bunfs/` path, is the graph's own
-        // lookup. An embedded path the graph does not spell that way (a directory, a missing extension) and a
-        // bare specifier from an embedded module run the resolver's algorithm over the embedded tree, which the
-        // directory cache serves from the graph. A bare specifier that is not embedded then resolves from the
-        // cwd's `node_modules` chain on disk, as node SEA and deno compile do. Nothing else is ever resolved
-        // relative to `/$bunfs/`.
+        // `bun build --compile`: the embedded module graph first (the graph's own lookup, then the
+        // resolver's algorithm over the embedded tree), then the cwd on disk.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
@@ -1376,8 +1370,7 @@ impl<'a> Resolver<'a> {
                                 self.extension_order = original_order;
                                 return ResultUnion::Failure(err);
                             }
-                            // Not embedded, or found on disk (`NODE_PATH`): the cwd pass below finds it
-                            // in its place in the search order.
+                            // Not embedded: the cwd pass below.
                             _ => {}
                         }
                     }
@@ -4559,8 +4552,7 @@ impl<'a> Resolver<'a> {
                             // A permission-denied ancestor (sandboxed drive roots, x-only
                             // shared dirs) is treated as opaque and empty, like the
                             // ENOTDIR tolerance; the requested directory itself stays fatal.
-                            // So is a missing ancestor of an embedded path: the virtual
-                            // root's drive (`B:` on Windows) need not exist on disk.
+                            // So is a missing ancestor of an embedded path (`B:` on Windows).
                             if queue_slice_len > 0
                                 && (matches!(
                                     err,

@@ -1043,10 +1043,8 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub type Implementation = RealFS;
 
-    /// The `bun build --compile` executable's embedded files, mounted at the virtual root (`/$bunfs/`). Set once,
-    /// before the first VM is created. `RealFS::read_directory` and `cache::Fs::read_file_with_allocator` serve
-    /// every path under it from here and never from disk, so the resolver's algorithm runs over embedded
-    /// directories as it does over real ones.
+    /// The compiled executable's embedded files, mounted at `/$bunfs/`: `read_directory` and
+    /// `read_file_with_allocator` serve paths under it from here, never from disk.
     static STANDALONE_MODULE_GRAPH: std::sync::OnceLock<&'static dyn crate::StandaloneModuleGraph> =
         std::sync::OnceLock::new();
 

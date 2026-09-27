@@ -67,9 +67,8 @@ pub mod standalone_path {
         }
     }
 
-    /// True iff `str_` is a directory that exists only in the embedded module graph: one under the virtual root, or
-    /// the root's parent (`/$bunfs`, `B:\~BUN`). The real filesystem has none of these, so the resolver's
-    /// directory cache lists them from the graph instead of `opendir`.
+    /// True iff `str_` is a directory of the embedded module graph: under the virtual root, or its parent
+    /// (`/$bunfs`, `B:\~BUN`).
     #[inline]
     pub fn is_bun_standalone_dir_path(str_: &[u8]) -> bool {
         if is_bun_standalone_file_path(str_) {

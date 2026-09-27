@@ -414,8 +414,7 @@ impl DirEntry {
         )
     }
 
-    /// Fills `self` with the entries of the embedded directory `self.dir` and returns whether the graph has that
-    /// directory. Every entry's kind is known, so none is ever `stat`ed.
+    /// Lists the embedded directory `self.dir` into `self`: `false` when the graph has no such directory.
     pub(crate) fn add_entries_from_standalone_graph<I: DirEntryIterator>(
         &mut self,
         mut prev_map: Option<&mut dir_entry::EntryMap>,

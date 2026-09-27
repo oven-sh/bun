@@ -29,15 +29,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]>;
-    /// Calls `each(basename, is_dir)` for every entry of the embedded directory `dir` (absolute, in either path
-    /// syntax, a trailing separator allowed) and returns whether the graph has that directory. The virtual root's
-    /// parent (`/$bunfs`) lists `root`. This is what the resolver's directory cache reads for an embedded path
-    /// instead of `opendir`.
+    /// Calls `each(basename, is_dir)` for every entry of the embedded directory `dir` (either path syntax,
+    /// trailing separator allowed); `false` when the graph has no such directory. `/$bunfs` lists `root`.
     fn for_each_dir_entry(&self, _dir: &[u8], _each: &mut dyn FnMut(&[u8], bool)) -> bool {
         false
     }
-    /// The bytes of the embedded file `name` (an absolute embedded path in either path syntax), if there is one.
-    /// This is what the resolver's file cache reads for an embedded path instead of `open`.
+    /// The bytes of the embedded file `name` (either path syntax), if there is one.
     fn file_contents(&self, _name: &[u8]) -> Option<&[u8]> {
         None
     }

@@ -368,7 +368,7 @@ impl us_socket_t {
             "us_socket_ipc_write_fd({:p}, {}, {}) = {}",
             self,
             data.len(),
-            file_descriptor.posix(),
+            bun_core::fd_int!(file_descriptor),
             rc
         );
         rc

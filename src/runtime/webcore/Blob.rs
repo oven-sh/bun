@@ -1059,7 +1059,7 @@ impl BlobExt for Blob {
                                 writer,
                                 ENABLE_ANSI_COLORS,
                                 " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
-                                fd.posix(),
+                                bun_core::fd_int!(fd),
                             )?;
                         }
                     }
@@ -2792,7 +2792,7 @@ impl BlobExt for Blob {
                                         .saturating_sub(allocated.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.fd.posix() as i64,
+                                            bun_core::fd_int!(memfd.fd) as i64,
                                             global,
                                             byte_offset,
                                             buf_len,

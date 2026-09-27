@@ -14,6 +14,12 @@
  * others and the allocators of its optimizing compilers hand it out. The image is Linux inside and runs
  * on all of them, so its build takes the first list: one line of ARM64Registers.h asks for the definition
  * JSC_ARM64_RESERVE_X18 (patches/webkit-arm64-registers-reserve-x18.diff), and the build defines it.
+ *
+ * Memory: where the host says that memory is usable after it was committed (AT_BUN_HOST_MEMORY of
+ * host/linux_abi.h: the Windows host), JavaScriptCore does what its OSAllocator for Windows does, in the
+ * calls of Linux (patches/webkit-osallocator-host-commits.diff), and mimalloc does the same
+ * (patches/mimalloc/portable-host-commits.patch of the repository).
+ *
  * $JSC_VARIANT builds another image of the same sources, in a build directory of its own:
  *   x18-allocatable   WITHOUT the definition: <out>/jsc.x18-allocatable.img, the negative control of the
  *                     x18 tests. Never run that image under a host that keeps something in x18.
@@ -68,9 +74,37 @@ export function mimallocPatches(): string[] {
   return named.map(name => join(dir, name));
 }
 
+/** A patch of WebKit, and what shows that a checkout has it: a file, and a word that the patch puts there. */
+interface WebkitPatch {
+  patch: string;
+  file: string;
+  has: string;
+}
+
 /** aarch64: the list of registers of JavaScriptCore that keeps x18 free can be asked for by a definition. */
-const RESERVE_X18_PATCH = join(TREE, "patches", "webkit-arm64-registers-reserve-x18.diff");
+const RESERVE_X18_PATCH: WebkitPatch = {
+  patch: join(TREE, "patches", "webkit-arm64-registers-reserve-x18.diff"),
+  file: "Source/JavaScriptCore/assembler/ARM64Registers.h",
+  has: "JSC_ARM64_RESERVE_X18",
+};
 const RESERVE_X18 = "-DJSC_ARM64_RESERVE_X18=1";
+
+/**
+ * Under a host that commits memory, OSAllocator reserves with PROT_NONE, commits with mprotect and
+ * decommits with mprotect(PROT_NONE) and madvise(MADV_DONTNEED). A block of the heap keeps the pages that
+ * hold no live cell: on Linux it gives them back by a decommit after which it reads them.
+ */
+const HOST_COMMITS_PATCH: WebkitPatch = {
+  patch: join(TREE, "patches", "webkit-osallocator-host-commits.diff"),
+  file: "Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp",
+  has: "AT_BUN_HOST_MEMORY",
+};
+
+/** The patches of WebKit for the image, in the order in which they are applied. */
+function webkitPatches(ctx: Context): WebkitPatch[] {
+  return [HOST_COMMITS_PATCH, ...(ctx.arch === "aarch64" ? [RESERVE_X18_PATCH] : [])];
+}
+
 const JIT_PERMISSIONS_HEADER = join(TREE, "jsc", "bun_jit_permissions.h");
 
 /** Which image of JavaScriptCore is built, see the top of this file. "" is the image. */
@@ -241,14 +275,14 @@ function mimalloc(ctx: Context, before: string): Step {
 /** The checkout that is compiled, and the commit it is at. $BUN_WEBKIT_PATH is read and never written. */
 export function webkitSource(ctx: Context): { dir: string; commit: string; fetch: () => void } {
   const given = process.env.BUN_WEBKIT_PATH;
-  const patches = ctx.arch === "aarch64" ? [RESERVE_X18_PATCH] : [];
+  const patches = webkitPatches(ctx);
   if (given !== undefined && given !== "") {
     if (!existsSync(join(given, "Source", "JavaScriptCore"))) {
       throw new BuildError(`BUN_WEBKIT_PATH=${given}: no checkout of WebKit (Source/JavaScriptCore is not there)`);
     }
-    const registers = join(given, "Source", "JavaScriptCore", "assembler", "ARM64Registers.h");
-    if (patches.length > 0 && !readFileSync(registers, "utf8").includes("JSC_ARM64_RESERVE_X18")) {
-      throw new BuildError(`BUN_WEBKIT_PATH=${given}: the checkout does not have ${RESERVE_X18_PATCH}`, {
+    for (const { patch, file, has } of patches) {
+      if (existsSync(join(given, file)) && readFileSync(join(given, file), "utf8").includes(has)) continue;
+      throw new BuildError(`BUN_WEBKIT_PATH=${given}: the checkout does not have ${patch}`, {
         hint: "it is read and never written. Without BUN_WEBKIT_PATH the build clones WebKit and applies the patch",
       });
     }
@@ -268,7 +302,14 @@ export function webkitSource(ctx: Context): { dir: string; commit: string; fetch
   return {
     dir,
     commit: source.commit,
-    fetch: () => void fetchGit("webkit", source, dir, patches, inOut(ctx, "logs")),
+    fetch: () =>
+      void fetchGit(
+        "webkit",
+        source,
+        dir,
+        patches.map(({ patch }) => patch),
+        inOut(ctx, "logs"),
+      ),
   };
 }
 
@@ -313,10 +354,10 @@ function webkit(ctx: Context, before: string): Step {
     ...(ctx.arch === hostArch() ? [] : cmakeToolchain(ctx).filter(option => option.startsWith("-DCMAKE_SYSTEM_"))),
   ];
   const build = webkitBuild(ctx, variant);
-  const inputs =
-    ctx.arch === "aarch64"
-      ? [sha256File(RESERVE_X18_PATCH), ...(variant === "jit-permissions" ? [sha256File(JIT_PERMISSIONS_HEADER)] : [])]
-      : [];
+  const inputs = [
+    ...webkitPatches(ctx).map(({ patch }) => sha256File(patch)),
+    ...(variant === "jit-permissions" ? [sha256File(JIT_PERMISSIONS_HEADER)] : []),
+  ];
   return {
     name: `webkit${suffixOf(variant)}`,
     inputs: [before, source.commit, source.dir, options, ...inputs],

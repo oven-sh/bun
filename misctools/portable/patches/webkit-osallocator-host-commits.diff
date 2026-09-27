@@ -1,0 +1,141 @@
+diff --git a/Source/JavaScriptCore/heap/MarkedBlock.cpp b/Source/JavaScriptCore/heap/MarkedBlock.cpp
+index 64c6806..cf85289 100644
+--- a/Source/JavaScriptCore/heap/MarkedBlock.cpp
++++ b/Source/JavaScriptCore/heap/MarkedBlock.cpp
+@@ -498,6 +498,11 @@ void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollecti
+     // OSAllocator::decommit makes the pages inaccessible there; this scheme relies on decommitted pages reading as zero.
+     return;
+ #else
++#if OS(LINUX)
++    // And under a host of bun's portable image that commits memory.
++    if (OSAllocator::hostCommitsMemory())
++        return;
++#endif
+     if (!Options::decommitUnusedMarkedBlockPages())
+         return;
+     // A cell's destructor may read its Structure even when that Structure died in the same cycle and its block was
+diff --git a/Source/WTF/wtf/OSAllocator.h b/Source/WTF/wtf/OSAllocator.h
+index 5c0d80e..9118aaa 100644
+--- a/Source/WTF/wtf/OSAllocator.h
++++ b/Source/WTF/wtf/OSAllocator.h
+@@ -62,6 +62,12 @@ public:
+     WTF_EXPORT_PRIVATE static void commit(void*, size_t, bool writable, bool executable);
+     WTF_EXPORT_PRIVATE static void decommit(void*, size_t);
+ 
++#if OS(LINUX)
++    // bun's portable image: whether the host that runs the image says that memory is usable after it was
++    // committed (AT_BUN_HOST_MEMORY). Then uncommitted and decommitted memory is inaccessible, as on Windows.
++    WTF_EXPORT_PRIVATE static bool hostCommitsMemory();
++#endif
++
+     // These methods are symmetric; reserveAndCommit allocates VM in an committed state,
+     // decommitAndRelease should be called on a region of VM allocated by a single reservation,
+     // the memory must all currently be in a committed state.
+diff --git a/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp b/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
+index 2622b0e..486b500 100644
+--- a/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
++++ b/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp
+@@ -74,6 +74,7 @@
+ #endif
+ 
+ #if OS(LINUX)
++#include <sys/auxv.h>
+ #include <sys/prctl.h>
+ 
+ #ifndef PR_SET_VMA
+@@ -83,11 +84,37 @@
+ #ifndef PR_SET_VMA_ANON_NAME
+ #define PR_SET_VMA_ANON_NAME 0
+ #endif
++
++// bun's portable image is a Linux program that a host runs on Windows and on macOS. The host says how its
++// memory behaves with an entry of the auxiliary vector (misctools/portable/host/linux_abi.h in bun's
++// repository). The kernel of Linux has no such entry: the value is 0.
++#define AT_BUN_HOST_MEMORY 0x62756e11
++// Memory is usable after it was committed, and what is committed is accounted, as on Windows. The host reserves
++// for an mmap with PROT_NONE, commits for the mprotect that makes the pages accessible, and decommits for
++// madvise(MADV_DONTNEED) on pages that are PROT_NONE. What is mapped with MAP_NORESERVE and accessible is
++// committed when code of the process faults on a page. A system call of the host's OS does not do that: it
++// fails on such a page.
++#define BUN_HOST_MEMORY_COMMITS 1
+ #endif
+ 
+ 
+ namespace WTF {
+ 
++#if OS(LINUX)
++bool OSAllocator::hostCommitsMemory()
++{
++    static std::once_flag onceKey;
++    static bool commits;
++    std::call_once(onceKey, [] {
++        // getauxval() sets errno for an entry that is not there.
++        int savedErrno = errno;
++        commits = getauxval(AT_BUN_HOST_MEMORY) & BUN_HOST_MEMORY_COMMITS;
++        errno = savedErrno;
++    });
++    return commits;
++}
++#endif
++
+ void* OSAllocator::tryReserveAndCommit(size_t bytes, Usage usage, void* address, bool writable, bool executable, bool jitCageEnabled, unsigned numGuardPagesToAddOnEachEnd)
+ {
+     return tryReserveAndCommitImpl(bytes, usage, address, writable, executable, jitCageEnabled, numGuardPagesToAddOnEachEnd, /* uncommitted */ false);
+@@ -113,8 +140,15 @@ void* OSAllocator::tryReserveAndCommitImpl(size_t bytes, Usage usage, void* addr
+     }
+ #elif OS(LINUX) || OS(HAIKU)
+     UNUSED_PARAM(jitCageEnabled);
+-    if (uncommitted)
+-        flags |= MAP_NORESERVE;
++    if (uncommitted) {
++#if OS(LINUX)
++        // Reserved only: OSAllocator::commit makes the pages accessible.
++        if (hostCommitsMemory())
++            protection = PROT_NONE;
++        else
++#endif
++            flags |= MAP_NORESERVE;
++    }
+ #else
+     UNUSED_PARAM(jitCageEnabled);
+     UNUSED_PARAM(uncommitted);
+@@ -275,6 +309,20 @@ void* OSAllocator::reserveAndCommit(size_t bytes, Usage usage, void* address, bo
+ 
+ void OSAllocator::commit(void* address, size_t bytes, bool writable, bool executable)
+ {
++#if OS(LINUX)
++    if (hostCommitsMemory()) {
++        if (!bytes)
++            return;
++        int protection = PROT_READ;
++        if (writable)
++            protection |= PROT_WRITE;
++        if (executable)
++            protection |= PROT_EXEC;
++        if (mprotect(address, bytes, protection))
++            CRASH();
++        return;
++    }
++#endif
+ #if OS(LINUX) || OS(HAIKU) || OS(QNX)
+     UNUSED_PARAM(writable);
+     UNUSED_PARAM(executable);
+@@ -296,6 +344,18 @@ void OSAllocator::commit(void* address, size_t bytes, bool writable, bool execut
+ 
+ void OSAllocator::decommit(void* address, size_t bytes)
+ {
++#if OS(LINUX)
++    if (hostCommitsMemory()) {
++        if (!bytes)
++            return;
++        // As VirtualFree(MEM_DECOMMIT): inaccessible and not accounted until OSAllocator::commit. PROT_NONE comes
++        // first: what is accessible, the host commits again as soon as it is discarded.
++        if (mprotect(address, bytes, PROT_NONE))
++            CRASH();
++        while (madvise(address, bytes, MADV_DONTNEED) == -1 && errno == EAGAIN) { }
++        return;
++    }
++#endif
+ #if OS(LINUX) || OS(HAIKU)
+     while (madvise(address, bytes, MADV_DONTNEED) == -1 && errno == EAGAIN) {
+     }

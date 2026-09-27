@@ -1438,7 +1438,7 @@ test("Error.stackTraceLimit default matches the limit captureStackTrace applies"
   expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
 });
 
-test("Error.stackTraceLimit assignments keep applying after the assignment site gets hot", async () => {
+test.concurrent("Error.stackTraceLimit assignments keep applying after the assignment site gets hot", async () => {
   // Runs in a fresh process so that the JIT state of each assignment site starts cold.
   const src = `
     // try/finally keeps each call out of tail position, so every helper stays on the stack.

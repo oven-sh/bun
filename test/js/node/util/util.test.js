@@ -566,7 +566,7 @@ describe("util", () => {
       }
     });
 
-    it("keeps honoring frameCount after many calls", async () => {
+    it.concurrent("keeps honoring frameCount after many calls", async () => {
       // getCallSites assigns Error.stackTraceLimit from one site. Runs in a fresh process so
       // that the JIT state of that site starts cold.
       const fixture = `

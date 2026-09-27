@@ -1599,6 +1599,48 @@ impl PostgresSQLConnection {
         });
     }
 
+    /// Give `request`, and each queued request that holds the same evicted statement
+    /// and is not on the wire, the statement that takes its place: the one a
+    /// pipelined sibling or a later query already cached, or a new one. The evicted
+    /// statement keeps the description the requests on the wire were bound with.
+    fn replace_statement(&self, request: &PostgresSQLQuery) {
+        let Some(invalidated) = request.statement.get().clone() else {
+            return;
+        };
+        let name = &invalidated.signature.name[..];
+        let cached = self
+            .statements
+            .get()
+            .get(name)
+            .and_then(|slot| slot.clone());
+        let replacement = cached.unwrap_or_else(|| {
+            let id = self.prepared_statement_id.get();
+            self.prepared_statement_id.set(id + 1);
+            let statement = {
+                let mut s = PostgresSQLStatement::default();
+                s.signature = invalidated.signature.renamed(id);
+                RefPtr::new(s)
+            };
+            let _ = self
+                .statements
+                .with_mut(|m| m.put(name, Some(statement.clone())));
+            statement
+        });
+        debug_assert!(!core::ptr::eq(replacement.as_ptr(), invalidated.as_ptr()));
+        for queued in self.requests.get().iter() {
+            if queued.status.get() == QueryStatus::Pending
+                && queued
+                    .statement
+                    .get()
+                    .as_ref()
+                    .is_some_and(|held| core::ptr::eq(held.as_ptr(), invalidated.as_ptr()))
+            {
+                queued.statement.set(Some(replacement.clone()));
+            }
+        }
+        request.statement.set(Some(replacement));
+    }
+
     pub(crate) fn has_query_running(&self) -> bool {
         !self
             .flags
@@ -3051,18 +3093,11 @@ impl PostgresSQLConnection {
                     } else if invalidates
                         // After BindComplete the same SQLSTATE comes from the query.
                         && request.status.get() == QueryStatus::Binding
+                        && stmt.status == StatementStatus::Prepared
                         && !stmt.signature.prepared_statement_name.is_empty()
-                        && matches!(
-                            stmt.status,
-                            StatementStatus::Prepared | StatementStatus::Pending
-                        )
                     {
-                        // Pending: a pipelined sibling already reset it under a fresh name.
-                        let already_reset = stmt.status == StatementStatus::Pending;
-                        if !already_reset {
-                            // Evict so later queries with this signature re-prepare.
-                            self.evict_statement(stmt);
-                        }
+                        // Evict so later queries with this signature re-prepare.
+                        self.evict_statement(stmt);
                         // Inside a transaction block the re-Parse would get 25P02.
                         if !request.flags.get().reprepared
                             && self.tx_status.get() == protocol::TransactionStatusIndicator::I
@@ -3070,16 +3105,7 @@ impl PostgresSQLConnection {
                         {
                             debug!("re-preparing invalidated statement (SQLSTATE {})", err);
                             self.finish_request(&request);
-                            if !already_reset {
-                                let id = self.prepared_statement_id.get();
-                                self.prepared_statement_id.set(id + 1);
-                                stmt.reset_for_reprepare(id);
-                                if let Some(statement) = request.statement.get().as_ref() {
-                                    let _ = self.statements.with_mut(|m| {
-                                        m.put(&statement.signature.name, Some(statement.clone()))
-                                    });
-                                }
-                            }
+                            self.replace_statement(&request);
                             request.status.set(QueryStatus::Pending);
                             request.update_flags(|f| {
                                 f.reprepared = true;

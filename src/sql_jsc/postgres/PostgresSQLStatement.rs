@@ -67,15 +67,6 @@ impl Error {
 pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
-    /// Reset to `Pending` under a fresh name so `advance()` re-Parses after 26000/0A000.
-    /// `fields` and `parameters` stay for Binds still on the wire under the old name.
-    pub(crate) fn reset_for_reprepare(&mut self, prepared_statement_id: u64) {
-        self.status = Status::Pending;
-        self.error_response = None;
-        self.signature
-            .set_prepared_statement_name(prepared_statement_id);
-    }
-
     pub(crate) fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;

@@ -266,6 +266,24 @@ export function pgBindParameters(body: Buffer): (Buffer | null)[] {
   return params;
 }
 
+/** The result-column format codes of a frontend Bind message body (0 = text, 1 = binary). */
+export function pgBindResultFormats(body: Buffer): number[] {
+  let o = body.indexOf(0) + 1; // portal name
+  o = body.indexOf(0, o) + 1; // statement name
+  o += 2 + 2 * body.readUInt16BE(o); // parameter format codes
+  const params = body.readUInt16BE(o);
+  o += 2;
+  for (let i = 0; i < params; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    if (len > 0) o += len;
+  }
+  const formats: number[] = [];
+  const count = body.readUInt16BE(o);
+  for (let i = 0; i < count; i++) formats.push(body.readUInt16BE(o + 2 + 2 * i));
+  return formats;
+}
+
 // Frontend messages as a client writes them. The mocks only read these; the builders let a test state the exact
 // bytes it expects on the wire.
 

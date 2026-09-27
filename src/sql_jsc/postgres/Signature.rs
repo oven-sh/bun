@@ -34,6 +34,17 @@ impl Signature {
         self.prepared_statement_name = v.into_boxed_slice();
     }
 
+    /// The same query under another server-side name.
+    pub(crate) fn renamed(&self, prepared_statement_id: u64) -> Signature {
+        let mut signature = Signature {
+            fields: self.fields.clone(),
+            name: self.name.clone(),
+            prepared_statement_name: Box::default(),
+        };
+        signature.set_prepared_statement_name(prepared_statement_id);
+        signature
+    }
+
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
     // crate-wide `crate::Error`.

@@ -16,6 +16,7 @@ import {
   pgAuthenticationOk,
   pgBindComplete,
   pgBindParameters,
+  pgBindResultFormats,
   pgCommandComplete,
   pgDataRow,
   pgErrorResponse,
@@ -743,3 +744,138 @@ test("postgres: a 26000 after BindComplete is surfaced and the statement stays c
     server.close();
   }
 });
+
+// The reply to a re-prepare can arrive split across reads between
+// ParseComplete and RowDescription. A query issued there finds the statement
+// Prepared and is written at once. Its Bind must not ask for the column
+// formats of the statement that the server invalidated: the server then sends
+// a value in one format and the client reads it in the other.
+type Column = { name: string; typeOid: number; text: string; binary: Buffer };
+
+function int4(value: number): Buffer {
+  const bytes = Buffer.alloc(4);
+  bytes.writeInt32BE(value);
+  return bytes;
+}
+
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+
+test.each([
+  {
+    change: "ALTER COLUMN TYPE",
+    before: [{ name: "a", typeOid: 25 /* text */, text: "42", binary: Buffer.from("42") }],
+    after: [{ name: "a", typeOid: 23 /* int4 */, text: "42", binary: int4(42) }],
+    row: { a: 42 },
+  },
+  {
+    change: "ADD COLUMN",
+    before: [
+      { name: "a", typeOid: 23, text: "1", binary: int4(1) },
+      { name: "b", typeOid: 25, text: "x", binary: Buffer.from("x") },
+    ],
+    after: [
+      { name: "a", typeOid: 23, text: "1", binary: int4(1) },
+      { name: "b", typeOid: 25, text: "x", binary: Buffer.from("x") },
+      { name: "c", typeOid: 23, text: "3", binary: int4(3) },
+    ],
+    row: { a: 1, b: "x", c: 3 },
+  },
+] satisfies { change: string; before: Column[]; after: Column[]; row: object }[])(
+  "postgres: a query issued before the RowDescription of a re-prepare asks for no stale column format ($change)",
+  async ({ before, after, row }) => {
+    let schema: Column[] = before;
+    let version = 1;
+    const parsedUnder = new Map<string, number>(); // statement name -> schema version
+    let portal: number[] | null = null; // the format of each column; null after a failed Bind
+    let holdNextDescribe = false;
+    let held = false;
+    let windowOpen = false;
+    let bindsInWindow = 0;
+    const describeHeld = Promise.withResolvers<void>();
+    // The mock does what the server does: a statement parsed under an older
+    // schema answers 0A000 to each Bind, the count of result formats must be
+    // 0, 1 or the column count, and a value goes out in the format asked for.
+    const mock = await pgMockServer((type, body) => {
+      switch (type) {
+        case "P":
+          parsedUnder.set(body.subarray(0, body.indexOf(0)).toString("utf-8"), version);
+          return pgParseComplete();
+        case "D":
+          if (!holdNextDescribe) return [pgParameterDescription([]), pgRowDescription(schema)];
+          holdNextDescribe = false;
+          held = true;
+          describeHeld.resolve();
+          return [pgParameterDescription([]), pgHold, pgRowDescription(schema)];
+        case "B": {
+          if (windowOpen) bindsInWindow++;
+          portal = null;
+          const afterPortal = body.indexOf(0) + 1;
+          const name = body.subarray(afterPortal, body.indexOf(0, afterPortal)).toString("utf-8");
+          if (parsedUnder.get(name) !== version) {
+            return pgErrorResponse({
+              S: "ERROR",
+              C: "0A000",
+              M: "cached plan must not change result type",
+              R: "RevalidateCachedQuery",
+            });
+          }
+          const formats = pgBindResultFormats(body);
+          if (formats.length > 1 && formats.length !== schema.length) {
+            return pgErrorResponse({
+              S: "ERROR",
+              C: "08P01",
+              M: `bind message has ${formats.length} result formats but query has ${schema.length} columns`,
+              R: "PortalSetResultFormat",
+            });
+          }
+          portal = schema.map((_, i) => (formats.length === 0 ? 0 : formats.length === 1 ? formats[0] : formats[i]));
+          return pgBindComplete();
+        }
+        case "E": {
+          if (portal === null) return;
+          const formats = portal;
+          const values = schema.map((column, i) => (formats[i] === 1 ? column.binary : Buffer.from(column.text)));
+          return [pgDataRow(values), pgCommandComplete("SELECT 1")];
+        }
+        case "S":
+          portal = null;
+          // The batch of the re-prepare ends here. A Bind after it is a new query.
+          if (held) windowOpen = true;
+          return pgReadyForQuery();
+      }
+    });
+
+    try {
+      await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1, idleTimeout: 5 });
+      const q = () => sql`select * from t`;
+      await q();
+      // The cached statement now has the columns of `before`.
+      await q();
+
+      schema = after;
+      version = 2;
+      holdNextDescribe = true;
+      const first = q().execute();
+      await describeHeld.promise;
+      // The client gives no signal when it has read ParseComplete and
+      // ParameterDescription, so the second query waits many turns of the
+      // loop. `bindsInWindow` below proves that it was written in the window.
+      let second: Promise<unknown> | undefined;
+      for (let turn = 0; turn < 20_000 && bindsInWindow === 0; turn++) {
+        await tick();
+        if (turn === 1_000) second = q().execute();
+      }
+      held = false;
+      windowOpen = false;
+      mock.release();
+
+      expect({ first: await first, second: await second, bindsInWindow }).toEqual({
+        first: [row],
+        second: [row],
+        bindsInWindow: 1,
+      });
+    } finally {
+      mock.server.close();
+    }
+  },
+);

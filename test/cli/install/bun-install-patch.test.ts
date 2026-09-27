@@ -27,12 +27,12 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..bc652e496c165a7415880ef4520c0ab3
 --- a/index.js
 +++ b/index.js
 @@ -10,5 +10,6 @@
-  var isOdd = require('is-odd');
+ var isOdd = require('is-odd');
 
-  module.exports = function isEven(i) {
+ module.exports = function isEven(i) {
 +  console.log("HI");
-    return !isOdd(i);
-  };
+   return !isOdd(i);
+ };
 `;
   const is_even_patch2 = /* patch */ `diff --git a/index.js b/index.js
 index 832d92223a9ec491364ee10dcbe3ad495446ab80..217353bf51861fe4fdba68cb98bc5f361c7730e1 100644
@@ -48,10 +48,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..217353bf51861fe4fdba68cb98bc5f36
 -var isOdd = require('is-odd');
 +var isOdd = require("is-odd");
 
-  module.exports = function isEven(i) {
+ module.exports = function isEven(i) {
 +  console.log("lmao");
-    return !isOdd(i);
-  };
+   return !isOdd(i);
+ };
 `;
 
   const is_odd_patch = /* patch */ `diff --git a/index.js b/index.js
@@ -459,14 +459,14 @@ index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09
 --- a/package.json
 +++ b/package.json
 @@ -2,7 +2,7 @@
-    "name": "@zackradisic/hls-dl",
-    "version": "0.0.1",
-    "description": "",
+   "name": "@zackradisic/hls-dl",
+   "version": "0.0.1",
+   "description": "",
 -  "main": "dist/hls-dl.commonjs2.js",
 +  "main": "./index.js",
-    "dependencies": {
-      "m3u8-parser": "^4.5.0",
-      "typescript": "^4.0.5"
+   "dependencies": {
+     "m3u8-parser": "^4.5.0",
+     "typescript": "^4.0.5"
 `;
 
     $.throws(true);
@@ -1282,5 +1282,118 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       });
       await installUnpatched(packageDir);
     });
+  });
+});
+
+describe("hunk placement", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // no-deps@1.0.0 index.js:
+  //   1 module.exports = require(`./package.json`);
+  //   2
+  //   3 for (const key of [`dependencies`, `devDependencies`, `peerDependencies`]) {
+  //   4   for (const dep of Object.keys(module.exports[key] || {})) {
+  //   5     module.exports[key][dep] = require(dep);
+  //   6   }
+  //   7 }
+  const packageJson = JSON.stringify({
+    name: "hunk-placement",
+    dependencies: { "no-deps": "1.0.0" },
+    patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+  });
+
+  const install = async (packageDir: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  const indexJs = (packageDir: string) => Bun.file(join(packageDir, "node_modules", "no-deps", "index.js"));
+
+  test.concurrent("a hunk whose - side matches nothing fails the install", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": packageJson,
+        patches: {
+          "no-deps@1.0.0.patch": [
+            "diff --git a/index.js b/index.js",
+            "--- a/index.js",
+            "+++ b/index.js",
+            "@@ -1 +1 @@",
+            "-a line that exists in no version of this package",
+            '+module.exports = "STALE-HUNK-APPLIED";',
+            "",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      error: failed applying patch file: hunk #1 does not apply to index.js (expected at line 1)
+      error: failed to apply patchfile (patches/no-deps@1.0.0.patch)"
+    `);
+    expect(exitCode).toBe(1);
+    const index = indexJs(packageDir);
+    expect((await index.exists()) && (await index.text()).includes("STALE-HUNK-APPLIED")).toBe(false);
+  });
+
+  test.concurrent("a hunk with a stale + start is placed by its context", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": packageJson,
+        patches: {
+          // Hunk 1 adds two lines, so hunk 2's correct `+` start is 7. The
+          // header says 5, as `yarn patch-commit` emits.
+          "no-deps@1.0.0.patch": [
+            "diff --git a/index.js b/index.js",
+            "--- a/index.js",
+            "+++ b/index.js",
+            "@@ -1,2 +1,4 @@",
+            " module.exports = require(`./package.json`);",
+            "+// FIRST-A",
+            "+// FIRST-B",
+            " ",
+            "@@ -5,2 +5,3 @@",
+            "     module.exports[key][dep] = require(dep);",
+            "+    // SECOND-MARKER",
+            "   }",
+            "",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect((await indexJs(packageDir).text()).split("\n")).toEqual([
+      "module.exports = require(`./package.json`);",
+      "// FIRST-A",
+      "// FIRST-B",
+      "",
+      "for (const key of [`dependencies`, `devDependencies`, `peerDependencies`]) {",
+      "  for (const dep of Object.keys(module.exports[key] || {})) {",
+      "    module.exports[key][dep] = require(dep);",
+      "    // SECOND-MARKER",
+      "  }",
+      "}",
+      "",
+    ]);
   });
 });

@@ -79,10 +79,11 @@ function removeCapacity(patch: any): any {
 
 describe("apply", () => {
   test("edgecase", async () => {
+    const oldcontents = "module.exports = x => x % 2 === 0;";
     const newcontents = "module.exports = x => x % 420 === 0;";
     await using tempdir2 = tempDir("patch-test2", {
       ".bun/install/cache/is-even@1.0.0": {
-        "index.js": "module.exports = x => x % 2 === 0;",
+        "index.js": oldcontents,
       },
     });
     await using tempdir = tempDir("patch-test", {
@@ -98,8 +99,12 @@ describe("apply", () => {
       tempdir,
     );
 
-    await apply(patchfile, `${tempdir}/node_modules/is-even`);
-    expect(await fs.readFile(`${tempdir}/node_modules/is-even/index.js`).then(b => b.toString())).toBe(newcontents);
+    // apply against the original (cache) contents, as `bun install` does
+    await using targetdir = tempDir("patch-test-target", {
+      "index.js": oldcontents,
+    });
+    await apply(patchfile, String(targetdir));
+    expect(await fs.readFile(`${targetdir}/index.js`, "utf8")).toBe(newcontents);
   });
 
   test("empty", async () => {
@@ -530,6 +535,272 @@ describe("apply", () => {
 
       expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
     });
+
+    // Patches produced by `yarn patch-commit` often have `+` start lines that
+    // don't account for lines added by earlier hunks. Hunks must be located by
+    // matching their `-` side context (like `git apply`), not by trusting the
+    // stated `+` offset.
+    test("hunk with stale + start line is placed by context", async () => {
+      const afile = Array.from({ length: 12 }, (_, i) => `line${String(i + 1).padStart(2, "0")}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      // Hunk 1 adds 2 lines, so hunk 2's correct `+` start is 9. The header
+      // says 7 (stale), exactly as yarn patch-commit emits.
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,4 +1,6 @@",
+        " line01",
+        " line02",
+        "+INSERT-ONE",
+        "+INSERT-TWO",
+        " line03",
+        " line04",
+        "@@ -7,6 +7,7 @@",
+        " line07",
+        " line08",
+        "-line09",
+        "+line09-changed",
+        "+SECOND-MARKER",
+        " line10",
+        " line11",
+        " line12",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(
+        [
+          "line01",
+          "line02",
+          "INSERT-ONE",
+          "INSERT-TWO",
+          "line03",
+          "line04",
+          "line05",
+          "line06",
+          "line07",
+          "line08",
+          "line09-changed",
+          "SECOND-MARKER",
+          "line10",
+          "line11",
+          "line12",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    test("hunk whose context matches nowhere fails instead of corrupting the file", async () => {
+      const afile = Array.from({ length: 30 }, (_, i) => `alpha${i}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,3 +1,4 @@",
+        " not-in-file-1",
+        " not-in-file-2",
+        "+NEW-LINE",
+        " not-in-file-3",
+        "",
+      ].join("\n");
+
+      expect(() => apply(patchfile, afolder)).toThrow("hunk #1 does not apply to hello.txt (expected at line 1)");
+      // the file must be left untouched
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(afile);
+    });
+
+    test("a later hunk that matches nowhere fails before anything is written", async () => {
+      const afile = Array.from({ length: 10 }, (_, i) => `line${i + 1}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,2 +1,3 @@",
+        " line1",
+        "+FIRST",
+        " line2",
+        "@@ -8,2 +9,3 @@",
+        " line8",
+        "+SECOND",
+        " not-line9",
+        "",
+      ].join("\n");
+
+      expect(() => apply(patchfile, afolder)).toThrow("hunk #2 does not apply to hello.txt (expected at line 8)");
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(afile);
+    });
+
+    test("hunk is found by context when the file shifted by more than 20 lines", async () => {
+      const afile = Array.from({ length: 60 }, (_, i) => (i === 49 ? "target" : `filler${i + 1}`)).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      // The patch was made when "target" was line 2. It is now line 50.
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,3 +1,3 @@",
+        " filler49",
+        "-target",
+        "+replaced",
+        " filler51",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      const lines = (await fs.readFile(join(afolder, "hello.txt"), "utf8")).split("\n");
+      expect({ line49: lines[48], line50: lines[49], line51: lines[50], count: lines.length }).toEqual({
+        line49: "filler49",
+        line50: "replaced",
+        line51: "filler51",
+        count: 61,
+      });
+    });
+
+    // `git diff -U0` emits hunks with no context lines. A zero-length range
+    // (`-3,0`, `+5,0`) names the line the gap sits after, and `0` is the top
+    // of the file. Every case below is what `git apply --unidiff-zero` produces.
+    const numbered = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    test.each([
+      [
+        "delete one line",
+        numbered(8),
+        "@@ -6 +5,0 @@\n-line 6\n",
+        "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
+      [
+        "delete a run of lines",
+        numbered(8),
+        "@@ -3,3 +2,0 @@\n-line 3\n-line 4\n-line 5\n",
+        "line 1\nline 2\nline 6\nline 7\nline 8\n",
+      ],
+      ["delete the first line", numbered(3), "@@ -1 +0,0 @@\n-line 1\n", "line 2\nline 3\n"],
+      ["delete the last line", numbered(3), "@@ -3 +2,0 @@\n-line 3\n", "line 1\nline 2\n"],
+      [
+        "two deletions",
+        numbered(8),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -6 +4,0 @@\n-line 6\n",
+        "line 1\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
+      ["insert after a line", numbered(4), "@@ -3,0 +4,2 @@\n+X\n+Y\n", "line 1\nline 2\nline 3\nX\nY\nline 4\n"],
+      ["insert at the top", numbered(2), "@@ -0,0 +1 @@\n+X\n", "X\nline 1\nline 2\n"],
+      ["insert at the end", numbered(2), "@@ -2,0 +3 @@\n+X\n", "line 1\nline 2\nX\n"],
+      ["replace a line", numbered(3), "@@ -2 +2 @@\n-line 2\n+TWO\n", "line 1\nTWO\nline 3\n"],
+      [
+        "delete then insert",
+        numbered(6),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -5,0 +5 @@\n+X\n",
+        "line 1\nline 3\nline 4\nline 5\nX\nline 6\n",
+      ],
+      [
+        "insert then insert",
+        numbered(4),
+        "@@ -1,0 +2,2 @@\n+A\n+B\n@@ -3,0 +6 @@\n+C\n",
+        "line 1\nA\nB\nline 2\nline 3\nC\nline 4\n",
+      ],
+    ])("zero-context hunk: %s", async (_name, before, hunks, after) => {
+      using dir = tempDir("patch-u0", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunks}`;
+      await apply(patchfile, String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
+    });
+
+    test("a pure insertion past the end of the file does not apply", async () => {
+      using dir = tempDir("patch-u0", { "index.js": "line 1\nline 2\n" });
+      const header = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n";
+      expect(() => apply(header + "@@ -9,0 +10 @@\n+X\n", String(dir))).toThrow(
+        "hunk #1 does not apply to index.js (expected at line 9)",
+      );
+      // One past the last line: the file has 2 lines, there is no line 3 to insert after.
+      expect(() => apply(header + "@@ -3,0 +4 @@\n+X\n", String(dir))).toThrow(
+        "hunk #1 does not apply to index.js (expected at line 3)",
+      );
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2\n");
+    });
+
+    // `\ No newline at end of file` ends that side of the file, so context or
+    // deleted lines after it are malformed. These used to crash or drop a line.
+    test.each([
+      ["deletion after it", "line 1\nline 2", "@@ -1,2 +1,1 @@\n+X\n\\ No newline at end of file\n-line 1\n-line 2\n"],
+      ["context after it", "line 1\nline 2", "@@ -1,2 +1,3 @@\n+X\n\\ No newline at end of file\n line 1\n line 2\n"],
+      [
+        "context after it, trailing newline",
+        "line 1\nline 2\n",
+        "@@ -1,2 +1,3 @@\n+X\n\\ No newline at end of file\n line 1\n line 2\n",
+      ],
+      [
+        "context after a deletion with it",
+        "line 1\nline 2",
+        "@@ -1,2 +1,1 @@\n-line 1\n\\ No newline at end of file\n line 2\n",
+      ],
+    ])("a no-newline pragma with %s does not apply", async (_name, before, hunk) => {
+      using dir = tempDir("patch-pragma", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
+      expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 1)");
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(before);
+    });
+
+    test.each([
+      [
+        "old side had no newline",
+        "a\nb",
+        "@@ -1,2 +1,3 @@\n a\n-b\n\\ No newline at end of file\n+b\n+c\n",
+        "a\nb\nc\n",
+      ],
+      [
+        "new side has no newline",
+        "a\nb\nc\n",
+        "@@ -1,3 +1,2 @@\n a\n-b\n-c\n+b\n\\ No newline at end of file\n",
+        "a\nb",
+      ],
+      [
+        "neither side has a newline",
+        "a\nb",
+        "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+B\n\\ No newline at end of file\n",
+        "a\nB",
+      ],
+      [
+        "unchanged last line without newline",
+        "a\nb",
+        "@@ -1,2 +1,3 @@\n+X\n a\n b\n\\ No newline at end of file\n",
+        "X\na\nb",
+      ],
+    ])("a no-newline pragma where git puts it applies: %s", async (_name, before, hunk, after) => {
+      using dir = tempDir("patch-pragma", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
+      await apply(patchfile, String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
+    });
+
+    test("a header start far past the end of the file is still found or rejected quickly", async () => {
+      using dir = tempDir("patch-far", { "index.js": "line 1\nline 2\nline 3\n" });
+      const header = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n";
+      await apply(header + "@@ -4000000000 +4000000000 @@\n-line 2\n+TWO\n", String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nTWO\nline 3\n");
+      expect(() => apply(header + "@@ -4000000000 +4000000000 @@\n-nowhere\n+X\n", String(dir))).toThrow(
+        "hunk #1 does not apply to index.js (expected at line 4000000000)",
+      );
+    });
   });
 
   describe("No newline at end of file", () => {
@@ -607,7 +878,7 @@ describe("apply", () => {
       });
     });
 
-    test("header deleting more lines than the target file has returns EINVAL", async () => {
+    test("header deleting more lines than the target file has does not apply", async () => {
       await using dir = tempDir("patch-underflow", { "target.txt": "only line\n" });
 
       await using proc = Bun.spawn({
@@ -629,7 +900,7 @@ describe("apply", () => {
              patchInternals.apply(patch, ${JSON.stringify(dir)});
              console.log("no-error");
            } catch (e) {
-             console.log("caught: " + e.code);
+             console.log("caught: " + e.message);
            }`,
         ],
         env: bunEnv,
@@ -639,7 +910,7 @@ describe("apply", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: "caught: EINVAL",
+        stdout: "caught: hunk #1 does not apply to target.txt (expected at line 1)",
         stderr: "",
         exitCode: 0,
       });
@@ -716,7 +987,7 @@ describe("parse", () => {
               "path": "banana.ts",
               "mode": "non_executable",
               "hunk": {
-                "header": { "original": { "start": 1, "len": 0 }, "patched": { "start": 1, "len": 1 } },
+                "header": { "original": { "start": 0, "len": 0 }, "patched": { "start": 1, "len": 1 } },
                 "parts": {
                   "items": [
                     {

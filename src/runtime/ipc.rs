@@ -1275,7 +1275,7 @@ impl SendQueue {
     /// channel to EOF before closing. The drain ends in `on_end`, which closes
     /// the socket; Windows (no synchronous read) and a user-requested close
     /// fall through to the next-tick close.
-    pub fn close_after_peer_exit(&self) {
+    pub(crate) fn close_after_peer_exit(&self) {
         log!("SendQueue#closeAfterPeerExit");
         #[cfg(not(windows))]
         if !self.pending_close.get() {

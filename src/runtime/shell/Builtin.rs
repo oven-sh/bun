@@ -721,6 +721,20 @@ impl Builtin {
                         };
                         me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
+                } else if crate::webcore::ReadableStream::is_readable_stream(jsval) {
+                    if !redirect.stdin() {
+                        let _ = global.throw(format_args!(
+                            "{}",
+                            crate::shell::states::cmd::STREAM_REDIRECT_NOT_STDIN
+                        ));
+                        return Some(Yield::Failed(cmd));
+                    }
+                    let name = Self::of(interp, cmd).kind.as_str();
+                    let _ = global.throw(format_args!(
+                        "ReadableStream cannot be redirected to a builtin command ('{name}'). \
+                         Use an external command or buffer the stream first",
+                    ));
+                    return Some(Yield::Failed(cmd));
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)
                 {
@@ -807,12 +821,22 @@ impl Builtin {
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
+        Self::cmd_write_error_and_exit(interp, cmd, 1, args)
+    }
+
+    /// [`cmd_write_failing_error`](Self::cmd_write_failing_error) that finishes the Cmd with `exit_code`.
+    pub(crate) fn cmd_write_error_and_exit(
+        interp: &Interpreter,
+        cmd: NodeId,
+        exit_code: ExitCode,
+        args: core::fmt::Arguments<'_>,
+    ) -> Yield {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             // Only the `Fd` arm transitions state.
-            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
+            interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr { exit_code };
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
@@ -821,7 +845,7 @@ impl Builtin {
             unreachable!()
         }
         // No-IO path: append to the shell env's captured stderr and finish
-        // synchronously with exit 1 (Cmd::on_io_writer_chunk's behaviour).
+        // synchronously with `exit_code` (Cmd::on_io_writer_chunk's behaviour).
         if let OutKind::Pipe = &interp.as_cmd(cmd).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
@@ -835,7 +859,7 @@ impl Builtin {
             stderr.append_slice(&buf);
         }
         let parent = interp.as_cmd(cmd).base.parent;
-        interp.child_done(parent, cmd, 1)
+        interp.child_done(parent, cmd, exit_code)
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.

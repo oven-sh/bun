@@ -360,6 +360,93 @@ describe("spawn stdin ReadableStream", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a ReadableStream that errored before the spawn does not surface an unhandled rejection", async () => {
+    // The pump promise is already rejected when the sink gets it, and no reaction is ever
+    // attached to it. Run it in a child so a stray rejection lands on its counter.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let uncaught = 0;
+        process.on("unhandledRejection", () => { uncaught++; });
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.error(new Error("stdin stream boom"));
+          },
+        });
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          stdout: "ignore",
+        });
+        await child.exited;
+        await new Promise(resolve => setImmediate(resolve));
+        console.log("uncaught=" + uncaught);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("stdin stream boom");
+    expect(stdout.trim()).toBe("uncaught=0");
+    expect(exitCode).toBe(0);
+  });
+
+  // A native source hears of a failed sink write as `Writable::Err` and ends the sink with that
+  // error. The sink has to know the error is its own write failure: then it cancels the stream.
+  // Before, a synchronous EPIPE left the fetch running with no consumer.
+  test.skipIf(isWindows)("a fetch body whose child closed its stdin is aborted at the failed write", async () => {
+    const { promise: childSocket, resolve: onChildSocket } = Promise.withResolvers<{ end(): void }>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => onChildSocket(socket), data() {} },
+    });
+    const { promise: aborted, resolve: onAborted } = Promise.withResolvers<true>();
+    // The body never ends. The second chunk follows once the child has closed its stdin.
+    let responded = false;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          if (responded) return;
+          responded = true;
+          socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000000\r\n\r\nfirst-");
+          childSocket.then(() => {
+            socket.write(Buffer.alloc(1 << 16, "y"));
+            socket.flush();
+          });
+        },
+        close: () => onAborted(true),
+        error() {},
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    // The child reads the first chunk, lets go of the pipe, connects, and exits 7 when the socket closes.
+    await using proc = spawn({
+      cmd: [
+        "sh",
+        "-c",
+        'head -c 6 >/dev/null; exec 0</dev/null; exec "$0" -e "$1"',
+        bunExe(),
+        `await Bun.connect({ hostname: "127.0.0.1", port: +process.env.PORT, socket: { close: () => process.exit(7), data() {} } });`,
+      ],
+      env: { ...bunEnv, PORT: String(listener.port) },
+      stdin: res.body!,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    // The child is still alive: the failed write aborts the download, not the exit.
+    expect(await aborted).toBe(true);
+    (await childSocket).end();
+    expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stderr: "", exitCode: 7 });
+  });
+
   // The ReadableStream -> stdin FileSink pump intentionally does not await the
   // Promise FileSink.write() returns for writes it cannot complete synchronously
   // (a full pipe on POSIX, every pipe write on Windows). When the child dies

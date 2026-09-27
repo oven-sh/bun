@@ -100,8 +100,8 @@ use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
+use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JsCell};
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
@@ -122,7 +122,7 @@ use bun_collections::index_sort;
 declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct MultiPartUpload {
+pub(crate) struct MultiPartUpload {
     pub(crate) root: Cell<Option<core::ptr::NonNull<MultiPartUpload>>>,
     pub(crate) queue: JsCell<Option<Box<[UploadPart]>>>,
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,
@@ -143,9 +143,6 @@ pub struct MultiPartUpload {
     /// The context of the script that started the upload: its requests are that script's.
     pub(crate) context: bun_jsc::ContextId,
     pub(crate) vm: &'static VirtualMachine,
-    // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
-    pub global_this: GlobalRef,
-
     pub(crate) buffered: JsCell<StreamBuffer>,
     /// Bytes accepted by `write*` (after encoding): what a streamed `Bun.write`/`writer.end()`
     /// resolves with.

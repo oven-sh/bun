@@ -29,7 +29,7 @@ bun_core::declare_scope!(FileSink, visible);
 // canonical `*mut FileSink` instead of any receiver — see the `borrow = ptr`
 // note on the `impl_streaming_writer_parent!` invocation below.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileSink {
+pub(crate) struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: JsCell<IOWriter>,
     pub(crate) event_loop_handle: EventLoopHandle,
@@ -59,6 +59,9 @@ pub struct FileSink {
     /// A write or source failure that is not a JS value; a JS one lives on `pipe` and sets `stream_js_error`.
     stream_error: JsCell<Option<streams::StreamError>>,
     stream_js_error: Cell<bool>,
+    /// Why the pipe ended early while this sink was open, other than a failed write into it. Boxed and
+    /// kept for the sink's owner: `pipe` lets go of a JS error when it is released.
+    stream_source_failure: JsCell<Option<Box<streams::StreamError>>>,
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
     /// `assign_to_js_stream` holds a ref for the pump promise's reactions, which release it.
@@ -335,6 +338,18 @@ impl FileSink {
         }
     }
 
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit) through a [`RefPtr`]. Returns the
+    /// piped stream's own failure from before the exit.
+    pub(crate) fn attached_process_exited(
+        this: &RefPtr<FileSink>,
+        status: &SpawnStatus,
+    ) -> Option<streams::StreamError> {
+        let failure = this.take_stream_source_failure();
+        // SAFETY: `this` holds a ref, and `as_ptr` is the allocation's own pointer.
+        unsafe { Self::on_attached_process_exit(this.as_ptr(), status) };
+        failure
+    }
+
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `WritablePending::run`
@@ -483,7 +498,7 @@ impl FileSink {
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
-    pub unsafe fn on_ready(this: *mut FileSink) {
+    pub(crate) unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
         // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
         unsafe {
@@ -510,7 +525,7 @@ impl FileSink {
     /// `this` must be the canonical live `*mut FileSink` (see
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `clear_keep_alive_ref`
     /// at the end may free `this`.
-    pub unsafe fn on_close(this: *mut FileSink) {
+    pub(crate) unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
@@ -603,6 +618,25 @@ impl FileSink {
         }
         self.pipe.get().set_error(error);
         self.stream_js_error.set(true);
+        if let Some(global) = self.js_global() {
+            self.keep_stream_source_failure(streams::StreamError::JSValue(
+                bun_jsc::strong::Optional::create(error, global),
+            ));
+        }
+    }
+
+    /// Not once the sink is done: the exit notice cancels the stream, and a source reports that like a failure.
+    fn keep_stream_source_failure(&self, failure: streams::StreamError) {
+        if !self.done.get() {
+            self.stream_source_failure.set(Some(Box::new(failure)));
+        }
+    }
+
+    /// Why the stream's consumer got a truncated body, when no write into this sink failed.
+    pub(crate) fn take_stream_source_failure(&self) -> Option<streams::StreamError> {
+        self.stream_source_failure
+            .replace(None)
+            .map(|failure| *failure)
     }
 
     /// Release the ref taken in `toResult`/`end`/`endFromJS` when a write
@@ -925,9 +959,7 @@ impl FileSink {
 
             let amount_buffered = (*this).writer.get().outgoing.size();
 
-            // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
-            // callback it may trigger goes via the stored `*mut FileSink` backref.
-            match (*this).writer.with_mut(|w| w.flush()) {
+            match (*this).writer_io(|w| w.flush()) {
                 WriteResult::Err(err) => {
                     (*this).update_ref(false);
                     // `flush()` returns a write error without routing through the
@@ -936,7 +968,6 @@ impl FileSink {
                     // `run_pending_later()` alone would resolve it as if every
                     // buffered byte had reached the reader. Latch the error and
                     // move the sink to its terminal state (mirrors `end_from_js`).
-                    (*this).record_stream_error(streams::StreamError::Error(err.clone()));
                     (*this).done.set(true);
                     if (*this).pending.get().state == streams::PendingState::Pending {
                         (*this)
@@ -976,7 +1007,7 @@ impl FileSink {
         }
     }
 
-    pub fn flush(&self) -> sys::Result<()> {
+    pub(crate) fn flush(&self) -> sys::Result<()> {
         sys::Result::Ok(())
     }
 
@@ -998,9 +1029,7 @@ impl FileSink {
         }
 
         let had_buffered_data = self.writer.get().has_pending_data();
-        // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS re-entry while
-        // the `&mut IOWriter` is held.
-        let rc = self.writer.with_mut(|w| w.flush());
+        let rc = self.writer_io(|w| w.flush());
         // `on_write` keeps the event loop alive while bytes sit in the buffer
         // and `on_auto_flush` releases that once it drains them. A flush from
         // JS that drained them has to release it too, or the loop still counts
@@ -1140,13 +1169,23 @@ impl FileSink {
         )
     }
 
-    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+    /// Every writer op that can fail (`on_error` has the asynchronous failures). The error is recorded before
+    /// the source hears of it: a source reports a failed sink write back like an error of its own.
+    fn writer_io(&self, op: impl FnOnce(&mut IOWriter) -> WriteResult) -> WriteResult {
+        // SAFETY(JsCell): pure I/O; a callback it triggers re-enters through the `*mut FileSink` backref.
+        let rc = self.writer.with_mut(op);
+        if let WriteResult::Err(err) = &rc {
+            self.record_stream_error(streams::StreamError::Error(err.clone()));
+        }
+        rc
+    }
+
+    pub(crate) fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
-        // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
-        let rc = self.writer.with_mut(|w| w.write(data.slice()));
+        let rc = self.writer_io(|w| w.write(data.slice()));
         if self.counting_stream_bytes() {
             self.count_stream_bytes(&rc, data.slice().len());
         }
@@ -1157,9 +1196,7 @@ impl FileSink {
     fn count_stream_bytes(&self, rc: &WriteResult, encoded_len: usize) {
         let counted = self.stream_bytes.get().unwrap_or(0);
         match rc {
-            WriteResult::Err(err) => {
-                self.record_stream_error(streams::StreamError::Error(err.clone()))
-            }
+            WriteResult::Err(_) => {}
             WriteResult::Done(n) => self.stream_bytes.set(Some(counted + *n as u64)),
             _ => self.stream_bytes.set(Some(counted + encoded_len as u64)),
         }
@@ -1189,8 +1226,7 @@ impl FileSink {
             return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
-        // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
-        let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
+        let rc = self.writer_io(|w| w.write_latin1(data.slice()));
         if self.counting_stream_bytes() {
             self.count_stream_bytes(
                 &rc,
@@ -1206,8 +1242,7 @@ impl FileSink {
             return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
-        // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
-        let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        let rc = self.writer_io(|w| w.write_utf16(data.slice16()));
         if self.counting_stream_bytes() {
             self.count_stream_bytes(
                 &rc,
@@ -1234,6 +1269,18 @@ impl FileSink {
             _ => None,
         };
         if let Some(err) = err {
+            if !write_failed {
+                match &err {
+                    streams::StreamError::Error(e) => {
+                        self.keep_stream_source_failure(streams::StreamError::Error(e.clone()))
+                    }
+                    streams::StreamError::AbortReason(reason) => {
+                        self.keep_stream_source_failure(streams::StreamError::AbortReason(*reason))
+                    }
+                    // `record_js_stream_error` keeps it.
+                    streams::StreamError::JSValue(_) => {}
+                }
+            }
             self.record_stream_error(err);
         }
         if !errored || !is_byte_stream {
@@ -1267,9 +1314,7 @@ impl FileSink {
         // the outcome is delivered via `run_pending` and the call returns `Ok`.
         let has_pending = self.pending.get().state == streams::PendingState::Pending;
 
-        // SAFETY(JsCell): `IOWriter::flush` is pure I/O; any callback re-entry
-        // goes via the stored `*mut FileSink` backref, not this borrow.
-        match self.writer.with_mut(|w| w.flush()) {
+        match self.writer_io(|w| w.flush()) {
             WriteResult::Done(written) | WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
                 if has_pending {
@@ -1280,7 +1325,6 @@ impl FileSink {
                 sys::Result::Ok(())
             }
             WriteResult::Err(e) => {
-                self.record_stream_error(streams::StreamError::Error(e.clone()));
                 self.done.set(true);
                 if has_pending {
                     self.pending
@@ -1304,7 +1348,7 @@ impl FileSink {
         }
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
         self.ref_();
         JSSink::create_object(global_this, self, 0)
@@ -1334,8 +1378,7 @@ impl FileSink {
             return sys::Result::Ok(JSValue::js_number(self.written.get() as f64));
         }
 
-        // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
-        let flush_result = self.writer.with_mut(|w| w.flush());
+        let flush_result = self.writer_io(|w| w.flush());
 
         // `writer.end()` only re-enters `on_close`, which never touches
         // `self.pending`; every arm that tears the writer down here with a
@@ -1359,8 +1402,7 @@ impl FileSink {
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
             WriteResult::Err(err) => {
-                // `writer.end()` below runs `on_close`, which settles a piped stream with it.
-                self.record_stream_error(streams::StreamError::Error(err.clone()));
+                // `writer.end()` below runs `on_close`, which settles a piped stream with the recorded error.
                 self.done.set(true);
                 if has_pending {
                     // A backpressured write() left its promise outstanding.
@@ -1626,6 +1668,7 @@ impl FileSink {
             pipe: JsCell::new(streams::PipeCell::default()),
             stream_error: JsCell::new(None),
             stream_js_error: Cell::new(false),
+            stream_source_failure: JsCell::new(None),
             stream_bytes: Cell::new(None),
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
@@ -1777,7 +1820,7 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 
 impl FileSink {
     /// `Bun.write(file, stream)`: the byte-count promise `on_close` settles, or an `Error` value.
-    pub fn pipe_stream(
+    pub(crate) fn pipe_stream(
         &mut self,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
@@ -1827,17 +1870,12 @@ impl FileSink {
                     return err;
                 }
                 // A pump that already failed reports through the done-promise.
-                if let Some(pump) = result.as_any_promise() {
-                    if pump.status() == bun_jsc::js_promise::Status::Rejected {
-                        pump.set_handled(global_this.vm());
-                    }
-                }
                 promise
             }
         }
     }
 
-    pub fn assign_to_stream(
+    pub(crate) fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
@@ -1934,7 +1972,8 @@ impl FileSink {
                 self.handle_resolve_stream(global_this);
             }
             bun_jsc::js_promise::Status::Rejected => {
-                // These don't ref().
+                // These don't ref(). The rejection is consumed here: no reaction is ever attached.
+                promise.set_handled(global_this.vm());
                 let result = promise.result(global_this.vm());
                 crate::dispatch::fold(self.handle_reject_stream(global_this, result));
             }

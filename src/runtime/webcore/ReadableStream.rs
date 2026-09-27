@@ -13,13 +13,13 @@ use crate::webcore::streams;
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
 #[derive(Copy, Clone)]
-pub struct ReadableStream {
+pub(crate) struct ReadableStream {
     pub value: JSValue,
     pub ptr: Source,
 }
 
 /// Outcome of [`ReadableStream::wire_native_sink`].
-pub enum NativeWireResult {
+pub(crate) enum NativeWireResult {
     /// The sink was installed on the native source; the source will call
     /// `SinkHandle::end` itself when it's done.
     Wired,
@@ -163,7 +163,7 @@ unsafe extern "C" {
 
 // ─── ReadableStream methods ──────────────────────────────────────────────────
 impl ReadableStream {
-    pub fn tee(
+    pub(crate) fn tee(
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
@@ -185,7 +185,7 @@ impl ReadableStream {
     }
 
     /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
-    pub fn reload_tag(&mut self) {
+    pub(crate) fn reload_tag(&mut self) {
         *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {
             ptr: Source::Invalid,
             value: JSValue::ZERO,
@@ -193,7 +193,10 @@ impl ReadableStream {
     }
 
     /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
-    pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
+    pub(crate) fn to_any_blob(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
         }
@@ -244,7 +247,7 @@ impl ReadableStream {
         Some(blob)
     }
 
-    pub fn done(&self) {
+    pub(crate) fn done(&self) {
         // done is called when we are done consuming the stream
         // cancel actually mark the stream source as done
         // this will resolve any pending promises to done: true
@@ -261,7 +264,7 @@ impl ReadableStream {
 
     /// Cancel the stream (an `AbortError` reason) and mark its native source done. The source's own
     /// cancel failure is the cancel promise's (handled) rejection; `Err` is anything thrown synchronously.
-    pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
         self.done();
         result
@@ -271,7 +274,7 @@ impl ReadableStream {
     /// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
     /// this does not synthesize a DOMException — fetch() uses it to surface
     /// `AbortSignal.reason` to the request body's cancel callback.
-    pub fn cancel_with_reason(
+    pub(crate) fn cancel_with_reason(
         &self,
         global_this: &JSGlobalObject,
         reason: JSValue,
@@ -282,7 +285,7 @@ impl ReadableStream {
         result
     }
 
-    pub fn abort(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn abort(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         // for now we are just calling cancel should be fine
         self.cancel(global_this)
     }
@@ -308,7 +311,7 @@ impl ReadableStream {
     /// fast-paths after wiring a `SinkHandle` directly so `.locked`,
     /// `.getReader()`, and body-mixin disturbed checks behave as they would
     /// after `readStreamIntoSink` acquires a reader.
-    pub fn lock_native(&self, global_object: &JSGlobalObject) {
+    pub(crate) fn lock_native(&self, global_object: &JSGlobalObject) {
         ReadableStream__lockNative(self.value, global_object);
     }
 
@@ -318,7 +321,7 @@ impl ReadableStream {
     /// the source's `sinkOwner` slot is pointed at `owner_cell` (`owner`
     /// belongs to the producer side). See [`NativeWireResult`] for caller
     /// obligations.
-    pub fn wire_native_sink(
+    pub(crate) fn wire_native_sink(
         &self,
         global: &JSGlobalObject,
         sink: webcore::SinkHandle,
@@ -405,28 +408,28 @@ impl ReadableStream {
         NativeWireResult::NotNative
     }
 
-    pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
+    pub(crate) fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)
     }
 
-    pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
+    pub(crate) fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
     }
 
     /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
-    pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
+    pub(crate) fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
         self.is_disturbed(global_object) || self.is_locked(global_object)
     }
 
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
-    pub fn is_readable_stream(value: JSValue) -> bool {
+    pub(crate) fn is_readable_stream(value: JSValue) -> bool {
         ReadableStream__is(value)
     }
 
     /// As [`from_js`](Self::from_js), but only matches a value that already is a `ReadableStream`
     /// (no async-iterable conversion): pure — no script, no exception, no trap poll.
-    pub fn from_js_direct(value: JSValue) -> Option<ReadableStream> {
+    pub(crate) fn from_js_direct(value: JSValue) -> Option<ReadableStream> {
         let mut ptr: *mut c_void = core::ptr::null_mut();
         let tag = ReadableStreamTag__taggedStream(value, &mut ptr);
         Self::from_tag(tag, value, ptr)
@@ -457,7 +460,7 @@ impl ReadableStream {
         }
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<ReadableStream>> {
@@ -471,7 +474,7 @@ impl ReadableStream {
         Ok(Self::from_tag(tag, out, ptr))
     }
 
-    pub fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ZigGlobalObject__createNativeReadableStream(global_this, native)
         })
@@ -519,7 +522,7 @@ impl ReadableStream {
         Self::from_blob_copy_ref(cx, &blob, recommended_chunk_size)
     }
 
-    pub fn from_blob_copy_ref(
+    pub(crate) fn from_blob_copy_ref(
         cx: &bun_jsc::JsThread<'_>,
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
@@ -576,7 +579,7 @@ impl ReadableStream {
         }
     }
 
-    pub fn from_pipe<P>(
+    pub(crate) fn from_pipe<P>(
         cx: &bun_jsc::JsThread<'_>,
         _parent: P,
         buffered_reader: &mut bun_io::BufferedReader,
@@ -611,7 +614,7 @@ impl ReadableStream {
     }
 
     /// A stream that delivers `bytes`, then errors with `err`.
-    pub fn from_bytes_then_error(
+    pub(crate) fn from_bytes_then_error(
         cx: &bun_jsc::JsThread<'_>,
         bytes: Vec<u8>,
         err: syscall::Error,
@@ -633,7 +636,7 @@ impl ReadableStream {
         source.to_readable_stream(cx)
     }
 
-    pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__empty(global_this)
@@ -641,7 +644,7 @@ impl ReadableStream {
     }
 
     /// A locked stand-in for the stream of a body that was read to its end: closed and disturbed.
-    pub fn used(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn used(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__used(global_this, true)
@@ -649,13 +652,13 @@ impl ReadableStream {
     }
 
     /// A locked stand-in for the stream of a body a consumer is still reading: it stays readable.
-    pub fn in_use(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn in_use(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || ReadableStream__used(global_this, false))
     }
 
     /// A stream already in the `errored` state, so every read rejects with
     /// `reason` instead of closing cleanly.
-    pub fn errored(global_this: &JSGlobalObject, reason: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn errored(global_this: &JSGlobalObject, reason: JSValue) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__errored(global_this, reason)
@@ -712,7 +715,7 @@ bun_core::assert_ffi_discr!(
 // Clone/Copy: bitwise OK — variant pointers are non-owning handles to
 // JSC-managed loader objects (lifetime governed by the stream/JS heap).
 #[derive(Copy, Clone)]
-pub enum Source {
+pub(crate) enum Source {
     Invalid,
     /// ReadableStreamDefaultController or ReadableByteStreamController
     JavaScript,
@@ -740,7 +743,7 @@ impl Source {
     /// Centralises the per-site raw-pointer deref so call sites are
     /// unsafe-free; the one audited deref lives in [`bun_ptr::BackRef::get`].
     #[inline]
-    pub fn bytes(self) -> Option<bun_ptr::BackRef<ByteStream>> {
+    pub(crate) fn bytes(self) -> Option<bun_ptr::BackRef<ByteStream>> {
         match self {
             Source::Bytes(p) => Some(bun_ptr::BackRef::from(
                 NonNull::new(p).expect("Source::Bytes payload is non-null"),
@@ -757,7 +760,7 @@ impl Source {
     /// touched through this borrow is `Cell`/`JsCell`-backed, so re-entrant JS
     /// that re-derives a fresh `&FileReader` from `m_ctx` aliases shared-only.
     #[inline]
-    pub fn file(self) -> Option<bun_ptr::BackRef<FileReader>> {
+    pub(crate) fn file(self) -> Option<bun_ptr::BackRef<FileReader>> {
         match self {
             Source::File(p) => Some(bun_ptr::BackRef::from(
                 NonNull::new(p).expect("Source::File payload is non-null"),

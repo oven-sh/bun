@@ -12,6 +12,8 @@
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
  * - Under ASAN, the Rust half and the C/C++ half (bun's sources and the deps)
  *   both compile out the fake-stack instrumentation.
+ * - clang's LLVM and rustc's LLVM are the same major version, or configure
+ *   fails: the link reads LLVM bitcode from both.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -43,14 +45,13 @@ const mockToolchain: Toolchain = {
   cxx: "/fake/llvm/bin/clang++",
   hostCc: "/fake/llvm/bin/clang",
   hostCxx: "/fake/llvm/bin/clang++",
-  clangVersion: "21.1.8",
-  clangResourceDir: "/fake/llvm/lib/clang/21",
+  clangVersion: "23.1.1",
+  clangResourceDir: "/fake/llvm/lib/clang/23",
   ar: "/fake/llvm/bin/llvm-ar",
   ranlib: "/fake/llvm/bin/llvm-ranlib",
   ld: "/fake/llvm/bin/ld.lld",
   ld64Lld: "/fake/llvm/bin/ld64.lld",
-  rustLld: undefined,
-  rustLlvmVersion: "22.1.4",
+  rustLlvmVersion: "23.1.1",
   rustSysroot: undefined,
   rustHostTriple: undefined,
   strip: "/fake/bin/strip",
@@ -273,5 +274,36 @@ describe("ASAN stack-use-after-return instrumentation", () => {
       expect(rustflags(cfg)).not.toContain("-Zsanitizer=address");
       expect(rustflags(cfg)).not.toContain(rustFlag);
     }
+  });
+});
+
+describe("clang's LLVM and rustc's LLVM", () => {
+  function resolveWith(clangVersion: string | undefined, rustLlvmVersion: string | undefined, lto: boolean): Config {
+    return resolveConfig(
+      { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake", buildType: "Release", lto },
+      { ...mockToolchain, clangVersion, rustLlvmVersion },
+    );
+  }
+
+  test("different major versions fail configure with both versions named, whichever is newer, with and without LTO", () => {
+    for (const lto of [true, false]) {
+      expect(() => resolveWith("23.1.1", "24.0.2", lto)).toThrow(
+        "clang is LLVM 23.1.1 and rustc's LLVM is 24.0.2; they have to be the same major version",
+      );
+      expect(() => resolveWith("23.1.1", "22.1.4", lto)).toThrow(
+        "clang is LLVM 23.1.1 and rustc's LLVM is 22.1.4; they have to be the same major version",
+      );
+    }
+  });
+
+  test("the same major version configures", () => {
+    expect(resolveWith("23.1.1", "23.1.1", true).lto).toBe(true);
+    expect(resolveWith("23.1.1", "23.0.0", true).lto).toBe(true);
+    expect(resolveWith("23.1.1", "23.1.1", false).lto).toBe(false);
+  });
+
+  test("a version that is not known is not compared", () => {
+    expect(resolveWith("23.1.1", undefined, true).lto).toBe(true);
+    expect(resolveWith(undefined, "24.0.2", true).lto).toBe(true);
   });
 });

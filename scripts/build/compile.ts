@@ -15,7 +15,7 @@ import { linksWithLld } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
-import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
+import { machoPostlinkCommand } from "./shims.ts";
 import { toolIdentityFile } from "./tools.ts";
 
 // ---------------------------------------------------------------------------
@@ -175,12 +175,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   //
   // /clang:-B<dir of cfg.ld> pins WHICH lld-link `-fuse-ld=lld` resolves:
   // -B program-prefix dirs are searched before the driver's own InstalledDir
-  // and PATH. Normally that's the same host-LLVM lld-link the driver would
-  // pick anyway; under cross-language LTO resolveConfig() swaps cfg.ld to
-  // rustc's gcc-ld/lld-link (newer LLVM, able to read rustc's bitcode), and
-  // this is what makes the link actually use it — clang-cl has no working
-  // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
-  // target triple.
+  // and PATH, so the link runs the lld-link configure resolved. clang-cl has
+  // no working --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the
+  // path with the target triple.
   //
   // $lazy: LinkOpts.lazyObjects as `-Wl,@<rsp>` (`/clang:-Wl,@<rsp>` through
   // clang-cl). The rsp holds `--start-lib <objects> --end-lib`, which must reach
@@ -199,7 +196,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       ? cfg.host.os === "windows" && cfg.winsysroot !== undefined
         ? `cmd /c "set "LIB=${cfg.winsysroot}"&& ${linkWindows}"`
         : linkWindows
-      : `${cxx} @$out.rsp $lazy $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      : `${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

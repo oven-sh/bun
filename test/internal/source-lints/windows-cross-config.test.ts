@@ -2,7 +2,7 @@
  * Build-config regression tests for cross-compiling Windows binaries from a
  * non-Windows host (scripts/build/config.ts + flags.ts), with a focus on the
  * LTO configuration: Windows x64 cross builds use ThinLTO with cross-language
- * (Rust↔C++) LTO through rustc's bundled lld-link.
+ * (Rust↔C++) LTO through lld-link.
  *
  * These exercise the configure-time logic only — no compiler, sysroot, or
  * WebKit download is involved — so they run on every platform. Scenarios that
@@ -38,14 +38,13 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang-cl",
     cxx: "/fake/llvm/bin/clang-cl",
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "23.1.1",
+    clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-lib",
     ranlib: undefined,
     ld: "/fake/llvm/bin/lld-link",
     ld64Lld: undefined,
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "23.1.1",
     rustSysroot: undefined,
     rustHostTriple: undefined,
     strip: "/fake/llvm/bin/llvm-strip",
@@ -96,10 +95,9 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     const cfg = resolveWindowsCross();
     expect(cfg.windows).toBe(true);
     expect(cfg.crossTarget).toBe("x86_64-pc-windows-msvc");
-    expect(cfg.lto).toBe(true);
-    // Rust↔C++ inlining: rustc emits bitcode (-Clinker-plugin-lto) and the
+    // Rust↔C++ inlining comes with it: rustc emits bitcode (-Clinker-plugin-lto) and the
     // final lld-link runs one ThinLTO graph across both halves.
-    expect(cfg.crossLangLto).toBe(true);
+    expect(cfg.lto).toBe(true);
   });
 
   test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
@@ -107,7 +105,6 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
     const arm64 = resolveWindowsCross({ arch: "aarch64" });
     expect(arm64.lto).toBe(false);
-    expect(arm64.crossLangLto).toBe(false);
     // Forced off even when explicitly requested, so the WebKit fetch never
     // 404s on a tarball that doesn't exist.
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
@@ -116,7 +113,6 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   test("local (non-ci) release builds are LTO too, unless turned off", () => {
     const local = resolveWindowsCross({ ci: false, baseline: false });
     expect(local.lto).toBe(true);
-    expect(local.crossLangLto).toBe(true);
     expect(resolveWindowsCross({ ci: false, lto: false }).lto).toBe(false);
   });
 
@@ -143,41 +139,10 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(plain.cxxflags).not.toContain("-fno-split-lto-unit");
   });
 
-  test("the link uses rustc's lld-link sibling when rustc's LLVM is newer than clang's", () => {
-    // resolveConfig swaps cfg.ld so lld-link can read the LLVM-22 bitcode
-    // rustc emits under -Clinker-plugin-lto (bitcode is forward-compatible
-    // only). rustc's gcc-ld/ ships every lld flavor; windows needs the
-    // lld-link sibling of the host-flavored rust-lld that findRustLld()
-    // resolves.
-    using dir = tempDir("win-cross-rust-lld", {
-      "gcc-ld/ld.lld": "",
-      "gcc-ld/lld-link": "",
-    });
-    const rustLld = join(String(dir), "gcc-ld", "ld.lld");
-    const cfg = resolveWindowsCross(
-      { lto: true, baseline: false },
-      mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
-    );
-    expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
-    // rustc-driven links (the .bin/ shim's executable) must NOT follow the swap: rustc
-    // treats a linker inside its own gcc-ld/ as rust-lld and prepends
-    // `-flavor link`, which breaks the wrapper. They keep the host lld-link.
-    expect(cfg.msvcLinker).toBe("/fake/llvm/bin/lld-link");
-
-    // Without LTO there's no bitcode skew to work around — keep the host
-    // LLVM's lld-link.
-    const plain = resolveWindowsCross({ lto: false }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
-    expect(plain.ld).toBe("/fake/llvm/bin/lld-link");
-
-    // If rustc's gcc-ld/ ever stops shipping lld-link, fall back to the host
-    // lld-link — validateBunConfig() then reports the version skew at
-    // configure time instead of an opaque "Invalid record" at link time.
-    using bare = tempDir("win-cross-rust-lld-bare", { "gcc-ld/ld.lld": "" });
-    const bareCfg = resolveWindowsCross(
-      { lto: true, baseline: false },
-      mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
-    );
-    expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
+  test("the link uses the LLVM toolchain's lld-link, with and without LTO", () => {
+    for (const lto of [true, false]) {
+      expect(resolveWindowsCross({ lto, baseline: false }).ld).toBe("/fake/llvm/bin/lld-link");
+    }
   });
 
   test("LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {

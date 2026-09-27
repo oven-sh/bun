@@ -206,10 +206,23 @@ interface TranspilerOptions {
   macro?: MacroMap,
 
   // Specify a set of exports to eliminate
-  // Or rename certain exports
+  // Or replace certain exports
   exports?: {
       eliminate?: string[];
-      replace?: Record<string, string>;
+      // A string, number, boolean, null or undefined becomes the value of the export
+      // [name, value] replaces the export with an export called name, with that value
+      // The default key takes a value, and not a pair
+      replace?: Record<
+        string,
+        | string
+        | number
+        | boolean
+        | null
+        | undefined
+        | readonly [name: string, value: string | number | boolean | null | undefined]
+      > & {
+        default?: string | number | boolean | null | undefined;
+      };
   },
 
   // Whether to remove unused imports from transpiled file

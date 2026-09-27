@@ -227,7 +227,7 @@ function pinned<T extends object>(callerOptions: T) {
     ownsCallback: receiver?.checkServerIdentity === options.checkServerIdentity,
     isCallerObject: receiver === options,
   });
-  return { options, seen };
+  return { options, seen, receiver: () => receiver };
 }
 
 async function secureConnect(socket: tls.TLSSocket) {
@@ -245,19 +245,20 @@ function outcomeOf(socket: tls.TLSSocket) {
   return promise.finally(() => socket.destroy());
 }
 
+// What `seen()` gives when `this` is the copy of the caller's options that tls.connect() builds.
+const connectOptions = (host: string) => ({
+  calls: 1,
+  pin: "agent1",
+  host,
+  ownsCallback: true,
+  isCallerObject: false,
+});
+
 // Node calls the callback as a method of the options object that tls.connect()
 // builds: its defaults, then a copy of the caller's own properties. https and
 // http2 clients get their socket from tls.connect().
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671
 describe("checkServerIdentity is called with the connect options as `this`", () => {
-  const connectOptions = (host: string) => ({
-    calls: 1,
-    pin: "agent1",
-    host,
-    ownsCallback: true,
-    isCallerObject: false,
-  });
-
   test("tls.connect(options) to an IP address", async () => {
     await withServer(async port => {
       const { options, seen } = pinned({ ca, host: "127.0.0.1", port });
@@ -376,6 +377,36 @@ describe("checkServerIdentity is called with the connect options as `this`", () 
     } finally {
       server.close();
     }
+  });
+});
+
+// Node runs the identity check only for a socket from tls.connect(), whose
+// options always own the callback. Bun also runs it after TLSSocket#connect().
+// There the callback can come from the constructor options, which Bun did not
+// keep. The options of connect() are then not its `this`.
+describe("checkServerIdentity after TLSSocket#connect()", () => {
+  test("`this` is undefined when the constructor options own the callback", async () => {
+    await withServer(async port => {
+      for (const ownKeys of [{}, { checkServerIdentity: undefined }]) {
+        const { options, seen, receiver } = pinned({ ca });
+        // @ts-expect-error @types/node requires a socket
+        const socket = new tls.TLSSocket(undefined, options);
+        socket.connect({ host: "127.0.0.1", port, ...ownKeys });
+        await secureConnect(socket);
+        assert.deepStrictEqual({ calls: seen().calls, receiver: receiver() }, { calls: 1, receiver: undefined });
+      }
+    });
+  });
+
+  test("`this` is the options of connect() when they own the callback", async () => {
+    await withServer(async port => {
+      const { options, seen } = pinned({ host: "127.0.0.1", port });
+      // @ts-expect-error @types/node requires a socket
+      const socket = new tls.TLSSocket(undefined, { ca });
+      socket.connect(options);
+      await secureConnect(socket);
+      assert.deepStrictEqual(seen(), { ...connectOptions("127.0.0.1"), isCallerObject: true });
+    });
   });
 });
 

@@ -404,7 +404,8 @@ export class Packages {
       if (stored === null || !this.canRead(stored, { kind: "user", user, via: "bearer", token: null }))
         throw notFound();
 
-      let changed = false;
+      // Every check comes before the first change, so a request that is refused changes nothing.
+      const deprecations: [VersionDocument, string | undefined][] = [];
       if (isObject(body.versions)) {
         for (const [key, incoming] of Object.entries(body.versions)) {
           const version = own(stored.document.versions, key);
@@ -415,11 +416,15 @@ export class Packages {
             throw new RegistryError(400, "Bad Request: a deprecation message is a string");
           }
           if (!this.canWrite(name.name, stored, user)) throw forbidden(name.name);
-          // An empty message takes the deprecation away.
-          if (!message) delete version.deprecated;
-          else version.deprecated = message;
-          changed = true;
+          deprecations.push([version, message]);
         }
+      }
+
+      let changed = deprecations.length > 0;
+      for (const [version, message] of deprecations) {
+        // An empty message takes the deprecation away.
+        if (!message) delete version.deprecated;
+        else version.deprecated = message;
       }
       if (isObject(body.users)) {
         const users = { ...stored.document.users };
@@ -444,6 +449,19 @@ export class Packages {
       checkRevision(stored, revision);
       const document = stored.document;
 
+      // Every check comes before the first change, so a request that is refused changes nothing.
+      const incomingTags = isObject(body["dist-tags"]) ? Object.entries(body["dist-tags"]) : null;
+      for (const [tag] of incomingTags ?? []) {
+        if (!isValidTag(tag)) throw new RegistryError(400, `Bad Request: "${tag}" is not a valid dist-tag`);
+      }
+      let maintainers: Human[] | null = null;
+      if (Array.isArray(body.maintainers)) {
+        maintainers = body.maintainers
+          .filter((maintainer): maintainer is Human => isObject(maintainer) && typeof maintainer.name === "string")
+          .map(({ name, email }) => ({ name, email }));
+        if (maintainers.length === 0) throw new RegistryError(400, "Bad Request: a package needs one maintainer");
+      }
+
       if (isObject(body.versions)) {
         for (const key of Object.keys(document.versions)) {
           if (Object.hasOwn(body.versions, key)) continue;
@@ -455,10 +473,9 @@ export class Packages {
         return this.#remove(stored);
       }
 
-      if (isObject(body["dist-tags"])) {
+      if (incomingTags !== null) {
         const tags: Record<string, string> = {};
-        for (const [tag, target] of Object.entries(body["dist-tags"])) {
-          if (!isValidTag(tag)) throw new RegistryError(400, `Bad Request: "${tag}" is not a valid dist-tag`);
+        for (const [tag, target] of incomingTags) {
           if (typeof target === "string" && own(document.versions, target)) tags[tag] = target;
         }
         document["dist-tags"] = tags;
@@ -470,13 +487,7 @@ export class Packages {
       // Every package has a `latest`. When its version goes away, the highest version that is left takes the tag.
       document["dist-tags"].latest ??= highestVersion(Object.keys(document.versions))!;
 
-      if (Array.isArray(body.maintainers)) {
-        const maintainers = body.maintainers.filter(
-          (maintainer): maintainer is Human => isObject(maintainer) && typeof maintainer.name === "string",
-        );
-        if (maintainers.length === 0) throw new RegistryError(400, "Bad Request: a package needs one maintainer");
-        document.maintainers = maintainers.map(({ name, email }) => ({ name, email }));
-      }
+      if (maintainers !== null) document.maintainers = maintainers;
       return this.#commit(stored, new Date());
     });
   }

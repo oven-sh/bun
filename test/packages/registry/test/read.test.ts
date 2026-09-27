@@ -630,6 +630,25 @@ describe("services", () => {
     const scoped = await request(`${origin}/-/v1/search?text=scope:scope`);
     expect(scoped.json.objects.map((found: any) => found.package.name)).toEqual(["@scope/scoped"]);
     expect((await request(`${origin}/-/v1/search?text=zzz`)).json.total).toBe(0);
+
+    // A package is found when each word matches, in every order of the words.
+    const found = async (text: string) => {
+      const reply = await request(`${origin}/-/v1/search?text=${encodeURIComponent(text)}`);
+      return reply.json.objects.map((found: any) => found.package.name);
+    };
+    expect({
+      "zzz scope:scope": await found("zzz scope:scope"),
+      "scope:scope zzz": await found("scope:scope zzz"),
+      "scoped scope:scope": await found("scoped scope:scope"),
+      "scope:scope scoped": await found("scope:scope scoped"),
+      "scope:other scoped": await found("scope:other scoped"),
+    }).toEqual({
+      "zzz scope:scope": [],
+      "scope:scope zzz": [],
+      "scoped scope:scope": ["@scope/scoped"],
+      "scope:scope scoped": ["@scope/scoped"],
+      "scope:other scoped": [],
+    });
     expect((await request(`${origin}/-/v1/search?from=4`)).json.objects).toHaveLength(1);
   });
 });

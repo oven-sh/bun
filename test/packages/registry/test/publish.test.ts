@@ -416,6 +416,23 @@ describe("changes after the publish", () => {
     expect((await packument("aging")).versions["1.0.0"]).not.toHaveProperty("deprecated");
   });
 
+  test("a deprecation that the registry refuses changes nothing", async () => {
+    const { registry, publish, packument, put } = setup();
+    using _ = registry;
+    await publish({ name: "aging", version: "1.0.0" });
+    await publish({ name: "aging", version: "1.1.0" });
+
+    const document = await packument("aging");
+    document.versions["1.0.0"].deprecated = "1.0.0 has a bug";
+    document.versions["1.1.0"].deprecated = 5;
+    expect(await put("aging", document)).toMatchObject({
+      status: 400,
+      json: { error: "Bad Request: a deprecation message is a string" },
+    });
+    expect((await request(`${registry.url}aging/1.0.0`)).json).not.toHaveProperty("deprecated");
+    expect((await packument("aging"))._rev).toBe(document._rev);
+  });
+
   test("star", async () => {
     const { registry, publish, packument, put } = setup();
     using _ = registry;
@@ -515,6 +532,35 @@ describe("unpublish", () => {
     const again = await publish({ name: "shrinking", version: "2.0.0" });
     expect(again.status).toBe(403);
     expect((await publish({ name: "shrinking", version: "2.0.1" })).status).toBe(200);
+  });
+
+  test("a change that the registry refuses changes nothing", async () => {
+    const { registry, publish, packument, put } = setup();
+    using _ = registry;
+    await publish({ name: "steady", version: "1.0.0" });
+    await publish({ name: "steady", version: "1.1.0" }, { tag: "next" });
+    const before = await packument("steady");
+    const without = () => {
+      const document = structuredClone(before);
+      delete document.versions["1.1.0"];
+      delete document["dist-tags"].next;
+      return document;
+    };
+
+    expect(await put(`steady/-rev/${before._rev}`, { ...without(), "dist-tags": { "1.x": "1.0.0" } })).toMatchObject({
+      status: 400,
+      json: { error: `Bad Request: "1.x" is not a valid dist-tag` },
+    });
+    expect(await put(`steady/-rev/${before._rev}`, { ...without(), maintainers: [] })).toMatchObject({
+      status: 400,
+      json: { error: "Bad Request: a package needs one maintainer" },
+    });
+
+    expect((await request(`${registry.url}steady/1.1.0`)).status).toBe(200);
+    expect((await request(`${registry.url}-/package/steady/dist-tags`)).json).toEqual(before["dist-tags"]);
+    // The same request without the error does the change, so the revision did not move either.
+    expect((await put(`steady/-rev/${before._rev}`, without())).status).toBe(200);
+    expect(Object.keys((await packument("steady")).versions)).toEqual(["1.0.0"]);
   });
 
   test("the whole package", async () => {

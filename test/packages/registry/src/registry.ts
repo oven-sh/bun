@@ -775,6 +775,8 @@ export class Registry {
       const keywords = Array.isArray(latest.keywords) ? latest.keywords.filter(word => typeof word === "string") : [];
       const description = typeof latest.description === "string" ? latest.description : undefined;
 
+      // A package is found when each word matches. The score only orders the packages that are found.
+      let matches = true;
       let searchScore = 0;
       for (const word of words) {
         const qualifier = word.match(/^(scope|keywords|maintainer|author):(.*)$/);
@@ -789,14 +791,15 @@ export class Registry {
                 : kind === "maintainer"
                   ? (document.maintainers ?? []).some(maintainer => maintainer.name === value)
                   : typeof author === "string" && author.toLowerCase().includes(value);
-          searchScore = hit ? Math.max(searchScore, 1) : -Infinity;
+          if (hit) searchScore += 1;
+          else matches = false;
         } else if (name === word) searchScore += 1000;
         else if (name.includes(word)) searchScore += 100;
         else if (keywords.some(keyword => keyword.toLowerCase() === word)) searchScore += 10;
         else if (description?.toLowerCase().includes(word)) searchScore += 1;
-        else searchScore = -Infinity;
+        else matches = false;
       }
-      if (words.length > 0 && !(searchScore > 0)) continue;
+      if (!matches) continue;
 
       const maintainers = (document.maintainers ?? []).map(({ name, email }) => ({ username: name, email }));
       objects.push({

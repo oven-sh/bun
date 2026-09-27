@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
@@ -244,4 +244,50 @@ test("Response import is added when Response is global, but not when shadowed", 
   expect(serverResult).toContain('new "ooga booga!"');
   // Global Response is transformed to import_bun_app.Response
   expect(serverResult).toContain("var lmao = new import_bun_app.Response");
+});
+
+// Only the dev server sets the AsyncLocalStorage instance that these calls read.
+describe.concurrent('the Response of "bun:app" outside the dev server', () => {
+  async function run(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `import { Response } from "bun:app";\n${source}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("Response.redirect() returns a Response", async () => {
+    const result = await run(`
+      const response = Response.redirect("/login", 302);
+      console.log(response instanceof globalThis.Response, response.status, response.headers.get("location"));
+    `);
+    expect(result).toEqual({ stdout: "true 302 /login\n", stderr: "", exitCode: 0 });
+  });
+
+  test("Response.render() throws", async () => {
+    const result = await run(`
+      try {
+        Response.render("/404");
+      } catch (error) {
+        console.log(error.message);
+      }
+    `);
+    expect(result).toEqual({
+      stdout: "Response.render() is only available in the Bun dev server\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("new Response(<jsx />) returns the element as a component", async () => {
+    const result = await run(`
+      const element = { $$typeof: Symbol.for("react.transitional.element"), type: "div", key: null, props: {} };
+      const response = new Response(element, { status: 201 });
+      console.log(response.status, response.type() === element);
+    `);
+    expect(result).toEqual({ stdout: "201 true\n", stderr: "", exitCode: 0 });
+  });
 });

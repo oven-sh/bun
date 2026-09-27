@@ -86,9 +86,11 @@ struct BakeAdditionsToGlobalObject {
         return m_bakeEnsureAsyncLocalStorage.get(globalObject);
     }
 
+    // Only the dev server sets the instance. `undefined` means it is not set.
     JSValue getAsyncLocalStorage(JSGlobalObject* globalObject)
     {
-        return m_asyncLocalStorageInstance.get();
+        JSValue instance = m_asyncLocalStorageInstance.get();
+        return instance ? instance : jsUndefined();
     }
 
     JSC::JSObject* JSBakeResponseConstructor(const JSGlobalObject* global) const { return m_JSBakeResponseClassStructure.constructorInitializedOnMainThread(global); }

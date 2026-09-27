@@ -1,6 +1,6 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -5583,5 +5583,281 @@ describe("read*/write* after JIT tier-up", () => {
     // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
+  });
+});
+
+// A call with no receiver, `callee(0)`, whose callee is read from a binding that a closure captures (or
+// from a module or global binding) reaches a native function with the scope object that holds the
+// binding in its `this` slot. A JS function sees `undefined` there. The accessors must agree: the
+// error of `.call(undefined)`, and no look at the variables of the calling scope.
+describe("read*/write* called without a receiver", () => {
+  const names = Object.getOwnPropertyNames(Buffer.prototype).filter(
+    name => /^(read|write)(Big)?(U?[Ii]nt|Float|Double)/.test(name) && typeof Buffer.prototype[name] === "function",
+  );
+
+  // The arguments that get an accessor past its argument checks, to where it looks at its receiver.
+  function argumentsFor(name) {
+    if (/^read(U?[Ii]nt)(LE|BE)$/.test(name)) return [0, 1]; // (offset, byteLength)
+    if (/^write(U?[Ii]nt)(LE|BE)$/.test(name)) return [0, 0, 1]; // (value, offset, byteLength)
+    if (/^writeBig/.test(name)) return [0n, 0]; // (value, offset)
+    return [0]; // (offset), or (value) with the default offset
+  }
+
+  const forEachAccessor = call => Object.fromEntries(names.map(name => [name, call(name, ...argumentsFor(name))]));
+
+  function errorOf(fn) {
+    try {
+      return { returned: String(fn()) };
+    } catch (e) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  }
+
+  const receiverError = received => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "buf" argument must be of type Buffer. Received ${received}`,
+  });
+
+  // A variable is part of the scope object only when a closure captures it.
+  const closures = [];
+
+  // Each entry calls every accessor as `callee(a, b, c)`, with the callee in a scope of another kind.
+  // `constructor` is what an error message reads from a receiver to describe it.
+  const callFrom = {
+    "a function that has a `constructor` object": onConstructorRead =>
+      forEachAccessor((name, a, b, c) => {
+        const callee = Buffer.prototype[name];
+        const constructor = {
+          get name() {
+            onConstructorRead?.(name);
+            return "VariableOfTheCaller";
+          },
+        };
+        closures.push(() => constructor);
+        return errorOf(() => callee(a, b, c));
+      }),
+    "a function that has a `constructor` class": () =>
+      forEachAccessor((name, a, b, c) => {
+        const callee = Buffer.prototype[name];
+        class constructor {}
+        closures.push(() => constructor);
+        return errorOf(() => callee(a, b, c));
+      }),
+    "a function that has no `constructor`": () =>
+      forEachAccessor((name, a, b, c) => {
+        const callee = Buffer.prototype[name];
+        return errorOf(() => callee(a, b, c));
+      }),
+    "a block": () =>
+      forEachAccessor((name, a, b, c) => {
+        {
+          const callee = Buffer.prototype[name];
+          return errorOf(() => callee(a, b, c));
+        }
+      }),
+    "a strict direct eval": () =>
+      forEachAccessor((name, a, b, c) =>
+        eval(`"use strict"; var callee = Buffer.prototype[name]; errorOf(() => callee(a, b, c));`),
+      ),
+    "the global lexical scope of another context": () => {
+      const results = {};
+      vm.runInNewContext(
+        `let callee;
+        for (const name of names) {
+          callee = Buffer.prototype[name];
+          const [a, b, c] = argumentsFor(name);
+          results[name] = errorOf(() => callee(a, b, c));
+        }`,
+        { names, argumentsFor, errorOf, results, Buffer },
+      );
+      return results;
+    },
+    "the global object": () =>
+      forEachAccessor((name, a, b, c) => {
+        globalThis.accessorOnTheGlobalObject = Buffer.prototype[name];
+        try {
+          return errorOf(() => accessorOnTheGlobalObject(a, b, c));
+        } finally {
+          delete globalThis.accessorOnTheGlobalObject;
+        }
+      }),
+  };
+
+  const viaCallUndefined = forEachAccessor((name, ...args) =>
+    errorOf(() => Buffer.prototype[name].call(undefined, ...args)),
+  );
+
+  it("the cases cover every accessor, each with arguments that reach the receiver check", () => {
+    expect({ names: names.length, functions: new Set(names.map(name => Buffer.prototype[name])).size }).toEqual({
+      names: 74,
+      functions: 54,
+    });
+    expect(viaCallUndefined).toEqual(forEachAccessor(() => receiverError("undefined")));
+  });
+
+  it.each(Object.keys(callFrom))("throws what .call(undefined) throws, with the callee in %s", scope => {
+    expect(callFrom[scope]()).toEqual(viaCallUndefined);
+  });
+
+  it("does not read the variables of the calling scope", () => {
+    const reads = [];
+    callFrom["a function that has a `constructor` object"](name => reads.push(name));
+    expect(reads).toEqual([]);
+  });
+
+  it("reports a bad argument before the receiver, as .call(undefined) does", () => {
+    const cases = [
+      ["readInt8", ["bad"], "ERR_INVALID_ARG_TYPE", '"offset"'],
+      ["readIntLE", [0], "ERR_INVALID_ARG_TYPE", '"byteLength"'],
+      ["readUIntBE", [0, 7], "ERR_OUT_OF_RANGE", '"byteLength"'],
+      ["writeInt8", [300, 0], "ERR_OUT_OF_RANGE", '"value"'],
+      ["writeInt8", [1, "bad"], "ERR_INVALID_ARG_TYPE", '"offset"'],
+      ["writeInt16LE", [1e9, "bad"], "ERR_OUT_OF_RANGE", '"value"'],
+      ["writeUIntLE", [0, 0], "ERR_INVALID_ARG_TYPE", '"byteLength"'],
+      ["writeBigInt64LE", [0, 0], "ERR_INVALID_ARG_TYPE", '"value"'],
+      ["writeBigUInt64BE", [-1n, 0], "ERR_OUT_OF_RANGE", '"value"'],
+      ["writeBigInt64BE", [0n, "bad"], "ERR_INVALID_ARG_TYPE", '"offset"'],
+    ];
+    const bare = cases.map(([name, [a, b, c]]) => {
+      const callee = Buffer.prototype[name];
+      return errorOf(() => callee(a, b, c));
+    });
+    const explicit = cases.map(([name, args]) => errorOf(() => Buffer.prototype[name].call(undefined, ...args)));
+    expect(bare).toEqual(explicit);
+    expect(bare.map(({ code, message }) => [code, /"\w+"/.exec(message)?.[0]])).toEqual(
+      cases.map(([, , code, argument]) => [code, argument]),
+    );
+  });
+
+  it("still describes a receiver that the caller passes", () => {
+    const { readInt8, writeBigInt64LE, readUIntBE } = Buffer.prototype;
+    expect([
+      errorOf(() => readInt8.call(null, 0)),
+      errorOf(() => readInt8.call(5, 0)),
+      errorOf(() => readInt8.call("text", 0)),
+      errorOf(() => readInt8.call({}, 0)),
+      errorOf(() => readInt8.call([], 0)),
+      errorOf(() => readInt8.call(globalThis, 0)),
+      errorOf(() => writeBigInt64LE.call(new Map(), 0n, 0)),
+      errorOf(() => readUIntBE.call(function named() {}, 0, 1)),
+      errorOf(() => new Function("object", "with (object) { return accessor(0); }")({ accessor: readInt8 })),
+    ]).toEqual([
+      receiverError("null"),
+      receiverError("type number (5)"),
+      receiverError("type string ('text')"),
+      receiverError("an instance of Object"),
+      receiverError("an instance of Array"),
+      receiverError("an instance of Object"),
+      receiverError("an instance of Map"),
+      receiverError("function named"),
+      receiverError("an instance of Object"),
+    ]);
+  });
+
+  async function run(dir, file, env = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let results = stdout;
+    try {
+      results = JSON.parse(stdout);
+    } catch {}
+    return { file, results, stderr, exitCode };
+  }
+
+  // A `let`, `const` or `class` binding that is not initialized yet holds no value at all. The accessors
+  // read it as the `constructor` of their receiver, and the process died with a segmentation fault.
+  it("does not crash while `constructor` in the calling scope is not initialized", async () => {
+    const calls = setCallee => `
+      ${argumentsFor}
+      const results = {};
+      for (const name of ${JSON.stringify(names)}) {
+        ${setCallee}
+        const [a, b, c] = argumentsFor(name);
+        try {
+          results[name] = { returned: String(callee(a, b, c)) };
+        } catch (e) {
+          results[name] = { name: e.name, code: e.code, message: e.message };
+        }
+      }
+      console.log(JSON.stringify(results));
+      let constructor;
+    `;
+    const local = `let callee;${calls("callee = Buffer.prototype[name];")}`;
+    using dir = tempDir("buffer-accessor-bare-call", {
+      "module-scope.mjs": `${local}\nexport const keep = () => [callee, constructor];`,
+      "imported-binding.mjs": `import { callee, setCallee } from "./accessor.mjs";${calls(
+        "setCallee(Buffer.prototype[name]);",
+      )}\nexport const keep = () => [callee, constructor];`,
+      "accessor.mjs": `export let callee;\nexport function setCallee(value) { callee = value; }`,
+      "function-scope.cjs": `(function () {${local}\nreturn () => [callee, constructor];})();`,
+      "global-lexical-scope.cjs": `require("node:vm").runInThisContext(${JSON.stringify(
+        `${local}\nglobalThis.keep = () => [callee, constructor];`,
+      )});`,
+    });
+
+    const files = ["module-scope.mjs", "imported-binding.mjs", "function-scope.cjs", "global-lexical-scope.cjs"];
+    expect(await Promise.all(files.map(file => run(dir, file)))).toEqual(
+      files.map(file => ({ file, results: viaCallUndefined, stderr: "", exitCode: 0 })),
+    );
+  });
+
+  // The call site first calls a JS function that returns. The DFG then keeps the call in the code it
+  // compiles, and the accessor that the binding holds next is called from that code. This is a plain
+  // call: the compiler inlines an accessor only at a method call on a Buffer.
+  it("keeps throwing the same error from a compiled call site", async () => {
+    using dir = tempDir("buffer-accessor-compiled-bare-call", {
+      "compiled-call-site.cjs": `
+        const { numberOfDFGCompiles, noInline } = require("bun:jsc");
+        (function caller() {
+          let callee = function returns(offset) {
+            return offset | 0;
+          };
+          function bare(offset) {
+            return callee(offset);
+          }
+          noInline(bare);
+          let returned = 0;
+          for (let i = 0; i < 100; i++) returned += bare(i);
+
+          callee = Buffer.prototype.readInt32LE;
+          const outcomes = new Set();
+          const compiles = [];
+          for (let i = 0; i < 200; i++) {
+            try {
+              outcomes.add("returned " + bare(i & 15));
+            } catch (e) {
+              outcomes.add(e.code + ": " + e.message);
+            }
+            if (i === 49 || i === 199) compiles.push(numberOfDFGCompiles(bare));
+          }
+          console.log(JSON.stringify({
+            returned,
+            outcomes: [...outcomes],
+            compiledAgain: compiles[0] !== compiles[1],
+          }));
+          let constructor;
+          return () => [callee, constructor];
+        })();
+      `,
+    });
+    // Compile on the main thread and after few calls, so that the loops above are long enough.
+    const env = { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.05" };
+    expect(await run(dir, "compiled-call-site.cjs", env)).toEqual({
+      file: "compiled-call-site.cjs",
+      results: {
+        returned: 4950,
+        outcomes: [`ERR_INVALID_ARG_TYPE: ${receiverError("undefined").message}`],
+        compiledAgain: false,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

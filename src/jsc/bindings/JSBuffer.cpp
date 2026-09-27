@@ -2922,14 +2922,10 @@ namespace {
 
 // Any ArrayBufferView receiver is accepted (bounded by its element count, like `this.length`); anything else is
 // ERR_INVALID_ARG_TYPE("buf").
-static JSC::JSArrayBufferView* bufferAccessReceiver(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue)
+// A bare call leaves the caller's scope object in `this`; toThis() makes it the undefined a JS callee sees.
+static void bufferAccessReceiver(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue)
 {
-    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(thisValue);
-    if (!view) [[unlikely]] {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue);
-        return nullptr;
-    }
-    return view;
+    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "buf"_s, "Buffer"_s, thisValue.toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
 }
 
 // validateNumber(offset, 'offset')

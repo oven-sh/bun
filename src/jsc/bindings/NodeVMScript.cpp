@@ -381,6 +381,12 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
+// A bare call leaves the caller's scope object in `this`; toThis() makes it the undefined a JS callee sees.
+static EncodedJSValue throwThisIsNotAScript(JSGlobalObject* globalObject, ThrowScope& scope, JSValue thisValue)
+{
+    return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue.toThis(globalObject, ECMAMode::strict()), "must be a Script"_s);
+}
+
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = JSC::getVM(globalObject);
@@ -389,7 +395,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     JSValue thisValue = callFrame->thisValue();
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     JSValue optionsArg = callFrame->argument(0);
@@ -430,7 +436,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     // Populated by the compile in the constructor (a CodeCache hit copies it over too).
@@ -449,7 +455,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     scope.assertNoExceptionExceptTermination();
@@ -466,7 +472,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     scope.assertNoExceptionExceptTermination();
@@ -480,7 +486,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     switch (script->cachedDataRejected()) {
@@ -501,7 +507,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
     JSValue thisValue = callFrame->thisValue();
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     const JSC::SourceCode& source = script->source();
@@ -516,7 +522,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSValue thisValue = callFrame->thisValue();
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
-        return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+        return throwThisIsNotAScript(globalObject, scope, thisValue);
     }
 
     ArgList args(callFrame);

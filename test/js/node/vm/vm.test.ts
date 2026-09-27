@@ -1968,6 +1968,98 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
   expect(exitCode).toBe(0);
 });
 
+// A call with no receiver, `callee()`, whose callee is read from a variable that a closure captures
+// reaches a native function with the scope object that holds the variable in its `this` slot. A JS
+// function sees `undefined` there, and the error of these functions must describe that.
+describe("node:vm Script functions called without a receiver", () => {
+  // The three methods and the getters of the four accessors that check their receiver.
+  function scriptNatives(Script: any) {
+    const getter = (name: string) => Object.getOwnPropertyDescriptor(Script.prototype, name).get;
+    return {
+      runInThisContext: Script.prototype.runInThisContext,
+      runInContext: Script.prototype.runInContext,
+      createCachedData: Script.prototype.createCachedData,
+      sourceMapURL: getter("sourceMapURL"),
+      cachedData: getter("cachedData"),
+      cachedDataProduced: getter("cachedDataProduced"),
+      cachedDataRejected: getter("cachedDataRejected"),
+    };
+  }
+
+  function errorOf(fn: () => unknown) {
+    try {
+      return { returned: String(fn()) };
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  }
+
+  const natives: Record<string, Function> = scriptNatives(Script);
+  const viaCallUndefined = Object.fromEntries(
+    Object.entries(natives).map(([name, native]) => [name, errorOf(() => native.call(undefined))]),
+  );
+
+  test("throw what .call(undefined) throws and do not read the variables of the caller", () => {
+    // A variable is part of the scope object only when a closure captures it.
+    const closures: unknown[] = [];
+    let reads = 0;
+    const bare = Object.fromEntries(
+      Object.keys(natives).map(name => {
+        const callee = natives[name];
+        // An error message shows an object that has these three properties as a React element.
+        const $$typeof = Symbol.for("react.element");
+        const type = "div";
+        const props = {
+          get apiKey() {
+            reads++;
+            return "a variable of the caller";
+          },
+        };
+        closures.push(() => [$$typeof, type, props]);
+        return [name, errorOf(() => callee())];
+      }),
+    );
+    expect(Object.values(viaCallUndefined).map(error => error.name)).toEqual(Array(7).fill("TypeError"));
+    expect({ bare, reads }).toEqual({ bare: viaCallUndefined, reads: 0 });
+  });
+
+  test("do not fail on a variable of the caller that is not initialized", async () => {
+    const fixture = `
+      const { Script } = require("node:vm");
+      ${scriptNatives}
+      (function caller() {
+        const results = {};
+        let callee;
+        const $$typeof = Symbol.for("react.element");
+        const type = "div";
+        for (const [name, native] of Object.entries(scriptNatives(Script))) {
+          callee = native;
+          try {
+            results[name] = { returned: String(callee()) };
+          } catch (e) {
+            results[name] = { name: e.name, code: e.code, message: e.message };
+          }
+        }
+        console.log(JSON.stringify(results));
+        let props;
+        return () => [callee, $$typeof, type, props];
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let results: unknown = stdout;
+    try {
+      results = JSON.parse(stdout);
+    } catch {}
+    expect({ results, stderr, exitCode }).toEqual({ results: viaCallUndefined, stderr: "", exitCode: 0 });
+  });
+});
+
 test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {
   // The native link(specifiers, moduleNatives, scriptFetcher) entry point validates
   // that the two arguments are arrays but must also validate every element of

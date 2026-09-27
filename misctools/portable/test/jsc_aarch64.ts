@@ -1,13 +1,16 @@
 // Everything that is asked of the aarch64 image of JavaScriptCore on a Linux machine, in one
 // run. An x86-64 machine runs the image and its host under qemu-aarch64.
 //
-//   bun test/jsc_aarch64.ts [--runs 5] [--out <WORK>/out/aarch64/proof] [--only step,step]
+//   bun test/jsc_aarch64.ts [--runs 5] [--images <dir>] [--out <dir>] [--only step,step]
 //
-// What it needs, from jsc/build-aarch64.ts, under WORK (the directory above this tree):
-//   out/aarch64/jsc.img                   the image
-//   out/aarch64/jsc.x18-allocatable.img   JSC_VARIANT=x18-allocatable, the negative control
-//   out/aarch64/jsc.jit-permissions.img   JSC_VARIANT=jit-permissions (optional)
-//   out/aarch64/host-linux                the test host (step small of jsc/build-aarch64.ts)
+// What it needs in --images, the output directory of build.ts for aarch64 (default:
+// build/portable/aarch64 in the repository), from "bun build.ts jsc --arch aarch64" and
+// "bun build.ts host --arch aarch64":
+//   jsc.img                   the image
+//   jsc.x18-allocatable.img   JSC_VARIANT=x18-allocatable, the negative control
+//   jsc.jit-permissions.img   JSC_VARIANT=jit-permissions (optional)
+//   host-linux                the test host
+// --out is where the results go (default: <images>/proof).
 //
 // Steps, each with its own directory of results and one line in summary.json:
 //   static     test/check_aarch64_jsc.ts over the image: no instruction writes x18, and the rest
@@ -23,18 +26,18 @@
 //   permissions  the image that says itself when it writes code, under jitwx: what is said,
 //              and the faults that are left
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { REPOSITORY, TREE } from "../flags.ts";
 
-const tree = resolve(dirname(import.meta.path), "..");
-const work = resolve(tree, "..");
+const tree = TREE;
 const option = (name: string, fallback: string) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 };
 const runs = option("runs", "5");
-const out = resolve(option("out", join(work, "out/aarch64/proof")));
+const images = resolve(option("images", join(REPOSITORY, "build", "portable", "aarch64")));
+const out = resolve(option("out", join(images, "proof")));
 const only = option("only", "").split(",").filter(Boolean);
-const images = join(work, "out/aarch64");
 const host = join(images, "host-linux");
 mkdirSync(out, { recursive: true });
 
@@ -52,10 +55,10 @@ function step(name: string, what: string, cmd: string[], result: string) {
   writeFileSync(join(out, "summary.json"), JSON.stringify(summary, null, 1) + "\n");
 }
 const scenarios = (image: string, dir: string, modes: string, more: string[] = []) => [
-  "bun", join(tree, "test/jsc_scenarios.ts"), "--runs", runs, "--image", join(images, image), "--host", host, "--out", join(out, dir, "scenarios.json"), "--modes", modes, ...more,
+  process.execPath, join(tree, "test/jsc_scenarios.ts"), "--runs", runs, "--image", join(images, image), "--host", host, "--out", join(out, dir, "scenarios.json"), "--modes", modes, ...more,
 ];
 
-step("static", "no instruction of the image writes x18", ["bun", join(tree, "test/check_aarch64_jsc.ts"), "--image", join(images, "jsc.img"), "--out", join(out, "static.json")], join(out, "static.json"));
+step("static", "no instruction of the image writes x18", [process.execPath, join(tree, "test/check_aarch64_jsc.ts"), "--image", join(images, "jsc.img"), "--out", join(out, "static.json")], join(out, "static.json"));
 step("scenarios", `direct and hosted, ${runs} runs`, scenarios("jsc.img", "scenarios", "direct,hosted"), join(out, "scenarios/scenarios.json"));
 if (existsSync(join(images, "jsc.x18-allocatable.img"))) {
   step("control", `must fail: the JIT may hand out x18, hosted, ${runs} runs`, scenarios("jsc.x18-allocatable.img", "control", "direct,hosted", ["--must-end-with", "96"]), join(out, "control/scenarios.json"));

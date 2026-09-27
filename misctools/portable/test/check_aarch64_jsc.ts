@@ -18,7 +18,10 @@
 // 3. Images: a function that has "svc" reads __bun_host.os, or is one of the Linux halves
 //    of the libc.
 // 4. Images: tpidr_el0 is written in __set_thread_area only, and a function that reads it
-//    reads tpidrro_el0 and x18 as often (the three ways of __get_tp).
+//    reads tpidrro_el0 and x18 as often (the three ways of __get_tp). The check of a function
+//    that the host OS enters (__bun_thread_enter of the libc, which the compiler calls
+//    __sanitizer_cov_trace_pc) reads the host table, and x18 and tpidrro_el0 as often: on
+//    Linux no thread is of another maker, and it does not read tpidr_el0.
 // 5. Images: every register of the system that is read or written (mrs, msr) and every
 //    instruction for the caches (dc, ic, sys) is listed with the functions that have it.
 //    A register that only a kernel can answer for (the ID registers: Linux emulates the
@@ -31,6 +34,7 @@
 // reports every use of x18 that is not "mov xN, x18", and JavaScriptCore has other reads.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { llvmBin } from "../flags.ts";
 
 // ---- rule 1: does an instruction write x18 ----
 const READS_ALL = new Set([
@@ -114,6 +118,7 @@ function selfTest(): number {
 
 // ---- the other rules ----
 const LINUX_HALVES = new Set(["__clone_linux", "__unmapself_linux", "__vfork_linux", "__syscall_cp_asm", "__restore_rt", "__restore"]);
+const ENTRY_CHECK = new Set(["__bun_thread_enter", "__sanitizer_cov_trace_pc"]);
 // Registers that code outside of a kernel reads on every system. CTR_EL0: the libc reads
 // it on Linux only (__clear_cache), so it is asked for by name below.
 const REGISTERS_OF_EVERYWHERE = new Set(["TPIDR_EL0", "TPIDRRO_EL0", "FPCR", "FPSR", "NZCV", "DCZID_EL0"]);
@@ -203,7 +208,8 @@ async function check(file: string, llvm: string, isImage: boolean, mapPath: stri
     }
     if (tp || ro) {
       result.functions_that_read_the_thread_register!++;
-      if (!(tp === ro && ro === x18tp && readsHost)) result.errors.push(`${name} (${originOf(origins, start)}) reads tpidr_el0 ${tp}, tpidrro_el0 ${ro}, x18 ${x18tp} times`);
+      const entryCheck = ENTRY_CHECK.has(name) && readsHost && tp === 0 && ro === x18tp;
+      if (!(tp === ro && ro === x18tp && readsHost) && !entryCheck) result.errors.push(`${name} (${originOf(origins, start)}) reads tpidr_el0 ${tp}, tpidrro_el0 ${ro}, x18 ${x18tp} times`);
     }
   };
   const pageLoad = new RegExp(`^x\\d+, ${hostPage}\\b`);
@@ -324,7 +330,7 @@ if (import.meta.main) {
   const all = (name: string) => process.argv.flatMap((a, i) => (a === `--${name}` && process.argv[i + 1] ? [process.argv[i + 1]] : []));
   const one = (name: string, fallback?: string) => all(name)[0] ?? fallback;
   const has = (name: string) => process.argv.includes(`--${name}`);
-  const llvm = one("llvm", "/usr/lib/llvm-current/bin")!;
+  const llvm = one("llvm") ?? llvmBin();
   let failed = selfTest();
   if (has("self-test") && process.argv.length === 3) process.exit(failed ? 1 : 0);
   const images = all("image");

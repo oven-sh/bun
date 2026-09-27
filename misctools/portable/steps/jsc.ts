@@ -8,6 +8,20 @@
  *
  * WebKit's own link of the shell is not run: it would take the mimalloc that WebKit brings along. The image
  * links the one that bun links.
+ *
+ * aarch64: JavaScriptCore keeps x18 free where the system owns it (Darwin, Windows) with the third column
+ * of its list of registers, and has a second list for Linux and FreeBSD, where x18 is a register like the
+ * others and the allocators of its optimizing compilers hand it out. The image is Linux inside and runs
+ * on all of them, so its build takes the first list: one line of ARM64Registers.h asks for the definition
+ * JSC_ARM64_RESERVE_X18 (patches/webkit-arm64-registers-reserve-x18.diff), and the build defines it.
+ * $JSC_VARIANT builds another image of the same sources, in a build directory of its own:
+ *   x18-allocatable   WITHOUT the definition: <out>/jsc.x18-allocatable.img, the negative control of the
+ *                     x18 tests. Never run that image under a host that keeps something in x18.
+ *   jit-permissions   with jsc/bun_jit_permissions.h in front of every file: JavaScriptCore says itself
+ *                     when a thread writes code and when it runs it, where the host asks for that (Apple
+ *                     Silicon). <out>/jsc.jit-permissions.img. It is the other way next to the faults of
+ *                     the macOS host.
+ * An aarch64 image ends with an ad-hoc Apple code signature (tools/apple_sign.ts).
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -23,6 +37,7 @@ import {
   driverRuntimeFlags,
   hostArch,
 } from "../flags.ts";
+import { sign } from "../tools/apple_sign.ts";
 import { type Context, type Step, inOut, logOf, runStep } from "./context.ts";
 import { BuildError, type GitSource, fetchGit, run, sha256File } from "./run.ts";
 import { cmakeToolchain } from "./sysroot.ts";
@@ -32,6 +47,39 @@ import { cmakeToolchain } from "./sysroot.ts";
  * take the NULL that a thread has there before its first allocation in the pthreads model.
  */
 const MIMALLOC_PATCH = join(TREE, "patches", "mimalloc-theap-null-in-new.diff");
+
+/** aarch64: the list of registers of JavaScriptCore that keeps x18 free can be asked for by a definition. */
+const RESERVE_X18_PATCH = join(TREE, "patches", "webkit-arm64-registers-reserve-x18.diff");
+const RESERVE_X18 = "-DJSC_ARM64_RESERVE_X18=1";
+const JIT_PERMISSIONS_HEADER = join(TREE, "jsc", "bun_jit_permissions.h");
+
+/** Which image of JavaScriptCore is built, see the top of this file. "" is the image. */
+export type Variant = "" | "x18-allocatable" | "jit-permissions";
+
+export function variantOf(ctx: Context): Variant {
+  const variant = process.env.JSC_VARIANT ?? "";
+  if (variant !== "" && variant !== "x18-allocatable" && variant !== "jit-permissions") {
+    throw new BuildError(`JSC_VARIANT=${variant}: x18-allocatable or jit-permissions`);
+  }
+  if (variant !== "" && ctx.arch !== "aarch64") throw new BuildError(`JSC_VARIANT=${variant} is for aarch64`);
+  return variant;
+}
+
+const suffixOf = (variant: Variant) => (variant === "" ? "" : `.${variant}`);
+
+/** The image of a variant in the output directory. */
+export function jscImage(ctx: Context, variant: Variant): string {
+  return inOut(ctx, `jsc${suffixOf(variant)}.img`);
+}
+
+/** What the build of JavaScriptCore for the image adds to the flags of the image. */
+function variantFlags(ctx: Context, variant: Variant): string[] {
+  if (ctx.arch !== "aarch64") return [];
+  return [
+    ...(variant === "x18-allocatable" ? [] : [RESERVE_X18]),
+    ...(variant === "jit-permissions" ? ["-include", JIT_PERMISSIONS_HEADER] : []),
+  ];
+}
 
 /** What of oven-sh/WebKit the build of JavaScriptCore reads. */
 const WEBKIT_DIRECTORIES = [
@@ -172,9 +220,16 @@ function mimalloc(ctx: Context, before: string): Step {
 /** The checkout that is compiled, and the commit it is at. $BUN_WEBKIT_PATH is read and never written. */
 export function webkitSource(ctx: Context): { dir: string; commit: string; fetch: () => void } {
   const given = process.env.BUN_WEBKIT_PATH;
+  const patches = ctx.arch === "aarch64" ? [RESERVE_X18_PATCH] : [];
   if (given !== undefined && given !== "") {
     if (!existsSync(join(given, "Source", "JavaScriptCore"))) {
       throw new BuildError(`BUN_WEBKIT_PATH=${given}: no checkout of WebKit (Source/JavaScriptCore is not there)`);
+    }
+    const registers = join(given, "Source", "JavaScriptCore", "assembler", "ARM64Registers.h");
+    if (patches.length > 0 && !readFileSync(registers, "utf8").includes("JSC_ARM64_RESERVE_X18")) {
+      throw new BuildError(`BUN_WEBKIT_PATH=${given}: the checkout does not have ${RESERVE_X18_PATCH}`, {
+        hint: "it is read and never written. Without BUN_WEBKIT_PATH the build clones WebKit and applies the patch",
+      });
     }
     const head = existsSync(join(given, ".git")) ? run(["git", "-C", given, "rev-parse", "HEAD"]).trim() : given;
     if (head !== webkitCommit()) {
@@ -189,12 +244,21 @@ export function webkitSource(ctx: Context): { dir: string; commit: string; fetch
     commit: webkitCommit(),
     sparse: WEBKIT_DIRECTORIES,
   };
-  return { dir, commit: source.commit, fetch: () => void fetchGit("webkit", source, dir, [], inOut(ctx, "logs")) };
+  return {
+    dir,
+    commit: source.commit,
+    fetch: () => void fetchGit("webkit", source, dir, patches, inOut(ctx, "logs")),
+  };
 }
+
+const webkitBuild = (ctx: Context, variant: Variant) => inOut(ctx, "build", `webkit${suffixOf(variant)}`);
 
 function webkit(ctx: Context, before: string): Step {
   const source = webkitSource(ctx);
-  const image = [...compileFlags(ctx.arch, ctx.sysroot), ...cpuFlags(ctx.arch)].join(" ");
+  const variant = variantOf(ctx);
+  const image = [...compileFlags(ctx.arch, ctx.sysroot), ...cpuFlags(ctx.arch), ...variantFlags(ctx, variant)].join(
+    " ",
+  );
   // bun's options for a WebKit that it builds itself (scripts/build/deps/webkit.ts), release, no LTO.
   const options = [
     "-G",
@@ -227,10 +291,14 @@ function webkit(ctx: Context, before: string): Step {
     // things out. For another architecture it is told that it cannot.
     ...(ctx.arch === hostArch() ? [] : cmakeToolchain(ctx).filter(option => option.startsWith("-DCMAKE_SYSTEM_"))),
   ];
-  const build = inOut(ctx, "build", "webkit");
+  const build = webkitBuild(ctx, variant);
+  const inputs =
+    ctx.arch === "aarch64"
+      ? [sha256File(RESERVE_X18_PATCH), ...(variant === "jit-permissions" ? [sha256File(JIT_PERMISSIONS_HEADER)] : [])]
+      : [];
   return {
-    name: "webkit",
-    inputs: [before, source.commit, source.dir, options],
+    name: `webkit${suffixOf(variant)}`,
+    inputs: [before, source.commit, source.dir, options, ...inputs],
     outputs: [
       ...WEBKIT_LIBRARIES.map(name => join(build, "lib", name)),
       ...SHELL_OBJECTS.map(name => join(build, name)),
@@ -240,10 +308,11 @@ function webkit(ctx: Context, before: string): Step {
       rmSync(build, { recursive: true, force: true });
       // The generators of WebKit are Python scripts in the checkout. Python must not leave its caches there.
       const env = { PYTHONDONTWRITEBYTECODE: "1" };
-      run(["cmake", "-S", source.dir, "-B", build, ...options], { env, log: logOf(ctx, "webkit-configure") });
+      const log = `webkit${suffixOf(variant)}`;
+      run(["cmake", "-S", source.dir, "-B", build, ...options], { env, log: logOf(ctx, `${log}-configure`) });
       run(
         ["ninja", "-C", build, `-j${ctx.jobs}`, ...WEBKIT_LIBRARIES.map(name => join("lib", name)), ...SHELL_OBJECTS],
-        { env, log: logOf(ctx, "webkit-build") },
+        { env, log: logOf(ctx, `${log}-build`) },
       );
     },
   };
@@ -254,8 +323,9 @@ function webkit(ctx: Context, before: string): Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 function link(ctx: Context, before: string): Step {
-  const image = inOut(ctx, "jsc.img");
-  const build = inOut(ctx, "build", "webkit");
+  const variant = variantOf(ctx);
+  const image = jscImage(ctx, variant);
+  const build = webkitBuild(ctx, variant);
   const library = (name: string) => join(build, "lib", name);
   const command = [
     tool(ctx, "clang++"),
@@ -291,11 +361,14 @@ function link(ctx: Context, before: string): Step {
     "-ldl",
   ];
   return {
-    name: "jsc",
+    name: `jsc${suffixOf(variant)}`,
     inputs: [before, command],
     outputs: [image, `${image}.map`, `${image}.json`],
     make() {
-      run(command, { log: logOf(ctx, "jsc-link") });
+      run(command, { log: logOf(ctx, `jsc${suffixOf(variant)}-link`) });
+      const unsigned = sha256File(image);
+      // Apple Silicon maps code from a file only under a code signature. Last step.
+      if (ctx.arch === "aarch64") sign(image);
       const sizes = run([tool(ctx, "llvm-size"), "-A", image]);
       const map = readFileSync(`${image}.map`, "utf8").split("\n");
       /** The input section that a symbol of the image came from, as the link map names it. */
@@ -315,6 +388,16 @@ function link(ctx: Context, before: string): Step {
         __emutls_get_address: from("__emutls_get_address"),
         __bun_libc_malloc_impl: from("__bun_libc_malloc_impl"),
         malloc: from("malloc"),
+        ...(ctx.arch === "aarch64"
+          ? {
+              sha256_before_the_signature: unsigned,
+              variant: variant === "" ? "x18 reserved" : variant,
+              flags_of_the_variant: variantFlags(ctx, variant),
+              __clear_cache: from("__clear_cache"),
+              __aarch64_have_lse_atomics: from("__aarch64_have_lse_atomics"),
+              __bun_jit_write_protect: from("__bun_jit_write_protect"),
+            }
+          : {}),
       };
       writeFileSync(`${image}.json`, JSON.stringify(facts, null, 1) + "\n");
       console.log(JSON.stringify(facts, null, 1));

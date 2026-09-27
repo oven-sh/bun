@@ -12,8 +12,9 @@
    instructions are allowed there is not written down anywhere, so on another
    host this is a request: BUN_SYS_clear_cache(start, end).
 
-   jsc/build-aarch64.ts copies this file to src/thread/aarch64 of musl, and
-   takes clear_cache.c.o out of the builtins, so that this is the only one. */
+   libc/patch_musl.ts writes this file to src/thread/aarch64 of musl, and
+   steps/sysroot.ts takes clear_cache.c.o out of the builtins, so that this is
+   the only one. */
 #include <stdint.h>
 #include "bun_host.h"
 

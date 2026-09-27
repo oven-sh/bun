@@ -1,0 +1,13 @@
+diff --git a/Source/JavaScriptCore/assembler/ARM64Registers.h b/Source/JavaScriptCore/assembler/ARM64Registers.h
+index 372131cb..ce016c8c 100644
+--- a/Source/JavaScriptCore/assembler/ARM64Registers.h
++++ b/Source/JavaScriptCore/assembler/ARM64Registers.h
+@@ -41,7 +41,7 @@
+ // beyond what you would save by the platform-agnostic "preserve return address" and "restore
+ // return address" operations in CCallHelpers.
+ 
+-#if OS(LINUX) || OS(FREEBSD)
++#if (OS(LINUX) || OS(FREEBSD)) && !defined(JSC_ARM64_RESERVE_X18)
+ #define FOR_EACH_GP_REGISTER(macro)                             \
+     /* Parameter/result registers. */                           \
+     macro(x0,  "x0"_s,  0, 0)                                     \

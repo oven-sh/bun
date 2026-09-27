@@ -12,7 +12,9 @@
  *   host         the POSIX host (host/host_posix.c) for this machine. With an --arch that is not this
  *                machine's: the static Linux host of that architecture, which runs under qemu-<arch>.
  *   jsc          JavaScriptCore's shell as an image: jsc.img. Builds the sysroot, bun's mimalloc and WebKit
- *                if it has to, and runs the static checks.
+ *                if it has to, and runs the static checks. aarch64: $JSC_VARIANT=x18-allocatable builds the
+ *                negative control of the x18 tests, $JSC_VARIANT=jit-permissions the image that says
+ *                itself when a thread writes code (steps/jsc.ts).
  *   bun          all of bun as an image, x86_64: builds the sysroot, then runs bun's own build against it
  *                (scripts/build.ts --profile=portable). What follows `--` goes to that build.
  *   check        the static checks, on the disassembly of the sysroot and of every image in the output

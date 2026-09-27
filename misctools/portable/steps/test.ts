@@ -9,6 +9,11 @@
  * (test/rewrite_insn.ts):
  *   - traps in place of the instructions that the mode under test must not run
  *   - "must fail" runs, which show that those traps and the x18 reload are real
+ * The aarch64 host checks at every request and at every signal that x18 is what it put there (exit code
+ * 96). variants/x18_clobber.img writes x18 on purpose: its "must fail" runs show that the check is real.
+ * The hosted aarch64 tests run with signals, and in the ways of the test host that stand for another
+ * system: the memory model of Windows, pages that are discarded as on macOS, memory for code that is
+ * writable or executable for a thread (BUN_HOST_TEST=jitwx), pages of 16 KiB (BUN_HOST_PAGE=16384).
  * The x86_64 host ends the process when code outside of the host issues a syscall (seccomp), so every hosted
  * x86_64 run that passes issued none. The "must fail" run of raw_syscall.img shows that the filter is real.
  * The hosted x86_64 tests run three times: as they are, with the memory model of the Windows host
@@ -22,7 +27,7 @@ import { TREE } from "../flags.ts";
 import { rewrite } from "../test/rewrite_insn.ts";
 import { check } from "./check.ts";
 import { type Context, inOut } from "./context.ts";
-import { hostName } from "./images.ts";
+import { X18_CLOBBER, hostName, imageFile } from "./images.ts";
 import { BuildError } from "./run.ts";
 
 const THREADS =
@@ -295,10 +300,83 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
       [...hosted, pathsX18Only, "hosted"],
       macos,
     );
+
+    const signals = new RegExp(`^linux_paths: mode=hosted-signals ${PATHS} vectors=1$`, "m");
+    await expect(
+      42,
+      new RegExp(`^linux_paths: mode=direct ${PATHS} vectors=1$`, "m"),
+      "aarch64 linux_paths direct, with the vector registers in the signal context",
+      [...emulator, image("linux_paths"), "direct"],
+    );
+    await expect(42, signals, "aarch64 linux_paths hosted with signals (x18)", [
+      ...hosted,
+      image("linux_paths"),
+      "hosted-signals",
+    ]);
+    await expect(
+      42,
+      signals,
+      "aarch64 linux_paths hosted with signals (x18), traps on svc, tpidr_el0, tpidrro_el0",
+      [...hosted, pathsX18Only, "hosted-signals"],
+    );
+    await expect(42, requests("hosted"), "aarch64 requests hosted with signals (x18)", [
+      ...hosted,
+      image("requests"),
+      "hosted",
+      requestsFile,
+    ]);
+    const ways: [string, string][] = [
+      ["BUN_HOST_TEST", "winmem"],
+      ["BUN_HOST_TEST", "overlay"],
+      ["BUN_HOST_TEST", "jitwx"],
+      ["BUN_HOST_PAGE", "16384"],
+    ];
+    for (const [key, value] of ways) {
+      const way = `${key}=${value}`;
+      const env = { [key]: value };
+      await expect(42, THREADS, `aarch64 threads hosted, ${way}`, [...hosted, image("threads"), probe], env);
+      await expect(
+        42,
+        signals,
+        `aarch64 linux_paths hosted with signals, ${way}`,
+        [...hosted, image("linux_paths"), "hosted-signals"],
+        env,
+      );
+      await expect(
+        42,
+        requests("hosted"),
+        `aarch64 requests hosted, ${way}`,
+        [...hosted, image("requests"), "hosted", requestsFile],
+        env,
+      );
+    }
+    const clobber = imageFile(ctx, X18_CLOBBER);
+    await expect(
+      42,
+      /^x18_clobber: mode=request/m,
+      "aarch64 x18_clobber direct (x18 is a register like the others on Linux)",
+      [...emulator, clobber, "request"],
+    );
+    await expect(
+      42,
+      /^x18_clobber: mode=keep pid_ok=1 joined=1 detached=1/m,
+      "aarch64 control: hosted, x18 is read and written back as it was",
+      [...hosted, clobber, "keep"],
+    );
+    for (const way of ["request", "fault", "thread", "detached"]) {
+      await expect(
+        96,
+        /^host: the image changed x18: it is 0x1234/m,
+        `aarch64 must fail: hosted, image that writes x18 (${way})`,
+        [...hosted, clobber, way],
+      );
+    }
   }
 
-  // The scenarios of JavaScriptCore's shell, when `jsc` has built the image.
-  if (existsSync(inOut(ctx, "jsc.img")) && ctx.emulator === undefined) {
+  // The scenarios of JavaScriptCore's shell, when `jsc` has built the image. An image of another
+  // architecture runs under the emulator, direct and hosted: test/jsc_aarch64.ts is its whole test.
+  if (existsSync(inOut(ctx, "jsc.img"))) {
+    const modes = ctx.emulator === undefined ? "direct,hosted,winmem,overlay" : "direct,hosted";
     const scenarios = Bun.spawn(
       [
         process.execPath,
@@ -312,15 +390,14 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
         "--out",
         inOut(ctx, "scenarios.json"),
         "--modes",
-        "direct,hosted,winmem,overlay",
+        modes,
+        ...(ctx.emulator === undefined ? [] : ["--qemu", ctx.emulator]),
       ],
       { stdin: "ignore", stdout: "inherit", stderr: "inherit" },
     );
     const code = await scenarios.exited;
-    console.log(`scenarios of jsc.img (direct, hosted, winmem, overlay): ${code === 0 ? "passed" : "FAILED"}`);
+    console.log(`scenarios of jsc.img (${modes.split(",").join(", ")}): ${code === 0 ? "passed" : "FAILED"}`);
     checked = code === 0 && checked;
-  } else if (existsSync(inOut(ctx, "jsc.img"))) {
-    console.log(`scenarios of jsc.img: not run, the runner of the scenarios does not start ${ctx.emulator}`);
   } else {
     console.log("scenarios of jsc.img: not run, the image is not built (command: jsc)");
   }

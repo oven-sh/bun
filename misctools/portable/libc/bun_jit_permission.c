@@ -18,7 +18,7 @@
    BUN_SYS_jit_write_protect(what): 0 the thread may write, 1 the thread may
    execute, 2 the question whether this host is one where a thread has to say.
 
-   jsc/build-aarch64.ts copies this file to src/thread/aarch64 of musl. */
+   libc/patch_musl.ts writes this file to src/thread/aarch64 of musl. */
 #include "bun_host.h"
 
 #define BUN_SYS_jit_write_protect 0x62756e04

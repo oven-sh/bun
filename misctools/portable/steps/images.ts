@@ -9,6 +9,9 @@
  *   <out>/adopt.img         threads that the image did not create (test/adopt.c, test/adopt_cpp.cpp, and
  *                           test/adopt.list: the functions whose check of the thread pointer the compiler
  *                           writes)
+ *   <out>/variants/x18_clobber.img   aarch64: an image that writes x18 on purpose. The tests show that the
+ *                           host ends it and that the static checks report it (test/x18_clobber.c). It is
+ *                           not next to the others: what is there has to pass the static checks
  *   <out>/memory_model      test of host/memory.h by itself, a program of this machine (test/memory_model.c)
  *   <out>/host-linux        the POSIX host in hosted mode, for testing the host path on linux
  *
@@ -66,10 +69,17 @@ function libraries(ctx: Context): string[] {
   return [`-L${ctx.sysroot.lib}`, "-lc", ctx.sysroot.builtins, "-lc"];
 }
 
+/** The image of the tests that breaks a rule on purpose, aarch64. */
+export const X18_CLOBBER = "x18_clobber";
+
+export function imageFile(ctx: Context, name: string): string {
+  return name === X18_CLOBBER ? inOut(ctx, "variants", `${name}.img`) : inOut(ctx, `${name}.img`);
+}
+
 function image(ctx: Context, name: string, before: string): Step {
   const more = MORE[name] ?? { sources: [], flags: [] };
   const sources = [`${name}.c`, ...more.sources].map(source => join(TREE, "test", source));
-  const file = inOut(ctx, `${name}.img`);
+  const file = imageFile(ctx, name);
   const flags = [...abiFlags(ctx.arch), ...more.flags];
   const link = ["-static", "-pie", "--no-dynamic-linker", "-z", "noexecstack", ...IMAGE_LINK_FLAGS];
   const lists = more.flags
@@ -81,6 +91,7 @@ function image(ctx: Context, name: string, before: string): Step {
     outputs: [file],
     make() {
       mkdirSync(inOut(ctx, "build", "images"), { recursive: true });
+      mkdirSync(join(file, ".."), { recursive: true });
       const objects = sources.map(source => {
         const object = inOut(ctx, "build", "images", `${basename(source)}.o`);
         const cxx = source.endsWith(".cpp") ? ["-x", "c++", "-nostdinc++", "-fno-exceptions", "-fno-rtti"] : [];
@@ -183,6 +194,7 @@ function host(ctx: Context, before: string): Step {
 /** `libc` is the identity of the libc and the builtins that the images link against. */
 export async function buildTestImages(ctx: Context, libc: string): Promise<void> {
   for (const name of testImages(ctx)) await runStep(ctx, image(ctx, name, libc));
+  if (ctx.arch === "aarch64") await runStep(ctx, image(ctx, X18_CLOBBER, libc));
   await runStep(ctx, memoryModel(ctx));
 }
 

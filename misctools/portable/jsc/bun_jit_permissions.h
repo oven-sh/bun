@@ -1,4 +1,4 @@
-/* For the build of WebKit with JSC_VARIANT=jit-permissions (jsc/build-aarch64.ts puts it in
+/* For the build of WebKit with JSC_VARIANT=jit-permissions (steps/jsc.ts puts it in
    front of every file with -include): JavaScriptCore's own code for memory that is
    writable or executable for a thread, compiled into an image that is Linux inside, and
    chosen when the image runs.

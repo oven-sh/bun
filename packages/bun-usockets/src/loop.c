@@ -568,6 +568,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;
 
+                /* One connection per readiness event, as libuv does (uv__server_io since
+                 * 6c692ad1cb). The handlers of an accepted socket run inline, so a client
+                 * they answer can be back in the queue before the next accept(): a loop
+                 * here does not end while such clients keep coming, and nothing else on
+                 * the event loop runs. The poll is level-triggered and reports a
+                 * connection that is still queued on the next iteration. */
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
                     /* Todo: start timer here */
@@ -576,15 +582,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     /* Todo: stop timer if any */
 
-                    do {
-                        us_internal_listen_socket_accepted(listen_socket, client_fd, &addr);
-
-                        /* Exit accept loop if listen socket was closed in on_open or the request handler */
-                        if (us_socket_is_closed(&listen_socket->s)) {
-                            break;
-                        }
-
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    us_internal_listen_socket_accepted(listen_socket, client_fd, &addr);
                 }
             }
         break;

@@ -344,7 +344,8 @@ myNormalSpiedMethod("asdf");
 expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
 
 const spy = spyOn(console, "log");
-expectType(spy.mock.calls).is<any[][]>();
+// `console.log` is `(...data: any[])` in @types/node >= 25 and `(message?: any, ...optionalParams: any[])` before.
+expectType(spy.mock.calls).is<Parameters<typeof console.log>[]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);

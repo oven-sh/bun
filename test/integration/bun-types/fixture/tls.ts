@@ -30,3 +30,11 @@ tls.connect({
   ca: new Uint8Array([1, 2, 3]),
   cert: new Uint8Array([1, 2, 3]),
 });
+
+// Both specifiers take Bun's options and keep Node's own overloads.
+import * as bareTls from "tls";
+import { expectType } from "./utilities";
+
+bareTls.connect({ host: "localhost", port: 80, ca: Bun.file("asdf") });
+expectType(bareTls.connect(443, "localhost", { servername: "localhost" })).is<tls.TLSSocket>();
+expectType(tls.connect(443, "localhost", { servername: "localhost" })).is<bareTls.TLSSocket>();

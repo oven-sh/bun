@@ -472,8 +472,9 @@ describe("a listener accepts one connection per event loop iteration", () => {
   // Starts a listener and puts `count` connections into its queue. Nothing accepts them before
   // this returns: the thread of the listener is blocked while the Worker connects them.
   async function queued(start: (typeof kinds)[string], arrived: Arrived) {
-    const dir = tempDir("accept-per-turn", {});
-    const listener = await start(arrived, join(String(dir), "listener.sock"));
+    // Short names: the path of a unix socket has about 100 bytes.
+    const dir = tempDir("accept", {});
+    const listener = await start(arrived, join(String(dir), "s.sock"));
     const signal = new Int32Array(new SharedArrayBuffer(4));
     clients.postMessage({ target: listener.target, count, first: listener.first ?? "", signal: signal.buffer });
     Atomics.wait(signal, 0, 0, 30_000);

@@ -29,6 +29,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 /// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
+#[cfg(unix)]
 #[path = "posix_spawn.rs"]
 pub mod posix_spawn;
 

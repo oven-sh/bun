@@ -2626,7 +2626,7 @@ macro_rules! impl_streaming_writer_parent {
     (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
     (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
 
-    // Internal: expand the three impls once generics are normalized.
+    // Internal: expand the POSIX impl, then the Windows ones, once generics are normalized.
     (@emit
         [$($gen:tt)*] $Ty:ty;
         poll_tag   = $poll_tag:expr,
@@ -2684,6 +2684,31 @@ macro_rules! impl_streaming_writer_parent {
             }
         }
 
+        $crate::impl_streaming_writer_parent! {
+            @windows [$($gen)*] $Ty;
+            borrow     = $borrow,
+            on_write   = $on_write,
+            on_error   = $on_error,
+            on_ready   = $on_ready,
+            on_close   = $on_close,
+            uv_loop    = |$uv_this| $uv,
+            ref_       = |$ref_this| $ref_,
+            deref      = |$deref_this| $deref,
+        }
+    };
+
+    // Internal: the two Windows impls.
+    (@windows
+        [$($gen:tt)*] $Ty:ty;
+        borrow     = $borrow:tt,
+        on_write   = $on_write:ident,
+        on_error   = $on_error:ident,
+        on_ready   = $on_ready:ident,
+        on_close   = $on_close:ident,
+        uv_loop    = |$uv_this:ident| $uv:expr,
+        ref_       = |$ref_this:ident| $ref_:expr,
+        deref      = |$deref_this:ident| $deref:expr,
+    ) => {
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
             #[inline]
@@ -2744,6 +2769,14 @@ macro_rules! impl_streaming_writer_parent {
         $crate::impl_streaming_writer_parent! {
             @emit [<$($gp $(: $b0)?),+>] $Ty; $($rest)*
         }
+    };
+
+    // Public entry — a parent that only exists on Windows: no poll tag, event loop or uws loop to name.
+    (
+        windows_only $Ty:ty;
+        $($rest:tt)*
+    ) => {
+        $crate::impl_streaming_writer_parent! { @windows [] $Ty; $($rest)* }
     };
 
     // Public entry — non-generic parent.

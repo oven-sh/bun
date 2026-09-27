@@ -2,22 +2,16 @@
 
 #[cfg(target_os = "macos")]
 use core::ffi::c_short;
-#[cfg(unix)]
 use core::ffi::{c_char, c_int};
-#[cfg(unix)]
 use core::ptr;
-#[cfg(unix)]
 use std::ffi::{CStr, CString};
 
-#[cfg(unix)]
 use bun_sys as sys;
-#[cfg(unix)]
 use bun_sys::Fd;
 
 // `bun_sys::c` only re-exports a thin slice of libc
 // (no `posix_spawn*`/`waitpid`/`wait4`). Use the `libc` crate directly here;
 // `bun_sys::c` can re-export these later and this `use` swaps back.
-#[cfg(unix)]
 use libc as system;
 
 // ── Darwin spawn extensions missing from the `libc` crate ────────────────
@@ -46,20 +40,15 @@ mod darwin_spawn_np {
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
 use self::posix_compat::pid_t;
-#[cfg(unix)]
 use self::posix_compat::{Errno, errno};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t};
-#[cfg(unix)]
 use self::posix_compat::{fd_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
-    #[cfg(unix)]
     use crate::Error;
-    #[cfg(unix)]
     use core::ffi::c_int;
-    #[cfg(unix)]
     use std::ffi::CString;
 
     /// Native fd backing int.
@@ -67,24 +56,18 @@ mod posix_compat {
     // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
     // `FdNative` is HANDLE, but this code path is unreachable there — keep
     // the C-ABI type so the struct compiles unchanged.
-    #[cfg(unix)]
     pub(super) type fd_t = core::ffi::c_int;
     /// Native process id type.
-    #[cfg(unix)]
     pub(super) type pid_t = libc::pid_t;
-    #[cfg(not(unix))]
-    pub(super) type pid_t = i32;
     #[cfg(target_os = "macos")]
     pub(super) use bun_sys::posix::mode_t;
 
     /// Errno enum with **unprefixed** variant names. The real
     /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
     /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
-    #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub(super) struct Errno(pub c_int);
-    #[cfg(unix)]
     impl Errno {
         pub(super) const SUCCESS: Errno = Errno(0);
         #[cfg(target_os = "macos")]
@@ -95,7 +78,6 @@ mod posix_compat {
     /// else `.SUCCESS`. For syscalls using the conventional return style
     /// (`wait4`, etc.) — NOT for `posix_spawn*`, which returns the errno
     /// directly; use [`errno_from_posix_spawn`] there.
-    #[cfg(unix)]
     #[inline]
     pub(super) fn errno(rc: c_int) -> Errno {
         if rc == -1 {
@@ -113,7 +95,6 @@ mod posix_compat {
     }
 
     /// Copy a path into a NUL-terminated buffer.
-    #[cfg(unix)]
     pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
         CString::new(path).map_err(|_| crate::Error::Unexpected)
     }
@@ -124,7 +105,6 @@ mod posix_compat {
 // `bun_runtime::api::bun_spawn` and is not declared here.
 
 pub mod bun_spawn {
-    #[cfg(unix)]
     use super::*;
     use crate::Error;
 
@@ -137,14 +117,12 @@ pub mod bun_spawn {
     // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
     // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
     // spawn there), so trap instead of inventing a HANDLE→int cast.
-    #[cfg(unix)]
     #[inline(always)]
     fn fd_int(fd: Fd) -> fd_t {
         fd.native()
     }
 
     #[derive(Default)]
-    #[cfg(unix)]
     pub struct Actions {
         pub(crate) chdir_buf: Option<CString>,
         pub(crate) actions: Vec<Action>,
@@ -155,7 +133,6 @@ pub mod bun_spawn {
         pub(crate) paths: Vec<CString>,
     }
 
-    #[cfg(unix)]
     impl Actions {
         pub(crate) fn init() -> Result<Actions, Error> {
             Ok(Actions::default())
@@ -227,7 +204,6 @@ pub mod bun_spawn {
     }
 
     #[derive(Clone, Copy)]
-    #[allow(dead_code)]
     pub(crate) struct Attr {
         pub detached: bool,
         pub new_process_group: bool,
@@ -260,12 +236,10 @@ pub mod bun_spawn {
     }
 
     impl Attr {
-        #[allow(dead_code)]
         pub(crate) fn init() -> Result<Attr, Error> {
             Ok(Attr::default())
         }
 
-        #[allow(dead_code)]
         pub(crate) fn set(&mut self, flags: u16) -> Result<(), Error> {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
@@ -287,7 +261,6 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        #[allow(dead_code)]
         pub(crate) fn reset_signals(&mut self) -> Result<(), Error> {
             self.reset_signals = true;
             Ok(())
@@ -296,13 +269,10 @@ pub mod bun_spawn {
 }
 
 pub mod posix_spawn {
-    #[cfg(unix)]
     use super::bun_spawn;
     use super::*;
 
-    #[cfg(unix)]
     const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::posix_spawn;
-    #[cfg(unix)]
     const SYSCALL_WAITPID: sys::Tag = sys::Tag::waitpid;
 
     #[derive(Copy, Clone)]
@@ -468,9 +438,7 @@ pub mod posix_spawn {
 
     // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
     // Windows uses different spawn mechanisms.
-    #[cfg(unix)]
     pub(crate) type Actions = bun_spawn::Actions;
-    #[cfg(unix)]
     pub(crate) type Attr = bun_spawn::Attr;
     // No not(unix) Actions/Attr aliases: Windows goes through
     // `process.rs::spawn_process_windows` (libuv) and never reaches these.
@@ -479,10 +447,8 @@ pub mod posix_spawn {
     // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
     // `sys::Result`-wrapping spawn helper stays here because `bun_core` cannot
     // depend on `bun_sys`.
-    #[cfg(unix)]
     pub(super) use bun_core::spawn_ffi::{ActionsList, BunSpawnRequest, posix_spawn_bun};
 
-    #[cfg(unix)]
     fn spawn_bun(
         path: &CStr,
         req_: BunSpawnRequest,
@@ -610,7 +576,6 @@ pub mod posix_spawn {
         Ok((posix_actions, posix_attr))
     }
 
-    #[cfg(unix)]
     pub(crate) fn spawn_z(
         path: &CStr,
         actions: Option<&Actions>,
@@ -726,7 +691,6 @@ pub mod posix_spawn {
     }
 
     /// Same as waitpid, but also returns resource usage information.
-    #[cfg(unix)]
     pub fn wait4(
         pid: pid_t,
         flags: u32,
@@ -771,5 +735,4 @@ pub mod posix_spawn {
     pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }
 
-#[cfg(unix)]
 use crate::spawn_process as process;

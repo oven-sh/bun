@@ -62,11 +62,6 @@ pub(crate) struct WindowsNamedPipe {
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
     pub(crate) vm: &'static VirtualMachine,
-    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    #[cfg_attr(windows, allow(dead_code))]
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
-
     pub(crate) writer: JsCell<StreamingWriter<WindowsNamedPipe>>,
 
     pub(crate) incoming: JsCell<Vec<u8>>, // Maybe we should use IPCBuffer here as well
@@ -535,7 +530,6 @@ impl WindowsNamedPipe {
         // `uv::Pipe`.
         WindowsNamedPipe {
             vm,
-            event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
             // Leak the `Box` and keep only a non-owning `NonNull` alias.
             // Ownership of the allocation is later transferred to
             // `self.writer.source` via `start_with_pipe` in `start()`, which
@@ -1100,19 +1094,13 @@ pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut bori
     }
 }
 
-// Windows-only at runtime; the POSIX impl exists purely so the
-// `StreamingWriter<Self>` field type-checks (poll_tag::NULL keeps the
-// dispatch table from being silently wrong if a poll is ever created).
 bun_io::impl_streaming_writer_parent! {
-    WindowsNamedPipe;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::NULL,
+    windows_only WindowsNamedPipe;
     borrow     = shared,
     on_write   = on_write,
     on_error   = on_error,
     on_ready   = on_writable,
     on_close   = on_close,
-    event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
-    uws_loop   = |this| (*this).vm.uws_loop(),
     uv_loop    = |this| (*this).vm.uv_loop(),
     ref_       = |this| (&*this).r#ref(),
     deref      = |this| (&*this).deref(),

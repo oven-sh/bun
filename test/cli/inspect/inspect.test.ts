@@ -44,8 +44,12 @@ test.skipIf(!isDebug && !isASAN)("Runtime.evaluate does not trip exception-check
         if (candidate.startsWith("ws://") && URL.canParse(candidate)) resolveUrl(new URL(candidate));
       }
     }
-    rejectUrl(new Error("inspectee exited before printing inspector URL:\n" + stderr));
   })();
+  // Each way the reader can end settles urlPromise. A read error also fails the test where it awaits drained.
+  drained.then(
+    () => rejectUrl(new Error("inspectee exited before printing inspector URL:\n" + stderr)),
+    cause => rejectUrl(new Error("could not read inspectee stderr:\n" + stderr, { cause })),
+  );
 
   const url = await urlPromise;
   const ws = new WebSocket(url);

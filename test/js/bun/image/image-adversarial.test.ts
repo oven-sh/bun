@@ -1246,7 +1246,8 @@ describe("concurrent terminals on one Image", () => {
         // BMP is the cheapest format to write by hand, and Bun.Image turns it
         // into the flat-colour WebP files the race needs. Every file is under
         // 200 bytes, so the input can change inside one decode's header parses.
-        const bmp = (w, h, px) => {
+        // The pixels repeat to the end of the picture. BMP stores B,G,R,X.
+        const bmp = (w, h, pixels) => {
           const b = Buffer.alloc(54 + w * h * 4);
           b.write("BM");
           b.writeUInt32LE(b.length, 2);
@@ -1256,13 +1257,13 @@ describe("concurrent terminals on one Image", () => {
           b.writeInt32LE(-h, 22);
           b.writeUInt16LE(1, 26);
           b.writeUInt16LE(32, 28);
-          for (let i = 0; i < w * h; i++) b.set(px(i), 54 + i * 4);
+          b.fill(Buffer.from(pixels), 54);
           return b;
         };
-        const MARK = Buffer.from("SECRET-PIXELS-OF-ANOTHER-PICTURE"); // 8 pixels; BMP stores B,G,R,X
-        const secrets = [16, 64, 100].map(s =>
-          bmp(s, s, i => [MARK[(i % 8) * 4 + 2], MARK[(i % 8) * 4 + 1], MARK[(i % 8) * 4], 255]),
-        );
+        const MARK = Buffer.from("SECRET-PIXELS-OF-ANOTHER-PICTURE"); // 8 pixels
+        const markPixels = [];
+        for (let p = 0; p < 8; p++) markPixels.push(MARK[p * 4 + 2], MARK[p * 4 + 1], MARK[p * 4], 255);
+        const secrets = [16, 64, 100].map(s => bmp(s, s, markPixels));
         // The marker as the RGBA bytes an output would carry.
         const want = Buffer.from([...MARK].map((c, i) => (i % 4 === 3 ? 255 : c))).subarray(0, 12);
 
@@ -1274,7 +1275,7 @@ describe("concurrent terminals on one Image", () => {
           const pair = [];
           for (const [w, h, c] of [[16, 16, 1], [200, 211, 2]]) {
             const padded = new Uint8Array(n);
-            padded.set(await new Bun.Image(bmp(w, h, () => [c, c, c, 255])).webp(opts).bytes());
+            padded.set(await new Bun.Image(bmp(w, h, [c, c, c, 255])).webp(opts).bytes());
             pair.push(padded);
           }
           pairs.push(pair);
@@ -1383,7 +1384,7 @@ describe("concurrent terminals on one Image", () => {
           b.writeInt32LE(-h, 22);
           b.writeUInt16LE(1, 26);
           b.writeUInt16LE(32, 28);
-          for (let i = 0; i < w * h; i++) b.set([c, c, c, 255], 54 + i * 4);
+          b.fill(Buffer.from([c, c, c, 255]), 54);
           return b;
         };
         const chunk = (tag, payload) => {
@@ -1405,7 +1406,7 @@ describe("concurrent terminals on one Image", () => {
           Buffer.from("WEBP"),
           chunk("VP8X", Buffer.concat([Buffer.from([0x20, 0, 0, 0]), le24(W - 1), le24(H - 1)])),
           chunk("ICCP", profile),
-          ...Array.from({ length: 4096 }, () => chunk("FILL", Buffer.alloc(2))),
+          Buffer.alloc(4096 * 10, chunk("FILL", Buffer.alloc(2))), // 4096 chunks of 10 bytes
           bare.subarray(12), // the "VP8L" chunk, header and all
         ]);
         const head = Buffer.alloc(8);

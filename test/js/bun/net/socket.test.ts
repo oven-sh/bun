@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, getEventLoopStats, socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
@@ -5273,3 +5273,286 @@ it.concurrent.skipIf(!socketFaultInjection.available()).each([
     expect(exitCode).toBe(0);
   },
 );
+
+// Bun.listen and Bun.connect: a socket without allowHalfOpen ends at its peer's FIN, behind what it has queued.
+describe.concurrent("a socket whose peer sends its FIN first", () => {
+  type Transport = "tcp" | "unix" | "tls";
+  type Side = "listen" | "connect";
+  const STEP = 256 * 1024;
+  const TAIL = 4 * 1024 * 1024;
+  const source = randomFillSync(Buffer.allocUnsafe(16 * 1024 * 1024));
+
+  // `subject` is the socket under test, on `side`. `peer` is the other end and is half-open.
+  function openPair(
+    transport: Transport,
+    side: Side,
+    allowHalfOpen: boolean,
+    subject: SocketHandler,
+    peer: SocketHandler,
+  ) {
+    const dir = transport === "unix" ? tempDir("peer-fin", {}) : undefined;
+    const subjectOptions = allowHalfOpen ? { allowHalfOpen: true } : {};
+    const accepting = {
+      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: side === "listen" ? subject : peer,
+      ...(side === "listen" ? subjectOptions : { allowHalfOpen: true }),
+    };
+    const connecting = {
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: side === "connect" ? subject : peer,
+      ...(side === "connect" ? subjectOptions : { allowHalfOpen: true }),
+    };
+    let listener: Bun.SocketListener<unknown>;
+    let connected: Promise<Socket<unknown>>;
+    if (dir) {
+      const unix = join(String(dir), "s.sock");
+      listener = Bun.listen({ unix, ...accepting });
+      connected = Bun.connect({ unix, ...connecting });
+    } else {
+      const tcp = Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting });
+      listener = tcp;
+      connected = Bun.connect({ hostname: "127.0.0.1", port: tcp.port, ...connecting });
+    }
+    return {
+      listener,
+      connected,
+      [Symbol.dispose]() {
+        listener.stop(true);
+        dir?.[Symbol.dispose]();
+      },
+    };
+  }
+
+  // The other end of every row: it sends its request and its FIN at once, and from then on only reads.
+  function makePeer(transport: Transport, startPaused: boolean, onData: (chunk: Buffer) => void) {
+    const closed = Promise.withResolvers<void>();
+    const closeErrors: unknown[] = [];
+    const errors: string[] = [];
+    let socket: Socket<unknown> | undefined;
+    function sendRequestAndFin(opened: Socket<unknown>) {
+      socket = opened;
+      if (startPaused) opened.pause();
+      opened.write("request");
+      opened.shutdown();
+    }
+    const handlers: SocketHandler = {
+      // A TLS socket writes once its handshake is done.
+      ...(transport === "tls" ? { handshake: sendRequestAndFin } : { open: sendRequestAndFin }),
+      data: (_socket, chunk) => onData(chunk),
+      close(_socket, error) {
+        closeErrors.push(error);
+        closed.resolve();
+      },
+      error: (_socket, error) => void errors.push(String(error)),
+    };
+    return { handlers, closed: closed.promise, closeErrors, errors, resume: () => socket?.resume() };
+  }
+
+  describe.each(["tcp", "unix", "tls"] as const)("%s, nothing queued", transport => {
+    describe.each(["listen", "connect"] as const)("%s side", side => {
+      async function peerEndsFirst({ allowHalfOpen, withEnd }: { allowHalfOpen: boolean; withEnd: boolean }) {
+        const events: string[] = [];
+        const closeErrors: unknown[] = [];
+        const sawEnd = Promise.withResolvers<Socket<unknown>>();
+        const closed = Promise.withResolvers<void>();
+        const peerReadLate = Promise.withResolvers<void>();
+        let peerRead = "";
+        let endedAt = -1;
+        let closedAt = -1;
+        const peer = makePeer(transport, false, chunk => {
+          peerRead += chunk.toString();
+          if (peerRead.endsWith("still open")) peerReadLate.resolve();
+        });
+        const subject: SocketHandler = {
+          data(socket, chunk) {
+            events.push(`data ${chunk}`, `write ${socket.write("response")}`);
+          },
+          ...(withEnd
+            ? {
+                end(socket: Socket<unknown>) {
+                  events.push("end");
+                  endedAt = getEventLoopStats().iteration;
+                  sawEnd.resolve(socket);
+                },
+              }
+            : {}),
+          close(_socket, error) {
+            events.push("close");
+            closedAt = getEventLoopStats().iteration;
+            closeErrors.push(error);
+            closed.resolve();
+          },
+          error: (_socket, error) => void events.push(`error ${error}`),
+        };
+        using pair = openPair(transport, side, allowHalfOpen, subject, peer.handlers);
+        await pair.connected;
+
+        let whileOpen: { wrote: number; events: string[]; peerRead: string } | undefined;
+        if (allowHalfOpen && withEnd) {
+          const socket = await Promise.race([sawEnd.promise, closed.promise]);
+          if (socket) {
+            const wrote = socket.write("still open");
+            await Promise.race([peerReadLate.promise, closed.promise]);
+            whileOpen = { wrote, events: events.slice(), peerRead };
+            socket.end();
+          }
+        }
+        await Promise.all([closed.promise, peer.closed]);
+        return {
+          events,
+          closeErrors,
+          // A socket that ends at the FIN closes in the loop iteration that read it.
+          loopIterationsFromEndToClose: withEnd && !allowHalfOpen ? closedAt - endedAt : undefined,
+          whileOpen,
+          peer: { read: peerRead, closeErrors: peer.closeErrors, errors: peer.errors },
+        };
+      }
+
+      const skip = isWindows && transport === "unix";
+
+      it.skipIf(skip)("a default socket with an end handler gets end, then close at the FIN", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: false, withEnd: true })).toEqual({
+          events: ["data request", "write 8", "end", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: 0,
+          whileOpen: undefined,
+          peer: { read: "response", closeErrors: [undefined], errors: [] },
+        });
+      });
+
+      it.skipIf(skip)("a default socket without an end handler closes at the FIN", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: false, withEnd: false })).toEqual({
+          events: ["data request", "write 8", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: undefined,
+          whileOpen: undefined,
+          peer: { read: "response", closeErrors: [undefined], errors: [] },
+        });
+      });
+
+      it.skipIf(skip)("an allowHalfOpen socket without an end handler closes at the FIN", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: true, withEnd: false })).toEqual({
+          events: ["data request", "write 8", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: undefined,
+          whileOpen: undefined,
+          peer: { read: "response", closeErrors: [undefined], errors: [] },
+        });
+      });
+
+      it.skipIf(skip)("an allowHalfOpen socket with an end handler stays open until it calls end()", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: true, withEnd: true })).toEqual({
+          events: ["data request", "write 8", "end", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: undefined,
+          whileOpen: { wrote: 10, events: ["data request", "write 8", "end"], peerRead: "responsestill open" },
+          peer: { read: "responsestill open", closeErrors: [undefined], errors: [] },
+        });
+      });
+    });
+  });
+
+  // write() fills the kernel first, so end() has to queue its chunk: Windows takes a first send of any size whole.
+  function endBehindFullBuffers(socket: Socket<unknown>) {
+    let filled = 0;
+    let took = STEP;
+    while (took === STEP && filled + STEP + TAIL <= source.length) {
+      took = socket.write(source.subarray(filled, filled + STEP));
+      filled += Math.max(took, 0);
+    }
+    const endReturned = socket.end(source.subarray(filled, filled + TAIL));
+    return { kernelFull: took !== STEP, endReturned, length: filled + TAIL };
+  }
+
+  // A connection that its peer answers: a FIN that was sent before it has been read by the time it resolves.
+  async function pendingReadsDone() {
+    const server = net.createServer(socket => socket.end("x"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    await once(socket, "data");
+    socket.destroy();
+    server.close();
+  }
+
+  const reloads: { change: string; endAtFin: boolean; expected: string[] }[] = [
+    { change: "adds", endAtFin: true, expected: ["first data", "second end", "second close"] },
+    { change: "removes", endAtFin: false, expected: ["first data", "second close"] },
+  ];
+  describe.each([
+    { side: "listen", via: "listener" },
+    { side: "listen", via: "socket" },
+    { side: "connect", via: "socket" },
+  ] as const)("reload() on the $via before the FIN, $side side", ({ side, via }) => {
+    it.each(reloads)("that $change the end handler still delivers the queued tail of end(data)", async row => {
+      const { endAtFin, expected } = row;
+      const events: string[] = [];
+      const closeErrors: unknown[] = [];
+      const answered = Promise.withResolvers<void>();
+      const sawEnd = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const peerSaw = { bytes: 0, mismatchAt: -1 };
+      const peer = makePeer("tcp", true, chunk => {
+        const want = source.subarray(peerSaw.bytes, peerSaw.bytes + chunk.byteLength);
+        if (peerSaw.mismatchAt === -1 && !chunk.equals(want)) peerSaw.mismatchAt = peerSaw.bytes;
+        peerSaw.bytes += chunk.byteLength;
+      });
+      let sent = { kernelFull: false, endReturned: NaN, length: NaN };
+      const handlers = (generation: "first" | "second", withEnd: boolean): SocketHandler => ({
+        data(socket) {
+          events.push(`${generation} data`);
+          if (generation === "second") return;
+          sent = endBehindFullBuffers(socket);
+          const reloaded = { socket: handlers("second", endAtFin) };
+          if (via === "listener") pair.listener.reload(reloaded);
+          else socket.reload(reloaded);
+          answered.resolve();
+        },
+        ...(withEnd
+          ? {
+              end() {
+                events.push(`${generation} end`);
+                sawEnd.resolve();
+              },
+            }
+          : {}),
+        close(_socket, error) {
+          events.push(`${generation} close`);
+          closeErrors.push(error);
+          closed.resolve();
+        },
+        error: (_socket, error) => void events.push(`${generation} error ${error}`),
+      });
+      using pair = openPair("tcp", side, false, handlers("first", !endAtFin), peer.handlers);
+      await pair.connected;
+
+      // The peer reads only after the socket under test has read the FIN. Without an end handler no event reports it.
+      if (endAtFin) {
+        await Promise.race([sawEnd.promise, closed.promise]);
+      } else {
+        await answered.promise;
+        await pendingReadsDone();
+      }
+      peer.resume();
+      await Promise.all([closed.promise, peer.closed]);
+
+      expect({
+        events,
+        kernelFull: sent.kernelFull,
+        endReturned: sent.endReturned,
+        closeErrors,
+        peer: {
+          unreceived: sent.length - peerSaw.bytes,
+          mismatchAt: peerSaw.mismatchAt,
+          closeErrors: peer.closeErrors,
+          errors: peer.errors,
+        },
+      }).toEqual({
+        events: expected,
+        kernelFull: true,
+        endReturned: TAIL,
+        closeErrors: [undefined],
+        peer: { unreceived: 0, mismatchAt: -1, closeErrors: [undefined], errors: [] },
+      });
+    });
+  });
+});

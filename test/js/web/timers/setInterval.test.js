@@ -167,6 +167,7 @@ it.concurrent("an interval that stops itself via _repeat = null / _idleTimeout =
 });
 
 it.concurrent("refresh() on an interval that stopped itself does not start it or keep it alive", async () => {
+  // The intervals stop with `_idleTimeout = -1`: Node ignores refresh() for that value too.
   const code = /* js */ `
     const { heapStats } = require("bun:jsc");
     const N = 200;
@@ -176,8 +177,7 @@ it.concurrent("refresh() on an interval that stopped itself does not start it or
       for (let i = 0; i < N; i++) {
         setInterval(function () {
           fired++;
-          if (i % 2) this._repeat = null;
-          else this._idleTimeout = -1;
+          this._idleTimeout = -1;
           // The immediate runs after this fire has ended, so the interval has stopped.
           setImmediate(() => {
             this.refresh();
@@ -202,5 +202,34 @@ it.concurrent("refresh() on an interval that stopped itself does not start it or
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe("200 200 collected");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("an interval that calls refresh() and then stops itself runs once more", async () => {
+  // Node prints the same: refresh() puts the timer in the list again, and
+  // `_repeat = null` / `_idleTimeout = -1` only stop the re-arm after a callback.
+  const code = /* js */ `
+    const fires = { repeat: 0, idleTimeout: 0 };
+    for (const how of ["repeat", "idleTimeout"]) {
+      setInterval(function () {
+        if (++fires[how] === 1) {
+          this.refresh();
+          // Nothing in JS holds the timer. A collection must not take it out of the heap.
+          setImmediate(() => Bun.gc(true));
+        }
+        if (how === "repeat") this._repeat = null;
+        else this._idleTimeout = -1;
+      }, 1);
+    }
+    process.on("exit", () => console.log(JSON.stringify(fires)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"repeat":2,"idleTimeout":2}');
   expect(exitCode).toBe(0);
 });

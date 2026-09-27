@@ -487,6 +487,13 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
                 // Node doesn't drain microtasks after each timer callback.
                 if kind == KindBig::SetInterval {
                     if !this.should_reschedule_timer(repeat, idle_timeout) {
+                        if this.event_loop_timer_state() == EventLoopTimerState::ACTIVE {
+                            // `refresh()` linked it before the callback stopped it. Node
+                            // leaves a linked timer alone, so it runs once more:
+                            // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L615
+                            // The heap keeps its ref and the wrapper stays strong.
+                            break 'is_timer_done false;
+                        }
                         // Stopped Node-style (`_repeat = null` / `_idleTimeout = -1`)
                         // rather than through `cancel()`, so nothing has let go of
                         // the wrapper yet.

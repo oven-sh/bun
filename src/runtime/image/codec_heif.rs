@@ -127,6 +127,10 @@ struct Lib {
         unsafe extern "C" fn(*const Handle, *mut *mut Img, c_int, c_int, *const c_void) -> HeifError,
     image_release: unsafe extern "C" fn(*mut Img),
     plane_readonly: unsafe extern "C" fn(*const Img, c_int, *mut c_int) -> *const u8,
+    /// The decoded frame's own dimensions, which the row copy checks the
+    /// handle's against rather than assuming the two agree.
+    image_width: unsafe extern "C" fn(*const Img, c_int) -> c_int,
+    image_height: unsafe extern "C" fn(*const Img, c_int) -> c_int,
 }
 
 /// The versioned name first: on Debian the bare `libheif.so` is in
@@ -213,6 +217,8 @@ fn load() -> Option<Lib> {
         decode_image: sym!("heif_decode_image"),
         image_release: sym!("heif_image_release"),
         plane_readonly: sym!("heif_image_get_plane_readonly"),
+        image_width: sym!("heif_image_get_width"),
+        image_height: sym!("heif_image_get_height"),
     };
     // The bare `libheif.so` above can resolve to any major version the host
     // happens to have. Loading one whose ABI these signatures were never
@@ -406,12 +412,26 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         return Err(codecs::Error::DecodeFailed);
     }
     let stride = stride as usize;
-    // Bounded by `h`, the height the guard above accepted and `len` was sized
-    // from — never by anything re-read from the frame, because `bytes` can
-    // alias a live JS ArrayBuffer.
+    // `out` was sized from the handle's dimensions and the copy below reads
+    // `h` rows of `row` bytes out of the plane, so the two have to be the
+    // same picture. libheif has let them disagree — strukturag/libheif#417,
+    // where the handle was taller than the decoded plane — and a row that is
+    // not there is not worth leaving to the library's good behaviour. There
+    // is nothing the caller could do differently about it, so it joins the
+    // rest as a bad decode. Compared only: the loop below stays bounded by
+    // `h`, the height the guard accepted and `len` was sized from, never by
+    // anything re-read from the frame.
+    // SAFETY: `frame.img` is live.
+    let dw = unsafe { (lib.image_width)(frame.img, CHANNEL_INTERLEAVED) };
+    // SAFETY: as above.
+    let dh = unsafe { (lib.image_height)(frame.img, CHANNEL_INTERLEAVED) };
+    if dw != w as c_int || dh != h as c_int {
+        return Err(codecs::Error::DecodeFailed);
+    }
     for y in 0..h as usize {
-        // SAFETY: libheif's plane holds `stride >= row` bytes for each of its
-        // rows, and `out` has `len == row * h` bytes of spare capacity.
+        // SAFETY: the plane has `h` rows of `stride >= row` bytes, both
+        // checked just above, and `out` has `len == row * h` bytes of spare
+        // capacity.
         unsafe {
             core::ptr::copy_nonoverlapping(plane.add(y * stride), out.as_mut_ptr().add(y * row), row);
         }

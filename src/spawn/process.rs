@@ -731,6 +731,31 @@ impl Process {
 
         Ok(())
     }
+
+    /// For a spawn that fails after the child exists and before `watch()`. The caller never
+    /// receives this child and, on POSIX, nothing would ever reap it: SIGKILL, then a
+    /// blocking reap. On Windows libuv watches the handle from `uv_spawn` on, so this only kills.
+    ///
+    /// Not for a pty session leader on XNU: its exit waits for the pty master to drain (#41732).
+    pub fn dispose_failed_spawn(&mut self) {
+        if self.has_exited() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            // `kill()` ignores a `Detached` poller because that also means "already reaped".
+            // Here it means "not watched yet", so the pid still names the child.
+            debug_assert!(matches!(self.poller, Poller::Detached));
+            let result = posix_spawn::kill_and_reap(self.pid);
+            if let Some(status) = Status::from(self.pid, &result) {
+                self.status = status;
+            }
+        }
+        #[cfg(windows)]
+        {
+            let _ = self.kill(bun_sys::SignalCode::SIGKILL.0);
+        }
+    }
 }
 
 // Not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest.

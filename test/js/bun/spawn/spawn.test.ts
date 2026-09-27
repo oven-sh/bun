@@ -1516,6 +1516,125 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
   expect(exitCode).toBe(0);
 });
 
+// The caller never gets a Subprocess to kill the child with: a child that still
+// runs, or one that exited and was never reaped, stays with this process until
+// it exits.
+describe("a Bun.spawn that fails while it sets up a stdin stream leaves no child behind", () => {
+  // The stdin sink invokes pull() synchronously while Bun.spawn wires up stdin.
+  const spawnWithStdin = `Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"], stdio: [stream, "ignore", "ignore"] });`;
+
+  // reportChildren() prints how many processes still have the fixture as their
+  // parent, running or not yet reaped, once a bounded window is over.
+  const reportChildren = `
+    const { existsSync, readdirSync, readFileSync } = require("node:fs");
+    function children() {
+      // Linux and Android.
+      if (existsSync("/proc/self/stat")) {
+        return readdirSync("/proc").filter(name => {
+          if (!/^[0-9]+$/.test(name)) return false;
+          try {
+            // "pid (name) state ppid ..."
+            const stat = readFileSync("/proc/" + name + "/stat", "utf8");
+            return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] === String(process.pid);
+          } catch {
+            return false;
+          }
+        });
+      }
+      // One "pid ppid" line per process.
+      const list = Bun.spawnSync({
+        cmd:
+          process.platform === "win32"
+            ? ["powershell", "-NoProfile", "-Command", 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }']
+            : ["ps", "-ax", "-o", "pid=,ppid="],
+      });
+      return list.stdout
+        .toString()
+        .split("\\n")
+        .map(line => line.trim().split(/\\s+/))
+        .filter(([pid, ppid]) => ppid === String(process.pid) && pid !== String(list.pid))
+        .map(([pid]) => pid);
+    }
+    async function reportChildren(report) {
+      let left = children();
+      for (const deadline = performance.now() + 2000; left.length > 0 && performance.now() < deadline; left = children()) {
+        await Bun.sleep(10);
+      }
+      console.log(JSON.stringify({ ...report, children: left.length }));
+      for (const pid of left) {
+        try {
+          process.kill(Number(pid), "SIGKILL");
+        } catch {}
+      }
+    }
+  `;
+
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("spawn-stdin-setup-failure", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let report: unknown = stdout;
+    try {
+      report = JSON.parse(stdout);
+    } catch {}
+    return { report, stderr, exitCode };
+  }
+
+  it.concurrent("when pull() throws", async () => {
+    const result = await run({
+      "main.js": `
+        ${reportChildren}
+        const stream = new ReadableStream({
+          type: "direct",
+          pull() {
+            throw new Error("pull unavailable");
+          },
+        });
+        let message = "did not throw";
+        try {
+          ${spawnWithStdin}
+        } catch (err) {
+          message = err.message;
+        }
+        reportChildren({ message });
+      `,
+    });
+    expect(result).toEqual({ report: { message: "pull unavailable", children: 0 }, stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("when its worker is terminated inside pull()", async () => {
+    const result = await run({
+      "main.js": `
+        ${reportChildren}
+        const worker = new Worker(require("node:path").join(__dirname, "worker.js"));
+        // The worker posts from inside pull(), so the child exists by now.
+        worker.onmessage = async () => {
+          await worker.terminate();
+          reportChildren({});
+        };
+      `,
+      "worker.js": `
+        const idle = new Int32Array(new SharedArrayBuffer(4));
+        const stream = new ReadableStream({
+          type: "direct",
+          pull() {
+            postMessage("in pull");
+            // Stay inside pull(), and so inside Bun.spawn, until the termination arrives.
+            for (;;) Atomics.wait(idle, 0, 0, 50);
+          },
+        });
+        ${spawnWithStdin}
+      `,
+    });
+    expect(result).toEqual({ report: { children: 0 }, stderr: "", exitCode: 0 });
+  });
+});
+
 // The child opens a path at the slot for "ignore", for "inherit" of a slot that
 // is closed in the parent (both /dev/null), and for Bun.file(path). open() returns
 // the lowest free fd, so with the slot free it returns the slot itself, and the

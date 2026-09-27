@@ -547,13 +547,9 @@ impl PosixSpawnResult {
                     // Until we switch to CLONE_PIDFD, this needs to be handled separately.
                     bun_sys::E::ESRCH => {}
 
-                    // The spawn fails below. Kill first: a child that waits on a pipe this process holds would block wait4 forever.
+                    // The spawn fails below, so nothing will ever watch this child.
                     _ => {
-                        // SAFETY: `self.pid` is the un-reaped child posix_spawn just returned.
-                        unsafe {
-                            libc::kill(self.pid, libc::SIGKILL);
-                        }
-                        let _ = posix_spawn::wait4(self.pid, 0, None);
+                        let _ = posix_spawn::kill_and_reap(self.pid);
                     }
                 }
                 Err(err)

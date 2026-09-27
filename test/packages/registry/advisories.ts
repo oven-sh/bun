@@ -16,14 +16,15 @@ export class Advisories {
   /** Records an advisory against a package. Fields that are left out get the values of a typical advisory. */
   add(name: string, advisory: Partial<Advisory> & { vulnerable_versions: string }): Advisory {
     const id = advisory.id ?? this.#nextId++;
+    // Not a spread of `advisory`: a field that is there with the value undefined must not remove its default.
     const entry: Advisory = {
       id,
-      url: `https://github.com/advisories/GHSA-${id}`,
-      title: `Vulnerability in ${name}`,
-      severity: "high",
-      cwe: [],
-      cvss: { score: 0, vectorString: null },
-      ...advisory,
+      url: advisory.url ?? `https://github.com/advisories/GHSA-${id}`,
+      title: advisory.title ?? `Vulnerability in ${name}`,
+      severity: advisory.severity ?? "high",
+      vulnerable_versions: advisory.vulnerable_versions,
+      cwe: advisory.cwe ?? [],
+      cvss: advisory.cvss ?? { score: 0, vectorString: null },
     };
     const advisories = this.#byPackage.get(name);
     if (advisories) advisories.push(entry);

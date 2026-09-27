@@ -320,11 +320,35 @@ describe("publish", () => {
     expect(reply).toMatchObject({ status: 400, json: { error: `Bad Request: "${version}" is not a valid version` } });
   });
 
-  test("build metadata is part of the version", async () => {
-    const { registry, publish, packument } = setup();
+  test("build metadata does not make another version", async () => {
+    const { registry, publish, packument, put } = setup();
     using _ = registry;
-    expect((await publish({ name: "built", version: "1.0.0+build.5" })).status).toBe(200);
-    expect(Object.keys((await packument("built")).versions)).toEqual(["1.0.0+build.5"]);
+    const manifest = { name: "built", version: "1.0.0+build.5" };
+
+    // What libnpmpublish would send if it kept the metadata: the registry has no version with a `+` in its name.
+    const keyed = await publish(manifest);
+    expect(keyed).toMatchObject({
+      status: 400,
+      json: { error: `Bad Request: "1.0.0+build.5" is not a valid version` },
+    });
+
+    // What bun sends: the key and the tag without the metadata, the manifest and the file name with it.
+    const body: any = publishBody(manifest, await pack(manifest));
+    body.versions = { "1.0.0": body.versions["1.0.0+build.5"] };
+    body["dist-tags"] = { latest: "1.0.0" };
+    expect((await put("built", body)).status).toBe(200);
+
+    const document = await packument("built");
+    expect(Object.keys(document.versions)).toEqual(["1.0.0"]);
+    expect(document.versions["1.0.0"].version).toBe("1.0.0+build.5");
+    expect(document.versions["1.0.0"].dist.tarball).toBe(`${registry.url}built/-/built-1.0.0.tgz`);
+    expect(document["dist-tags"]).toEqual({ latest: "1.0.0" });
+
+    // The same version with other metadata is the same version.
+    const other: any = publishBody({ name: "built", version: "1.0.0+build.6" }, await pack(manifest));
+    other.versions = { "1.0.0": other.versions["1.0.0+build.6"] };
+    other["dist-tags"] = { latest: "1.0.0" };
+    expect((await put("built", other)).status).toBe(403);
   });
 
   test("the body must be JSON of the right type", async () => {
@@ -336,11 +360,30 @@ describe("publish", () => {
     const send = (headers: Record<string, string>, content: BodyInit = body) =>
       request(`${registry.url}typed`, { method: "PUT", headers: { authorization, ...headers }, body: content });
 
-    expect((await send({ "content-type": "application/octet-stream" })).status).toBe(415);
+    // The type must be `application/json`, character for character. This is the check of verdaccio, and it is
+    // why `bun publish` sends the header without a parameter.
+    for (const type of [
+      "application/octet-stream",
+      "text/plain",
+      "application/json; charset=utf-8",
+      "application/json;charset=utf-8",
+      "Application/JSON",
+    ]) {
+      const refused = await send({ "content-type": type });
+      expect({ type, status: refused.status }).toEqual({ type, status: 415 });
+    }
+    const withoutType = await request(`${registry.url}typed`, {
+      method: "PUT",
+      headers: { authorization },
+      body: new Blob([body]),
+    });
+    expect(withoutType.status).toBe(415);
+    expect(withoutType.json.error).toBe("Unsupported Media Type: expected application/json, got no Content-Type");
+
     expect((await send({ "content-type": "application/json" }, "{ not json")).status).toBe(400);
     expect((await send({ "content-type": "application/json" }, "[]")).status).toBe(400);
     expect(await registry.packages.has("typed")).toBe(false);
-    expect((await send({ "content-type": "application/json; charset=utf-8" })).status).toBe(200);
+    expect((await send({ "content-type": "application/json" })).status).toBe(200);
     registry.packages.delete("typed");
     const gzipped = await send({ "content-type": "application/json", "content-encoding": "gzip" }, Bun.gzipSync(body));
     expect(gzipped.status).toBe(200);
@@ -401,8 +444,9 @@ describe("changes after the publish", () => {
 
     // The body is the version as a JSON string.
     expect(await write("PUT", "stable", "1.0.0")).toMatchObject({ status: 200, json: { ok: "dist-tags updated" } });
-    expect((await write("POST", "latest", "2.0.0")).status).toBe(200);
+    expect((await write("PUT", "latest", "2.0.0")).status).toBe(200);
     expect((await request(tags)).json).toEqual({ latest: "2.0.0", next: "2.0.0", stable: "1.0.0" });
+    expect(await write("POST", "stable", "2.0.0")).toMatchObject({ status: 405, headers: { allow: "PUT, DELETE" } });
 
     expect((await write("DELETE", "next")).status).toBe(200);
     expect((await request(tags)).json).toEqual({ latest: "2.0.0", stable: "1.0.0" });
@@ -523,9 +567,15 @@ describe("advisories", () => {
   test("the bulk endpoint answers for the versions the client has", async () => {
     const { registry } = setup();
     using _ = registry;
-    const advisory = registry.advisories.add("on-disk", { vulnerable_versions: "<1.1.0", severity: "critical" });
+    registry.advisories.add("on-disk", {
+      vulnerable_versions: "<1.1.0",
+      severity: "critical",
+      // A field that is there without a value keeps its default.
+      url: undefined,
+      title: undefined,
+    });
     registry.advisories.add("on-disk", { vulnerable_versions: ">=5", title: "not installed" });
-    registry.advisories.add("elsewhere", { vulnerable_versions: "*" });
+    registry.advisories.add("elsewhere", { vulnerable_versions: "*", id: 7, url: "https://example.com/advisory/7" });
 
     const ask = (body: unknown, gzip = false) =>
       request(`${registry.url}-/npm/v1/security/advisories/bulk`, {
@@ -534,17 +584,31 @@ describe("advisories", () => {
         body: gzip ? Bun.gzipSync(JSON.stringify(body)) : JSON.stringify(body),
       });
 
-    const found = await ask({ "on-disk": ["1.0.0", "1.1.0"], "unknown": ["1.0.0"] }, true);
+    const found = await ask({ "on-disk": ["1.0.0", "1.1.0"], "elsewhere": ["3.0.0"], "unknown": ["1.0.0"] }, true);
     expect(found.status).toBe(200);
-    expect(found.json).toEqual({ "on-disk": [advisory] });
-    expect(advisory).toEqual({
-      id: expect.any(Number),
-      url: `https://github.com/advisories/GHSA-${advisory.id}`,
-      title: "Vulnerability in on-disk",
-      severity: "critical",
-      vulnerable_versions: "<1.1.0",
-      cwe: [],
-      cvss: { score: 0, vectorString: null },
+    expect(found.json).toEqual({
+      "on-disk": [
+        {
+          id: 1000000,
+          url: "https://github.com/advisories/GHSA-1000000",
+          title: "Vulnerability in on-disk",
+          severity: "critical",
+          vulnerable_versions: "<1.1.0",
+          cwe: [],
+          cvss: { score: 0, vectorString: null },
+        },
+      ],
+      "elsewhere": [
+        {
+          id: 7,
+          url: "https://example.com/advisory/7",
+          title: "Vulnerability in elsewhere",
+          severity: "high",
+          vulnerable_versions: "*",
+          cwe: [],
+          cvss: { score: 0, vectorString: null },
+        },
+      ],
     });
     expect(await ask({ "on-disk": ["1.1.0"] })).toMatchObject({ status: 200, text: "{}" });
     expect((await ask([])).status).toBe(400);

@@ -180,7 +180,20 @@ describe("tokens and profile", () => {
     });
     expect({ status: removed.status, body: removed.text }).toEqual({ status: 204, body: "" });
     expect((await request(`${registry.url}-/whoami`, { headers: jsonHeaders(created.json.token) })).status).toBe(401);
-    expect((await request(endpoint)).status).toBe(401);
+
+    // The account endpoints answer a client that they do not know without a body.
+    expect(await request(endpoint)).toMatchObject({ status: 401, text: "", headers: {} });
+    expect(await request(endpoint, { headers: jsonHeaders(created.json.token) })).toMatchObject({
+      status: 401,
+      text: "",
+      headers: { "www-authenticate": "Basic, Bearer" },
+    });
+    const direct = await registry.fetch(new Request(endpoint, { headers: jsonHeaders(created.json.token) }));
+    expect({ status: direct.status, headers: Object.fromEntries(direct.headers), text: await direct.text() }).toEqual({
+      status: 401,
+      headers: { "www-authenticate": "Basic, Bearer" },
+      text: "",
+    });
   });
 
   test("a read-only token reads and does not write", async () => {
@@ -216,7 +229,16 @@ describe("tokens and profile", () => {
       cidr_whitelist: null,
       fullname: "",
     });
-    expect((await request(endpoint)).status).toBe(401);
+    const anonymous = await request(endpoint);
+    expect({ status: anonymous.status, text: anonymous.text }).toEqual({ status: 401, text: "" });
+    expect(anonymous.headers).not.toHaveProperty("www-authenticate");
+    // What the registry itself answers, without the HTTP server between: nothing that describes a body.
+    const direct = await registry.fetch(new Request(endpoint));
+    expect({ status: direct.status, headers: Object.fromEntries(direct.headers), text: await direct.text() }).toEqual({
+      status: 401,
+      headers: {},
+      text: "",
+    });
 
     const renamed = await request(endpoint, {
       method: "POST",
@@ -291,7 +313,7 @@ describe("one-time passwords", () => {
     expect(refused.headers["www-authenticate"]).toBe("OTP");
     expect(refused.json).toEqual({
       error: otpMessage,
-      authUrl: expect.stringMatching(new RegExp(`^${origin}/-/v1/auth/cli/[0-9a-f-]{36}$`)),
+      authUrl: expect.stringMatching(new RegExp(`^${origin}/auth/cli/[0-9a-f-]{36}$`)),
       doneUrl: expect.stringMatching(new RegExp(`^${origin}/-/v1/done\\?authId=[0-9a-f-]{36}$`)),
     });
 
@@ -337,7 +359,7 @@ describe("web login", () => {
     });
     expect(opened.status).toBe(200);
     expect(opened.json).toEqual({
-      loginUrl: expect.stringMatching(new RegExp(`^${origin}/-/v1/login/cli/[0-9a-f-]{36}$`)),
+      loginUrl: expect.stringMatching(new RegExp(`^${origin}/login/cli/[0-9a-f-]{36}$`)),
       doneUrl: expect.stringMatching(new RegExp(`^${origin}/-/v1/done\\?sessionId=[0-9a-f-]{36}$`)),
     });
 
@@ -356,6 +378,9 @@ describe("web login", () => {
 
     // The token is handed out once.
     expect((await request(opened.json.doneUrl)).status).toBe(404);
-    expect((await request(`${registry.url}-/v1/done?sessionId=unknown`)).status).toBe(404);
+    for (const query of ["?sessionId=unknown", "?authId=unknown", ""]) {
+      const reply = await request(`${registry.url}-/v1/done${query}`);
+      expect({ status: reply.status, text: reply.text }).toEqual({ status: 404, text: `{"message":"not found"}` });
+    }
   });
 });

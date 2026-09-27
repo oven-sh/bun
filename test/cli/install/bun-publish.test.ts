@@ -495,6 +495,31 @@ test("can publish a package then install it", async () => {
   await runBunInstall(env, packageDir);
   expect(await exists(join(packageDir, "node_modules", "publish-pkg-1", "package.json"))).toBeTrue();
 });
+test("the publish request has the Content-Type that verdaccio accepts", async () => {
+  // verdaccio compares the header with `application/json`, character for character, and answers 415 to
+  // `application/json; charset=utf-8`. The registry of these tests does the same, so every publish in this file
+  // fails if bun changes the header. This test says which header it is.
+  using recording = new TestRegistry({ recordRequests: true }).start();
+  const { packageDir, packageJson } = await recording.createTestDir();
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "publish-content-type", version: "1.0.0" })),
+    write(join(packageDir, "bunfig.toml"), await recording.authBunfig("content-type")),
+  ]);
+  recording.requests.length = 0;
+
+  const { err, exitCode } = await publish(env, packageDir);
+  expect(err).not.toContain("error:");
+  expect(
+    recording.requests.map(({ method, path, status, headers }) => ({
+      method,
+      path,
+      status,
+      "content-type": headers["content-type"],
+    })),
+  ).toEqual([{ method: "PUT", path: "/publish-content-type", status: 200, "content-type": "application/json" }]);
+  expect(exitCode).toBe(0);
+});
+
 test("can publish from a tarball", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("tarball");

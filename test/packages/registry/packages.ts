@@ -3,7 +3,14 @@ import { join } from "node:path";
 import type { Credentials, User } from "./auth.ts";
 import { RegistryError, notFound, type Body } from "./http.ts";
 import type { PackageName } from "./names.ts";
-import { highestVersion, isValidTag, isValidVersion, parsePackageName, validateNewPackageName } from "./names.ts";
+import {
+  highestVersion,
+  isValidTag,
+  isValidVersion,
+  parsePackageName,
+  validateNewPackageName,
+  withoutBuildMetadata,
+} from "./names.ts";
 import { own, tarballFilename, type Human, type Packument, type VersionDocument } from "./packument.ts";
 
 export type Access = "public" | "restricted";
@@ -272,8 +279,17 @@ export class Packages {
         throw new RegistryError(400, "Bad Request: a publish holds one version");
       }
       const [key, incoming] = versions[0];
-      if (!isValidVersion(key)) throw new RegistryError(400, `Bad Request: "${key}" is not a valid version`);
-      if (!isObject(incoming) || incoming.name !== name.name || incoming.version !== key) {
+      // Build metadata does not make another version. bun sends the key without it and the manifest with it.
+      if (!isValidVersion(key) || key !== withoutBuildMetadata(key)) {
+        throw new RegistryError(400, `Bad Request: "${key}" is not a valid version`);
+      }
+      if (
+        !isObject(incoming) ||
+        incoming.name !== name.name ||
+        typeof incoming.version !== "string" ||
+        !isValidVersion(incoming.version) ||
+        withoutBuildMetadata(incoming.version) !== key
+      ) {
         throw new RegistryError(400, `Bad Request: versions["${key}"] must have this name and this version`);
       }
 

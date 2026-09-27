@@ -8,6 +8,8 @@ import {
   matchesEntityTag,
   methodNotAllowed,
   notFound,
+  parseRange,
+  rangeNotSatisfiable,
   readJson,
   resourceNotFound,
   send,
@@ -105,25 +107,13 @@ function validDate(value: unknown, fallback: Date): Date {
   return Number.isNaN(date.getTime()) ? fallback : date;
 }
 
-function parseRange(header: string | null, size: number): { start: number; end: number } | "unsatisfiable" | null {
-  const match = header?.match(/^bytes=(\d*)-(\d*)$/);
-  if (!match || (match[1] === "" && match[2] === "")) return null;
-  let start: number;
-  let end: number;
-  if (match[1] === "") {
-    const suffix = Number(match[2]);
-    if (suffix === 0) return "unsatisfiable";
-    start = Math.max(0, size - suffix);
-    end = size - 1;
-  } else {
-    start = Number(match[1]);
-    end = match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
-  }
-  return start > end || start >= size ? "unsatisfiable" : { start, end };
-}
-
 /**
- * An npm registry. It answers the HTTP API of registry.npmjs.org: the same paths, status codes, headers and bodies.
+ * An npm registry for tests.
+ *
+ * What a package manager reads follows registry.npmjs.org as it answered in September 2026: the packument in both
+ * forms, a version, a tarball, the dist-tags, `whoami`. What it writes follows the npm documentation and the npm
+ * client, because nothing was written to the public registry to compare. The known differences are in the
+ * description of the pull request that added this package.
  *
  * ```ts
  * using registry = new Registry({ storage: "./packages" }).start();
@@ -139,6 +129,8 @@ export class Registry {
   readonly requests: RecordedRequest[] = [];
   readonly options: Readonly<RegistryOptions>;
   #server: Server<undefined> | null = null;
+  /** The first error that is not an answer of the registry, for example a failed `expect()` in `intercept`. */
+  #failure: { error: unknown } | null = null;
 
   constructor(options: RegistryOptions = {}) {
     this.options = options;
@@ -165,10 +157,18 @@ export class Registry {
     return this;
   }
 
-  /** Closes the port and every open connection. Users, tokens and packages stay, so `start` can follow. */
+  /**
+   * Closes the port and every open connection. Users, tokens and packages stay, so `start` can follow.
+   *
+   * Throws the first error that `intercept` or the registry itself threw while it answered a request. The client
+   * got a 500 for it, which a test can miss. This makes the test fail.
+   */
   stop() {
     this.#server?.stop(true);
     this.#server = null;
+    const failure = this.#failure;
+    this.#failure = null;
+    if (failure !== null) throw failure.error;
   }
 
   [Symbol.dispose]() {
@@ -200,7 +200,8 @@ export class Registry {
       if (error instanceof RegistryError) {
         response = sendError(request, error);
       } else {
-        console.error(`[registry] ${request.method} ${request.url} failed:`, error);
+        // Not printed here: `stop` throws it, with the stack.
+        this.#failure ??= { error };
         response = sendJson(request, { error: "Internal Server Error" }, { status: 500 });
       }
     }
@@ -229,7 +230,23 @@ export class Registry {
       return sendJson(request, {}, { headers: { "cache-control": tarballCacheControl } });
     }
     if (segments[0] === "-") return this.#service(request, url, segments.slice(1));
+    if (segments.length === 3 && segments[1] === "cli" && (segments[0] === "login" || segments[0] === "auth")) {
+      return this.#browser(request, segments[2]);
+    }
     return this.#package(request, url, segments);
+  }
+
+  /**
+   * Stands in for the page of the npm website that the user opens to log in or to approve a write:
+   * `/login/cli/<id>` and `/auth/cli/<id>`. A request with the credentials of a user approves the session.
+   */
+  #browser(request: Request, id: string): Response {
+    allow(request, "GET", "POST");
+    const credentials = this.#user(request);
+    const session = this.auth.sessions.get(id);
+    if (session === undefined || (session.user !== null && session.user !== credentials.user.name)) throw notFound();
+    this.auth.approveSession(session.id, credentials.user.name);
+    return sendJson(request, { ok: true });
   }
 
   #base(url: URL): string {
@@ -260,6 +277,16 @@ export class Registry {
     throw new RegistryError(401, message, credentials.kind === "invalid" ? { body: {} } : {});
   }
 
+  /** The user of a request to the account endpoints. Their 401 has no body. */
+  #account(request: Request): Extract<Credentials, { kind: "user" }> {
+    const credentials = this.auth.credentials(request);
+    if (credentials.kind === "user") return credentials;
+    throw new RegistryError(401, "Unauthorized", {
+      body: undefined,
+      headers: credentials.kind === "invalid" ? { "www-authenticate": "Basic, Bearer" } : {},
+    });
+  }
+
   /** The user of a request that changes something. It needs a token that can write, and a one-time password. */
   #writer(request: Request, url: URL, message = "You must be logged in to publish packages."): User {
     const { user, token } = this.#user(request, message);
@@ -276,7 +303,7 @@ export class Registry {
     if (request.headers.get("npm-auth-type") === "web") {
       // The client opens `authUrl` in a browser and waits at `doneUrl` for the code.
       const session = this.auth.openSession("otp", user.name);
-      body.authUrl = `${this.#base(url)}/-/v1/auth/cli/${session.id}`;
+      body.authUrl = `${this.#base(url)}/auth/cli/${session.id}`;
       body.doneUrl = `${this.#base(url)}/-/v1/done?authId=${session.id}`;
     }
     throw new RegistryError(401, otpMessage, { body, headers: { "www-authenticate": "OTP" } });
@@ -330,7 +357,7 @@ export class Registry {
         throw new RegistryError(404, `version not found: ${wanted}`, { body: `version not found: ${wanted}` });
       }
       return sendJson(request, renderVersion(this.#context(url, stored), version), {
-        headers: { "cache-control": packumentCacheControl, "vary": "accept-encoding, accept" },
+        headers: { "cache-control": "max-age=300", "vary": "accept-encoding, accept" },
       });
     }
 
@@ -338,13 +365,21 @@ export class Registry {
   }
 
   #packument(request: Request, url: URL, stored: StoredPackage): Response {
-    const abbreviated = wantsAbbreviated(request.headers.get("accept"));
+    // A client asks with `?write=true` for the document that it edits and sends back. The answer is the full
+    // document, whatever the Accept header says, and it has no validators.
+    const forWrite = url.searchParams.get("write") === "true";
+    const abbreviated = !forWrite && wantsAbbreviated(request.headers.get("accept"));
     const context = this.#context(url, stored);
     const key = `${abbreviated ? "abbreviated" : "full"} ${context.base}`;
     let body = stored.rendered.get(key);
     if (body === undefined) {
       body = bodyOf(abbreviated ? renderAbbreviated(context, stored.document) : renderFull(context, stored.document));
       stored.rendered.set(key, body);
+    }
+    if (forWrite) {
+      return send(request, body, {
+        headers: { "cache-control": packumentCacheControl, "vary": "accept-encoding, accept" },
+      });
     }
     return send(request, body, {
       conditional: true,
@@ -382,19 +417,16 @@ export class Registry {
     if (range === "unsatisfiable") {
       headers.set("content-range", `bytes */${tarball.size}`);
       headers.delete("cache-control");
-      return sendJson(
-        request,
-        { error: "Requested Range Not Satisfiable" },
-        { status: 416, headers: toObject(headers) },
-      );
+      return sendJson(request, rangeNotSatisfiable, { status: 416, headers: toObject(headers) });
     }
 
     headers.set("content-type", "application/octet-stream");
-    headers.set("accept-ranges", "bytes");
     // The bytes, not the file: a file body makes Bun.serve add a Content-Disposition header that the registry does
     // not send.
     let body = await tarball.bytes();
-    if (range !== null) {
+    if (range === null) {
+      headers.set("accept-ranges", "bytes");
+    } else {
       headers.set("content-range", `bytes ${range.start}-${range.end}/${tarball.size}`);
       body = body.subarray(range.start, range.end + 1);
     }
@@ -441,7 +473,7 @@ export class Registry {
         const session = this.auth.openSession("login", null);
         const base = this.#base(url);
         return sendJson(request, {
-          loginUrl: `${base}/-/v1/login/cli/${session.id}`,
+          loginUrl: `${base}/login/cli/${session.id}`,
           doneUrl: `${base}/-/v1/done?sessionId=${session.id}`,
         });
       }
@@ -500,16 +532,6 @@ export class Registry {
       return new Response(null, { status: 204 });
     }
 
-    if ((path.startsWith("v1/login/cli/") || path.startsWith("v1/auth/cli/")) && segments.length === 4) {
-      allow(request, "GET", "POST");
-      // The page that the user opens in a browser. A request with the credentials of a user approves.
-      const credentials = this.#user(request);
-      const session = this.auth.sessions.get(segments[3]);
-      if (session === undefined || (session.user !== null && session.user !== credentials.user.name)) throw notFound();
-      this.auth.approveSession(session.id, credentials.user.name);
-      return sendJson(request, { ok: true });
-    }
-
     if (segments[0] === "package") {
       const taken = takePackageName(segments.slice(1));
       if (taken !== null) return this.#packageService(request, url, taken.name, taken.rest);
@@ -520,20 +542,19 @@ export class Registry {
 
   async #packageService(request: Request, url: URL, name: PackageName, rest: string[]): Promise<Response> {
     const credentials = this.auth.credentials(request);
-    const read = async () => {
+    const readable = async () => {
       const stored = await this.packages.get(name.name);
-      if (stored === null || !this.packages.canRead(stored, credentials)) {
-        throw new RegistryError(404, "Not Found", { body: "Not Found" });
-      }
-      return stored;
+      return stored !== null && this.packages.canRead(stored, credentials) ? stored : null;
     };
 
     if (rest[0] === "dist-tags" && rest.length === 1) {
       allow(request, "GET", "HEAD");
-      return sendJson(request, (await read()).document["dist-tags"]);
+      const stored = await readable();
+      if (stored === null) throw new RegistryError(404, "Not Found", { body: "Not Found" });
+      return sendJson(request, stored.document["dist-tags"]);
     }
     if (rest[0] === "dist-tags" && rest.length === 2) {
-      allow(request, "PUT", "POST", "DELETE");
+      allow(request, "PUT", "DELETE");
       // Only a change of `latest` counts as a write that needs a one-time password.
       const user = rest[1] === "latest" ? this.#writer(request, url) : this.#writerWithoutOtp(request);
       if (request.method === "DELETE") await this.packages.removeTag(name, rest[1], user);
@@ -542,12 +563,21 @@ export class Registry {
     }
     if (rest[0] === "collaborators" && rest.length === 1) {
       allow(request, "GET", "HEAD");
-      const maintainers = (await read()).document.maintainers ?? [];
+      // This endpoint looks at the credentials of a public package too. A packument does not.
+      if (credentials.kind === "invalid") {
+        throw new RegistryError(401, "You must be logged in to publish packages.", {
+          headers: { "www-authenticate": "Basic, Bearer" },
+        });
+      }
+      const stored = await readable();
+      if (stored === null) throw new RegistryError(404, "Package not found");
+      const maintainers = stored.document.maintainers ?? [];
       return sendJson(request, Object.fromEntries(maintainers.map(maintainer => [maintainer.name, "write"])));
     }
     if (rest[0] === "visibility" && rest.length === 1) {
       allow(request, "GET", "HEAD");
-      return sendJson(request, { public: (await read()).access === "public" });
+      // A package that is not there is not public. The answer is not a 404.
+      return sendJson(request, { public: (await readable())?.access === "public" });
     }
     if (rest[0] === "access" && rest.length === 1) {
       allow(request, "POST");
@@ -620,7 +650,7 @@ export class Registry {
   #done(request: Request, url: URL): Response {
     const id = url.searchParams.get("sessionId") ?? url.searchParams.get("authId");
     const session = id === null ? undefined : this.auth.sessions.get(id);
-    if (session === undefined) throw notFound();
+    if (session === undefined) throw new RegistryError(404, "not found", { body: { message: "not found" } });
     session.polls++;
     if (session.result === null) {
       return sendJson(request, {}, { status: 202, headers: { "retry-after": "1" } });
@@ -631,7 +661,7 @@ export class Registry {
   }
 
   async #profile(request: Request, url: URL): Promise<Response> {
-    const credentials = this.#user(request);
+    const credentials = this.#account(request);
     const user = credentials.user;
     if (request.method === "POST") {
       const body = await readJson(request);
@@ -666,7 +696,7 @@ export class Registry {
   }
 
   async #tokens(request: Request, url: URL): Promise<Response> {
-    const credentials = this.#user(request);
+    const credentials = this.#account(request);
     const user = credentials.user;
     const describe = (token: Token, value: string) => ({
       token: value,

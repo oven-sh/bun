@@ -2,7 +2,8 @@ import { brotliCompressSync, constants as zlib } from "node:zlib";
 
 /**
  * A failure that the registry reports to the client. The default body is `{"error": message}`, the shape that
- * `npm-registry-fetch` and bun read. Pass `body` for the endpoints that answer with another shape.
+ * `npm-registry-fetch` and bun read. Pass `body` for the endpoints that answer with another shape, and
+ * `body: undefined` for the ones that answer with no body.
  */
 export class RegistryError extends Error {
   status: number;
@@ -94,9 +95,35 @@ export function matchesEntityTag(header: string | null, md5: string): boolean {
 export interface SendOptions {
   status?: number;
   headers?: Record<string, string>;
-  /** Send the validators and answer a matching `If-None-Match` with 304. */
+  /**
+   * Treat the body as a stored object, as the registry does for a packument: send the entity tag, answer a
+   * matching `If-None-Match` with 304, and answer a `Range` with the part that it names.
+   */
   conditional?: boolean;
 }
+
+/** Reads `Range: bytes=<first>-<last>`. The registry answers a request for more than one range with all of it. */
+export function parseRange(
+  header: string | null,
+  size: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  const match = header?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match || (match[1] === "" && match[2] === "")) return null;
+  let start: number;
+  let end: number;
+  if (match[1] === "") {
+    const suffix = Number(match[2]);
+    if (suffix === 0) return "unsatisfiable";
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
+  }
+  return start > end || start >= size ? "unsatisfiable" : { start, end };
+}
+
+export const rangeNotSatisfiable = { error: "Requested range not satisfiable" };
 
 /** Sends a JSON body the way the registry does: compact, compressed on request, with an md5 entity tag. */
 export function send(request: Request, body: Body, options: SendOptions = {}): Response {
@@ -111,6 +138,27 @@ export function send(request: Request, body: Body, options: SendOptions = {}): R
       headers.set("etag", `"${body.md5}"`);
       return new Response(null, { status: 304, headers });
     }
+  }
+
+  if (options.conditional) {
+    const range = parseRange(request.headers.get("range"), body.bytes.byteLength);
+    if (range === "unsatisfiable") {
+      const failed = new Headers({ "content-range": `bytes */${body.bytes.byteLength}`, "etag": `"${body.md5}"` });
+      const modified = headers.get("last-modified");
+      if (modified !== null) failed.set("last-modified", modified);
+      return sendJson(request, rangeNotSatisfiable, { status: 416, headers: Object.fromEntries(failed) });
+    }
+    if (range !== null) {
+      // A part of the body is a part of the body as it is stored, so it is never encoded.
+      const part = body.bytes.subarray(range.start, range.end + 1);
+      headers.set("content-range", `bytes ${range.start}-${range.end}/${body.bytes.byteLength}`);
+      headers.set("etag", `"${body.md5}"`);
+      return new Response(request.method === "HEAD" ? null : part, {
+        status: 206,
+        headers: request.method === "HEAD" ? withHeader(headers, "content-length", String(part.byteLength)) : headers,
+      });
+    }
+    headers.set("accept-ranges", "bytes");
   }
 
   let bytes = body.bytes;
@@ -141,15 +189,21 @@ export function sendJson(request: Request, value: unknown, options: SendOptions 
 }
 
 export function sendError(request: Request, error: RegistryError): Response {
+  if (error.body === undefined) return new Response(null, { status: error.status, headers: error.headers });
   return sendJson(request, error.body, { status: error.status, headers: error.headers });
 }
 
-/** Reads a JSON request body. The registry accepts `Content-Encoding: gzip`, which `npm audit` and bun use. */
+/**
+ * Reads a JSON request body. The registry accepts `Content-Encoding: gzip`, which `npm audit` and bun use.
+ *
+ * The Content-Type must be `application/json`, character for character. A parameter such as `; charset=utf-8` is
+ * refused. This is the check of verdaccio, which many people run as their registry. `bun publish` must keep to
+ * it (src/runtime/cli/publish_command.rs), and these tests are what holds it to that.
+ */
 export async function readJson(request: Request): Promise<unknown> {
   const type = request.headers.get("content-type");
-  const mediaType = type?.split(";", 1)[0].trim().toLowerCase();
-  if (mediaType !== "application/json") {
-    throw new RegistryError(415, `Unsupported Media Type: expected application/json, got ${type ?? "nothing"}`);
+  if (type !== "application/json") {
+    throw new RegistryError(415, `Unsupported Media Type: expected application/json, got ${type ?? "no Content-Type"}`);
   }
   let bytes = await request.bytes();
   const encoding = request.headers.get("content-encoding")?.trim().toLowerCase();

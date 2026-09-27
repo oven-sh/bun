@@ -1693,14 +1693,14 @@ it("bun update <name> rejects a name that is not in the lockfile", async () => {
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0; a-dep 1.0.1..1.0.10; dep-with-tags latest=3.0.0, pre-2=2.0.1; @types/* 1.0.0/2.0.0.
 describe("bun update <name> semantics", () => {
   type Json = Record<string, any>;
-  const registry = new TestRegistry();
+  const verdaccio = new TestRegistry();
 
   beforeAll(async () => {
-    await registry.start();
+    await verdaccio.start();
   });
 
   afterAll(() => {
-    registry.stop();
+    verdaccio.stop();
   });
 
   const GROUPS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
@@ -1753,7 +1753,7 @@ describe("bun update <name> semantics", () => {
   }
 
   async function createDir(files: Record<string, Json | string>) {
-    const { packageDir } = await registry.createTestDir({
+    const { packageDir } = await verdaccio.createTestDir({
       bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
       files: Object.fromEntries(
         Object.entries(files).map(([path, json]) => [path, typeof json === "string" ? json : stringify(json)]),

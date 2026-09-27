@@ -1,12 +1,16 @@
 // Puts together what a person needs on a Windows machine to run the loop slice there.
 //
-//   bun package-windows.ts [directory]      default: <WORK>/windows-package, WORK as in build.ts.
-//                                           After build.ts, test.ts and check-windows.ts.
+//   bun package-windows.ts [--out <dir>] [directory]
+//                                           After build.ts, test.ts and check-windows.ts, --out as
+//                                           there; the default of the directory is
+//                                           <out>/loop/windows-package
 //
 // In the directory:
 //   bun_loop_slice.img                      the image (x86-64), as build.ts made it
 //   host/host_win.c, host/host_win_uv.c     the Windows host and its table of libuv functions
-//   host_win.diff                           what this branch changed in the two files
+//   host/linux_abi.h, host/memory.h         what host_win.c includes
+//   host_win.diff                           what changed in the host since the one that ran on
+//                                           Windows ($HOST_THAT_RAN, a commit)
 //   patches/*.patch                         bun's patches of libuv
 //   windows-c/                              what the C of the image for Windows was compiled against
 //                                           (uv_header.ts, windows.ts), and check_on_windows.c
@@ -20,15 +24,20 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { REPOSITORY, TREE } from "../flags.ts";
+import { places } from "./places.ts";
 import { headerCheckFlags, host as hostBuild, libuv, signatureCheckFlags } from "./windows_build.ts";
 
 const here = dirname(import.meta.path);
-const tree = resolve(here, "..");
-const repo = resolve(tree, "../..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
-const out = resolve(process.argv[2] ?? join(work, "windows-package"));
-const base = process.env.BASE_COMMIT ?? "5f92f9441a";
-const checked = join(work, "wincheck");
+const tree = TREE;
+const repo = REPOSITORY;
+const args = process.argv.slice(2);
+const at = places(args);
+const work = at.loop;
+const out = resolve(args[0] ?? join(work, "windows-package"));
+// The host of the first merge: it was built natively and ran the file system slice on Windows x64.
+const base = process.env.HOST_THAT_RAN ?? "6165b36e55";
+const checked = at.checked;
 
 const summaryPath = join(checked, "summary.json");
 if (!existsSync(summaryPath)) throw new Error(`${summaryPath} is not there: check-windows.ts makes it`);
@@ -36,9 +45,9 @@ const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
 
 rmSync(out, { recursive: true, force: true });
 for (const dir of ["host", "patches", "bindings", "expected", "windows-c", "checked-on-linux"]) mkdirSync(join(out, dir), { recursive: true });
-const image = join(work, "out/bun_loop_slice.img");
+const image = at.image;
 copyFileSync(image, join(out, "bun_loop_slice.img"));
-for (const name of hostBuild.sources) copyFileSync(join(tree, "host", name), join(out, "host", name));
+for (const name of [...hostBuild.sources, ...hostBuild.headers]) copyFileSync(join(tree, "host", name), join(out, "host", name));
 for (const name of libuv.patches) copyFileSync(join(libuv.patchDirectory, name), join(out, "patches", name));
 for (const name of ["windows_layout.c", "verify.ts", "compare.ts"]) copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
 cpSync(join(here, "expected"), join(out, "expected"), { recursive: true });
@@ -52,13 +61,16 @@ for (const name of [
 ])
   copyFileSync(join(checked, name), join(out, "checked-on-linux", name));
 
-const hostLinux = join(work, "out/host-linux");
+const hostLinux = at.host;
 if (!existsSync(hostLinux)) throw new Error(`${hostLinux} is not there: test.ts makes it`);
 const imports = Bun.spawnSync([hostLinux, image, "--imports"], { stdout: "pipe" });
 writeFileSync(join(out, "imports-linux.jsonl"), imports.stdout);
 const total = JSON.parse(imports.stdout.toString().trim().split("\n").pop()!).total;
 
-const diff = Bun.spawnSync(["git", "--no-pager", "diff", base, "--", ...hostBuild.sources.map(name => `misctools/portable/host/${name}`)], { cwd: repo, stdout: "pipe" });
+const diff = Bun.spawnSync(
+  ["git", "--no-pager", "diff", base, "--", ...[...hostBuild.sources, ...hostBuild.headers].map(name => `misctools/portable/host/${name}`)],
+  { cwd: repo, stdout: "pipe" },
+);
 writeFileSync(join(out, "host_win.diff"), diff.stdout);
 
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");

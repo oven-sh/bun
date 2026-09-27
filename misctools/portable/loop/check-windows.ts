@@ -2,7 +2,7 @@
 // with clang for the MSVC target and the headers and libraries of Microsoft's SDK
 // (../tools/windows-sdk.ts). Everything is compiled and linked, and nothing is run.
 //
-//   bun check-windows.ts        after build.ts and test.ts. WORK as in build.ts.
+//   bun check-windows.ts [--out <dir>]       after build.ts and test.ts, --out as there
 //
 //   libuv             bun's fork at the commit bun pins, with bun's patches, compiled with the flags
 //                     of the commands for Windows (windows_build.ts)
@@ -17,21 +17,23 @@
 //   imports           every import of the image against the import libraries of the SDK and the
 //                     table of the host (../bindings/imports-libraries.ts)
 //
-// Under WORK/wincheck: the logs, host.exe, layout.headers.json, layout-compare.txt,
+// Under <out>/loop/wincheck: the logs, host.exe, layout.headers.json, layout-compare.txt,
 // imports-libraries.json and summary.json. Exit code 1 if a check fails.
 //
-// Environment: WORK, LLVM_BIN, SDK (default WORK/winsdk), LIBUV_GIT (where libuv is cloned from).
+// Environment: LLVM_BIN, SDK (default <out>/winsdk), LIBUV_GIT (where libuv is cloned from).
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { TREE, llvmBin } from "../flags.ts";
+import { places } from "./places.ts";
 import { headerCheckFlags, host, libuv, signatureCheckFlags } from "./windows_build.ts";
 
-const here = dirname(import.meta.path);
-const tree = resolve(here, "..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
-const llvm = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
-const sdk = resolve(process.env.SDK ?? join(work, "winsdk"));
-const out = join(work, "wincheck");
+const tree = TREE;
+const at = places(process.argv.slice(2));
+const work = at.loop;
+const llvm = llvmBin();
+const sdk = at.sdk;
+const out = at.checked;
 mkdirSync(out, { recursive: true });
 
 function run(cmd: string[], log?: string, cwd?: string) {
@@ -44,7 +46,7 @@ const count = (text: string, what: RegExp) => [...text.matchAll(what)].length;
 
 {
   // What is there is checked against its hash and kept.
-  const fetched = run(["bun", join(tree, "tools/windows-sdk.ts"), sdk], join(out, "sdk.log"));
+  const fetched = run([process.execPath, join(tree, "tools/windows-sdk.ts"), sdk], join(out, "sdk.log"));
   if (!fetched.ok) throw new Error(`the SDK could not be fetched: ${join(out, "sdk.log")}`);
 }
 const versions = JSON.parse(readFileSync(join(sdk, "versions.json"), "utf8"));
@@ -147,14 +149,13 @@ mkdirSync(objects, { recursive: true });
 
 // ---- the layout of the bindings ----
 {
-  const image = join(work, "out/bun_fs_slice.img");
-  const ours = run([image, "--layout"]);
+  const ours = run([at.fileSystemImage, "--layout"]);
   writeFileSync(join(out, "layout.image.json"), ours.stdout);
   const verified = run(
-["bun", join(tree, "bindings/verify.ts"), "--libuv", checkout, "--table", "--cc", clang.join(" "), "--out", join(out, "layout.headers.json")],
+    [process.execPath, join(tree, "bindings/verify.ts"), "--libuv", checkout, "--table", "--cc", clang.join(" "), "--out", join(out, "layout.headers.json")],
     join(out, "layout-verify.log"),
   );
-  const compared = verified.ok ? run(["bun", join(tree, "bindings/compare.ts"), join(out, "layout.image.json"), join(out, "layout.headers.json")]) : undefined;
+  const compared = verified.ok ? run([process.execPath, join(tree, "bindings/compare.ts"), join(out, "layout.image.json"), join(out, "layout.headers.json")]) : undefined;
   if (compared) writeFileSync(join(out, "layout-compare.txt"), compared.text);
   const last = /(\d+) facts are the same, (\d+) differ, (\d+) could not be compared/.exec(compared?.text ?? "");
   check("layout of the bindings", ours.ok && verified.ok && compared?.ok === true, {
@@ -168,14 +169,14 @@ mkdirSync(objects, { recursive: true });
 }
 
 // ---- the imports ----
-for (const [name, image] of [
-  ["imports of the loop slice", "bun_loop_slice.img"],
-  ["imports of the file system slice", "bun_fs_slice.img"],
+for (const [name, image, path] of [
+  ["imports of the loop slice", "bun_loop_slice.img", at.image],
+  ["imports of the file system slice", "bun_fs_slice.img", at.fileSystemImage],
 ]) {
-  const listed = run([join(work, "out/host-linux"), join(work, "out", image), "--imports"]);
+  const listed = run([at.host, path, "--imports"]);
   const list = join(out, `${image}.imports.jsonl`);
   writeFileSync(list, listed.stdout);
-  const checked = run(["bun", join(tree, "bindings/imports-libraries.ts"), list, "--sdk", sdk]);
+  const checked = run([process.execPath, join(tree, "bindings/imports-libraries.ts"), list, "--sdk", sdk, "--nm", `${llvm}/llvm-nm`]);
   writeFileSync(join(out, `${image}.imports-libraries.json`), checked.stdout);
   const report = checked.stdout.startsWith("{") ? JSON.parse(checked.stdout) : { imports: 0, not_found: [{ why: checked.text.slice(0, 300) }] };
   check(name, checked.ok && report.imports > 0, { imports: report.imports, by_library: report.by_library, not_found: report.not_found });

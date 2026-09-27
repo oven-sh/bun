@@ -1,9 +1,10 @@
 // uSockets of bun on libuv, its code for Windows, compiled for the portable image.
 //
-//   bun windows.ts compile [work]    writes <work>/usockets/windows-include (uv_header.ts) and compiles
-//                                    the sources to <work>/usockets/windows-plain/*.o
-//   bun windows.ts rename [work]     after flavor.ts: <work>/usockets/windows/*.o, the same objects
-//                                    with the names of the flavour
+//   bun windows.ts compile [--out <dir>]   writes usockets/windows-include (uv_header.ts) and compiles
+//                                          the sources to usockets/windows-plain/*.o
+//   bun windows.ts rename [--out <dir>]    after flavor.ts: usockets/windows/*.o, the same objects
+//                                          with the names of the flavour
+//   --out as for build.ts; the directories are the ones of the loop slice in it, <out>/loop.
 //
 // The sources are the files that bun compiles for Windows, unchanged. What makes them the code for
 // Windows is what the preprocessor sees: _WIN32 and not __linux__, and the headers of
@@ -25,15 +26,16 @@
 // (us_socket_write__windows). What the image has once keeps its name (the C library, mimalloc,
 // bun_core): flavors/windows/flavor.json lists it.
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
+import { REPOSITORY, llvmBin } from "../flags.ts";
+import { places } from "./places.ts";
 
 const here = dirname(import.meta.path);
-const repo = resolve(here, "../../..");
-const [command, workArgument] = process.argv.slice(2);
-const work = resolve(workArgument ?? process.env.WORK ?? "/tmp/portable/n2");
-const llvm = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
-const vendor = process.env.VENDOR ?? "/workspace/bun/vendor";
-const sysroot = join(work, "sysroot");
+const repo = REPOSITORY;
+const args = process.argv.slice(2);
+const { sysroot, loop: work, vendor } = places(args);
+const [command] = args;
+const llvm = llvmBin();
 const include = join(work, "usockets/windows-include");
 const plain = join(work, "usockets/windows-plain");
 const renamed = join(work, "usockets/windows");
@@ -53,10 +55,10 @@ function run(cmd: string[], log?: string) {
 }
 
 function compile() {
-  const facts = join(work, "out/layout.image.json");
+  const facts = join(work, "layout.image.json");
   if (!existsSync(facts)) throw new Error(`${facts} is not there: it is what bun_fs_slice.img --layout prints (build.ts, step base)`);
   rmSync(include, { recursive: true, force: true });
-  run(["bun", join(here, "uv_header.ts"), "--facts", facts, "--out", include]);
+  run([process.execPath, join(here, "uv_header.ts"), "--facts", facts, "--out", include]);
 
   // The callbacks of libuv in eventing/libuv.c.
   const libuv = readFileSync(join(repo, "packages/bun-usockets/src/eventing/libuv.c"), "utf8");

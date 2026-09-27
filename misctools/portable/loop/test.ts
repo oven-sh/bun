@@ -1,10 +1,12 @@
 // Runs the loop slice on this Linux machine, each way it can run here, and checks what it prints.
 //
-//   bun test.ts [--runs 3]      after build.ts. WORK as in build.ts.
+//   bun test.ts [--runs 3] [--out <dir>]     after build.ts, --out as there
 //
 //   direct        the kernel runs the image
 //   hosted        the Linux test host (../host/host_posix.c) maps the image and serves its requests.
-//                 The children of the program are the host with the image, started by the image.
+//                 The children of the program are the host with the image, started by the image: the
+//                 host is asked to pass the requests for a process on (BUN_HOST_PROCESSES=1), which
+//                 a host refuses
 //   as win32      BUN_PORTABLE_HOST_INTERFACE=win32 makes the image take its code for Windows, on Linux: its
 //                 first call of Windows or of libuv has to stop it with a message
 //   imports       the import table has the functions of libuv, of Winsock and of kernel32 that bun's
@@ -12,19 +14,20 @@
 //   entries       the functions of the image that the host OS calls check the slot of the thread
 //                 pointer before anything that needs one (../image/entries.ts), in Rust and in C
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
+import { TREE } from "../flags.ts";
+import { ARCH, places } from "./places.ts";
 
 const here = dirname(import.meta.path);
-const tree = resolve(here, "..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
-const runs = Number(process.argv.includes("--runs") ? process.argv[process.argv.indexOf("--runs") + 1] : 3);
-const image = join(work, "out/bun_loop_slice.img");
-const host = join(work, "out/host-linux");
-const directory = join(work, "run");
+const tree = TREE;
+const args = process.argv.slice(2);
+const { out, loop, image, host } = places(args);
+const runs = Number(args.includes("--runs") ? args[args.indexOf("--runs") + 1] : 3);
+const directory = join(loop, "run");
 mkdirSync(directory, { recursive: true });
 
-const compiled = Bun.spawnSync(["cc", "-O2", "-Wall", "-Wextra", "-Wno-unused-parameter", "-o", host, join(tree, "host/host_posix.c"), "-lpthread"], { stderr: "inherit" });
-if (compiled.exitCode !== 0 || !existsSync(image)) throw new Error("the host does not compile, or build.ts has not made the image");
+const built = Bun.spawnSync([process.execPath, join(tree, "build.ts"), "host", "--arch", ARCH, "--out", out], { stdout: "inherit", stderr: "inherit" });
+if (built.exitCode !== 0 || !existsSync(image)) throw new Error("the host does not build, or build.ts of the loop slice has not made the image");
 
 const expected = readFileSync(join(here, "expected/linux.jsonl"), "utf8");
 function run(command: string[], env: Record<string, string> = {}) {
@@ -50,7 +53,7 @@ const asExpected = (r: ReturnType<typeof run>) => {
 };
 
 check("direct", () => asExpected(run([image])));
-check("hosted", () => asExpected(run([host, image])));
+check("hosted", () => asExpected(run([host, image], { BUN_HOST_PROCESSES: "1" })));
 check("as win32: takes the code for Windows and stops at its first call of Windows", () => {
   const r = run([image], { BUN_PORTABLE_HOST_INTERFACE: "win32" });
   const lines = steps(r.out);
@@ -77,7 +80,7 @@ check("imports", () => {
 });
 
 {
-  const analysed = Bun.spawnSync(["bun", join(tree, "image/entries.ts"), image], { stdout: "pipe", stderr: "pipe" });
+  const analysed = Bun.spawnSync([process.execPath, join(tree, "image/entries.ts"), image], { stdout: "pipe", stderr: "pipe" });
   const report = analysed.stdout.toString().startsWith("{") ? JSON.parse(analysed.stdout.toString()) : {};
   const ok = analysed.exitCode === 0 && report.functions_that_check > 0 && report.check_written_by_the_compiler > 0;
   results.push({

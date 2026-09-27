@@ -1,13 +1,18 @@
 // Builds the loop slice of the portable image (x86_64) and the things it is linked against.
 //
-//   bun build.ts [step]...     steps, in this order: base usockets c flavors image
+//   bun build.ts [--out <dir>] [step]...
+//                              steps, in this order: base usockets c flavors image
 //                              no step: all of them. A step whose result exists is skipped, except
 //                              when it is named; "flavors" and "image" always run.
 //
-// Under WORK (default /tmp/portable/n2):
-//   musl/ sysroot/ cdeps/ codegen/     what ../slice/build.ts makes (step "base")
+//   --out   the output directory of misctools/portable/build.ts for x86_64.
+//           Default: build/portable/x86_64 in the repository.
+//
+// Under <out>:
+//   sysroot/, slice/                   what ../slice/build.ts makes (step "base")
+// Under <out>/loop:
 //   usockets/posix/*.o                 uSockets of bun on epoll, compiled for the image
-//   out/layout.image.json              the layout of bun's bindings of Windows and of libuv in the
+//   layout.image.json                  the layout of bun's bindings of Windows and of libuv in the
 //                                      image: what the file system slice prints for --layout
 //   usockets/windows-include/          what the C for Windows includes (uv_header.ts)
 //   usockets/windows-plain/*.o         uSockets of bun on libuv, its code for Windows, compiled for the
@@ -22,32 +27,32 @@
 //                                      and src/shim.c, which is this program's own
 //   flavors/<os>/<crate>               bun's crates as each OS compiles them (flavor.ts)
 //   image-loop/                        the manifest of the image, which has both flavours
-//   out/bun_loop_slice.img, .map, .json, .missing.txt
+//   bun_loop_slice.img, .map, .json, .missing.txt
 //
 // A crate of bun calls functions of crates and of C++ that this program is built without: the owners
 // of sockets and polls in bun_runtime, JavaScriptCore, uWebSockets. The linker names them. Each one
-// becomes a function that says its name and stops the program (out/bun_loop_slice.missing.txt has the
+// becomes a function that says its name and stops the program (bun_loop_slice.missing.txt has the
 // list): the program does not reach them, and would say so if it did.
 //
-// Environment: WORK, LLVM_BIN, JOBS (8), VENDOR (the vendor directory of a checkout that has fetched
+// Environment: LLVM_BIN, JOBS (8), VENDOR (the vendor directory of a checkout whose build has fetched
 // it), PORTABLE_BUILD (the build directory of a portable build of bun: the headers of WebKit that
 // bun's C++ includes, and the configuration of c-ares that bun's build wrote), and what
 // ../slice/build.ts reads.
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
+import { REPOSITORY, TREE, llvmBin, tripleOf } from "../flags.ts";
+import { ARCH, places } from "./places.ts";
 
 const here = dirname(import.meta.path);
-const tree = resolve(here, "..");
-const repo = resolve(tree, "../..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
-const llvm = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
+const tree = TREE;
+const repo = REPOSITORY;
+const args = process.argv.slice(2);
+const { out: output, sysroot, slice, fileSystemImage, loop: work, image, vendor, portableBuild } = places(args);
+const llvm = llvmBin();
 const jobs = process.env.JOBS ?? "8";
-const triple = "x86_64-unknown-linux-musl";
-const sysroot = join(work, "sysroot");
-const out = join(work, "out");
-const vendor = process.env.VENDOR ?? "/workspace/bun/vendor";
-const portableBuild = process.env.PORTABLE_BUILD ?? "/tmp/portable/bun-tree/build/release-portable";
+const triple = tripleOf(ARCH);
+const out = work;
 const seeds = "bun_threading,bun_uws_sys,bun_io,bun_spawn_sys";
 
 function run(cmd: string[], options: { cwd?: string; env?: Record<string, string>; log?: string; allowFailure?: boolean } = {}) {
@@ -118,30 +123,25 @@ function objectsIn(directory: string) {
 }
 
 const flavorArguments = (os: string) => [
-  "bun", join(here, "flavor.ts"), "--os", os, "--out", join(work, "flavors"),
+  process.execPath, join(here, "flavor.ts"), "--os", os, "--out", join(work, "flavors"), "--nm", `${llvm}/llvm-nm`,
   "--roots", join(here, "program"), "--seeds", seeds,
-  "--defined-in", [join(sysroot, "usr/lib/libc.a"), join(work, "cdeps/libcdeps.a"), join(work, "cdeps/libslice_shim.a"), join(work, "loop-c/libloop_c.a")].join(","),
+  "--defined-in", [join(sysroot, "usr/lib/libc.a"), join(slice, "cdeps/libcdeps.a"), join(slice, "cdeps/libslice_shim.a"), join(work, "loop-c/libloop_c.a")].join(","),
   ...(os === "windows" && objectsIn(join(work, "usockets/windows-plain")).length ? ["--flavoured-c", objectsIn(join(work, "usockets/windows-plain")).join(",")] : []),
 ];
 
 const steps: Record<string, { done: () => boolean; make: () => void }> = {
   base: {
     done: () =>
-      existsSync(join(sysroot, ".patched")) &&
-      existsSync(join(work, "cdeps/libcdeps.a")) &&
-      existsSync(join(work, "codegen/build_options.rs")) &&
+      existsSync(join(sysroot, "portable.cfg")) &&
+      existsSync(join(slice, "cdeps/libcdeps.a")) &&
+      existsSync(join(slice, "codegen/build_options.rs")) &&
+      existsSync(fileSystemImage) &&
       existsSync(join(out, "layout.image.json")),
     make() {
       mkdirSync(join(work, "logs"), { recursive: true });
-      const missing = ["musl", "sysroot", "cdeps", "codegen"].filter(
-        step =>
-          !existsSync(
-            { musl: join(work, "musl/sysroot/lib/libc.a"), sysroot: join(sysroot, ".patched"), cdeps: join(work, "cdeps/libcdeps.a"), codegen: join(work, "codegen/build_options.rs") }[step]!,
-          ),
-      );
-      if (missing.length) run(["bun", join(tree, "slice/build.ts"), ...missing], { env: { WORK: work } });
-      if (!existsSync(join(out, "bun_fs_slice.img"))) run(["bun", join(tree, "slice/build.ts"), "image"], { env: { WORK: work } });
-      const layout = Bun.spawnSync([join(out, "bun_fs_slice.img"), "--layout"], { stdout: "pipe" });
+      // The file system slice knows which of its steps are done.
+      run([process.execPath, join(tree, "slice/build.ts"), "--out", output]);
+      const layout = Bun.spawnSync([fileSystemImage, "--layout"], { stdout: "pipe" });
       if (layout.exitCode !== 0) throw new Error("bun_fs_slice.img --layout does not run");
       writeFileSync(join(out, "layout.image.json"), layout.stdout);
     },
@@ -155,7 +155,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       mkdirSync(directory, { recursive: true });
       for (const name of [...usocketsShared, "eventing/epoll_kqueue"])
         run([`${llvm}/clang`, ...cFlags, "-c", join(repo, "packages/bun-usockets/src", `${name}.c`), "-o", join(directory, `${name.split("/").pop()}.o`)]);
-      run(["bun", join(here, "windows.ts"), "compile", work]);
+      run([process.execPath, join(here, "windows.ts"), "compile", "--out", output]);
     },
   },
 
@@ -183,7 +183,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
     done: () => false,
     make() {
       for (const os of ["posix", "windows"]) run(flavorArguments(os));
-      run(["bun", join(here, "windows.ts"), "rename", work]);
+      run([process.execPath, join(here, "windows.ts"), "rename", "--out", output]);
     },
   },
 
@@ -271,25 +271,25 @@ panic = "abort"
           "-Clink-arg=-Wl,--start-group",
           `-Clink-arg=${posix}`,
           ...windows.map(path => `-Clink-arg=${path}`),
-          `-Clink-arg=${join(work, "cdeps/libslice_shim.a")}`,
+          `-Clink-arg=${join(slice, "cdeps/libslice_shim.a")}`,
           `-Clink-arg=${join(work, "loop-c/libloop_c.a")}`,
-          `-Clink-arg=${join(work, "cdeps/libcdeps.a")}`,
+          `-Clink-arg=${join(slice, "cdeps/libcdeps.a")}`,
           `-Clink-arg=${missingArchive}`,
           "-Clink-arg=-Wl,--end-group",
           "-Clink-arg=-lc++", "-Clink-arg=-lclang_rt.builtins",
         ];
         // cargo does not know the archives of the link: what it made of the program before goes, so
         // that it links again.
-        const made = join(work, "target/image-loop", triple, "release");
+        const made = join(work, "target", triple, "release");
         rmSync(join(made, "bun-loop-slice"), { force: true });
         rmSync(join(made, "build/bun-loop-slice"), { recursive: true, force: true });
         const log = join(work, "logs", `loop-image-link-${missing.length}.log`);
         const ok = run(["cargo", "build", "--release", "--target", triple, "-Zbuild-std=std,core,alloc,panic_abort", "-Zbuild-std-features=panic-unwind,default"], {
           cwd: directory,
           env: {
-            CARGO_TARGET_DIR: join(work, "target/image-loop"),
+            CARGO_TARGET_DIR: join(work, "target"),
             CARGO_BUILD_JOBS: jobs,
-            BUN_CODEGEN_DIR: join(work, "codegen"),
+            BUN_CODEGEN_DIR: join(slice, "codegen"),
             CC: `${llvm}/clang`,
             CXX: `${llvm}/clang++`,
             AR: `${llvm}/llvm-ar`,
@@ -321,8 +321,7 @@ panic = "abort"
       }
       writeFileSync(known, missing.join("\n") + "\n");
 
-      const image = join(out, "bun_loop_slice.img");
-      copyFileSync(join(work, "target/image-loop", triple, "release/bun-loop-slice"), image);
+      copyFileSync(join(work, "target", triple, "release/bun-loop-slice"), image);
       chmodSync(image, 0o755);
       const bytes = readFileSync(image);
       const facts = {
@@ -338,7 +337,7 @@ panic = "abort"
   },
 };
 
-const named = process.argv.slice(2);
+const named = args;
 for (const name of named) if (!(name in steps)) throw new Error(`unknown step ${name}: ${Object.keys(steps).join(" ")}`);
 for (const [name, step] of Object.entries(steps)) {
   if (named.length ? !named.includes(name) : step.done()) continue;

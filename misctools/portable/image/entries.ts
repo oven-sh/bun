@@ -16,11 +16,12 @@
 //
 // Exit code 1 if a function does something of the above before its check.
 import { resolve } from "node:path";
+import { llvmBin } from "../flags.ts";
 
 const args = process.argv.slice(2);
 const image = args.find(a => !a.startsWith("--"));
 if (!image) throw new Error("usage: bun entries.ts <image> [--list]");
-const llvm = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
+const llvm = llvmBin();
 
 function output(cmd: string[]) {
   const result = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe", maxBuffer: 1 << 30 });

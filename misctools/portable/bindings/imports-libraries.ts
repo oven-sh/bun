@@ -19,6 +19,7 @@
 // Prints what was not found, and where else the SDK has it. Exit code 1 if anything was not found.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { llvmBin } from "../flags.ts";
 
 const here = dirname(import.meta.path);
 const args = process.argv.slice(2);
@@ -28,11 +29,12 @@ const option = (name: string, fallback?: string) => {
 };
 const list = args.find((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1].startsWith("--")));
 const sdk = option("--sdk");
-if (!list || !sdk) throw new Error("usage: bun imports-libraries.ts <imports.jsonl> --sdk <directory> [--host-table host_win_uv.c]");
+if (!list || !sdk)
+  throw new Error("usage: bun imports-libraries.ts <imports.jsonl> --sdk <directory> [--host-table host_win_uv.c] [--nm <llvm-nm>]");
 const libraries = join(resolve(sdk), "lib-x64");
 const hostTable = readFileSync(option("--host-table", join(here, "../host/host_win_uv.c"))!, "utf8");
 const hostSource = readFileSync(join(here, "../host/host_win.c"), "utf8");
-const nm = process.env.LLVM_NM ?? "/usr/lib/llvm-current/bin/llvm-nm";
+const nm = option("--nm") ?? join(llvmBin(), "llvm-nm");
 
 const inTable = new Set([...hostTable.matchAll(/^\s*UV\(([A-Za-z_0-9]+)\)/gm)].map(m => m[1]));
 const always = [...(/always\[\] = \{([^}]*)\}/.exec(hostSource)?.[1] ?? "").matchAll(/L"([^"]+)"/g)].map(m => m[1]);

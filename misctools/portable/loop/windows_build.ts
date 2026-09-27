@@ -36,6 +36,8 @@ export const libuv = {
 /** The host: host_win.c with the table of libuv (host_win_uv.c) and libuv's objects. */
 export const host = {
   sources: ["host_win.c", "host_win_uv.c"],
+  /** What host_win.c includes, next to it. */
+  headers: ["linux_abi.h", "memory.h"],
   // One C runtime for the host, libuv and the image: the DLL that the import "ucrtbase" of the image names.
   flags: ["-O2", "-fms-runtime-lib=dll", "-DBUN_HOST_LIBUV"],
   libraries: ["synchronization", "advapi32", "psapi", "user32", "iphlpapi", "userenv", "ws2_32", "dbghelp", "ole32", "shell32"],

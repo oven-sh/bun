@@ -30,6 +30,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { Edits, tokens, type Token } from "./rust_tokens.ts";
+import { llvmBin } from "../flags.ts";
 
 type Os = "windows" | "posix";
 
@@ -668,7 +669,7 @@ if (import.meta.main) {
   const out = resolve(option("out") ?? "");
   if (!option("out")) throw new Error("--out <dir>");
   const arch = option("arch", "x86_64")!;
-  const nm = option("nm", "/usr/lib/llvm-current/bin/llvm-nm")!;
+  const nm = option("nm") ?? join(llvmBin(), "llvm-nm");
   const here = dirname(import.meta.path);
   const repo = resolve(here, "../../..");
   const suffix = `__${os}`;

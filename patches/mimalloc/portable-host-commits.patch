@@ -1,0 +1,77 @@
+--- a/src/prim/unix/prim.c
++++ b/src/prim/unix/prim.c
+@@ -123,11 +123,44 @@ static inline int mi_prim_access(const char *fpath, int mode) {
+ 
+ 
+ 
++//---------------------------------------------
++// The host of bun's portable image
++//---------------------------------------------
++
++// The image is a Linux program that a host runs on Windows and on macOS. The host says how its memory
++// behaves with an entry of the auxiliary vector (`misctools/portable/host/linux_abi.h` in bun's
++// repository). The kernel of Linux has no such entry: the value is 0.
++#define MI_AT_BUN_HOST_MEMORY        0x62756e11
++// Memory is usable after it was committed, and what is committed is accounted, as on Windows. The host
++// reserves for an `mmap` with `PROT_NONE`, commits for the `mprotect` that makes the pages accessible,
++// and decommits for `madvise(MADV_DONTNEED)` on pages that are `PROT_NONE`. What is mapped with
++// `MAP_NORESERVE` and accessible is committed when code of the process faults on a page. A system call
++// of the host's OS does not do that: it fails on such a page (`ReadFile`: ERROR_NOACCESS). So with this
++// bit the primitives say what `prim/windows/prim.c` says, in the calls of Linux.
++#define MI_BUN_HOST_MEMORY_COMMITS   1
++
++#if defined(__linux__)
++#include <sys/auxv.h>   // getauxval
++
++static bool unix_host_commits;  // = false, set by `_mi_prim_mem_init`
++
++static void unix_detect_host(void) {
++  const int saved = errno;      // `getauxval` sets `errno` for an entry that is not there
++  unix_host_commits = ((getauxval(MI_AT_BUN_HOST_MEMORY) & MI_BUN_HOST_MEMORY_COMMITS) != 0);
++  errno = saved;
++}
++#else
++#define unix_host_commits  false
++static void unix_detect_host(void) { }
++#endif
++
++
+ //---------------------------------------------
+ // init
+ //---------------------------------------------
+ 
+ static bool unix_detect_overcommit(void) {
++  if (unix_host_commits) return false;
+   bool os_overcommit = true;
+   #if defined(__linux__)
+     int fd = mi_prim_open("/proc/sys/vm/overcommit_memory", O_RDONLY);
+@@ -263,6 +296,7 @@ static size_t unix_detect_virtual_address_bits(void) {
+ 
+ void _mi_prim_mem_init( mi_os_mem_config_t* config )
+ {
++  unix_detect_host();
+   long psize = sysconf(_SC_PAGESIZE);
+   if (psize > 0 && (unsigned long)psize < SIZE_MAX) {
+     config->page_size = (size_t)psize;
+@@ -568,6 +602,13 @@ int _mi_prim_reuse(void* start, size_t size) {
+ 
+ int _mi_prim_decommit(void* start, size_t size, bool* needs_recommit) {
+   int err = 0;
++  if (unix_host_commits) {
++    // as `VirtualFree(MEM_DECOMMIT)`: not accessible and not accounted until `_mi_prim_commit`.
++    // `PROT_NONE` comes first: what is accessible, the host commits again as soon as it is discarded.
++    *needs_recommit = true;
++    if (mprotect(start, size, PROT_NONE) != 0) return errno;
++    return unix_madvise(start, size, MADV_DONTNEED);
++  }
+   #if 1
+     #if defined(__APPLE__) && defined(MADV_FREE_REUSABLE)
+       // decommit on macOS: use MADV_FREE_REUSABLE as it does immediate rss accounting (issue #1097)
+@@ -621,6 +662,7 @@ static bool unix_madv_zero_supported(void) {
+ 
+ int _mi_prim_decommit_zero(void* start, size_t size, bool* needs_recommit, bool* is_zero) {
+   *is_zero = false;
++  if (unix_host_commits) return _mi_prim_decommit(start, size, needs_recommit);
+   #if !MI_DEBUG && MI_SECURE<=2
+   #if defined(__linux__)
+     // MADV_DONTNEED on a private anonymous mapping is documented to zero-fill on refault.

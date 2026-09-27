@@ -21,8 +21,16 @@ const MIMALLOC_COMMIT = "eab09015a5850ae18fc43ccfaa5bbe8272992314";
  * theap-null-in-new: in the pthread-key TLS model (below) the default heap of a thread that has not
  * allocated yet is NULL, and mi_new/mi_new_n/mi_mallocn hand it to mi_theap_malloc, which does not accept
  * NULL.
+ *
+ * host-commits: the host that runs the image on Windows commits memory, and says so in the auxiliary
+ * vector. There mimalloc reserves with PROT_NONE, commits with mprotect and decommits, as its Windows
+ * primitives do: a page of a lazily committed arena is not memory for a system call, and bun's code for
+ * Windows hands its buffers to Windows itself.
  */
-const PORTABLE_PATCHES = ["patches/mimalloc/portable-theap-null-in-new.patch"];
+const PORTABLE_PATCHES = [
+  "patches/mimalloc/portable-theap-null-in-new.patch",
+  "patches/mimalloc/portable-host-commits.patch",
+];
 
 export const mimalloc: Dependency = {
   name: "mimalloc",

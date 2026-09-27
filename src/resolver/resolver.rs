@@ -573,11 +573,8 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// Set for one resolution of a bare specifier from a module embedded in a
-    /// compiled binary (`bun build --compile`). The `node_modules` walk in
-    /// `load_node_modules` starts at this directory (the executable's
-    /// directory) and, when it reaches the root, continues from the source
-    /// directory (the current working directory) before it tries `NODE_PATH`.
+    /// Compiled binary, bare specifier: `load_node_modules` walks
+    /// `node_modules` from here first, then from the source directory.
     pub(crate) standalone_exe_dir: Option<&'static [u8]>,
 }
 
@@ -945,8 +942,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Directory of the running executable, the same path `process.execPath`
-    /// reports.
+    /// `dirname(process.execPath)`.
     fn exe_dir() -> Option<&'static [u8]> {
         let exe = bun_core::self_exe_path().ok()?;
         bun_paths::dirname(exe.as_bytes())
@@ -1318,14 +1314,9 @@ impl<'a> Resolver<'a> {
             Ok(None) => {}
         }
 
-        // When using `bun build --compile`, module resolution is never
-        // relative to our special /$bunfs/ directory.
-        //
-        // A specifier that exists in the standalone module graph resolves to the
-        // embedded file. Otherwise it resolves from the current working
-        // directory, and a bare package specifier also searches `node_modules`
-        // next to the executable before the `node_modules` walk from the
-        // current working directory.
+        // `bun build --compile`: a specifier that is not in the standalone
+        // module graph resolves from the cwd, never from `/$bunfs/`. A bare
+        // specifier also checks `node_modules` next to the executable first.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let mut standalone_exe_dir: Option<&'static [u8]> = None;
         let source_dir_normalized: &[u8] = 'brk: {
@@ -2618,8 +2609,6 @@ impl<'a> Resolver<'a> {
         let mut any_node_modules_folder = false;
         let use_node_module_resolver = global_cache != GlobalCache::force;
 
-        // In a compiled binary the walk starts next to the executable. When it
-        // reaches the root it continues from the source directory.
         let mut exe_dir_info: Option<DirInfoRef> = None;
         if !is_self_reference
             && let Some(exe_dir) = self.standalone_exe_dir.take()
@@ -2628,8 +2617,7 @@ impl<'a> Resolver<'a> {
             exe_dir_info = Some(info);
             dir_info = info;
         }
-        // Set once the walk continues from the source directory: the chain
-        // from here up to the root was already probed.
+        // The chain from here to the root was already walked.
         let mut probed_chain_root: Option<DirInfoRef> = None;
 
         // Then check for the package in any enclosing "node_modules" directories

@@ -576,7 +576,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Windows: rustc's `*-msvc` linker flavor passes `link.exe`-style args directly (`/NOLOGO`, `/OUT:`, …).
   // `clang-cl` is a *compiler driver*, not a linker — it reads `/N…` args as input filenames — so use
   // `lld-link` (matches what `dep_cargo` sets for vendored crates, source.ts), which speaks that dialect.
-  const linker = cfg.windows ? (cfg.msvcLinker ?? cfg.ld) : cfg.cxx;
+  const linker = cfg.windows ? cfg.ld : cfg.cxx;
 
   // What configures cargo itself, on top of the children's environment.
   const env: Record<string, string> = {
@@ -804,11 +804,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
  * `-C linker` for host units (build scripts, proc-macros). Under cargo the `[target.<triple>]` linker setting
  * applies to host units too whenever the host *is* the target triple (the common, non-cross case), so those
  * builds keep one linker for everything; when cross-compiling, host units get the discovered host C++ driver, or
- * on a Windows host the MSVC-style linker. (The generated `.cargo/config.toml`, cargo-config.ts, names the same
- * for the gnu and darwin hosts that build bun; it has no entry for a Windows host.)
+ * on a Windows host lld-link, where `cfg.ld` is that. (The generated `.cargo/config.toml`, cargo-config.ts, names
+ * the same.)
  */
 function hostLinker(cfg: Config, targetTriple: string, targetLinker: string): string | undefined {
   if (cfg.rustHostTriple === targetTriple) return targetLinker;
-  if (cfg.host.os === "windows") return cfg.msvcLinker;
+  if (cfg.host.os === "windows") return cfg.windows ? cfg.ld : undefined;
   return cfg.hostCxx;
 }

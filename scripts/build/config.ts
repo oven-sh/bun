@@ -278,8 +278,6 @@ export interface Config {
   rustSysroot: string | undefined;
   /** The host triple rustc reports (`x86_64-unknown-linux-gnu`, …): the platform of build scripts and proc-macros. */
   rustHostTriple: string | undefined;
-  /** Windows targets: the host LLVM's lld-link, which is what rustc links with. */
-  msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
@@ -1351,7 +1349,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : undefined,
     rustSysroot: toolchain.rustSysroot,
     rustHostTriple: toolchain.rustHostTriple,
-    msvcLinker: windows ? toolchain.ld : undefined,
     rc: toolchain.rc,
     mt: toolchain.mt,
     nasm: toolchain.nasm,

@@ -82,10 +82,10 @@ export function generateCargoConfig(cfg: Config): string {
 
   for (const triple of allRustTargets) {
     if (tripleOs(triple) === "windows") {
-      if (cfg.host.os !== "windows" || cfg.winsysroot === undefined || cfg.msvcLinker === undefined) continue;
+      if (cfg.host.os !== "windows" || cfg.winsysroot === undefined) continue;
       lines.push("");
       lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
-      lines.push(`linker = ${JSON.stringify(cfg.msvcLinker)}`);
+      lines.push(`linker = ${JSON.stringify(cfg.ld)}`);
       lines.push(`rustflags = ["-C", ${JSON.stringify(`link-arg=/winsysroot:${cfg.winsysroot}`)}]`);
       continue;
     }

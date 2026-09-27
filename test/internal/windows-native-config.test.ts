@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 
 import { locations } from "../../scripts/build/ci-images/spec.ts";
 import { resolveConfig, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 import { windowsSysrootCachePath } from "../../scripts/build/winsysroot.ts";
 
 /** A fully-populated fake toolchain. */
@@ -96,8 +97,8 @@ describe.skipIf(!isWindows)("a build for Windows on Windows", () => {
   });
 
   test("has rustc link with lld-link either way: link.exe is Visual Studio's", () => {
-    expect(native().msvcLinker).toBe(toolchain.ld);
-    expect(native({ webkit: "local" }).msvcLinker).toBe(toolchain.ld);
+    expect(cargoBuildInvocation(native()).linker).toBe(toolchain.ld);
+    expect(cargoBuildInvocation(native({ webkit: "local" })).linker).toBe(toolchain.ld);
   });
 });
 

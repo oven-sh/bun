@@ -1438,12 +1438,12 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   // Windows: pin the linker. Without this rustc looks for MSVC's link.exe,
   // and if Git Bash is in PATH finds its /usr/bin/link (GNU hard-link tool)
   // instead, and cargo's link step fails with a baffling error.
-  if (cfg.windows && cfg.msvcLinker !== undefined) {
+  if (cfg.windows) {
     // Triple-specific linker env var. Cargo reads CARGO_TARGET_<TRIPLE>_LINKER
     // where <TRIPLE> is uppercased with hyphens→underscores.
     const triple = spec.rustTarget ?? (cfg.arm64 ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc");
     const envKey = `CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.msvcLinker;
+    env[envKey] = cfg.ld;
   }
 
   // Cross-compile (Android): cargo's default `cc` linker can't handle the

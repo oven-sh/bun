@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -255,6 +256,230 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.append("expires")).toThrow(TypeError);
+    });
+
+    // A name that repeats has one value: the values in the order of the calls,
+    // joined by ", ", or by "; " for Cookie. These cases pin that result for
+    // every way to reach the join, at a combined length under 4 KB and past it.
+    describe("with a name that repeats", () => {
+      const COUNT = 100;
+      describe.each([
+        ["under 4 KB", "v"],
+        ["past 4 KB", Buffer.alloc(100, "v").toString()],
+      ])("combined value %s", (_, unit) => {
+        const valueAt = (i: number) => `${unit}${i}`;
+        const joined = (count: number, delimiter = ", ") =>
+          Array.from({ length: count }, (_, i) => valueAt(i)).join(delimiter);
+        const filled = (name = "x-repeated") => {
+          const headers = new Headers();
+          for (let i = 0; i < COUNT; i++) headers.append(name, valueAt(i));
+          return headers;
+        };
+
+        describe.each(["x-repeated", "accept", "cookie"])("%s", name => {
+          const delimiter = name === "cookie" ? "; " : ", ";
+
+          test("appends join in order", () => {
+            expect(filled(name).get(name)).toBe(joined(COUNT, delimiter));
+          });
+
+          test("reading between appends does not change the result", () => {
+            const headers = new Headers();
+            const snapshots: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              headers.append(name, valueAt(i));
+              // Each read hands out the combined value so far. A later append
+              // must not edit a string that was already handed out.
+              snapshots.push(headers.get(name)!);
+            }
+            expect(snapshots).toEqual(Array.from({ length: COUNT }, (_, i) => joined(i + 1, delimiter)));
+          });
+        });
+
+        test("set() after appends replaces the combined value", () => {
+          const headers = filled();
+          headers.set("x-repeated", "only");
+          expect(headers.get("x-repeated")).toBe("only");
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe("only, next");
+        });
+
+        test("delete() after appends drops the header", () => {
+          const headers = filled();
+          headers.delete("x-repeated");
+          expect(headers.has("x-repeated")).toBe(false);
+          expect(headers.get("x-repeated")).toBeNull();
+        });
+
+        test("delete() then append() starts a new value", () => {
+          const headers = filled();
+          const before = headers.get("x-repeated");
+          headers.delete("x-repeated");
+          headers.append("x-repeated", "again");
+          headers.append("x-repeated", "more");
+          expect(headers.get("x-repeated")).toBe("again, more");
+          expect(before).toBe(joined(COUNT));
+        });
+
+        test("set() with the string that get() returned keeps the value", () => {
+          const headers = filled();
+          headers.set("x-repeated", headers.get("x-repeated")!);
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe(`${joined(COUNT)}, next`);
+        });
+
+        test("two names that hold one string grow apart", () => {
+          const headers = filled();
+          headers.set("x-other", headers.get("x-repeated")!);
+          headers.append("x-other", "b");
+          headers.append("x-repeated", "a");
+          headers.append("x-other", "d");
+          headers.append("x-repeated", "c");
+          expect(headers.toJSON()).toEqual({
+            "x-repeated": `${joined(COUNT)}, a, c`,
+            "x-other": `${joined(COUNT)}, b, d`,
+          });
+        });
+
+        test("several names grow in turn", () => {
+          const headers = new Headers();
+          for (let i = 0; i < COUNT; i++) {
+            for (const name of ["x-first", "accept", "x-second", "cookie"]) headers.append(name, valueAt(i));
+          }
+          expect(headers.toJSON()).toEqual({
+            "x-first": joined(COUNT),
+            "accept": joined(COUNT),
+            "x-second": joined(COUNT),
+            "cookie": joined(COUNT, "; "),
+          });
+        });
+
+        // A header that is gone, or that set() replaced, leaves nothing in the
+        // size that the object reports.
+        test("delete() and set() release what the value held", () => {
+          const size = (headers: Headers) => estimateShallowMemoryUsageOf(headers);
+          const deleted = filled();
+          expect(size(deleted)).toBeGreaterThan(size(new Headers()) + joined(COUNT).length);
+          deleted.delete("x-repeated");
+          expect(size(deleted)).toBe(size(new Headers()));
+
+          const replaced = filled();
+          replaced.set("x-repeated", "only");
+          expect(size(replaced)).toBe(size(new Headers([["x-repeated", "only"]])));
+        });
+
+        test("a copy does not change when the original keeps appending", () => {
+          const original = filled();
+          const copy = new Headers(original);
+          original.append("x-repeated", "c");
+          expect(copy.get("x-repeated")).toBe(joined(COUNT));
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+          copy.append("x-repeated", "d");
+          expect(copy.get("x-repeated")).toBe(`${joined(COUNT)}, d`);
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+        });
+
+        test("iteration and toJSON report the combined value", () => {
+          const headers = filled();
+          expect([...headers]).toEqual([["x-repeated", joined(COUNT)]]);
+          expect(headers.toJSON()).toEqual({ "x-repeated": joined(COUNT) });
+        });
+
+        // A Latin-1 value can arrive in a 16-bit string. A UTF-16 round trip
+        // forces that storage, and the first assertion proves that it did.
+        test("values in 16-bit strings combine with values in 8-bit strings", () => {
+          const wide = (s: string) => Buffer.from(s, "utf16le").toString("utf16le");
+          expect(jscDescribe(wide(`${unit}caf\u00e9`))).toContain("8Bit:(0)");
+          for (const wideFirst of [false, true]) {
+            const headers = new Headers();
+            const values: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              const value = `${unit}caf\u00e9${i}`;
+              values.push(value);
+              headers.append("x-repeated", (i % 2 === 0) === wideFirst ? wide(value) : value);
+            }
+            expect(headers.get("x-repeated")).toBe(values.join(", "));
+          }
+        });
+      });
+
+      // Each program mixes the operations above at random, on up to three
+      // Headers objects that are copies of each other, and a plain Map of
+      // name to joined value says what every read must return.
+      test("seeded random programs give what a model gives", () => {
+        const names = ["x-a", "x-b", "accept", "cookie"];
+        const wide = (s: string) => (s.length > 1 ? Buffer.from(s, "utf16le").toString("utf16le") : s);
+        const join = (model: Map<string, string>, name: string, value: string) =>
+          model.set(name, model.has(name) ? model.get(name) + (name === "cookie" ? "; " : ", ") + value : value);
+
+        for (let program = 0; program < 8; program++) {
+          let state = program * 7919 + 17;
+          const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+          const pick = <T>(list: T[]) => list[(random() * list.length) | 0];
+          const value = (i: number) => {
+            const text = `v${i}-${Buffer.alloc(pick([1, 31, 300, 2000]), "a").toString()}`;
+            return random() < 0.2 ? wide(text) : text;
+          };
+
+          const live = [{ headers: new Headers(), model: new Map<string, string>() }];
+          const held: [string, string][] = [];
+          for (let i = 0; i < 100; i++) {
+            const { headers, model } = pick(live);
+            const name = pick(names);
+            const operation = random();
+            if (operation < 0.55) {
+              const appended = value(i);
+              headers.append(name, appended);
+              join(model, name, appended);
+            } else if (operation < 0.65) {
+              const replaced = value(i);
+              headers.set(name, replaced);
+              model.set(name, replaced);
+            } else if (operation < 0.75) {
+              const other = pick(names);
+              const shared = headers.get(other);
+              if (shared !== null) {
+                headers.set(name, shared);
+                model.set(name, model.get(other)!);
+              }
+            } else if (operation < 0.83) {
+              headers.delete(name);
+              model.delete(name);
+            } else if (operation < 0.93) {
+              const read = headers.get(name);
+              if (read !== null) held.push([read, model.get(name)!]);
+            } else {
+              live[live.length < 3 ? live.length : (random() * 3) | 0] = {
+                headers: new Headers(headers),
+                model: new Map(model),
+              };
+            }
+          }
+
+          for (const { headers, model } of live) {
+            expect(headers.toJSON()).toEqual(Object.fromEntries(model));
+            for (const name of names) expect(headers.get(name)).toBe(model.get(name) ?? null);
+          }
+          for (const [read, expected] of held) expect(read).toBe(expected);
+        }
+      });
+
+      // The order in which the names get their values does not change what
+      // each name holds, and it does not change the size that the object reports.
+      test("names that grow in turn end as names that grow one by one", () => {
+        const unit = Buffer.alloc(100, "v").toString();
+        const names = ["x-first", "accept", "x-second"];
+        const inTurn = new Headers();
+        for (let i = 0; i < 100; i++) {
+          for (const name of names) inTurn.append(name, unit);
+        }
+        const oneByOne = new Headers();
+        for (const name of names) {
+          for (let i = 0; i < 100; i++) oneByOne.append(name, unit);
+        }
+        expect(inTurn.toJSON()).toEqual(oneByOne.toJSON());
+        expect(estimateShallowMemoryUsageOf(inTurn)).toBe(estimateShallowMemoryUsageOf(oneByOne));
+      });
     });
   });
   describe("set()", () => {

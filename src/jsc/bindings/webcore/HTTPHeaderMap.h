@@ -50,13 +50,6 @@ public:
         bool operator==(const CommonHeader& other) const { return key == other.key && value == other.value; }
     };
 
-    struct HeaderIndex {
-        size_t index;
-        bool isCommon;
-
-        bool isValid() const { return index != notFound; }
-    };
-
     struct UncommonHeader {
         String key;
         String value;
@@ -171,11 +164,6 @@ public:
     WEBCORE_EXPORT bool remove(const StringView);
     WEBCORE_EXPORT bool removeUncommonHeader(const StringView);
 
-    WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
-    WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String& value);
-    HeaderIndex indexOf(const String& name) const;
-    HeaderIndex indexOf(HTTPHeaderName name) const;
-
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
     void set(HTTPHeaderName, const String& value);
     void add(HTTPHeaderName, const String& value);
@@ -235,6 +223,9 @@ public:
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
+
+    // Every add function joins a repeated name here.
+    static void combine(String& stored, ASCIILiteral delimiter, const String& value);
 
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;

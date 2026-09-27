@@ -168,9 +168,7 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 pub(crate) struct ParserSnapshot<'a> {
     lexer: js_lexer::LexerSnapshot<'a>,
     comments_to_preserve_before: Vec<js_ast::G::Comment>,
-    log_msgs_len: usize,
-    log_errors: u32,
-    log_warnings: u32,
+    log: bun_ast::LogMark,
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
@@ -686,8 +684,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) const_calls_enabled: bool,
     /// Visiting the argument of `import()`, `require()` or `require.resolve()`.
     pub(crate) in_import_specifier: bool,
-    /// Counts the `--define` values, `feature()` calls and folded calls that the visit pass substituted.
-    pub(crate) build_time_values: u32,
+    /// Visiting the tag of a template. A value in place of a call there can change the `this` of the tag.
+    pub(crate) in_template_tag: bool,
     /// The parse pass looks for imports that a branch condition calls.
     pub(crate) const_call_prefilter: bool,
 
@@ -8326,13 +8324,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);
-        let log = self.log();
+        let log = self.log().mark();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
             comments_to_preserve_before,
-            log_msgs_len: log.msgs.len(),
-            log_errors: log.errors,
-            log_warnings: log.warnings,
+            log,
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
@@ -8362,10 +8358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
 
-        let log = self.log();
-        log.msgs.truncate(snapshot.log_msgs_len);
-        log.errors = snapshot.log_errors;
-        log.warnings = snapshot.log_warnings;
+        self.log().rewind(snapshot.log);
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
@@ -9414,7 +9407,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
-        let const_call_values = self.const_call_exports();
 
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
@@ -9515,7 +9507,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,
-            const_call_values,
             import_meta_ref: self.import_meta_ref,
 
             symbols,
@@ -9730,9 +9721,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
-        // Almost no file in a package gets a value, so only first-party files stop for one.
-        let const_call_prefilter = crate::visit::const_call::const_calls_allowed(&opts)
-            && opts.const_call_seeds.is_none()
+        // Almost no file in a package calls a constant import, so only first-party files ask.
+        let const_call_prefilter = opts.const_call_lookup.is_some()
+            && crate::visit::const_call::const_calls_allowed(&opts)
             && !source.path.is_node_module();
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
@@ -9932,7 +9923,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             const_calls: None,
             const_calls_enabled: false,
             in_import_specifier: false,
-            build_time_values: 0,
+            in_template_tag: false,
             const_call_prefilter,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

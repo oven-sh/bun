@@ -448,10 +448,10 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "50b3e5192dd86a205c73583d585884c1b414467b14db54d03c77d3026bf236ff",
+          "js": "8a56eea71d6803315b23acefedfb4c06e20e89459a45dea2b321068075c1e35c",
           "jsc": {
-            "bytes": 1730832,
-            "sha256": "5e132599b3db8e752f8fa5aca7145b52b2710e4ea29c292814bd9401d93803f1",
+            "bytes": 1730600,
+            "sha256": "e4e986164730b1389a9aa4fd86e38a7c82d6581546b66cb707b71ae9c524c588",
           },
         },
         "bun build --bytecode --minify features.js": {

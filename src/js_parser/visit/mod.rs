@@ -298,7 +298,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
-                let prev_build_time_values = self.build_time_values;
                 let orig_dead = self.is_control_flow_dead;
                 // `replacement` is a `BackRef` so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
@@ -598,7 +597,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else {
                             false
                         },
-                        reads_build_time_value: prev_build_time_values != self.build_time_values,
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
@@ -623,7 +621,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     was_anonymous_named_expr: false,
                                     could_be_const_value: was_const && !is_after,
                                     could_be_macro: false,
-                                    reads_build_time_value: false,
                                 },
                             );
                         } else {
@@ -730,7 +727,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             was_anonymous_named_expr,
             could_be_const_value,
             could_be_macro,
-            reads_build_time_value,
         } = opts;
         // Optionally preserve the name
         match decl.binding.data {
@@ -741,12 +737,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
                         } else if could_be_const_value && self.const_calls_enabled {
-                            self.note_const_call_decl(
-                                id_ref,
-                                decl.binding.loc,
-                                &val,
-                                reads_build_time_value,
-                            );
+                            self.note_const_call_decl(id_ref, decl.binding.loc, &val);
                         }
                     }
                 } else {

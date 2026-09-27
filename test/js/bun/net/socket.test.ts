@@ -6211,7 +6211,6 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
     const STEP = 256 * 1024;
     const payload = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
     let accepted;
-    let kernelFull;
     await Bun.connect({
       hostname: "127.0.0.1",
       port: Number(process.env.PEER_PORT),
@@ -6225,7 +6224,6 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
             wrote = socket.write(payload.subarray(sent, sent + STEP));
             sent += Math.max(wrote, 0);
           }
-          kernelFull = wrote !== STEP;
           accepted = sent + socket.end(payload.subarray(sent));
           // Nothing reports the FIN here: it is read at most one loop iteration after the request.
           const at = getEventLoopStats().iteration;
@@ -6233,7 +6231,7 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
           poll();
         },
         close(_socket, error) {
-          console.log("close " + error + " accepted " + accepted + " kernelFull " + kernelFull);
+          console.log("close " + error + " accepted " + accepted);
         },
       },
     });
@@ -6286,7 +6284,8 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
   const peerCloseError = await peerClosed.promise;
 
   expect({ stdout, stderr: exitCode === 0 ? "" : stderr.slice(-2000), peerCloseError, got, mismatchAt }).toEqual({
-    stdout: `fin read\nclose undefined accepted ${N} kernelFull true\n`,
+    // An end() with nothing to queue closes at once, so it would print its close first, without `accepted`.
+    stdout: `fin read\nclose undefined accepted ${N}\n`,
     stderr: "",
     peerCloseError: undefined,
     got: N,

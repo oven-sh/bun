@@ -1008,6 +1008,13 @@ describe("Bun.Image", () => {
       "base64",
     );
 
+    // The same thing at 16×16 in 10-bit, with its coded payload scrambled —
+    // see the test that uses it.
+    const heic10bitBroken = Buffer.from(
+      "AAAAHGZ0eXBoZWl4AAAAAG1pZjFoZWl4bWlhZgAAAXptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACJpbG9jAAAAAERAAAEAAQAAAAABngABAAAAAAAAAPoAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAAABAABodmMxAAAAAA5waXRtAAAAAAABAAAA+mlwcnAAAADaaXBjbwAAAHVodmNDAQQIAAAAAAAAAAAAHvAA/P36+gAADwNgAAEAF0ABDAH//wQIAAADAJ24AAADAAAeugJAYQABACpCAQEECAAAAwCduAAAAwAAHqAggQTZbqrprm4CGgwIAAADAMgAAAMACEBiAAEABkQBwXPBiQAAABNjb2xybmNseAABAA0ABoAAAAAUaXNwZQAAAAAAAABAAAAAQAAAAChjbGFwAAAAEAAAAAEAAAAQAAAAAf///9AAAAAC////0AAAAAIAAAAOcGl4aQAAAAABCgAAABhpcG1hAAAAAAAAAAEAAQWBAgMFhAAAAQJtZGF0WlparHJb9Ul60cuaIoJewmIbM4Ioqp7fzbeKt76RacNIqvG/dnPa0Hec8geGpLuv+OVZTT9COWVqugpq21nMcIK6mSrufn+Bf3dfI5/wdAXH4GGqCpgYOcjbI/3m6XSfCaK5a6Wg6C2xg+ji6KRetflk6ByLE1AAGpNvbxiVWNSuaStF/YnC105h57cwkrTs5XyMf/YYd2M8u3BWoUqV+OYfiYjWT4eAgNroLRO+nCqpF7L0ZKtOK/mUtm8tM1FRSapnYJahoKaRnTkCYiGNdzKz6sPHqyKv1KFhZaIoSGjl4j+ypqWnvB+2MfoApWWkiGWkF4WhL8QG4Q==",
+      "base64",
+    );
+
     // Whether THIS host can decode THAT image — several separate questions
     // (is libheif installed, does it have an HEVC decoder plugin, can that
     // plugin read this file) that the tests below do not need to tell apart,
@@ -1077,6 +1084,26 @@ describe("Bun.Image", () => {
         await expect(new Bun.Image(heic64x32.subarray(0, 200)).png().bytes()).rejects.toMatchObject({
           code: "ERR_IMAGE_DECODE_FAILED",
         });
+      });
+
+      test("a 10-bit HEIC that will not decode is a bad file, not a missing codec", async () => {
+        // 16×16 HEVC Main10, brand `heix`, with the coded payload scrambled
+        // and the container left intact, so libheif parses it and the decoder
+        // is what fails. The frame's depth used to be read as the reason for
+        // that — "this host cannot do 10-bit" — which sends someone off
+        // installing a decoder they already have. How a frame is coded says
+        // nothing about why its decode failed, so only libheif's own "no
+        // decoder installed" is allowed to mean that.
+        //
+        // Whether a scrambled bitstream errors at all or quietly produces
+        // something is the decoder's choice and differs between libde265 and
+        // ffmpeg, so both outcomes pass. What is pinned is the one code it
+        // must never come back with.
+        try {
+          await new Bun.Image(heic10bitBroken).png().bytes();
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_IMAGE_DECODE_FAILED");
+        }
       });
 
       test("encoding HEIC is still unavailable", async () => {

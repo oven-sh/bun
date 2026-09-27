@@ -58,11 +58,19 @@ struct HeifError {
 /// when an input trips the size limit `open_primary` sets on the context.
 const ERROR_MEMORY_ALLOCATION: c_int = 6;
 const SUBERROR_SECURITY_LIMIT_EXCEEDED: c_int = 1000;
-/// Also `heif_error.h`: `heif_error_Unsupported_feature` with
-/// `heif_suberror_Unsupported_codec`, which is what a libheif installed
-/// without an HEVC decoder plugin answers.
+/// Also `heif_error.h`. "No decoder here for this" has been said two ways
+/// across the versions this can load. Up to 1.17 a missing decoder plugin
+/// was `heif_error_Unsupported_feature` with
+/// `heif_suberror_Unsupported_codec` (`context.cc`); from 1.19 it is
+/// `heif_suberror_No_matching_decoder_installed`, under
+/// `heif_error_Plugin_loading_error` when the plugin for the compression
+/// format is absent (`codecs/decoder.cc`) and under
+/// `heif_error_Unsupported_feature` when the item type has no decoder at all
+/// (`image-items/image_item.h`). That subcode is unambiguous on its own, so
+/// only the older pair needs its code matched as well.
 const ERROR_UNSUPPORTED_FEATURE: c_int = 4;
 const SUBERROR_UNSUPPORTED_CODEC: c_int = 3000;
+const SUBERROR_NO_MATCHING_DECODER: c_int = 6003;
 
 impl HeifError {
     fn ok(&self) -> bool {
@@ -115,9 +123,6 @@ struct Lib {
     handle_release: unsafe extern "C" fn(*mut Handle),
     handle_width: unsafe extern "C" fn(*const Handle) -> c_int,
     handle_height: unsafe extern "C" fn(*const Handle) -> c_int,
-    /// `heif_image_handle_get_luma_bits_per_pixel`: the source's depth,
-    /// used only to tell an undecodable one from a corrupt file.
-    handle_luma_depth: unsafe extern "C" fn(*const Handle) -> c_int,
     /// `0xHHMMLL00`, so 1.22.2 is `0x01160200`.
     version_number: unsafe extern "C" fn() -> u32,
     profile_type: unsafe extern "C" fn(*const Handle) -> u32,
@@ -209,7 +214,6 @@ fn load() -> Option<Lib> {
         handle_release: sym!("heif_image_handle_release"),
         handle_width: sym!("heif_image_handle_get_width"),
         handle_height: sym!("heif_image_handle_get_height"),
-        handle_luma_depth: sym!("heif_image_handle_get_luma_bits_per_pixel"),
         version_number: sym!("heif_get_version_number"),
         profile_type: sym!("heif_image_handle_get_color_profile_type"),
         profile_size: sym!("heif_image_handle_get_raw_color_profile_size"),
@@ -389,18 +393,15 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         )
     };
     if !e.ok() || frame.img.is_null() {
-        // Three unrelated problems arrive here, and only the last means the
-        // file is bad. libheif can be installed with no HEVC decoder plugin
-        // at all — on Debian those are separate packages — and says so. A
-        // plugin built for 8-bit only cannot read a 10- or 12-bit frame, and
-        // says nothing in particular, so the frame's own depth is what tells
-        // us. Both are "install a decoder that can read this", which is what
-        // `UnsupportedOnPlatform` means; only what is left is `DecodeFailed`.
-        if e.code == ERROR_UNSUPPORTED_FEATURE && e.subcode == SUBERROR_UNSUPPORTED_CODEC {
-            return Err(codecs::Error::UnsupportedOnPlatform);
-        }
-        // SAFETY: `r.handle` is live.
-        if unsafe { (lib.handle_luma_depth)(r.handle) } > 8 {
+        // Two unrelated problems arrive here and only one means the file is
+        // bad. libheif can be installed with no HEVC decoder plugin at all —
+        // on Debian those are separate packages — and says so, in either of
+        // the two vocabularies the constants above describe. That is "install
+        // a decoder that can read this", which is what `UnsupportedOnPlatform`
+        // means; everything else is `DecodeFailed`.
+        if e.subcode == SUBERROR_NO_MATCHING_DECODER
+            || (e.code == ERROR_UNSUPPORTED_FEATURE && e.subcode == SUBERROR_UNSUPPORTED_CODEC)
+        {
             return Err(codecs::Error::UnsupportedOnPlatform);
         }
         return Err(codecs::Error::DecodeFailed);

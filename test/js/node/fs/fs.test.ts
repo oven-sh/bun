@@ -8293,7 +8293,8 @@ describe("fs.close() that is not waited for", () => {
            });
            fs.fstat(0, say("used after it"));`,
       ],
-      env: bunEnv,
+      // Off Windows each read has one of the pool's threads, of which a small machine has two.
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -8334,7 +8335,7 @@ describe("fs.close() that is not waited for", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js"],
       cwd: String(dir),
-      env: bunEnv,
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",

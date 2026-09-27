@@ -5958,7 +5958,6 @@ describe.concurrent("upgradeTLS halves from a default Bun.connect socket and und
     peer: ReturnType<typeof halfOpenPeer>;
     events: string[];
     late: string[];
-    closedAtFin: boolean;
     peerGotLate: Promise<void>;
     closed: Promise<void>;
   };
@@ -5966,13 +5965,15 @@ describe.concurrent("upgradeTLS halves from a default Bun.connect socket and und
   // The socket under test is the TLS half of an upgraded Bun.connect socket.
   async function upgraded(
     { allowHalfOpen, payload }: { allowHalfOpen: boolean; payload?: Buffer },
-    afterFin: (ctx: Upgraded) => unknown,
+    afterEnd: (ctx: Upgraded) => unknown,
   ) {
     const events: string[] = [];
     const late: string[] = [];
-    const finDispatched = Promise.withResolvers<boolean>();
+    const sawEnd = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();
     const peerGotLate = Promise.withResolvers<void>();
+    let endedAt = -1;
+    let closedAt = -1;
     let got = 0;
     let mismatchAt = -1;
     // A peer that is sent a payload starts paused: it reads after the socket under test has read the FIN.
@@ -6009,11 +6010,12 @@ describe.concurrent("upgradeTLS halves from a default Bun.connect socket and und
         },
         end() {
           events.push("end");
-          // An immediate runs after the dispatch that read the FIN.
-          setImmediate(() => finDispatched.resolve(events.includes("close")));
+          endedAt = getEventLoopStats().iteration;
+          sawEnd.resolve();
         },
         close(_s: Socket, err: unknown) {
           events.push(closeEvent(err));
+          closedAt = getEventLoopStats().iteration;
           closed.resolve();
         },
         error(_s: Socket, err: any) {
@@ -6021,19 +6023,18 @@ describe.concurrent("upgradeTLS halves from a default Bun.connect socket and und
         },
       },
     } as any);
-    // A close that no end event announced counts too, so that the row reports its events.
-    const closedAtFin = await Promise.race([finDispatched.promise, closed.promise.then(() => true)]);
-    const extra = await afterFin({
+    await Promise.race([sawEnd.promise, closed.promise]);
+    const extra = await afterEnd({
       secure,
       peer,
       events,
       late,
-      closedAtFin,
       peerGotLate: peerGotLate.promise,
       closed: closed.promise,
     });
     await Promise.all([closed.promise, peer.closed]);
-    return { events, closedAtFin, got, mismatchAt, extra };
+    // A socket that ends at the FIN closes in the loop iteration that read it.
+    return { events, closedAtFin: closedAt === endedAt, got, mismatchAt, extra };
   }
 
   it("the TLS half sends the queued tail of end(data) after the peer's FIN", async () => {
@@ -6048,12 +6049,7 @@ describe.concurrent("upgradeTLS halves from a default Bun.connect socket and und
   });
 
   it("the TLS half of a default socket ends at the peer's FIN", async () => {
-    expect(
-      await upgraded({ allowHalfOpen: false }, ({ secure, closedAtFin }) => {
-        // A socket that the FIN left open is ended here, so that the row reports its events.
-        if (!closedAtFin) secure.end();
-      }),
-    ).toEqual({
+    expect(await upgraded({ allowHalfOpen: false }, () => {})).toEqual({
       events: ["data request", "end", "raw close", "close"],
       closedAtFin: true,
       got: 0,

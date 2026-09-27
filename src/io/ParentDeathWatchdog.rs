@@ -362,6 +362,9 @@ pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
 /// (atexit on macOS, at_quick_exit on Linux, and the explicit `Global.exit`
 /// path). C calling convention because that's the exit-callback ABI.
 extern "C" fn on_process_exit() {
+    // Workers are still running: stop their spawns before the walk below.
+    #[cfg(unix)]
+    bun_spawn_sys::spawn_gate::close();
     kill_sync_pgroups_and_descendants();
 }
 
@@ -381,8 +384,8 @@ extern "C" fn on_process_exit() {
 ///      and unlike SIGTERM can't be trapped or ignored.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. The only forking process is `self`, and we're in
-/// the exit handler — not forking.
+/// verify step sufficient. The only forking process is `self`, and
+/// `spawn_gate::close()` has refused new spawns and waited for the in-flight ones.
 fn kill_descendants() {
     #[cfg(unix)]
     {

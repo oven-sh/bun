@@ -1283,11 +1283,12 @@ describe("concurrent terminals on one Image", () => {
 
         let outputs = 0, leaked = 0, rejected = 0, rounds = 0;
         // Every round is an independent try. Keep going past the minimum only
-        // while no decode has seen the rewrite at all, so a slow box cannot
-        // pass this on "nothing raced".
+        // while no decode has seen the rewrite at all, so a box where the
+        // writer and the pool rarely overlap neither passes on "nothing
+        // raced" nor fails for want of tries.
         const minRounds = Number(process.env.WEBP_RACE_ROUNDS);
         const withMarker = process.env.WEBP_RACE_MARKER === "1";
-        for (let round = 0; round < minRounds * 3 && (round < minRounds || rejected === 0); round++) {
+        for (let round = 0; round < minRounds * 8 && (round < minRounds || rejected === 0); round++) {
           rounds++;
           const [small, large] = pairs[round % pairs.length];
           buf.set(large);
@@ -1626,11 +1627,12 @@ describe("WebP container walk", () => {
 
 // The decoder writes into capacity that nothing initialised, so an accepted
 // decode must write all of it. ASAN fills every new allocation with a chosen
-// byte: a pixel libwebp never wrote then reads as that byte, whatever the
-// block held before. Same check as the JPEG one above.
+// byte, so a byte libwebp never wrote reads as that byte, whatever the block
+// held before. Each file is decoded under two fills: a byte that differs
+// between the two runs followed the fill. Same idea as the JPEG check above.
 test.skipIf(!isASAN)("an accepted WebP decode commits no byte that libwebp did not write", async () => {
-  const FILL = 90;
-  // Alpha stays clear of the fill byte, so a match cannot be a coincidence.
+  const fills = [90, 230];
+  // Alpha stays clear of both fills and of 255.
   const alphaOf = (x: number, y: number) => 100 + ((x * 7 + y * 3) % 100);
   const sizes: [number, number][] = [
     [1, 1],
@@ -1657,58 +1659,70 @@ test.skipIf(!isASAN)("an accepted WebP decode commits no byte that libwebp did n
     }
   }
 
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const cases = await Bun.stdin.json();
-        const out = {};
-        for (const c of cases) {
-          out[c.name] = await new Bun.Image(Buffer.from(c.webp, "base64")).png().bytes().then(
-            png => Buffer.from(png).toString("base64"),
-            e => "rejected: " + e.code,
-          );
-        }
-        console.log(JSON.stringify(out));
-      `,
-    ],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `malloc_fill_byte=${FILL}`, "max_malloc_fill_size=1073741824"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdin: Buffer.from(JSON.stringify(cases)),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const stderr = rawStderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderr).toBe("");
+  const runs = await Promise.all(
+    fills.map(async fill => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const cases = await Bun.stdin.json();
+            const out = {};
+            for (const c of cases) {
+              out[c.name] = await new Bun.Image(Buffer.from(c.webp, "base64")).png().bytes().then(
+                png => Buffer.from(png).toString("base64"),
+                e => "rejected: " + e.code,
+              );
+            }
+            console.log(JSON.stringify(out));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `malloc_fill_byte=${fill}`, "max_malloc_fill_size=1073741824"]
+            .filter(Boolean)
+            .join(":"),
+        },
+        stdin: Buffer.from(JSON.stringify(cases)),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stderr = rawStderr
+        .split("\n")
+        .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+        .join("\n");
+      return { stderr, exitCode, pngs: JSON.parse(stdout || "{}") as Record<string, string> };
+    }),
+  );
+  expect(runs.map(r => r.stderr)).toEqual(["", ""]);
 
-  const pngs: Record<string, string> = JSON.parse(stdout || "{}");
   const got: Record<string, string> = {};
   for (const { name, w, h, alpha } of cases) {
-    const png = pngs[name] ?? "missing";
-    if (png.startsWith("rejected") || png === "missing") {
-      got[name] = png;
+    const pngs = runs.map(r => r.pngs[name] ?? "missing");
+    const bad = pngs.find(png => png.startsWith("rejected") || png === "missing");
+    if (bad) {
+      got[name] = bad;
       continue;
     }
-    const rgba = await rgbaOf(Buffer.from(png, "base64"));
-    let unwritten = rgba.length === w * h * 4 ? 0 : -1;
-    for (let y = 0; y < h && unwritten >= 0; y++) {
-      for (let x = 0; x < w; x++) {
-        if (rgba[(y * w + x) * 4 + 3] !== (alpha ? alphaOf(x, y) : 255)) unwritten++;
+    const [a, b] = await Promise.all(pngs.map(png => rgbaOf(Buffer.from(png, "base64"))));
+    let followFill = a.length === w * h * 4 && b.length === a.length ? 0 : -1;
+    let otherAlpha = 0;
+    for (let i = 0; i < a.length && followFill >= 0; i++) {
+      if (a[i] !== b[i]) followFill++;
+      if (i % 4 === 3) {
+        const x = ((i - 3) / 4) % w;
+        const y = ((i - 3) / 4 - x) / w;
+        if (a[i] !== (alpha ? alphaOf(x, y) : 255)) otherAlpha++;
       }
     }
-    got[name] = unwritten === 0 ? "fully written" : `${unwritten} pixels with another alpha`;
+    got[name] =
+      followFill === 0 && otherAlpha === 0
+        ? "fully written"
+        : `${followFill} bytes follow the fill, ${otherAlpha} pixels with another alpha`;
   }
   expect(got).toEqual(Object.fromEntries(cases.map(c => [c.name, "fully written"])));
-  expect(exitCode).toBe(0);
+  expect(runs.map(r => r.exitCode)).toEqual([0, 0]);
 });
 
 // ─── 11. random-byte fuzz (cheap, bounded) ───────────────────────────────────

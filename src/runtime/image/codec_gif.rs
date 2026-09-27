@@ -361,12 +361,7 @@ fn decode_frame(
     }
     // SAFETY: every row in 0..h was expanded above (the passes partition 0..h): all npix slots set.
     unsafe { bun_core::vec::commit_spare(&mut out, npix * 4) };
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: h,
-        icc_profile: None,
-    })
+    codecs::Decoded::new(out, w, h, None)
 }
 
 /// One row of palette indices → RGBA slots. Scalar 4-byte copy per pixel — see file

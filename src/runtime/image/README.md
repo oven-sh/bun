@@ -52,11 +52,23 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
 
 - Pixel format is **RGBA8 everywhere** between decode and encode. Decoders are
   configured to emit it; encoders are fed it. Nothing branches on channels.
+  `codecs::Decoded` (defined in `plane.rs`, so its fields are private to
+  `codecs.rs` as well) enforces the shape in release builds: `Decoded::new`
+  is the only constructor and refuses zero dimensions and a buffer that is
+  not `w * h * 4`; every decoder and every geometry kernel (`resize`,
+  `rotate`, `flip`) returns one, and `replace_with` swaps a whole `Decoded`
+  in, so no caller ever pairs a buffer with a shape it computed itself. The
+  per-codec checks are not the source of truth.
 - **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
   is `Encoded{bytes, free}` where `free` is the _codec's_ deallocator
   (`tj3Free`/`WebPFree`/`std.c.free`/`mi_free`); `then()` hands that buffer
   straight to JS via `ArrayBuffer.toJSWithContext(..., free)` — no dupe. New
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
+  `pixels()` hands the decode buffer itself through the same path
+  (`Encoded::from_owned`, `free` = `default_alloc::free`). That free is
+  layout-less and cross-thread by the allocator's contract, which the hand-off
+  relies on: the plane is allocated on a work-pool thread and freed by a JSC
+  finalizer on the JS thread.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —

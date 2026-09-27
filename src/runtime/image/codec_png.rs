@@ -166,12 +166,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     } else {
         None
     };
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: ihdr.width,
-        height: ihdr.height,
-        icc_profile: icc,
-    })
+    codecs::Decoded::new(out, ihdr.width, ihdr.height, icc)
 }
 
 /// Attach `icc_profile` to the encoder as an iCCP chunk. libspng requires

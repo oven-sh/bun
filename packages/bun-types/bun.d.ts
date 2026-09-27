@@ -9302,7 +9302,10 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a path-backed input is over the 256 MiB cap, or
+     *   the output (a `pixels()` plane, or an encoding delivered as a
+     *   `Uint8Array`/`Buffer`) would exceed the engine's `ArrayBuffer` limit;
+     *   the message says which.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
@@ -9380,6 +9383,19 @@ declare module "bun" {
       height: number;
       format: Format;
     }
+
+    /** What {@link Image.pixels} resolves with. */
+    interface Pixels {
+      /**
+       * RGBA, 8 bits per channel, `width * height * 4` bytes, rows top to
+       * bottom, no row padding. Alpha is straight (not premultiplied).
+       */
+      data: Uint8Array<ArrayBuffer>;
+      width: number;
+      height: number;
+      /** Always 4. Bun holds RGBA between decode and encode. */
+      channels: 4;
+    }
   }
 
   /**
@@ -9389,7 +9405,7 @@ declare module "bun" {
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
-   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `pixels`, `metadata`) is awaited.
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:
@@ -9534,6 +9550,46 @@ declare module "bun" {
     toBase64(): Promise<string>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
+    /**
+     * Run the pipeline and return the pixels it ends on instead of an encoded
+     * container: `{ data, width, height, channels: 4 }`, where `data` is RGBA8,
+     * `width * height * 4` bytes, rows top to bottom, no row padding. The shape
+     * travels with the bytes, so it stays correct however the `Image` is used
+     * afterwards. The equivalent of Sharp's
+     * `.raw().toBuffer({ resolveWithObject: true })`.
+     *
+     * Bun applies no color transform and does not deliver the ICC profile.
+     * Bun's own decoders (JPEG, PNG, WebP everywhere; BMP and GIF when
+     * {@link Image.backend} is `"bun"` or on Linux) return their output in
+     * the space the source profile describes; the system backend (HEIC,
+     * AVIF and TIFF, plus BMP and GIF under the default `"system"` backend
+     * on macOS and Windows) returns the OS decoder's output, which Bun does
+     * not convert and whose profile it does not read. Sharp converts to
+     * sRGB by default, so it differs for a source with a non-sRGB profile.
+     * Alpha is straight, not premultiplied.
+     *
+     * EXIF orientation is applied before the plane is produced (unless
+     * `autoOrient: false`), so a 90° or 270° tag swaps `width` and `height`.
+     * Nothing else from the source travels with the plane: no EXIF, no GPS,
+     * no profile.
+     *
+     * A plane is at most 2^30 pixels (4 GiB, JSC's `ArrayBuffer` limit)
+     * whatever `maxPixels` allows; a pipeline whose output plane would
+     * exceed it rejects with `ERR_IMAGE_TOO_MANY_PIXELS` before the resize
+     * runs, with a message naming the engine's limit rather than
+     * `maxPixels`.
+     *
+     * `data` is a `Uint8Array` over its own buffer; for an API that wants a
+     * `Buffer`, `Buffer.from(data.buffer)` views the same bytes without a copy.
+     *
+     * ```ts
+     * const { data, width, height } = await new Bun.Image(bytes)
+     *   .resize(224, 224, { fit: "fill" })
+     *   .pixels();
+     * // data.length === width * height * 4
+     * ```
+     */
+    pixels(): Promise<Image.Pixels>;
 
     /** Populated after the first awaited terminal; `-1` before. */
     readonly width: number;

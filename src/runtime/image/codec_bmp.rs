@@ -186,10 +186,5 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         }
         y += 1;
     }
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: h.width,
-        height: h.height,
-        icc_profile: None,
-    })
+    codecs::Decoded::new(out, h.width, h.height, None)
 }

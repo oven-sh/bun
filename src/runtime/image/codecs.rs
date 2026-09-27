@@ -207,24 +207,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default)]
-pub(crate) struct Decoded {
-    pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    /// ICC color profile bytes pulled from the source container (JPEG APP2,
-    /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
-    /// source didn't carry one or the decode path doesn't extract it —
-    /// BMP/GIF (no ICC chunk) and system backends (which already colour-
-    /// manage into sRGB during decode, so the profile is no longer
-    /// needed). The image pipeline hands this straight to the matching
-    /// encoder — the RGBA buffer is NOT converted to sRGB, so the bytes
-    /// only have their intended colour meaning when the profile travels
-    /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
-    /// would reinterpret the values as sRGB and visibly shift the
-    /// colours. See issue #30197.
-    pub(crate) icc_profile: Option<Vec<u8>>,
-}
+pub(crate) use super::plane::Decoded;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum Error {
@@ -239,6 +222,12 @@ pub enum Error {
     /// BEFORE allocating the full RGBA buffer.
     #[error("TooManyPixels")]
     TooManyPixels,
+    /// The result would not fit the `ArrayBuffer` JS can hold: a `pixels()`
+    /// plane past `MAX_ARRAY_BUFFER_SIZE / 4` pixels, or an encoder output
+    /// past `MAX_ARRAY_BUFFER_SIZE` bytes. Distinct from `TooManyPixels`,
+    /// which is the caller's own `maxPixels`.
+    #[error("OutputTooLarge")]
+    OutputTooLarge,
     /// HEIC/AVIF on a platform with no system backend (Linux), or the system
     /// backend declined and there's no static codec to fall back to.
     #[error("UnsupportedOnPlatform")]
@@ -248,6 +237,16 @@ pub enum Error {
 }
 
 bun_core::oom_from_alloc!(Error);
+
+/// An empty `Vec` with `len` bytes of capacity for a kernel to fill, or
+/// `Error::OutOfMemory` when the allocator refuses. A plane can run to the
+/// `ArrayBuffer` limit, and a refused reservation of that size is a rejected
+/// promise, not an aborted process.
+fn reserve_exact(len: usize) -> Result<Vec<u8>, Error> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(len).map_err(|_| Error::OutOfMemory)?;
+    Ok(v)
+}
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
 /// cap is ~1 GiB, which is already past where you'd want to be.
@@ -301,7 +300,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
             // entry verbatim, leaving the original RGB with α=0. Normalise
             // here so
             // every backend yields identical bytes for the same GIF.
-            for px in d.rgba.as_chunks_mut::<4>().0 {
+            for px in d.rgba_mut().as_chunks_mut::<4>().0 {
                 if px[3] == 0 {
                     px[0] = 0;
                     px[1] = 0;
@@ -510,22 +509,30 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[allow(dead_code)]
-    pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
+    /// Hand a global-allocator `Vec` to JS as-is; `pixels()` delivers the
+    /// decode buffer through the same path as a system encoder's output.
+    /// `None` for an empty `Vec`: it owns no allocation and reports a
+    /// dangling pointer, so there would be nothing for the finalizer to
+    /// free and a detached buffer for JS.
+    pub(crate) fn from_owned(bytes: Vec<u8>) -> Option<Encoded> {
+        if bytes.is_empty() {
+            return None;
+        }
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
-        // SAFETY: Vec data ptr is non-null; len is valid.
+        // SAFETY: a non-empty `Vec` owns an allocation, so its data pointer
+        // is non-null and `len` bytes are initialised.
         let slice = unsafe {
             NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
                 bytes.as_mut_ptr(),
                 bytes.len(),
             ))
         };
-        Encoded {
+        Some(Encoded {
             bytes: slice,
             // `bytes` came from a `Vec<u8>` (the global allocator); free with
             // `default_alloc::free` so it agrees with the `#[global_allocator]`.
             free: encoded_wrap_free!(bun_alloc::default_alloc::free),
-        }
+        })
     }
 }
 
@@ -571,7 +578,9 @@ pub(crate) fn encode(
                 return match system_backend::BackendError::split(system_backend::encode(
                     rgba, width, height, &opts,
                 )) {
-                    Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
+                    // An encoder that reports success with no bytes has
+                    // failed to encode.
+                    Ok(Some(buf)) => Encoded::from_owned(buf).ok_or(Error::EncodeFailed),
                     // BackendUnavailable collapses into UnsupportedOnPlatform.
                     Ok(None) => Err(Error::UnsupportedOnPlatform),
                     Err(e) => Err(e),
@@ -658,28 +667,36 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
-pub(crate) fn resize(
-    src: &[u8],
-    sw: u32,
-    sh: u32,
-    dw: u32,
-    dh: u32,
-    f: Filter,
-) -> Result<Vec<u8>, Error> {
+/// The source scaled to `dw × dh`, as a plane with that shape. The kernel
+/// computes into a buffer it owns and `Decoded::new` checks the length, so
+/// no caller re-states the shape (a system-backend buffer is checked the
+/// same way). The profile is not copied; `Decoded::replace_with` moves it.
+pub(crate) fn resize(src: &Decoded, dw: u32, dh: u32, f: Filter) -> Result<Decoded, Error> {
+    let (sw, sh) = (src.width(), src.height());
     // Only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::scale(src, sw, sh, dw, dh, f)) {
-            Ok(Some(out)) => return Ok(out),
+        match system_backend::BackendError::split(system_backend::scale(
+            src.rgba(),
+            sw,
+            sh,
+            dw,
+            dh,
+            f,
+        )) {
+            Ok(Some(out)) => return Decoded::new(out, dw, dh, None),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
     }
-    // ONE allocation for output + the kernel's scratch arena (intermediate
-    // dst_w×src_h×4 row buffer + spans/weights tables). Zero mallocs in the
-    // C++; mimalloc here is faster than libc, and the over-allocation rounds
-    // into the same size class as the row buffer alone.
+    // The output canvas and the kernel's scratch arena (intermediate
+    // dst_w×src_h×4 row buffer + spans/weights tables) are two allocations:
+    // the output is exactly `out_sz` and outlives this call, possibly as a
+    // JS-visible plane, while the scratch drops at return. Fusing them and
+    // shrinking afterwards is a full-plane copy whenever the scratch is
+    // larger than the output (mimalloc reallocates in place only down to
+    // half the block), which is every real downscale.
     let out_sz: usize = (dw as usize) * (dh as usize) * 4;
     // SAFETY: pure FFI query; all args are by-value ints, no pointers.
     let scratch_sz = unsafe {
@@ -691,33 +708,35 @@ pub(crate) fn resize(
             f as i32,
         )
     };
-    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
-    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
+    let mut out = reserve_exact(out_sz)?;
+    let mut scratch = reserve_exact(scratch_sz)?;
+    // SAFETY: `out` has dst_w×dst_h×4 bytes of capacity and `scratch` the
+    // bytes the kernel asked for; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
-            src.as_ptr(),
+            src.rgba().as_ptr(),
             i32::try_from(sw).expect("int cast"),
             i32::try_from(sh).expect("int cast"),
-            block.as_mut_ptr(),
+            out.as_mut_ptr(),
             i32::try_from(dw).expect("int cast"),
             i32::try_from(dh).expect("int cast"),
             f as i32,
-            block.as_mut_ptr().add(out_sz),
+            scratch.as_mut_ptr(),
         )
     };
     if rc != 0 {
         return Err(Error::OutOfMemory);
     }
     // SAFETY: rc 0 means the vertical pass stored all dst_w×dst_h pixels, i.e. out_sz bytes.
-    unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
-    // Drop the scratch tail; mimalloc's shrink is in-place when the new size
-    // fits the same block, so this is free.
-    block.shrink_to_fit();
-    // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
-    Ok(block)
+    unsafe { bun_core::vec::commit_spare(&mut out, out_sz) };
+    Decoded::new(out, dw, dh, None)
 }
 
-pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
+/// The source rotated by `degrees` (a multiple of 90), as a plane with the
+/// rotated shape: a quarter turn swaps width and height, and the kernel is
+/// the one place that knows, so the caller never assembles the pair.
+pub(crate) fn rotate(src: &Decoded, degrees: u32) -> Result<Decoded, Error> {
+    let (w, h) = (src.width(), src.height());
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 {
         (h, w)
     } else {
@@ -725,25 +744,23 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     };
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
-            Ok(Some(out)) => {
-                return Ok(Decoded {
-                    rgba: out,
-                    width: dw,
-                    height: dh,
-                    icc_profile: None,
-                });
-            }
+        match system_backend::BackendError::split(system_backend::rotate(
+            src.rgba(),
+            w,
+            h,
+            degrees / 90,
+        )) {
+            Ok(Some(out)) => return Decoded::new(out, dw, dh, None),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
     }
     let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = reserve_exact(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
-            src.as_ptr(),
+            src.rgba().as_ptr(),
             i32::try_from(w).expect("int cast"),
             i32::try_from(h).expect("int cast"),
             out.as_mut_ptr(),
@@ -752,29 +769,32 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     };
     // SAFETY: the rotate kernel is a permutation that stores every one of the dw*dh dst pixels.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
-    Ok(Decoded {
-        rgba: out,
-        width: dw,
-        height: dh,
-        icc_profile: None,
-    })
+    Decoded::new(out, dw, dh, None)
 }
 
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
+/// The source mirrored (vertically, or horizontally when `horizontal`), as
+/// a plane with the source's shape.
+pub(crate) fn flip(src: &Decoded, horizontal: bool) -> Result<Decoded, Error> {
+    let (w, h) = (src.width(), src.height());
     #[cfg(target_os = "macos")]
     if use_system() {
-        match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {
-            Ok(Some(out)) => return Ok(out),
+        match system_backend::BackendError::split(system_backend::flip(
+            src.rgba(),
+            w,
+            h,
+            horizontal,
+        )) {
+            Ok(Some(out)) => return Decoded::new(out, w, h, None),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
         }
     }
     let out_len = (w as usize) * (h as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = reserve_exact(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(
-            src.as_ptr(),
+            src.rgba().as_ptr(),
             i32::try_from(w).expect("int cast"),
             i32::try_from(h).expect("int cast"),
             out.as_mut_ptr(),
@@ -783,5 +803,5 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     };
     // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
-    Ok(out)
+    Decoded::new(out, w, h, None)
 }

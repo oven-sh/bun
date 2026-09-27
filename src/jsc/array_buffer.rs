@@ -57,6 +57,8 @@ impl Default for ArrayBuffer {
 // without a `&T as *const T as *mut T` provenance laundering cast. This matches
 // the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
+    // safe: no arguments; returns a compile-time constant of the C++ side.
+    safe fn Bun__maxArrayBufferSize() -> usize;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `addr`/`len` are an opaque mmap region
     // C++ stores into the Buffer's `ArrayBufferContents` (adopted, freed via
@@ -138,6 +140,15 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+}
+
+/// The most bytes one `ArrayBuffer` can hold: JSC's `MAX_ARRAY_BUFFER_SIZE`,
+/// read from the C++ side so a change to the vendored WebKit cannot leave a
+/// Rust copy behind. Adoption of more than this (`make_*_with_bytes_no_copy`)
+/// throws; a producer that can refuse earlier compares against this first.
+#[inline]
+pub fn max_array_buffer_size() -> u64 {
+    Bun__maxArrayBufferSize() as u64
 }
 
 impl JSValue {

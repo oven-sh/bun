@@ -1519,15 +1519,16 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
 /// (`native_libs::is_shared_library_name`), whatever its loader. Members read from one
 /// source file (by real path) share one copy: the bundler hoists a required `.node` to
 /// `[name]-[hash].node`, and the `--asset` tree carries the same file next to the
-/// libraries it links. The `--asset` copy (deepest, if several) is the one the runtime
-/// loads, every other copy aliases it, and the executable stores the bytes once.
+/// libraries it links. The `--asset` copy (deepest, then first, if several) is the one
+/// the runtime loads, every other copy aliases it, and the executable stores the bytes once.
 fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
     struct Candidate<'a> {
         file_index: u32,
         rel_name: &'a [u8],
         real_path: Option<Vec<u8>>,
-        /// `--asset` copies rank above hoisted ones, then deeper above shallower.
-        rank: (bool, usize),
+        /// `--asset` copies rank above hoisted ones, then deeper above shallower,
+        /// then the first in table order.
+        rank: (bool, usize, core::cmp::Reverse<usize>),
         content_hash: u64,
         alias_index: u32,
     }
@@ -1552,6 +1553,7 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
             rank: (
                 output_file.source_index.is_none(),
                 strings::count_char(rel_name, b'/'),
+                core::cmp::Reverse(i),
             ),
             content_hash: bun_wyhash::hash(output_file.value.as_slice()),
             alias_index: NativeLibrarySet::NO_ALIAS,

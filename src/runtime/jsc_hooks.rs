@@ -4603,15 +4603,15 @@ impl MirrorSet<'_> {
             return None;
         }
 
-        // The mirror is reusable when the directory is ours alone (0700, not a
-        // symlink: nobody else can swap an entry under us before `dlopen`) and
-        // every member in it is ours with the right size.
+        // The mirror is reusable when the directory is ours (a directory, not a
+        // symlink, owned by the euid: nobody else can swap an entry under us
+        // before `dlopen`; mode bits are not part of the rule, some filesystems
+        // make them up) and every member in it is ours with the right size.
         let dir_is_ours = || -> bool {
             bun_sys::lstatat(tmpdir, dir_name).is_ok_and(|st| {
                 #[cfg(unix)]
                 {
-                    let mode = st.st_mode as u32;
-                    bun_sys::S::ISDIR(mode) && st.st_uid == uid && mode & 0o077 == 0
+                    bun_sys::S::ISDIR(st.st_mode as u32) && st.st_uid == uid
                 }
                 #[cfg(windows)]
                 {
@@ -4644,9 +4644,68 @@ impl MirrorSet<'_> {
             return Some(len);
         }
 
-        // Write the whole set into a scratch directory, then rename it into
-        // place. A directory rename never replaces a non-empty directory, so the
-        // first Worker or process to finish owns the canonical name.
+        // `file` written into `dir` at its relative path through a temp name and
+        // a rename in the same directory, so a reader never sees a partial file.
+        let write_member = |dir: &bun_sys::Dir, file: &bun_standalone_graph::File| -> bool {
+            let mut rel_buf = bun_paths::path_buffer_pool::get();
+            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+                return false;
+            };
+            let parent = match bun_paths::dirname(rel) {
+                Some(parent) => {
+                    match dir.make_open_path(parent, bun_sys::OpenDirOptions::default()) {
+                        Ok(parent) => parent,
+                        Err(_) => return false,
+                    }
+                }
+                None => bun_sys::Dir::from_fd(dir.fd),
+            };
+            let parent = scopeguard::guard(parent, |parent| {
+                if parent.fd != dir.fd {
+                    parent.fd.close();
+                }
+            });
+            let mut tmp_buf = bun_paths::path_buffer_pool::get();
+            let Ok(tmp_name) = Fs::FileSystem::tmpname(b"tmp", &mut tmp_buf[..], self.hash) else {
+                return false;
+            };
+            let mut name_buf = bun_paths::path_buffer_pool::get();
+            let name = bun_paths::resolve_path::z(bun_paths::basename(rel), &mut name_buf);
+            let flags = bun_sys::O::WRONLY
+                | bun_sys::O::CREAT
+                | bun_sys::O::EXCL
+                | bun_sys::O::NOFOLLOW
+                | bun_sys::O::CLOEXEC;
+            let written = bun_sys::File::openat(parent.fd, tmp_name.as_bytes(), flags, 0o600)
+                .and_then(|f| f.write_all(file.contents.as_bytes()))
+                .is_ok();
+            if written && bun_sys::renameat(parent.fd, tmp_name, parent.fd, name).is_ok() {
+                return true;
+            }
+            let _ = bun_sys::unlinkat(parent.fd, tmp_name);
+            false
+        };
+        // Our directory with a member missing or wrong (a temp sweeper took it):
+        // put the member back in place. The directory itself is never removed,
+        // so a process that is loading from it keeps what it sees.
+        let repair = || -> bool {
+            let Ok(dir) = tmpdir.open_at_with(
+                dir_name.as_bytes(),
+                bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+            ) else {
+                return false;
+            };
+            self.members
+                .all(&mut |file| file_is_ours(file) || write_member(&dir, file))
+                && mirror_is_ours()
+        };
+        if dir_is_ours() {
+            return repair().then_some(len);
+        }
+
+        // No mirror yet: write the whole set into a scratch directory, then
+        // rename it into place. A directory rename never replaces a non-empty
+        // directory, so the first Worker or process to finish owns the name.
         let mut scratch_buf = bun_paths::path_buffer_pool::get();
         let scratch_name = Fs::FileSystem::tmpname(b"tmp", &mut scratch_buf[..], self.hash).ok()?;
         bun_sys::mkdirat(tmpdir, scratch_name, 0o700).ok()?;
@@ -4660,52 +4719,19 @@ impl MirrorSet<'_> {
                 discard_scratch();
                 return None;
             };
-            self.members.all(&mut |file| {
-                let mut rel_buf = bun_paths::path_buffer_pool::get();
-                let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..])
-                else {
-                    return false;
-                };
-                let flags = bun_sys::O::WRONLY
-                    | bun_sys::O::CREAT
-                    | bun_sys::O::EXCL
-                    | bun_sys::O::NOFOLLOW
-                    | bun_sys::O::CLOEXEC;
-                bun_sys::File::make_openat(&scratch, rel, flags, 0o600)
-                    .and_then(|f| f.write_all(file.contents.as_bytes()))
-                    .is_ok()
-            })
+            self.members.all(&mut |file| write_member(&scratch, file))
         };
         if !written {
             discard_scratch();
             return None;
         }
-
-        let install = || bun_sys::renameat(tmpdir, scratch_name, tmpdir, dir_name).is_ok();
-        if install() {
-            return Some(len);
-        }
-        if mirror_is_ours() {
-            // Another writer won.
-            discard_scratch();
+        if bun_sys::renameat(tmpdir, scratch_name, tmpdir, dir_name).is_ok() {
             return Some(len);
         }
         if dir_is_ours() {
-            // Our mirror, but a member is gone or wrong (a temp sweeper took
-            // it): replace the directory.
-            let mut old_buf = bun_paths::path_buffer_pool::get();
-            if let Ok(old_name) = Fs::FileSystem::tmpname(b"old", &mut old_buf[..], self.hash)
-                && bun_sys::renameat(tmpdir, dir_name, tmpdir, old_name).is_ok()
-            {
-                let _ = tmpdir.delete_tree(old_name.as_bytes());
-            }
-            if install() {
-                return Some(len);
-            }
-            if mirror_is_ours() {
-                discard_scratch();
-                return Some(len);
-            }
+            // Another Worker or process won the name.
+            discard_scratch();
+            return (mirror_is_ours() || repair()).then_some(len);
         }
         // The name belongs to someone else on a sticky `/tmp`: use our own copy.
         let len =

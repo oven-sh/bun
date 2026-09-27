@@ -695,7 +695,7 @@ So you can ship a `node_modules` directory next to the executable and start it f
 ```bash terminal icon="terminal"
 bun build --compile --external sharp --compile-autoload-package-json ./index.ts --outfile ./dist/myapp
 cp -r node_modules ./dist/
-cd / && ./dist/myapp
+cd / && "$OLDPWD/dist/myapp"
 ```
 
 ---

@@ -15,6 +15,32 @@ import {
 
 function capture(_: any, _1?: any) {}
 
+// The engine runs a script of the form `var x = <JSON>;` without bytecode. These tests check that
+// sites that were warm before such a script ran see the global it declares. Each fixture runs in a
+// process of its own: its sites must be warm first, and its globals must not reach other tests.
+async function runDeclarationFixture(type: "cjs" | "mjs", body: string) {
+  const prelude = type === "cjs" ? `const vm = require("node:vm");` : `import vm from "node:vm";`;
+  using dir = tempDir("vm-jsonp-var", { [`fixture.${type}`]: prelude + "\n" + body });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), `fixture.${type}`],
+    cwd: String(dir),
+    // Without compiler threads each site reaches the JIT tiers at a fixed call.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+function readOfAnAbsentName(declare: string) {
+  return `
+    function read() { return globalThis.declaredLater; }
+    for (let i = 0; i < 2000; ++i) read();
+    ${declare}
+    console.log(read(), globalThis.declaredLater);
+  `;
+}
+
 describe("vm", () => {
   describe("runInContext()", () => {
     testRunInContext({ fn: runInContext, isIsolated: true });
@@ -106,6 +132,104 @@ describe("vm", () => {
         importModuleDynamically: undefined,
       });
       expect(result).toBe(2);
+    });
+
+    describe("a script of the form `var x = <JSON>;` declares a global that warm sites see", () => {
+      for (const type of ["cjs", "mjs"] as const) {
+        test.concurrent(`read of an absent name (${type})`, async () => {
+          const fixture = readOfAnAbsentName(`vm.runInThisContext("var declaredLater = 33;");`);
+          expect(await runDeclarationFixture(type, fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
+        });
+      }
+
+      const cases: Record<string, [fixture: string, stdout: string]> = {
+        "read with a computed key": [
+          `
+            function read(key) { return globalThis[key]; }
+            for (let i = 0; i < 2000; ++i) read("declaredLater");
+            vm.runInThisContext("var declaredLater = 33;");
+            console.log(read("declaredLater"));
+          `,
+          "33\n",
+        ],
+        "call of an inherited method": [
+          `
+            function call() { try { return typeof globalThis.valueOf(); } catch (error) { return error.name; } }
+            for (let i = 0; i < 2000; ++i) call();
+            vm.runInThisContext("var valueOf = 33;");
+            console.log(call());
+          `,
+          "TypeError\n",
+        ],
+        "write to an inherited setter": [
+          `
+            let setterCalls = 0;
+            Object.defineProperty(Object.prototype, "declaredLater", { get() { return "getter"; }, set(value) { ++setterCalls; }, configurable: true });
+            function write(value) { globalThis.declaredLater = value; }
+            for (let i = 0; i < 2000; ++i) write(i);
+            vm.runInThisContext("var declaredLater = 33;");
+            write(44);
+            console.log(setterCalls, globalThis.declaredLater);
+          `,
+          "2000 44\n",
+        ],
+        "two declarations in one script": [
+          `
+            function first() { return globalThis.declaredFirst; }
+            function second() { return globalThis.declaredSecond; }
+            for (let i = 0; i < 2000; ++i) { first(); second(); }
+            vm.runInThisContext('var declaredFirst = 1; var declaredSecond = { "a": [2] };');
+            console.log(first(), second()?.a[0]);
+          `,
+          "1 2\n",
+        ],
+        "a site that gets warm between two statements of the script": [
+          `
+            function read() { return globalThis.declaredSecond; }
+            globalThis.holder = { set warm(value) { for (let i = 0; i < 2000; ++i) read(); } };
+            vm.runInThisContext("var declaredFirst = 1; holder.warm = 1; var declaredSecond = 2;");
+            console.log(read());
+          `,
+          "2\n",
+        ],
+        "a reader that is on the stack when the script runs": [
+          `
+            function read() { return globalThis.declaredLater; }
+            function loop(count) {
+              const seen = [];
+              for (let i = 0; i < count; ++i) {
+                if (i === count - 2) vm.runInThisContext("var declaredLater = 33;");
+                const value = read();
+                if (i >= count - 3) seen.push(String(value));
+              }
+              return seen.join();
+            }
+            console.log(loop(5000));
+          `,
+          "undefined,33,33\n",
+        ],
+      };
+      for (const [name, [fixture, stdout]] of Object.entries(cases)) {
+        test.concurrent(name, async () => {
+          expect(await runDeclarationFixture("cjs", fixture)).toEqual({ stdout, stderr: "", exitCode: 0 });
+        });
+      }
+
+      test.concurrent("in a Worker", async () => {
+        const fixture = `
+          import { Worker, isMainThread, parentPort } from "node:worker_threads";
+          if (isMainThread) {
+            const worker = new Worker(new URL(import.meta.url));
+            worker.on("message", message => console.log(message));
+          } else {
+            function read() { return globalThis.declaredLater; }
+            for (let i = 0; i < 2000; ++i) read();
+            vm.runInThisContext("var declaredLater = 33;");
+            parentPort.postMessage(read() + " " + globalThis.declaredLater);
+          }
+        `;
+        expect(await runDeclarationFixture("mjs", fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
+      });
     });
   });
 
@@ -319,6 +443,34 @@ describe("Script", () => {
         const script = new Script(code, options);
         return script.runInThisContext();
       },
+    });
+
+    describe("a script of the form `var x = <JSON>;` declares a global that warm sites see", () => {
+      for (const type of ["cjs", "mjs"] as const) {
+        test.concurrent(`read of an absent name (${type})`, async () => {
+          const fixture = readOfAnAbsentName(`new vm.Script("var declaredLater = 33;").runInThisContext();`);
+          expect(await runDeclarationFixture(type, fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
+        });
+      }
+
+      test.concurrent("the same Script run twice", async () => {
+        const fixture = `
+          function read() { return globalThis.declaredLater; }
+          for (let i = 0; i < 2000; ++i) read();
+          const script = new vm.Script('var declaredLater = { "run": 1 };');
+          script.runInThisContext();
+          const first = read();
+          script.runInThisContext();
+          const second = read();
+          const descriptor = JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, "declaredLater"));
+          console.log(first?.run, second?.run, first === second, descriptor);
+        `;
+        expect(await runDeclarationFixture("cjs", fixture)).toEqual({
+          stdout: `1 1 false {"value":{"run":1},"writable":true,"enumerable":true,"configurable":false}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
   test("can throw without new", () => {

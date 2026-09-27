@@ -2490,6 +2490,10 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
+        // An embedded directory never changes, so there is nothing to re-read.
+        if Fs::standalone_graph_for_dir(path).is_some() {
+            return false;
+        }
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         bun_core::scoped_log!(

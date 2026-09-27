@@ -314,6 +314,9 @@ protected:
 
             if (isFin(src)) {
                 wState->state.opStack--;
+                if (wState->state.opStack == 0) {
+                    wState->state.lastFin = false;
+                }
             }
 
             src += payLength + MESSAGE_HEADER;
@@ -360,6 +363,9 @@ protected:
 
             if (wState->state.lastFin) {
                 wState->state.opStack--;
+                if (wState->state.opStack == 0) {
+                    wState->state.lastFin = false;
+                }
             }
 
             src += wState->remainingBytes;

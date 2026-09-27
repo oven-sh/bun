@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 const BUN = process.env.BUN ?? process.execPath;
 const BUN_BASELINE = process.env.BUN_BASELINE;
 const BASELINE_SUPPORTS_H2 = process.env.BASELINE_SUPPORTS_H2 === "1";
+const BENCH_HTTP2 = process.env.BENCH_HTTP2 !== "0";
 const CLIENT_RUNTIME = process.env.CLIENT_RUNTIME ?? process.execPath;
 const WORKLOAD = process.env.WORKLOAD ?? "echo";
 const PROCESSES = Number(process.env.PROCESSES ?? 4);
@@ -22,11 +23,21 @@ const WARMUP_MS = Number(process.env.WARMUP_MS ?? 2_000);
 const DURATION_MS = Number(process.env.DURATION_MS ?? 5_000);
 const H2_STREAM_WINDOW_SIZE = Number(process.env.H2_STREAM_WINDOW_SIZE ?? 16 * 1024 * 1024);
 const H2_CONNECTION_WINDOW_SIZE = Number(process.env.H2_CONNECTION_WINDOW_SIZE ?? 64 * 1024 * 1024);
+const PIPELINE_DEPTH = Number(process.env.PIPELINE_DEPTH ?? 1);
 const RUNS = Number(process.env.RUNS ?? 3);
 const CYCLES = Number(process.env.CYCLES ?? 1);
 const CASES = (process.env.CASES ?? "h1,h2-single,h2-mux").split(",");
 const here = fileURLToPath(new URL(".", import.meta.url));
 const children = new Set();
+
+function medianSorted(values) {
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2 === 0 ? (values[middle - 1] + values[middle]) / 2 : values[middle];
+}
+
+function medianValues(values) {
+  return medianSorted(values.sort((a, b) => a - b));
+}
 
 function track(proc) {
   children.add(proc);
@@ -54,6 +65,15 @@ for (const [name, value] of [
   ["CYCLES", CYCLES],
 ]) {
   if (!Number.isInteger(value) || value < 1) throw new Error(`${name} must be a positive integer: ${value}`);
+}
+if (PIPELINE_DEPTH !== 1) throw new Error(`PIPELINE_DEPTH must be 1 for comparable H1/H2 runs: ${PIPELINE_DEPTH}`);
+if (!BENCH_HTTP2 && CASES.some(testCase => testCase !== "h1")) {
+  throw new Error("BENCH_HTTP2=0 requires CASES=h1");
+}
+for (const payloadSize of PAYLOAD_SIZES) {
+  if (!Number.isInteger(payloadSize) || payloadSize < 16 || payloadSize > 1_048_576) {
+    throw new Error(`PAYLOAD_SIZES entries must be integers between 16 and 1048576: ${payloadSize}`);
+  }
 }
 for (const [name, value] of [
   ["WARMUP_MS", WARMUP_MS],
@@ -277,6 +297,7 @@ async function runOne(binary, binaryName, testCase, payloadSize, repetition) {
     const row = {
       binary: binaryName,
       workload: WORKLOAD,
+      serverHttp2: BENCH_HTTP2,
       case: testCase,
       repetition,
       payloadSize,
@@ -335,24 +356,25 @@ const medians = [];
 for (const binary of binaries) {
   for (const payloadSize of PAYLOAD_SIZES) {
     for (const testCase of CASES) {
-      const samples = rows
-        .filter(row => row.binary === binary.name && row.payloadSize === payloadSize && row.case === testCase)
-        .sort((a, b) => a.messagesPerSecond - b.messagesPerSecond);
+      const samples = rows.filter(
+        row => row.binary === binary.name && row.payloadSize === payloadSize && row.case === testCase,
+      );
       if (samples.length === 0) continue;
-      const median = samples[Math.floor(samples.length / 2)];
+      const median = field => medianValues(samples.map(row => row[field]));
       medians.push({
         binary: binary.name,
+        serverHttp2: BENCH_HTTP2,
         case: testCase,
         payload: payloadSize,
-        streams: median.streams,
-        sessions: median.sessions,
-        cycles: median.cycles,
-        "messages/s": median.messagesPerSecond,
-        "payload MiB/s": median.payloadMiBPerSecond,
-        "RSS start MiB": median.rssStartMiB,
-        "RSS end MiB": median.rssEndMiB,
-        "max RSS MiB": median.maxRssMiB,
-        "RSS cycle Δ MiB": median.rssCycleDeltaMiB,
+        streams: samples[0].streams,
+        sessions: samples[0].sessions,
+        cycles: samples[0].cycles,
+        "messages/s": Math.round(median("messagesPerSecond")),
+        "payload MiB/s": Number(median("payloadMiBPerSecond").toFixed(2)),
+        "RSS start MiB": Number(median("rssStartMiB").toFixed(2)),
+        "RSS end MiB": Number(median("rssEndMiB").toFixed(2)),
+        "max RSS MiB": Number(median("maxRssMiB").toFixed(2)),
+        "RSS cycle Δ MiB": Number(median("rssCycleDeltaMiB").toFixed(2)),
       });
     }
   }
@@ -392,16 +414,16 @@ if (BUN_BASELINE) {
       rssEndDeltas.sort((a, b) => a - b);
       maxRssDeltas.sort((a, b) => a - b);
       if (throughputDeltas.length === 0) continue;
-      const middle = Math.floor(throughputDeltas.length / 2);
       paired.push({
+        serverHttp2: BENCH_HTTP2,
         case: testCase,
         payload: payloadSize,
         pairs: throughputDeltas.length,
-        "median speed Δ %": Number(throughputDeltas[middle].toFixed(2)),
+        "median speed Δ %": Number(medianSorted(throughputDeltas).toFixed(2)),
         "min speed Δ %": Number(throughputDeltas[0].toFixed(2)),
         "max speed Δ %": Number(throughputDeltas.at(-1).toFixed(2)),
-        "median RSS end Δ MiB": Number(rssEndDeltas[middle].toFixed(2)),
-        "median max RSS Δ MiB": Number(maxRssDeltas[middle].toFixed(2)),
+        "median RSS end Δ MiB": Number(medianSorted(rssEndDeltas).toFixed(2)),
+        "median max RSS Δ MiB": Number(medianSorted(maxRssDeltas).toFixed(2)),
       });
     }
   }

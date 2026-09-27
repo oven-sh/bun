@@ -36,8 +36,8 @@ use bun_resolver::Resolver;
 use crate::Graph::Graph;
 use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
-    AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
-    LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
+    BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker, LinkerGraph,
+    MangledProps, PartRange, StableRef, WrapKind,
 };
 
 /// `bun_event_loop` is a
@@ -2678,22 +2678,15 @@ impl<'a> LinkerContext<'a> {
                             if from_chunk_dir == b"." {
                                 from_chunk_dir = b"";
                             }
-                            let parse_graph = self.parse_graph();
-                            let additional_files: &[AdditionalFile] =
-                                parse_graph.input_files.items_additional_files()
-                                    [piece.query.index() as usize]
-                                    .slice();
-                            debug_assert!(!additional_files.is_empty());
-                            if let AdditionalFile::OutputFile(output_file_id) = &additional_files[0]
-                            {
-                                let path = &parse_graph.additional_output_files
-                                    [*output_file_id as usize]
-                                    .dest_path;
-                                hash.write(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                    false,
-                                >(from_chunk_dir, path));
-                            }
+                            let output_file = self
+                                .parse_graph()
+                                .asset_output_file(piece.query.index() as usize);
+                            hash.write(bun_paths::resolve_path::relative_platform::<
+                                bun_paths::resolve_path::platform::Posix,
+                                false,
+                            >(
+                                from_chunk_dir, &output_file.dest_path
+                            ));
                         }
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
                             out.push(piece.query.index())

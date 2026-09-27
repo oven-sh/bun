@@ -1,5 +1,6 @@
 use crate::helpers;
 use crate::inlines::EmphDelim;
+use bun_core::strings;
 
 pub(crate) fn is_list_bullet(c: u8) -> bool {
     c == b'-' || c == b'+' || c == b'*'
@@ -86,11 +87,10 @@ pub struct AutolinkScanMemo {
     accept_start: [usize; 4],
     accept_end: [usize; 4],
     host_marks: HostMarks,
-    /// `content[paren_from..paren_to]` has `paren_open` '(' and `paren_close` ')'.
+    /// `parens` is the count for `content[paren_from..paren_to]`.
     paren_from: usize,
     paren_to: usize,
-    paren_open: i32,
-    paren_close: i32,
+    parens: ParenCount,
 }
 
 impl AutolinkScanMemo {
@@ -101,8 +101,7 @@ impl AutolinkScanMemo {
         host_marks: HostMarks::EMPTY,
         paren_from: NONE,
         paren_to: 0,
-        paren_open: 0,
-        paren_close: 0,
+        parens: ParenCount { open: 0, close: 0 },
     };
 
     #[inline]
@@ -136,28 +135,27 @@ impl AutolinkScanMemo {
     }
 
     /// Counts of '(' and ')' in `content[from..to]`.
-    fn parens(&mut self, content: &[u8], base: usize, from: usize, to: usize) -> (i32, i32) {
+    fn parens(&mut self, content: &[u8], base: usize, from: usize, to: usize) -> ParenCount {
         if self.armed && self.paren_from == base + from && self.paren_to == base + to {
-            return (self.paren_open, self.paren_close);
+            return self.parens;
         }
-        let mut open: i32 = 0;
-        let mut close: i32 = 0;
-        for &ch in &content[from..to] {
-            if ch == b'(' {
-                open += 1;
-            }
-            if ch == b')' {
-                close += 1;
-            }
-        }
+        let parens = ParenCount {
+            open: strings::count_char(&content[from..to], b'('),
+            close: strings::count_char(&content[from..to], b')'),
+        };
         if self.armed {
             self.paren_from = base + from;
             self.paren_to = base + to;
-            self.paren_open = open;
-            self.paren_close = close;
+            self.parens = parens;
         }
-        (open, close)
+        parens
     }
+}
+
+#[derive(Copy, Clone)]
+struct ParenCount {
+    open: usize,
+    close: usize,
 }
 
 /// Of a host run: the last '.', the '.' before it, the last alphanumeric before the last '.', the last alphanumeric.
@@ -182,14 +180,14 @@ impl HostMarks {
         HostMarks(marks)
     }
 
-    /// True if the part of the run from `start` on has `min` components.
+    /// True if the part of the run from `start` on has `min` components. A host needs one or two.
     fn has(&self, start: usize, min: u32) -> bool {
         let from = |mark: usize| mark != NONE && mark >= start;
         let [last_dot, dot_before, alnum_before_dot, last_alnum] = self.0;
-        match min {
-            0 => true,
-            1 => from(last_dot) || from(last_alnum),
-            _ => from(dot_before) || (from(last_dot) && from(alnum_before_dot)),
+        if min == 1 {
+            from(last_dot) || from(last_alnum)
+        } else {
+            from(dot_before) || (from(last_dot) && from(alnum_before_dot))
         }
     }
 }
@@ -532,7 +530,7 @@ fn post_process_autolink_end(
     if query_start >= end {
         return end;
     }
-    let (open, mut close) = ctx.memo.parens(content, ctx.base, query_start, end);
+    let ParenCount { open, mut close } = ctx.memo.parens(content, ctx.base, query_start, end);
     while end > beg && content[end - 1] == b')' && close > open {
         end -= 1;
         close -= 1;

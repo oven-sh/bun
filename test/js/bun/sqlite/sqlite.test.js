@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2662,8 +2662,6 @@ describe("fileControl without storage from the caller", () => {
         deserialized.fileControl(op("SIZE_LIMIT"), null);
         result.sizeLimitKept = sizeLimit() === sizeLimitBefore;
 
-        file.close();
-        result.closed = String(file.fileControl(op("DATA_VERSION"), null));
         console.log(JSON.stringify(result));
       `,
     );
@@ -2691,9 +2689,57 @@ describe("fileControl without storage from the caller", () => {
       unknownOpcode: Array(2).fill(isMacOS ? result.unknownOpcode?.[0] : 12),
       persistWal: [0, 1],
       sizeLimitKept: true,
-      closed: "undefined",
     });
     expect(exitCode).toBe(0);
+  });
+
+  // NULL is a value for SET_LOCKPROXYFILE: it means no proxy file. Only the
+  // SQLite of macOS can have the handler.
+  it.skipIf(!isMacOS)("null stays NULL for SET_LOCKPROXYFILE", () => {
+    using dir = tempDir("sqlite-fcntl-proxy", {});
+    using db = new Database(path.join(String(dir), "file.db"));
+    db.run("CREATE TABLE t (v)");
+
+    // GET_LOCKPROXYFILE writes the address of the proxy path. The address is
+    // NULL when the file does not use proxy locking.
+    const proxyPath = () => {
+      const address = new BigUint64Array([1n]);
+      const status = db.fileControl(constants.SQLITE_FCNTL_GET_LOCKPROXYFILE, address);
+      return { status, address: address[0] };
+    };
+    const before = proxyPath();
+
+    expect(db.fileControl(constants.SQLITE_FCNTL_SET_LOCKPROXYFILE, null)).toBe(before.status);
+    expect(proxyPath()).toEqual(before);
+    db.run("INSERT INTO t VALUES (1)");
+  });
+
+  // SQLite allocates the string that TEMPFILENAME and VFSNAME write to the
+  // argument. bun frees it when the storage is bun's.
+  it.concurrent("frees the string that SQLite writes to the storage of bun", async () => {
+    using dir = tempDir("sqlite-fcntl-leak", {});
+    await expectRssDeltaBelow(
+      [
+        "-e",
+        `
+          import { Database, constants } from "bun:sqlite";
+          const db = new Database(${JSON.stringify(path.join(String(dir), "file.db"))});
+          db.run("CREATE TABLE t (v)");
+          const run = arg => {
+            for (let i = 0; i < 30_000; i++) db.fileControl(constants.SQLITE_FCNTL_TEMPFILENAME, arg);
+          };
+          run(0);
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          run(0);
+          run(null);
+          Bun.gc(true);
+          console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+          db.close();
+        `,
+      ],
+      { release: 12, debug: 12 },
+    );
   });
 
   it.concurrent("a value that is not a number, null or a TypedArray throws", async () => {

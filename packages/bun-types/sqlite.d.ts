@@ -580,7 +580,8 @@ declare module "bun:sqlite" {
      * - `null` is for an `op` that takes no argument, such as
      *   `SQLITE_FCNTL_RESET_CACHE`. An `op` that reads its argument reads `-1`:
      *   `SQLITE_FCNTL_PERSIST_WAL` changes nothing, and
-     *   `SQLITE_FCNTL_CHUNK_SIZE` stores `-1`.
+     *   `SQLITE_FCNTL_CHUNK_SIZE` stores `-1`. For
+     *   `SQLITE_FCNTL_SET_LOCKPROXYFILE`, `null` means no proxy file.
      *
      * @returns The SQLite status code. `0` is `SQLITE_OK`. `12` is
      * `SQLITE_NOTFOUND`: the VFS does not implement `op`, or the database is
@@ -596,7 +597,7 @@ declare module "bun:sqlite" {
      *
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
-    fileControl(op: number, arg?: ArrayBufferView | number | null): number;
+    fileControl(op: number, arg: ArrayBufferView | number | null): number;
     /**
      * Call `sqlite3_file_control` on the database with the schema name
      * `zDbName`: `"main"` or the name of an attached database.
@@ -607,7 +608,7 @@ declare module "bun:sqlite" {
      *
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
-    fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number | null): number;
+    fileControl(zDbName: string, op: number, arg: ArrayBufferView | number | null): number;
   }
 
   /**

@@ -1982,10 +1982,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     }
 
     // SQLite dereferences pArg without a null check. -1 is "query" for the in/out opcodes.
-    int64_t resultInt = -1;
-    void* resultPtr = &resultInt;
+    union {
+        int64_t number;
+        char* string;
+    } scratch;
+    scratch.number = -1;
+    void* resultPtr = &scratch;
     if (resultValue.isNumber()) {
-        resultInt = resultValue.toInt32(lexicalGlobalObject);
+        scratch.number = resultValue.toInt32(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue)) {
         if (view->isDetached()) {
@@ -2003,13 +2007,24 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected buffer"_s));
             return {};
         }
-    } else if (!resultValue.isNull()) {
+    } else if (resultValue.isNull()) {
+        // NULL is a value for this opcode. It means no proxy file.
+        if (op == SQLITE_FCNTL_SET_LOCKPROXYFILE)
+            resultPtr = nullptr;
+    } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected result to be a number, null or a TypedArray"_s));
         return {};
     }
 
-    ASSERT(resultPtr);
+    // SQLite allocates the string of these two opcodes, and the caller frees it.
+    bool ownsString = resultPtr == &scratch && (op == SQLITE_FCNTL_VFSNAME || op == SQLITE_FCNTL_TEMPFILENAME);
+    if (ownsString)
+        scratch.string = nullptr;
+
     int statusCode = sqlite3_file_control(db, fileNameStr.isNull() ? nullptr : fileNameStr.data(), op, resultPtr);
+
+    if (ownsString)
+        sqlite3_free(scratch.string);
 
     if (statusCode == SQLITE_ERROR) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));

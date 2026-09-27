@@ -57,3 +57,7 @@ expectType(db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE, null)).is<number>(
 expectType(db.fileControl("main", constants.SQLITE_FCNTL_RESET_CACHE, null)).is<number>();
 // @ts-expect-error - an object that is not an ArrayBufferView throws at runtime
 db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, {});
+// @ts-expect-error - a call without an argument throws at runtime
+db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE);
+// @ts-expect-error - a call without an argument throws at runtime
+db.fileControl("main", constants.SQLITE_FCNTL_RESET_CACHE);

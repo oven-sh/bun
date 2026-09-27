@@ -2,7 +2,8 @@
  * Runs the scenarios of the jsc image, each of them several times and in several ways.
  *
  *   bun test/jsc_scenarios.ts [--runs 5] [--image <jsc.img>] [--host <host>] [--out <scenarios.json>]
- *                             [--modes direct,hosted,winmem,overlay,jitwx,hwcap0,page16] [--only name,name]
+ *                             [--modes direct,hosted,winmem,winmem-quiet,overlay,jitwx,hwcap0,page16]
+ *                             [--only name,name]
  *                             [--native <jsc of the same WebKit, built for this machine>]
  *                             [--timeout seconds] [--qemu <qemu-aarch64>] [--must-end-with 96]
  *
@@ -17,14 +18,18 @@
  *   hosted    the host runs it: every request goes through the host table. The host kills the
  *             process if code outside of the host issues a syscall (seccomp), and it forwards
  *             nothing to the kernel (BUN_HOST_FORWARD is taken out of the environment)
- *   winmem    hosted, with the memory model of the Windows host (BUN_HOST_TEST=winmem)
+ *   winmem    hosted, with the memory model of the Windows host (BUN_HOST_TEST=winmem). The host
+ *             tells the image that memory is committed, as the Windows host does
+ *   winmem-quiet  the same memory model, and the host does not tell the image
+ *             (BUN_HOST_TEST=winmem-quiet): its allocators map as on Linux, and the pages that
+ *             the host commits at a fault are "detail lazy_commits" of the result
  *   overlay   hosted, MADV_DONTNEED done the way the macOS branch does it (BUN_HOST_TEST=overlay)
  *   jitwx     hosted, memory for code is writable or executable for a thread, never both, as
  *             on Apple Silicon (BUN_HOST_TEST=jitwx). The switches are in the result
  *   hwcap0    hosted, aarch64: the image is told that the processor has none of the features
  *             that AT_HWCAP names (BUN_HOST_HWCAP=0,0)
  *   page16    hosted, pages of 16 KiB as macOS on Apple Silicon has them (BUN_HOST_PAGE=16384)
- * direct, winmem, overlay, jitwx, hwcap0 and page16 are for Linux.
+ * direct, winmem, winmem-quiet, overlay, jitwx, hwcap0 and page16 are for Linux.
  *
  * An image for another processor than the one of this machine (aarch64 on x86-64) runs
  * under qemu, and so does its host. qemu has no filter for syscalls, so on Linux such an
@@ -56,7 +61,13 @@ const hostProgram =
   process.platform === "win32" ? "host.exe" : process.platform === "darwin" ? "host-macos" : "host-linux";
 const host = resolve(option("host", join(dirname(image), hostProgram)));
 const outFile = resolve(option("out", join(dirname(image), "scenarios.json")));
+/** The ways to run that are a way of the test host: the value of BUN_HOST_TEST. */
+const WAYS_OF_THE_TEST_HOST = ["winmem", "winmem-quiet", "overlay", "jitwx"];
+const MODES = ["direct", "hosted", ...WAYS_OF_THE_TEST_HOST, "hwcap0", "page16"];
 const modes = option("modes", "direct,hosted").split(",");
+for (const mode of modes) {
+  if (!MODES.includes(mode)) throw new Error(`--modes ${mode}: not one of ${MODES.join(", ")}`);
+}
 const only = option("only", "").split(",").filter(Boolean);
 const native = option("native", "");
 const mustEndWith = option("must-end-with", "") === "" ? undefined : Number(option("must-end-with", ""));
@@ -246,7 +257,7 @@ async function once(s: Scenario, mode: string, index: number): Promise<string | 
     env.BUN_HOST_PATHS = pathLog;
     if (mode === "hwcap0") env.BUN_HOST_HWCAP = "0,0";
     else if (mode === "page16") env.BUN_HOST_PAGE = "16384";
-    else if (mode !== "hosted") env.BUN_HOST_TEST = mode;
+    else if (WAYS_OF_THE_TEST_HOST.includes(mode)) env.BUN_HOST_TEST = mode;
   }
   const proc = Bun.spawn(cmd, { env, stdin: "ignore", stdout: "pipe", stderr: "pipe", cwd: scratch });
   let late = false;
@@ -318,7 +329,7 @@ for (const s of scenarios) {
     const control =
       mustEndWith === undefined ? "" : `, ${tally.ended_by_the_host} ended by the host with ${mustEndWith}`;
     console.log(
-      `${s.name.padEnd(20)} ${mode.padEnd(8)} ${tally.passes} of ${tally.runs}${control}   ${tally.seconds.join(" ")} s${tally.failures.length ? "   " + tally.failures[0] : ""}`,
+      `${s.name.padEnd(20)} ${mode.padEnd(12)} ${tally.passes} of ${tally.runs}${control}   ${tally.seconds.join(" ")} s${tally.failures.length ? "   " + tally.failures[0] : ""}`,
     );
   }
   results.push(row);

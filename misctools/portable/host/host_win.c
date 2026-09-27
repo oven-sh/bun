@@ -1743,7 +1743,10 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
    What the image hands to such a function is not known here, so nothing calls
    model_touch() for it: a page of the image that is reserved and was never
    touched is committed when code of the process faults on it, and is
-   ERROR_NOACCESS for a system call that is the first to reach it. */
+   ERROR_NOACCESS for a system call that is the first to reach it. So the
+   image is told how memory behaves here (AT_BUN_HOST_MEMORY in main): an
+   allocator of the image that reads the entry hands out memory that it has
+   committed. */
 #ifdef BUN_HOST_LIBUV
 void *bun_host_uv_lookup(const char *symbol);
 #else
@@ -2049,7 +2052,7 @@ int wmain(int argc, wchar_t **wide) {
   uint64_t aux[] = {L_AT_PHDR, (uint64_t)(uintptr_t)image_ph, L_AT_PHENT, sizeof(Phdr), L_AT_PHNUM, eh->phnum, L_AT_PAGESZ, PAGE, L_AT_BASE, 0,
                     L_AT_ENTRY, (uint64_t)(uintptr_t)(base + eh->entry), L_AT_UID, 0, L_AT_EUID, 0, L_AT_GID, 0, L_AT_EGID, 0, L_AT_SECURE, 0,
                     L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host,
-                    AT_BUN_HOST_ENTRIES, BUN_HOST_ENTRIES, L_AT_NULL, 0};
+                    AT_BUN_HOST_ENTRIES, BUN_HOST_ENTRIES, AT_BUN_HOST_MEMORY, BUN_HOST_MEMORY_COMMITS, L_AT_NULL, 0};
   memcpy(v, aux, sizeof aux);
 
   if (trace) fprintf(stderr, "[host] file %lld bytes, image at %#llx, mapped at %p, entry %p, thread slot offset %#llx\n", (long long)file_size.QuadPart, (unsigned long long)image_off, base, base + eh->entry, host.tcb_offset);

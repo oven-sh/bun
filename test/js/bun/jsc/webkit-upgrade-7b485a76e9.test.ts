@@ -405,6 +405,11 @@ describe("WebKit 7b485a76e9 upgrade", () => {
         BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
         BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000",
         BUN_JSC_useConcurrentJIT: "false",
+        // bunEnv passes the BUN_JSC_* options of the runner on. Below the FTL the probes pass without the fix.
+        BUN_JSC_useJIT: "true",
+        BUN_JSC_useBaselineJIT: "true",
+        BUN_JSC_useDFGJIT: "true",
+        BUN_JSC_useFTLJIT: "true",
       },
       stdout: "pipe",
       stderr: "pipe",

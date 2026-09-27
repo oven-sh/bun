@@ -968,8 +968,26 @@ pub(crate) mod js_bundler {
                             // slip past this guard. `target` defaults to `Browser` when
                             // unset, so this must gate on `did_set_target` too, or every
                             // include build without an explicit `target` (the common case)
-                            // would be rejected.
-                            if did_set_target && this.target == Target::Browser {
+                            // would be rejected. But an *unset* target still infers
+                            // `Browser` further down (`is_standalone_html`, below) whenever
+                            // every entrypoint happens to be `.html` — so that case must be
+                            // rejected too, or a no-target, all-HTML build with an `.html`
+                            // include silently becomes standalone HTML with the include
+                            // bundled eagerly instead of rejected.
+                            let all_html_entrypoints = 'brk: {
+                                if this.entry_points.count() == 0 {
+                                    break 'brk false;
+                                }
+                                for ep in this.entry_points.keys() {
+                                    if !ep.ends_with(b".html") {
+                                        break 'brk false;
+                                    }
+                                }
+                                true
+                            };
+                            if this.target == Target::Browser
+                                && (did_set_target || all_html_entrypoints)
+                            {
                                 return Err(global_this.throw_invalid_arguments(format_args!(
                                     "Cannot use compile.include with target 'browser'"
                                 )));

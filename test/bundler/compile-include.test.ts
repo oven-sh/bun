@@ -23,14 +23,23 @@ async function spawnCapture(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-// Builds ./index.ts into ./app through the CLI flag or through Bun.build. Returns the
+// Builds `entries` into ./app through the CLI flag or through Bun.build. Returns the
 // failure text (empty on success) so rejection tests and success tests share one path.
-async function build(dir: string, via: Via, include: string[], opts: { bytecode?: boolean } = {}) {
+// `opts.target` lets a caller pin a non-default compile target (F2: an explicit
+// non-browser target must keep `compile.include` working, same as no target at all).
+async function buildEntries(
+  dir: string,
+  via: Via,
+  entries: string[],
+  include: string[],
+  opts: { bytecode?: boolean; target?: string } = {},
+) {
   if (via === "cli") {
     const args = include.map(p => `--include=${p}`);
     if (opts.bytecode) args.push("--bytecode");
+    if (opts.target) args.push(`--target=${opts.target}`);
     const { stderr, exitCode } = await spawnCapture(
-      [bunExe(), "build", "--compile", "./index.ts", "--outfile", "app", ...args],
+      [bunExe(), "build", "--compile", ...entries, "--outfile", "app", ...args],
       dir,
     );
     return { failed: exitCode !== 0, message: stderr };
@@ -38,8 +47,9 @@ async function build(dir: string, via: Via, include: string[], opts: { bytecode?
   const script = /* js */ `
     try {
       const r = await Bun.build({
-        entrypoints: ["./index.ts"],
+        entrypoints: ${JSON.stringify(entries)},
         bytecode: ${!!opts.bytecode},
+        ${opts.target ? `target: ${JSON.stringify(opts.target)},` : ""}
         compile: { outfile: "app", include: ${JSON.stringify(include)} },
       });
       console.log(JSON.stringify({ failed: !r.success, message: r.logs.map(String).join("\\n") }));
@@ -49,6 +59,10 @@ async function build(dir: string, via: Via, include: string[], opts: { bytecode?
   `;
   const { stdout } = await spawnCapture([bunExe(), "-e", script], dir);
   return JSON.parse(stdout.trim());
+}
+
+async function build(dir: string, via: Via, include: string[], opts: { bytecode?: boolean; target?: string } = {}) {
+  return buildEntries(dir, via, ["./index.ts"], include, opts);
 }
 
 async function run(dir: string) {
@@ -599,6 +613,97 @@ describe.concurrent("compile include", () => {
       `;
       const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
       expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build rejects compile.include with no target, all-HTML entrypoints, and an .html include",
+    async () => {
+      // Regression (F1): `target` defaults to `Browser` when unset, and further down
+      // (`is_standalone_html`, below the include-parsing block) an all-HTML entrypoint
+      // list with no explicit target still infers a standalone-HTML build. Gating this
+      // guard on `did_set_target` alone let that exact case through: the entry list
+      // stayed all-HTML, so the build silently became standalone HTML with the `.html`
+      // include bundled eagerly instead of rejected as a lazily-loaded module.
+      using dir = tempDir("compile-include-notarget-allhtml", {
+        "index.html": `<!doctype html>`,
+        "extra.html": `<!doctype html>`,
+      });
+      const script = /* js */ `
+        try {
+          await Bun.build({ entrypoints: ["./index.html"], compile: { include: ["./extra.html"] } });
+          console.log("no error");
+        } catch (e) { console.log(String(e.message)); }
+      `;
+      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
+      expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build allows compile.include with no target and a mixed HTML/non-HTML entrypoint list",
+    async () => {
+      // The no-target guard above must reject only when EVERY entrypoint is `.html`.
+      // A mixed list (one `.html` entry alongside a non-HTML one) still infers a plain
+      // Bun executable, not standalone HTML, so `compile.include` must keep working
+      // exactly as it does for an all-non-HTML entrypoint list — this is the boundary
+      // a buggy "any entrypoint is .html" check (instead of "every") would get wrong.
+      using dir = tempDir("compile-include-mixed-entries", {
+        "index.ts": /* ts */ `
+          const mod = await import("./plugins/" + "target" + ".js");
+          console.log(JSON.stringify({ value: mod.default }));
+        `,
+        "index.html": `<!doctype html>`,
+        "plugins/target.js": `export default "included-value";`,
+      });
+      const built = await buildEntries(String(dir), "api", ["./index.ts", "./index.html"], ["./plugins"]);
+      expect(built).toEqual({ failed: false, message: expect.any(String) });
+      const { stdout, exitCode } = await run(String(dir));
+      expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+      expect(exitCode).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build embeds compile.include lazily with an explicit non-browser target",
+    async () => {
+      // F2 (test gap / mutation survivor): the only existing negative test used an
+      // explicit `target: "browser"`, and the only positive test used the default
+      // target. Neither covers an explicit non-browser target, so the mutation
+      // `if (did_set_target) reject` (dropping the `target == Browser` comparison)
+      // stayed green while it would reject every explicitly-targeted include build.
+      using dir = tempDir("compile-include-explicit-bun-target", {
+        "index.ts": /* ts */ `
+          import { join } from "path";
+          const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
+          console.log(JSON.stringify({ value: mod.default }));
+        `,
+        "plugins/target.js": `export default "included-value";`,
+      });
+      const built = await build(String(dir), "api", ["./plugins"], { target: "bun" });
+      expect(built).toEqual({ failed: false, message: expect.any(String) });
+      const { stdout, exitCode } = await run(String(dir));
+      expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+      expect(exitCode).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build accepts compile.include with an explicit cross-compile target",
+    async () => {
+      // Same F2 gap as above, for a cross-target build (`bun-linux-x64`). The produced
+      // executable is for a different platform than the build host, so this only
+      // checks that the build itself succeeds — it is never run.
+      using dir = tempDir("compile-include-cross-target", {
+        "index.ts": `console.log(1);`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const built = await build(String(dir), "api", ["./plugins"], { target: "bun-linux-x64" });
+      expect(built).toEqual({ failed: false, message: expect.any(String) });
     },
     TIMEOUT,
   );

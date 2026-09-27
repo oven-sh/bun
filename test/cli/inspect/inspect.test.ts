@@ -51,34 +51,29 @@ test.skipIf(!isDebug && !isASAN)("Runtime.evaluate does not trip exception-check
     cause => rejectUrl(new Error("could not read inspectee stderr:\n" + stderr, { cause })),
   );
 
-  const url = await urlPromise;
-  const ws = new WebSocket(url);
-  let reply: unknown;
-  try {
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
-      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-    });
-
+  const ws = new WebSocket(await urlPromise);
+  // Settles with the reply, or with the way the socket ended when the inspectee did not reply.
+  const { promise: outcome, resolve: settle } = Promise.withResolvers<unknown>();
+  ws.addEventListener("open", () => {
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-    reply = await new Promise<unknown>((resolve, reject) => {
-      ws.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))));
-      ws.addEventListener("close", ({ code, reason }) => resolve({ closed: { code, reason } }));
-      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-    });
-  } finally {
-    ws.close();
-    child.kill();
-  }
-
+  });
+  ws.addEventListener("message", ({ data }) => settle(JSON.parse(String(data))));
+  ws.addEventListener("error", ({ message }) => settle({ error: message }));
+  ws.addEventListener("close", ({ code, reason }) => settle({ closed: { code, reason } }));
+  const reply = await outcome;
+  ws.close();
+  child.kill();
   await Promise.all([child.exited, drained]);
-  // An inspectee that aborts closes the socket with 1006 before it replies.
-  if (child.signalCode === "SIGABRT") {
-    throw new Error(`inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`);
-  }
-  expect(reply).toMatchObject({
-    id: 1,
-    result: { result: { type: "number", value: 2 } },
+
+  // The validator prints the two scopes involved before it ends the process. Keep them in the
+  // comparison so a failure names the call site.
+  const unchecked = stderr
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+  expect({ reply, unchecked }, `inspectee signal: ${child.signalCode}, stderr:\n${stderr}`).toMatchObject({
+    reply: { id: 1, result: { result: { type: "number", value: 2 } } },
+    unchecked: [],
   });
 });
 

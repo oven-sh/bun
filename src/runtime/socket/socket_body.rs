@@ -1357,20 +1357,30 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// slot is nulled before closing so the synchronous `on_close` /
     /// `on_connecting_error` dispatch early-returns and no JS callback fires;
     /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
-    /// took. Caller must hold an independent +1 across this call. Only
-    /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
-    /// not live in the ext slot so those are left for the caller's existing
-    /// `debug_assert!` to catch.
+    /// took. Caller must hold an independent +1 across this call. A Windows
+    /// named pipe has no ext slot: its context points back at the socket, and
+    /// forgets it here. An UpgradedDuplex is left for the caller's
+    /// `debug_assert!`: `node:tls` refuses to connect a handle that has one.
     pub(crate) fn detach_for_reconnect(this: ThisPtr<Self>) {
         let old = this.socket.get();
-        if !old.set_ext_owner::<Self>(None) {
+        #[cfg(windows)]
+        let is_pipe = matches!(old.socket, uws::InternalSocket::Pipe(_));
+        #[cfg(not(windows))]
+        let is_pipe = false;
+        if !is_pipe && !old.set_ext_owner::<Self>(None) {
             return;
         }
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
         this.detach_native_callback();
-        old.close(uws::CloseCode::Failure);
+        #[cfg(windows)]
+        if let uws::InternalSocket::Pipe(pipe) = old.socket {
+            crate::socket::WindowsNamedPipeContext::abandon(pipe.cast());
+        }
+        if !is_pipe {
+            old.close(uws::CloseCode::Failure);
+        }
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if this.flags.get().contains(Flags::IS_ACTIVE) {
             this.update_flags(|f| f.remove(Flags::IS_ACTIVE));

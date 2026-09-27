@@ -1112,6 +1112,35 @@ it.if(isWindows)(
   20_000,
 );
 
+// A named pipe on Windows, a unix socket elsewhere. On Windows the pipe stayed
+// open after the second connect(), with nothing left that could close it.
+it("connect() on a socket that is connected over a path closes that connection", async () => {
+  using dir = tempDir("net-reconnect-path", {});
+  const path = isWindows ? `\\\\.\\pipe\\bun-reconnect-${randomUUID()}` : join(String(dir), "a.sock");
+  const firstClosed = Promise.withResolvers<void>();
+  const pathServer = createServer(connection => {
+    connection.on("error", () => {});
+    connection.on("close", () => firstClosed.resolve());
+  });
+  const tcpServer = createServer(connection => {
+    connection.on("error", () => {});
+    connection.end();
+  });
+  await once(pathServer.listen(path), "listening");
+  await once(tcpServer.listen(0, "127.0.0.1"), "listening");
+  try {
+    const client = connect(path);
+    // Node reports ENOENT for the second connect and closes the socket.
+    client.on("error", () => {});
+    client.once("connect", () => client.connect((tcpServer.address() as { port: number }).port, "127.0.0.1"));
+    await firstClosed.promise;
+    client.destroy();
+  } finally {
+    pathServer.close();
+    tcpServer.close();
+  }
+});
+
 // The Windows counterpart of the synchronous-failure test below: a client
 // that polls for a daemon's pipe gets one asynchronous ENOENT per attempt,
 // and each failed attempt used to leave its native pipe context (and the

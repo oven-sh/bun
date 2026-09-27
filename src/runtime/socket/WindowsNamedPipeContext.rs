@@ -333,6 +333,26 @@ impl WindowsNamedPipeContext {
         }
     }
 
+    /// The socket of `pipe` connects again through another owner. Forget the
+    /// socket, release `create()`'s ref on it and close the pipe: no event of
+    /// this pipe reaches the socket again. The caller holds its own ref on
+    /// the socket.
+    pub(crate) fn abandon(pipe: *mut WindowsNamedPipe) {
+        // SAFETY: the `InternalSocket::Pipe` of a socket is the `named_pipe` of
+        // the live context that `create()` pointed at it, and `handlers.ctx`
+        // of that pipe is the context (`create()`).
+        let this = unsafe { (*pipe).handlers.ctx.cast::<Self>() };
+        // SAFETY: see `on_open`.
+        let socket = unsafe { core::mem::replace(&mut (*this).socket, SocketType::None) };
+        match_socket!(socket, |s: NewSocket<SSL>| {
+            s.release_named_pipe_ref();
+            Ok(())
+        });
+        // SAFETY: `this` is live. The close ends in `on_close`, which finds no
+        // socket and releases the context.
+        unsafe { (*ptr::addr_of!((*this).named_pipe)).close_or_cancel_connect() };
+    }
+
     /// Owns the freshly-`create()`d context until `disarm()`: on any early
     /// return it fails the pending connect and releases the sole ref.
     fn armed(this: *mut Self) -> FailAndRelease {

@@ -1320,6 +1320,29 @@ describe("pathological autolink inputs", () => {
     expect(trimmed).toContain('<a href="http://a.bc/?x=(1)">');
     expect(trimmed).not.toContain('x=(1))"');
   }, 90_000);
+
+  test("autolink candidates next to emphasis delimiters render in linear time", async () => {
+    await expectRendersQuickly(`
+      const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+      const count = (html, tag) => html.split(tag).length - 1;
+      const n = 40000;
+
+      // No "*" is paired, so no "*" is a boundary and no "www." is a link.
+      const literal = fill(n, "*www.a.bc/") + "x(";
+      const html = Bun.markdown.html(literal, { autolinks: true });
+      if (html !== Bun.markdown.html(literal)) {
+        throw new Error("unexpected output: " + JSON.stringify(html.slice(0, 120)));
+      }
+
+      // Each link comes after a paired "**".
+      const paired = Bun.markdown.html(fill(n, "**http://a.bc/d ok** "), { autolinks: true });
+      const found = [count(paired, '<a href="http://a.bc/d">'), count(paired, "<strong>"), count(paired, "</strong>")];
+      if (found.join() !== [n, n, n].join()) {
+        throw new Error("unexpected output: " + found + " " + JSON.stringify(paired.slice(0, 120)));
+      }
+      console.log("DONE");
+    `);
+  }, 90_000);
 });
 
 // ============================================================================

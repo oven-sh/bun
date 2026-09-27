@@ -168,4 +168,32 @@ summary(() => {
   });
 });
 
+const autolinkDocs = {
+  "bare links":
+    "Visit https://example.com/docs/api_reference/v2/index.html or www.example.org/path?q=1&r=2 and mail john.doe@example.com for info.\n\n".repeat(
+      40,
+    ),
+  "links in emphasis":
+    "Read **https://example.com/a_b/c** and _see www.example.org/x_ or *mail a.b@example.com*.\n\n".repeat(40),
+  "table of links":
+    "| Name | Link |\n|------|------|\n" +
+    "| docs | https://example.com/docs/v2 |\n| site | www.example.org/path |\n| mail | john.doe@example.com |\n".repeat(
+      40,
+    ),
+};
+
+if (typeof Bun !== "undefined" && Bun.markdown) {
+  for (const [name, doc] of Object.entries(autolinkDocs)) {
+    summary(() => {
+      bench(`${name} (${doc.length} chars) - Bun.markdown.html`, () => {
+        return Bun.markdown.html(doc);
+      });
+
+      bench(`${name} (${doc.length} chars) - Bun.markdown.html, autolinks`, () => {
+        return Bun.markdown.html(doc, { autolinks: true });
+      });
+    });
+  }
+}
+
 await run();

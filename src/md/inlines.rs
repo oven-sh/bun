@@ -1,4 +1,4 @@
-use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
+use crate::autolinks::{Autolink, find_email_autolink, find_url_autolink, find_www_autolink};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
@@ -250,13 +250,15 @@ impl Parser<'_> {
         'frames: loop {
             while i < cur.len() {
                 let content = cur;
-                let c = content[i];
 
-                // Fast path: character has no special meaning, skip it
-                if !self.mark_char_map.is_set(c as usize) {
+                // Fast path: skip the characters that have no special meaning
+                while i < content.len() && !self.mark_char_map.is_set(content[i] as usize) {
                     i += 1;
-                    continue;
                 }
+                if i >= content.len() {
+                    break;
+                }
+                let c = content[i];
 
                 // Newline from merged lines — check for hard break
                 if c == b'\n' {
@@ -475,17 +477,7 @@ impl Parser<'_> {
                         || (c == b'@' && self.flags.permissive_email_autolinks)
                         || (c == b'.' && self.flags.permissive_www_autolinks))
                 {
-                    // First try with strict boundaries, then with relaxed (emphasis-aware)
-                    let mut al = find_permissive_autolink(content, i, false);
-                    if al.is_none() {
-                        al = find_permissive_autolink(content, i, true);
-                        if let Some(a) = al {
-                            if !is_emph_boundary_resolved(content, a, &resolved) {
-                                al = None;
-                            }
-                        }
-                    }
-                    if let Some(a) = al {
+                    if let Some(a) = self.permissive_autolink_at(content, i, &resolved) {
                         if a.beg > text_start {
                             self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
                         }
@@ -587,6 +579,21 @@ impl Parser<'_> {
         // Hand the bracket-map storage back for reuse by the next block.
         self.bracket_pairs = brackets.into_storage();
         Ok(())
+    }
+
+    /// The permissive autolink with its trigger at `pos`. Not inline: the walk is faster without this code in it.
+    #[inline(never)]
+    fn permissive_autolink_at(
+        &self,
+        content: &[u8],
+        pos: usize,
+        resolved: &[EmphDelim],
+    ) -> Option<Autolink> {
+        match content[pos] {
+            b':' => find_url_autolink(content, pos, resolved),
+            b'@' => find_email_autolink(content, pos, resolved),
+            _ => find_www_autolink(content, pos, resolved),
+        }
     }
 
     pub(crate) fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {

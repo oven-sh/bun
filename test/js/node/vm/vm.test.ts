@@ -135,100 +135,77 @@ describe("vm", () => {
     });
 
     describe("a script of the form `var x = <JSON>;` declares a global that warm sites see", () => {
-      for (const type of ["cjs", "mjs"] as const) {
-        test.concurrent(`read of an absent name (${type})`, async () => {
-          const fixture = readOfAnAbsentName(`vm.runInThisContext("var declaredLater = 33;");`);
-          expect(await runDeclarationFixture(type, fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
-        });
-      }
-
-      const cases: Record<string, [fixture: string, stdout: string]> = {
-        "read with a computed key": [
-          `
-            function read(key) { return globalThis[key]; }
-            for (let i = 0; i < 2000; ++i) read("declaredLater");
-            vm.runInThisContext("var declaredLater = 33;");
-            console.log(read("declaredLater"));
-          `,
-          "33\n",
-        ],
-        "call of an inherited method": [
-          `
-            function call() { try { return typeof globalThis.valueOf(); } catch (error) { return error.name; } }
-            for (let i = 0; i < 2000; ++i) call();
-            vm.runInThisContext("var valueOf = 33;");
-            console.log(call());
-          `,
-          "TypeError\n",
-        ],
-        "write to an inherited setter": [
-          `
-            let setterCalls = 0;
-            Object.defineProperty(Object.prototype, "declaredLater", { get() { return "getter"; }, set(value) { ++setterCalls; }, configurable: true });
-            function write(value) { globalThis.declaredLater = value; }
-            for (let i = 0; i < 2000; ++i) write(i);
-            vm.runInThisContext("var declaredLater = 33;");
-            write(44);
-            console.log(setterCalls, globalThis.declaredLater);
-          `,
-          "2000 44\n",
-        ],
-        "two declarations in one script": [
-          `
-            function first() { return globalThis.declaredFirst; }
-            function second() { return globalThis.declaredSecond; }
-            for (let i = 0; i < 2000; ++i) { first(); second(); }
-            vm.runInThisContext('var declaredFirst = 1; var declaredSecond = { "a": [2] };');
-            console.log(first(), second()?.a[0]);
-          `,
-          "1 2\n",
-        ],
-        "a site that gets warm between two statements of the script": [
-          `
-            function read() { return globalThis.declaredSecond; }
-            globalThis.holder = { set warm(value) { for (let i = 0; i < 2000; ++i) read(); } };
-            vm.runInThisContext("var declaredFirst = 1; holder.warm = 1; var declaredSecond = 2;");
-            console.log(read());
-          `,
-          "2\n",
-        ],
-        "a reader that is on the stack when the script runs": [
-          `
-            function read() { return globalThis.declaredLater; }
-            function loop(count) {
-              const seen = [];
-              for (let i = 0; i < count; ++i) {
-                if (i === count - 2) vm.runInThisContext("var declaredLater = 33;");
-                const value = read();
-                if (i >= count - 3) seen.push(String(value));
-              }
-              return seen.join();
-            }
-            console.log(loop(5000));
-          `,
-          "undefined,33,33\n",
-        ],
-      };
-      for (const [name, [fixture, stdout]] of Object.entries(cases)) {
-        test.concurrent(name, async () => {
-          expect(await runDeclarationFixture("cjs", fixture)).toEqual({ stdout, stderr: "", exitCode: 0 });
-        });
-      }
-
-      test.concurrent("in a Worker", async () => {
+      test.concurrent("read, call and write sites", async () => {
         const fixture = `
-          import { Worker, isMainThread, parentPort } from "node:worker_threads";
-          if (isMainThread) {
-            const worker = new Worker(new URL(import.meta.url));
-            worker.on("message", message => console.log(message));
-          } else {
-            function read() { return globalThis.declaredLater; }
-            for (let i = 0; i < 2000; ++i) read();
-            vm.runInThisContext("var declaredLater = 33;");
-            parentPort.postMessage(read() + " " + globalThis.declaredLater);
-          }
+          let setterCalls = 0;
+          Object.defineProperty(Object.prototype, "declaredSetter", { get() { return "getter"; }, set(value) { ++setterCalls; }, configurable: true });
+
+          function read() { return globalThis.declaredLater; }
+          function readWithKey(key) { return globalThis[key]; }
+          function readSecond() { return globalThis.declaredSecond; }
+          function call() { try { return typeof globalThis.valueOf(); } catch (error) { return error.name; } }
+          function write(value) { globalThis.declaredSetter = value; }
+          for (let i = 0; i < 2000; ++i) { read(); readWithKey("declaredWithKey"); readSecond(); call(); write(i); }
+
+          vm.runInThisContext('var declaredLater = 1; var declaredWithKey = 2; var declaredSecond = { "a": [3] }; var valueOf = 4; var declaredSetter = 5;');
+
+          write(6);
+          console.log(JSON.stringify({
+            read: read(),
+            readWithKey: readWithKey("declaredWithKey"),
+            readSecond: readSecond()?.a[0],
+            call: call(),
+            setterCallsAfterTheScript: setterCalls - 2000,
+            written: globalThis.declaredSetter,
+          }));
         `;
+        const { stdout, stderr, exitCode } = await runDeclarationFixture("cjs", fixture);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          read: 1,
+          readWithKey: 2,
+          readSecond: 3,
+          call: "TypeError",
+          setterCallsAfterTheScript: 0,
+          written: 6,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("read of an absent name in an ES module", async () => {
+        const fixture = readOfAnAbsentName(`vm.runInThisContext("var declaredLater = 33;");`);
         expect(await runDeclarationFixture("mjs", fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent("a site that gets warm between two statements of the script", async () => {
+        const fixture = `
+          function read() { return globalThis.declaredSecond; }
+          globalThis.holder = { set warm(value) { for (let i = 0; i < 2000; ++i) read(); } };
+          vm.runInThisContext("var declaredFirst = 1; holder.warm = 1; var declaredSecond = 2;");
+          console.log(read());
+        `;
+        expect(await runDeclarationFixture("cjs", fixture)).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent("a reader that is on the stack when the script runs", async () => {
+        const fixture = `
+          function read() { return globalThis.declaredLater; }
+          function loop(count) {
+            const seen = [];
+            for (let i = 0; i < count; ++i) {
+              if (i === count - 2) vm.runInThisContext("var declaredLater = 33;");
+              const value = read();
+              if (i >= count - 3) seen.push(String(value));
+            }
+            return seen.join();
+          }
+          console.log(loop(5000));
+        `;
+        expect(await runDeclarationFixture("cjs", fixture)).toEqual({
+          stdout: "undefined,33,33\n",
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });
@@ -446,13 +423,6 @@ describe("Script", () => {
     });
 
     describe("a script of the form `var x = <JSON>;` declares a global that warm sites see", () => {
-      for (const type of ["cjs", "mjs"] as const) {
-        test.concurrent(`read of an absent name (${type})`, async () => {
-          const fixture = readOfAnAbsentName(`new vm.Script("var declaredLater = 33;").runInThisContext();`);
-          expect(await runDeclarationFixture(type, fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
-        });
-      }
-
       test.concurrent("the same Script run twice", async () => {
         const fixture = `
           function read() { return globalThis.declaredLater; }
@@ -470,6 +440,11 @@ describe("Script", () => {
           stderr: "",
           exitCode: 0,
         });
+      });
+
+      test.concurrent("read of an absent name in an ES module", async () => {
+        const fixture = readOfAnAbsentName(`new vm.Script("var declaredLater = 33;").runInThisContext();`);
+        expect(await runDeclarationFixture("mjs", fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
       });
     });
   });

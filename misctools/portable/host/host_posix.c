@@ -1113,6 +1113,15 @@ static long host_madvise(uintptr_t addr, size_t len, long advice) {
 static int refused_path(const char *p) {
   return !strncmp(p, "/proc/", 6) || !strcmp(p, "/proc") || !strncmp(p, "/sys/", 5) || !strcmp(p, "/sys");
 }
+/* One of them is answered by the Linux test host that passes the requests for a process on
+   (BUN_HOST_PROCESSES=1): where this program is. A program that starts itself as a child
+   starts this host with the image, and Linux has no other way to say where the host is. */
+#if defined(__linux__)
+static int passes_processes;
+static int names_this_program(const char *p) { return passes_processes && !strcmp(p, "/proc/self/exe"); }
+#else
+static int names_this_program(const char *p) { (void)p; return 0; }
+#endif
 static long host_open(long n, long dirfd, const char *path, long flags, long mode) {
   long r = refused_path(path) ? -L_ENOENT : ret(openat(host_dirfd(dirfd), path, host_open_flags(flags), (mode_t)mode));
   log_path(n, path, r);
@@ -1139,7 +1148,7 @@ static long host_access(long n, long dirfd, const char *path, long mode) {
 }
 static long host_readlink(long n, long dirfd, const char *path, char *buf, size_t size) {
   touch(buf, size);
-  long r = refused_path(path) ? -L_ENOENT : ret(readlinkat(host_dirfd(dirfd), path, buf, size));
+  long r = refused_path(path) && !names_this_program(path) ? -L_ENOENT : ret(readlinkat(host_dirfd(dirfd), path, buf, size));
   log_path(n, path, r);
   return r;
 }
@@ -1232,7 +1241,6 @@ static int is_loop_request(long n) {
    and asks for the rest through its copy of the host until its execve. The filter for
    syscalls is not installed then: it stays over execve, and the code of the program that
    execve starts is somewhere else. */
-static int passes_processes;
 static int is_process_request(long n) {
   switch (n) {
 #if defined(__x86_64__)
@@ -2419,7 +2427,13 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
     case N_sigaltstack: return host_sigaltstack((void *)a, (void *)b);
     case N_tkill: return a > 0 ? host_kill((int)a, (int)b) : -L_EINVAL;
     case N_tgkill: return a == main_tid && b > 0 ? host_kill((int)b, (int)c) : -L_ESRCH;
-    case N_kill: return a == main_tid || a == 0 ? host_kill(0, (int)b) : -L_ESRCH;
+    case N_kill:
+      if (a == main_tid || a == 0) return host_kill(0, (int)b);
+#ifdef __linux__
+      /* A child that the image started, where the requests for a process are passed on. */
+      if (is_process_request(n)) break;
+#endif
+      return -L_ESRCH;
     case N_rt_sigreturn:
       /* The host calls a handler of the image as a function and goes on when it returns.
          Nothing jumps to the restorer that the libc registers. */

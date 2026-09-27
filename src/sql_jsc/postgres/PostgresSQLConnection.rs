@@ -1599,10 +1599,8 @@ impl PostgresSQLConnection {
         });
     }
 
-    /// Give `request`, and each queued request that holds the same evicted statement
-    /// and is not on the wire, the statement that takes its place: the one a
-    /// pipelined sibling or a later query already cached, or a new one. The evicted
-    /// statement keeps the description the requests on the wire were bound with.
+    /// Point `request`, and every queued request that holds the same evicted
+    /// statement, at the cached replacement, or at a new one under a new name.
     fn replace_statement(&self, request: &PostgresSQLQuery) {
         let Some(invalidated) = request.statement.get().clone() else {
             return;

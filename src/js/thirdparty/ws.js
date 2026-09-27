@@ -1123,13 +1123,14 @@ function createEventClasses() {
   ObjectDefineProperty(MessageEvent.prototype, "data", { enumerable: true });
 }
 
+// npm ws returns nothing. The result goes back to emit(), so that an EventEmitter that captures
+// rejections gets the promise of an async listener, as it always did on this socket.
 function callListener(listener, thisArg, event) {
   let handleEvent;
   if (typeof listener === "object" && (handleEvent = listener.handleEvent)) {
-    handleEvent.$call(listener, event);
-  } else {
-    listener.$call(thisArg, event);
+    return handleEvent.$call(listener, event);
   }
+  return listener.$call(thisArg, event);
 }
 
 function createMessageAdapter(handler) {
@@ -1139,7 +1140,7 @@ function createMessageAdapter(handler) {
     });
 
     event[kTarget] = this;
-    callListener(handler, this, event);
+    return callListener(handler, this, event);
   };
 }
 
@@ -1155,7 +1156,7 @@ function createCloseAdapter(handler) {
     });
 
     event[kTarget] = this;
-    callListener(handler, this, event);
+    return callListener(handler, this, event);
   };
 }
 
@@ -1167,7 +1168,7 @@ function createErrorAdapter(handler) {
     });
 
     event[kTarget] = this;
-    callListener(handler, this, event);
+    return callListener(handler, this, event);
   };
 }
 
@@ -1176,11 +1177,26 @@ function createOpenAdapter(handler) {
     const event = new Event("open");
 
     event[kTarget] = this;
-    callListener(handler, this, event);
+    return callListener(handler, this, event);
   };
 }
 
+function isEventTargetType(type) {
+  return type === "message" || type === "close" || type === "error" || type === "open";
+}
+
 function addEventListener(type, handler, options = {}) {
+  if (!isEventTargetType(type)) {
+    // npm ws ignores every other type. This socket has always added the listener, so a
+    // heartbeat that calls addEventListener("pong", f) works.
+    if (options?.once) {
+      this.once(type, handler);
+    } else {
+      this.on(type, handler);
+    }
+    return;
+  }
+
   for (const listener of this.listeners(type)) {
     if (!options[kForOnEventAttribute] && listener[kListener] === handler && !listener[kForOnEventAttribute]) {
       return;
@@ -1195,10 +1211,8 @@ function addEventListener(type, handler, options = {}) {
     wrapper = createCloseAdapter(handler);
   } else if (type === "error") {
     wrapper = createErrorAdapter(handler);
-  } else if (type === "open") {
-    wrapper = createOpenAdapter(handler);
   } else {
-    return;
+    wrapper = createOpenAdapter(handler);
   }
 
   if (Event === undefined) createEventClasses();
@@ -1214,6 +1228,11 @@ function addEventListener(type, handler, options = {}) {
 }
 
 function removeEventListener(type, handler) {
+  if (!isEventTargetType(type)) {
+    this.removeListener(type, handler);
+    return;
+  }
+
   for (const listener of this.listeners(type)) {
     // npm ws tests `!listener[kForOnEventAttribute]`. That also holds for a listener that on()
     // added, so removeEventListener(type, undefined) removes one there: for 'close', the listener

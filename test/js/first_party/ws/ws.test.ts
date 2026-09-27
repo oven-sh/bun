@@ -626,7 +626,7 @@ it("onmessage", done => {
 
 // The socket that a WebSocketServer hands to 'connection' has the EventTarget interface of npm ws
 // (lib/event-target.js). The block runs on the built-in and on the installed package, so every
-// expectation is what npm ws does. `builtin` selects the value in the two tests where the
+// expectation is what npm ws does. `builtin` selects the value in the four tests where the
 // built-in differs on purpose. The client is the built-in one in both runs.
 describe.each([
   { implementation: "built-in", ServerClass: WebSocketServer, builtin: true },
@@ -962,12 +962,32 @@ describe.each([
     ]);
   });
 
-  it("addEventListener() ignores every other event type", async () => {
+  // The built-in differs on purpose. npm ws ignores a type that is not one of the four. The
+  // built-in has always added a plain listener, so a heartbeat with addEventListener("pong", f)
+  // works on it.
+  it(`addEventListener() of another event type adds ${builtin ? "a plain listener" : "nothing"}`, async () => {
     using connection = await connectedServerSocket();
-    const { ws } = connection;
+    const { ws, client } = connection;
     const types = ["ping", "pong", "upgrade", "unexpected-response", "foo"];
-    for (const type of types) ws.addEventListener(type, () => {});
-    expect(types.filter(type => ws.listenerCount(type) !== 0)).toEqual([]);
+    const calls: unknown[] = [];
+    const listener = (...args: unknown[]) => calls.push(args.map(shapeOf));
+    const onceListener = (...args: unknown[]) => calls.push(["once", ...args.map(shapeOf)]);
+    const pinged = Promise.withResolvers<void>();
+
+    for (const type of types) ws.addEventListener(type, listener);
+    ws.addEventListener("ping", onceListener, { once: true });
+    const added = types.filter(type => ws.listenerCount(type) !== 0);
+    ws.on("ping", () => pinged.resolve());
+    client.ping(Buffer.from([4]));
+    await pinged.promise;
+    ws.removeAllListeners("ping");
+    for (const type of types) ws.removeEventListener(type, listener);
+
+    expect({ added, calls, left: types.filter(type => ws.listenerCount(type) !== 0) }).toEqual(
+      builtin
+        ? { added: types, calls: [["Buffer"], ["once", "Buffer"]], left: [] }
+        : { added: [], calls: [], left: [] },
+    );
   });
 
   it("defines its six members as enumerable properties of the prototype", async () => {
@@ -1274,23 +1294,26 @@ describe.each([
     });
   });
 
-  // An adapter returns nothing, so an EventEmitter that captures rejections does not get the
-  // promise of an async listener.
-  it("a rejection of an async listener is not sent to 'error'", async () => {
+  // The built-in differs on purpose. An adapter of npm ws returns nothing, so an EventEmitter
+  // that captures rejections does not get the promise of an async listener. The built-in has
+  // always handed it over.
+  it(`a rejection of an async listener is ${builtin ? "" : "not "}sent to 'error'`, async () => {
     const errors: unknown[] = [];
     EventEmitter.captureRejections = true;
     try {
       using connection = await connectedServerSocket();
       const { ws } = connection;
-      const rejection = Promise.reject(new Error("from the listener"));
+      const error = new Error("from the listener");
+      const rejection = Promise.reject(error);
       rejection.catch(() => {});
       ws.on("error", (error: unknown) => errors.push(error));
       ws.onmessage = () => rejection;
       ws.addEventListener("message", () => rejection);
+      ws.addEventListener("message", { handleEvent: () => rejection });
       ws.emit("message", Buffer.from("text"), false);
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(errors).toEqual([]);
+      expect(errors).toEqual(builtin ? [error, error, error] : []);
     } finally {
       EventEmitter.captureRejections = false;
     }

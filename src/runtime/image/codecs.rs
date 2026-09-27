@@ -30,10 +30,10 @@ pub(crate) use super::backend_wic as system_backend;
 
 /// HEIC/HEIF decode on Linux via a dlopen'd system libheif (and,
 /// transitively, whichever HEVC decoder it was built against — libde265 or
-/// ffmpeg). See `src/jsc/bindings/image_heif_shim.cpp`. Nothing is linked: a
-/// host without `libheif.so.1` surfaces `UnsupportedOnPlatform`, which is
-/// what Linux returns for HEIC today. Decode only — HEIC output needs an
-/// HEVC encoder. macOS/Windows decode HEIC through `system_backend`.
+/// ffmpeg). See `codec_heif.rs`. Nothing is linked: a host without
+/// `libheif.so.1` surfaces `UnsupportedOnPlatform`, which is what Linux
+/// returns for HEIC today. Decode only — HEIC output needs an HEVC encoder.
+/// macOS/Windows decode HEIC through `system_backend`.
 #[cfg(target_os = "linux")]
 pub(crate) use super::codec_heif as heif;
 

@@ -1008,10 +1008,14 @@ describe("Bun.Image", () => {
       "base64",
     );
 
-    // Whether THIS host can decode THAT fixture — two separate questions
-    // (is libheif installed, was its HEVC decoder built for 12-bit) that the
-    // tests below do not need to tell apart. Answered in a subprocess so a
-    // failed dlopen cannot affect this one, and synchronously because
+    // Whether THIS host can decode THAT image — several separate questions
+    // (is libheif installed, does it have an HEVC decoder plugin, can that
+    // plugin read this file) that the tests below do not need to tell apart,
+    // because all of them answer ERR_IMAGE_FORMAT_UNSUPPORTED. Any other
+    // rejection means something is wrong rather than absent, so it runs the
+    // tests and lets them say what: a gate that skips on every failure hides
+    // the regressions it was put there to catch. Answered in a subprocess so
+    // a failed dlopen cannot affect this one, and synchronously because
     // `skipIf` needs the answer before the tests are declared.
     const heicDecodes = (() => {
       if (isMacOS || isWindows) return false; // covered by the system backend
@@ -1020,15 +1024,15 @@ describe("Bun.Image", () => {
         [
           "-e",
           `const b = Buffer.from(process.argv[1], "base64");
-           new Bun.Image(b).metadata().then(
-             m => process.exit(m.width === 64 && m.height === 32 ? 0 : 1),
-             () => process.exit(1),
+           new Bun.Image(b).png().bytes().then(
+             () => process.exit(0),
+             e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1),
            );`,
           heic64x32.toString("base64"),
         ],
         { env: bunEnv, stdio: ["ignore", "ignore", "ignore"] },
       );
-      return r.status === 0;
+      return r.status !== 2;
     })();
 
     describe.skipIf(!heicDecodes)("decode on Linux (dlopen'd libheif)", () => {

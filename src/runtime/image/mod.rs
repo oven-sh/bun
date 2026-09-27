@@ -33,8 +33,8 @@ pub(crate) mod codec_bmp;
 pub(crate) mod codec_gif;
 
 // HEIC/HEIF decode on Linux through a dlopen'd system libheif — see
-// `codec_heif.rs` and `src/jsc/bindings/image_heif_shim.cpp`. macOS and
-// Windows decode HEIC through their `system_backend` instead.
+// `codec_heif.rs`. macOS and Windows decode HEIC through their
+// `system_backend` instead.
 #[cfg(target_os = "linux")]
 #[path = "codec_heif.rs"]
 pub(crate) mod codec_heif;

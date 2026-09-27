@@ -53,9 +53,35 @@ struct HeifError {
     message: *const c_char,
 }
 
+/// `heif_error.h`: `heif_error_Memory_allocation_error` and
+/// `heif_suberror_Security_limit_exceeded`, the pair libheif answers with
+/// when an input trips the size limit `open_primary` sets on the context.
+const ERROR_MEMORY_ALLOCATION: c_int = 6;
+const SUBERROR_SECURITY_LIMIT_EXCEEDED: c_int = 1000;
+/// Also `heif_error.h`: `heif_error_Unsupported_feature` with
+/// `heif_suberror_Unsupported_codec`, which is what a libheif installed
+/// without an HEVC decoder plugin answers.
+const ERROR_UNSUPPORTED_FEATURE: c_int = 4;
+const SUBERROR_UNSUPPORTED_CODEC: c_int = 3000;
+
 impl HeifError {
     fn ok(&self) -> bool {
         self.code == 0 // heif_error_Ok
+    }
+
+    /// The error to report for a failed call. Tripping the size limit set in
+    /// `open_primary` is the same refusal `codecs::guard` makes a few lines
+    /// later, so it surfaces as the same error rather than as a damaged
+    /// file. libheif 1.22 checks that limit when it decodes rather than when
+    /// it reads, so in practice the guard is what answers; this is here so
+    /// the code does not depend on which of the two gets there first.
+    fn err(&self) -> codecs::Error {
+        if self.code == ERROR_MEMORY_ALLOCATION && self.subcode == SUBERROR_SECURITY_LIMIT_EXCEEDED
+        {
+            codecs::Error::TooManyPixels
+        } else {
+            codecs::Error::DecodeFailed
+        }
     }
 }
 
@@ -295,13 +321,15 @@ fn open_primary(bytes: &[u8], max_pixels: u64) -> Result<(Reader, u32, u32), cod
     // ends with `r`, inside the call the caller is blocked on.
     // SAFETY: `ctx` is live; ptr/len come from a live `&[u8]`; a null options
     // pointer asks for the defaults.
-    if !unsafe { (lib.read_mem)(ctx, bytes.as_ptr().cast(), bytes.len(), core::ptr::null()) }.ok() {
-        return Err(codecs::Error::DecodeFailed);
+    let e = unsafe { (lib.read_mem)(ctx, bytes.as_ptr().cast(), bytes.len(), core::ptr::null()) };
+    if !e.ok() {
+        return Err(e.err());
     }
     // SAFETY: `ctx` is live; `r.handle` is an initialised out-param owned by
     // `Reader::drop` from here on.
-    if !unsafe { (lib.primary_handle)(ctx, &raw mut r.handle) }.ok() || r.handle.is_null() {
-        return Err(codecs::Error::DecodeFailed);
+    let e = unsafe { (lib.primary_handle)(ctx, &raw mut r.handle) };
+    if !e.ok() || r.handle.is_null() {
+        return Err(e.err());
     }
     // SAFETY: `r.handle` is live for as long as `r` is.
     let w = unsafe { (lib.handle_width)(r.handle) };
@@ -345,7 +373,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // Bun's auto-orient only runs for JPEG, so nothing rotates them again.
     // SAFETY: `r.handle` is live; `frame.img` is an initialised out-param
     // owned by `Frame::drop` from here on.
-    if !unsafe {
+    let e = unsafe {
         (lib.decode_image)(
             r.handle,
             &raw mut frame.img,
@@ -353,14 +381,18 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             CHROMA_INTERLEAVED_RGBA,
             core::ptr::null(),
         )
-    }
-    .ok()
-        || frame.img.is_null()
-    {
-        // A libheif whose HEVC decoder was built for 8-bit only cannot read a
-        // 10- or 12-bit frame, and says so the same way it reports a corrupt
-        // one. They are different problems for whoever has to act on them:
-        // this is "install a decoder that can", not "the file is broken".
+    };
+    if !e.ok() || frame.img.is_null() {
+        // Three unrelated problems arrive here, and only the last means the
+        // file is bad. libheif can be installed with no HEVC decoder plugin
+        // at all — on Debian those are separate packages — and says so. A
+        // plugin built for 8-bit only cannot read a 10- or 12-bit frame, and
+        // says nothing in particular, so the frame's own depth is what tells
+        // us. Both are "install a decoder that can read this", which is what
+        // `UnsupportedOnPlatform` means; only what is left is `DecodeFailed`.
+        if e.code == ERROR_UNSUPPORTED_FEATURE && e.subcode == SUBERROR_UNSUPPORTED_CODEC {
+            return Err(codecs::Error::UnsupportedOnPlatform);
+        }
         // SAFETY: `r.handle` is live.
         if unsafe { (lib.handle_luma_depth)(r.handle) } > 8 {
             return Err(codecs::Error::UnsupportedOnPlatform);

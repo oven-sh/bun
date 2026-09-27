@@ -74,7 +74,8 @@ export const locations = {
   // What the build image cross-compiles with.
   androidNdk: "/opt/android-ndk",
   macosSdk: "/opt/macos-sdk",
-  windowsSysroot: "/opt/winsysroot",
+  /** Also on the Windows machines, which build nothing today: a build there finds what it would otherwise fetch. */
+  windowsSysroot: { linux: "/opt/winsysroot", windows: "C:\\winsysroot" },
   freebsdSysroot: { x64: "/opt/freebsd-sysroot", aarch64: "/opt/freebsd-sysroot-arm64" },
   glibcSysroot: { x64: "/opt/linux-sysroot-glibc", aarch64: "/opt/linux-sysroot-glibc-arm64" },
   muslSysroot: { x64: "/opt/linux-sysroot-musl", aarch64: "/opt/linux-sysroot-musl-arm64" },
@@ -996,11 +997,15 @@ function muslSysroot(image: LinuxImage): Tool {
   };
 }
 
-/** The MSVC CRT, the Windows SDK and ATL, which xwin downloads from Microsoft. */
-function windowsSysroot(image: LinuxImage): Tool {
+/**
+ * The MSVC CRT, the Windows SDK and ATL, which xwin downloads from Microsoft.
+ * xwin has one Windows build; the arm64 machine runs it under emulation.
+ */
+function windowsSysroot(image: LinuxImage | WindowsImage): Tool {
   const { xwin, sdk, crt } = pins.windowsSysroot;
-  const sysroot = locations.windowsSysroot;
-  const host = `${cpuName[image.arch]}-unknown-linux-musl`;
+  const windows = image.os === "windows";
+  const sysroot = locations.windowsSysroot[image.os];
+  const host = windows ? "x86_64-pc-windows-msvc" : `${cpuName[image.arch]}-unknown-linux-musl`;
   return {
     name: "windows-sysroot",
     identity: pinned(`xwin ${xwin}, SDK ${sdk}, CRT ${crt}`),
@@ -1017,7 +1022,7 @@ function windowsSysroot(image: LinuxImage): Tool {
       ),
       discardOutput(
         run(
-          scratch("xwin/xwin"),
+          scratch(windows ? "xwin/xwin.exe" : "xwin/xwin"),
           ...[
             "--accept-license",
             "--arch",
@@ -1035,14 +1040,20 @@ function windowsSysroot(image: LinuxImage): Tool {
             "--use-winsysroot-style",
             "--preserve-ms-arch-notation",
             "--include-debug-libs",
+            // They are for a file system that tells Include from include.
+            ...(windows ? ["--disable-symlinks"] : []),
           ],
           ...["--output", sysroot],
         ),
       ),
       remove(`${sysroot}.cache`),
-      comment("clang-cl asks for Include and Lib; xwin writes them in lower case."),
-      symlink("include", `${sysroot}/Windows Kits/10/Include`),
-      symlink("lib", `${sysroot}/Windows Kits/10/Lib`),
+      ...(windows
+        ? []
+        : [
+            comment("clang-cl asks for Include and Lib; xwin writes them in lower case."),
+            symlink("include", `${sysroot}/Windows Kits/10/Include`),
+            symlink("lib", `${sysroot}/Windows Kits/10/Lib`),
+          ]),
     ],
   };
 }
@@ -1594,6 +1605,7 @@ export function tools(image: Image): readonly Tool[] {
       ccache(image),
       rust(image),
       visualStudio(),
+      windowsSysroot(image),
       pdbAddr2line(image),
       ...(image.arch === "x64" ? [intelSde()] : []),
       buildkiteAgent(image),

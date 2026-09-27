@@ -633,7 +633,8 @@ export function detectWindowsSysroot(): string | undefined {
     existsSync(join(p, "Windows Kits", "10", "Include")) || existsSync(join(p, "Windows Kits", "10", "include"));
   const env = process.env.WINDOWS_SYSROOT;
   if (env && looksValid(env)) return env;
-  for (const p of [locations.windowsSysroot, "/opt/xwin"]) {
+  const { linux, windows } = locations.windowsSysroot;
+  for (const p of hostPlatform() === "win32" ? [windows] : [linux, "/opt/xwin"]) {
     if (looksValid(p)) return p;
   }
   return undefined;
@@ -1250,7 +1251,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint:
             "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
             "  cargo install xwin  (or download a release binary)\n" +
-            `  xwin --accept-license --arch x86_64,aarch64 --sdk-version ${pins.windowsSysroot.sdk} --crt-version ${pins.windowsSysroot.crt} --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${locations.windowsSysroot}`,
+            `  xwin --accept-license --arch x86_64,aarch64 --sdk-version ${pins.windowsSysroot.sdk} --crt-version ${pins.windowsSysroot.crt} --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${locations.windowsSysroot.linux}`,
         });
       }
     }

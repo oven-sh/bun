@@ -7,9 +7,11 @@
  * covers the other hosts.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
-import { resolve } from "node:path";
+import { isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 
+import { locations } from "../../scripts/build/ci-images/spec.ts";
 import { resolveConfig, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { windowsSysrootCachePath } from "../../scripts/build/winsysroot.ts";
 
@@ -59,13 +61,23 @@ describe.skipIf(!isWindows)("a build for Windows on Windows", () => {
     delete process.env.WINDOWS_SYSROOT;
   });
   afterEach(() => {
+    delete process.env.WINDOWS_SYSROOT;
     if (provisioned !== undefined) process.env.WINDOWS_SYSROOT = provisioned;
   });
 
-  test("uses the pinned sysroot in the build cache, and is not a cross-compile", () => {
+  test("uses the sysroot a CI image has, else the one in the build cache, and is not a cross-compile", () => {
     const cfg = native();
-    expect(cfg.winsysroot).toBe(windowsSysrootCachePath(cfg.cacheDir));
+    const baked = locations.windowsSysroot.windows;
+    expect(cfg.winsysroot).toBe(
+      existsSync(join(baked, "Windows Kits", "10", "Include")) ? baked : windowsSysrootCachePath(cfg.cacheDir),
+    );
     expect(cfg.crossTarget).toBeUndefined();
+  });
+
+  test("uses the sysroot WINDOWS_SYSROOT names, ahead of either", () => {
+    using dir = tempDir("winsysroot", { "Windows Kits/10/Include/keep": "" });
+    process.env.WINDOWS_SYSROOT = String(dir);
+    expect(native().winsysroot).toBe(String(dir));
   });
 
   test("uses the sysroot it is given", () => {

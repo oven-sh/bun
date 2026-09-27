@@ -564,4 +564,42 @@ describe.concurrent("compile include", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "the CLI rejects --include with --compile --target=browser and a non-HTML entrypoint",
+    async () => {
+      // Regression: the guard above only fired when every current entrypoint already
+      // ended in .html, so a non-HTML entry slipped past it.
+      using dir = tempDir("compile-include-browser-cli-nonhtml", {
+        "index.ts": `console.log(1);`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const { stderr, exitCode } = await spawnCapture(
+        [bunExe(), "build", "--compile", "--target=browser", "./index.ts", "--include", "./plugins/target.js"],
+        String(dir),
+      );
+      expect(stderr).toContain("cannot use --compile --target browser with --include");
+      expect(exitCode).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build rejects compile.include with target 'browser' and a non-HTML entrypoint",
+    async () => {
+      using dir = tempDir("compile-include-browser-api-nonhtml", {
+        "index.ts": `console.log(1);`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const script = /* js */ `
+        try {
+          await Bun.build({ entrypoints: ["./index.ts"], target: "browser", compile: { include: ["./plugins"] } });
+          console.log("no error");
+        } catch (e) { console.log(String(e.message)); }
+      `;
+      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
+      expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
+    },
+    TIMEOUT,
+  );
 });

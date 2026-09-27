@@ -960,11 +960,15 @@ pub(crate) mod js_bundler {
                             patterns.push(Box::from(slice.slice()));
                         }
                         if !patterns.is_empty() {
-                            let all_html = this.entry_points.count() != 0
-                                && this.entry_points.keys().iter().all(|ep| ep.ends_with(b".html"));
-                            if this.target == Target::Browser && all_html {
+                            // `include` is a Bun-executable feature (lazily-loaded modules
+                            // resolved by a runtime `import()`); it never produces a
+                            // standalone HTML build, regardless of what the entrypoints
+                            // happen to look like right now — checking only the
+                            // then-current entry points let a non-HTML entrypoint list
+                            // slip past this guard.
+                            if this.target == Target::Browser {
                                 return Err(global_this.throw_invalid_arguments(format_args!(
-                                    "Cannot use compile.include with target 'browser' for standalone HTML"
+                                    "Cannot use compile.include with target 'browser'"
                                 )));
                             }
                             match crate::cli::build_command::expand_compile_includes(&patterns) {

@@ -156,16 +156,11 @@ impl BuildCommand {
         // included files with this change — sits in the graph unexecuted until
         // something (e.g. a computed `import()`) resolves its path at runtime.
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_include.is_empty() {
-            // Expansion appends non-HTML entries, which would silently turn the
-            // all-HTML `--target=browser` mode below into a plain compile.
-            if user_requested_browser_target
-                && !this_transpiler.options.entry_points.is_empty()
-                && this_transpiler
-                    .options
-                    .entry_points
-                    .iter()
-                    .all(|e| strings::has_suffix_comptime(e, b".html"))
-            {
+            // `--include` is a Bun-executable feature; it never produces a standalone
+            // HTML build. Reject on the requested target alone — gating on the
+            // then-current entrypoints (as before) let a non-HTML `--target=browser`
+            // entry slip past silently into a plain Bun-target compile below.
+            if user_requested_browser_target {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> cannot use --compile --target browser with --include"
                 );

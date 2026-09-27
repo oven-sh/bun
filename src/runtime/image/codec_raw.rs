@@ -237,10 +237,14 @@ fn open(bytes: &[u8], max_pixels: u64) -> Result<(Raw, u32, u32), codecs::Error>
     if w <= 0 || h <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    // `identify` reports the sensor's orientation; `dcraw_process` then
-    // applies the camera's, which swaps the axes for a frame shot on its
-    // side. There is no C getter for LibRaw's `flip`, but it comes from the
-    // same IFD0 Orientation tag a TIFF carries, and a camera raw is a TIFF.
+    // These two stay in sensor order. On LibRaw 0.22.2 a frame shot on its
+    // side (`flip` 5 or 6) reports 3039×2014 here both before and after
+    // `dcraw_process`, and only `dcraw_make_mem_image` hands back the
+    // 2014×3039 the camera meant — so the axes have to be swapped for the
+    // probe to describe the same picture the decode returns. There is no C
+    // getter for `flip`; it is a field of a struct this file does not
+    // mirror. It comes from the same IFD0 Orientation tag a TIFF carries,
+    // though, and a camera raw is a TIFF.
     let swap = matches!(
         exif::parse_tiff(bytes)
             .unwrap_or(exif::Orientation::Normal)

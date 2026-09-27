@@ -248,6 +248,8 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_package_json: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
+        /// `compile.bytecodeOrder`: payload order files, most important first.
+        pub(crate) bytecode_order: Vec<Box<[u8]>>,
     }
 
     impl Default for CompileOptions {
@@ -270,6 +272,7 @@ pub(crate) mod js_bundler {
                 autoload_tsconfig: false,
                 autoload_package_json: false,
                 jit_policy: 1.0,
+                bytecode_order: Vec::new(),
             }
         }
     }
@@ -444,6 +447,38 @@ pub(crate) mod js_bundler {
                 object.get_boolean_loose(global_this, "autoloadPackageJson")?
             {
                 this.autoload_package_json = autoload_package_json;
+            }
+
+            // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
+            if let Some(bytecode_order) = object.get(global_this, "bytecodeOrder")?
+                && !bytecode_order.is_undefined_or_null()
+                && bytecode_order != JSValue::FALSE
+            {
+                let mut push = |path: JSValue| -> JsResult<()> {
+                    if !path.is_string() {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.bytecodeOrder",
+                            b"string or array of strings",
+                            path,
+                        ));
+                    }
+                    let slice = path.to_utf8(global_this)?;
+                    if slice.slice().is_empty() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.bytecodeOrder must not contain an empty path"
+                        )));
+                    }
+                    this.bytecode_order.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if bytecode_order.js_type().is_array() {
+                    let mut iter = bytecode_order.array_iterator(global_this)?;
+                    while let Some(path) = iter.next()? {
+                        push(path)?;
+                    }
+                } else {
+                    push(bytecode_order)?;
+                }
             }
 
             if let Some(jit_policy) = object.get(global_this, "jitPolicy")? {
@@ -1347,6 +1382,17 @@ pub(crate) mod js_bundler {
                 return Err(global_this.throw_invalid_arguments(format_args!("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.")));
             }
 
+            if !this.bytecode
+                && this
+                    .compile
+                    .as_ref()
+                    .is_some_and(|compile| !compile.bytecode_order.is_empty())
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "compile.bytecodeOrder requires bytecode: true"
+                )));
+            }
+
             // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
             if this.compile.is_some() && this.target == Target::Browser {
                 let has_all_html = 'brk: {
@@ -1474,7 +1520,7 @@ pub(crate) mod js_bundler {
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
     pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
+        Load, LoadDeferred, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1588,9 +1634,8 @@ pub(crate) mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::from_callback(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_js,
+                        let ct = ConcurrentTask::create_from(
+                            std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
                         );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
@@ -1613,14 +1658,6 @@ pub(crate) mod js_bundler {
                 Ok(bv2_plugin(self.bv2).append_defer_promise())
             }
         }
-    }
-
-    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
-        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
-        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
-        let load = unsafe { &mut *load };
-        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
-        Ok(())
     }
 
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {

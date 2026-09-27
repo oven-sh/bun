@@ -1248,8 +1248,6 @@ pub struct S3CredentialsWithOptions {
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
-    /// indicates if the virtual hosted style is used
-    pub virtual_hosted_style: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

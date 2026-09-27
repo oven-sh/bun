@@ -28,7 +28,6 @@ pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
 };
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
-pub use bun_event_loop::ManagedTask;
 pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask};

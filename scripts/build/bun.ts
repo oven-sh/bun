@@ -9,13 +9,6 @@
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
- *
- * ## Build modes
- *
- * `cfg.mode` controls what we actually produce:
- *   - "full": everything (default, local dev)
- *   - "archive-link": the same build, with the C/C++ objects archived into libbun-<exe>.a and linked from that
- *     archive; the archive and the dependency libraries are uploaded as artifacts (CI)
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
@@ -23,7 +16,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { ar, cc, cxx, link, pch } from "./compile.ts";
+import { cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
@@ -144,12 +137,8 @@ export interface BunOutput {
   deps: ResolvedDep[];
   /** All codegen outputs. */
   codegen: CodegenOutputs;
-  /** The Rust crates' rlibs, as the link takes them. Empty until the Rust plan exists (rust.ts emitRust). */
-  rustObjects: string[];
   /** All compiled .o files. */
   objects: string[];
-  /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
-  uploadStamps?: string[];
 }
 
 /**
@@ -418,29 +407,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
-  // objects — same response file, same archive in archive-link mode. With
-  // cfg.archiveDeps they live in depLibs as .a files instead.
+  // objects, in the same response file. With cfg.archiveDeps they live in
+  // depLibs as .a files instead.
   const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
-
-  // ─── Step 6: archive-link → archive ───
-  // CI archives all .o into libbun-<exe>.a (the exe name so asan/debug
-  // variants are distinguishable), links from it, and uploads it.
-  let archive: string | undefined;
-  const uploadStamps: string[] = [];
-  if (cfg.mode === "archive-link") {
-    n.comment(`─── Archive (${cfg.mode}) ───`);
-    n.blank();
-    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
-    // Dep libs upload as soon as they're built (minutes before the archive),
-    // overlapping the compile; own pool so it doesn't take a compile slot.
-    // Each upload edge depends only on its input, so the archive's starts the
-    // moment the archive exists and overlaps the link.
-    if (cfg.buildkite) {
-      registerBkUploadRules(n, cfg);
-      if (depLibs.length > 0) uploadStamps.push(emitBkUpload(n, cfg, ".dep-libs-uploaded", depLibs));
-      uploadStamps.push(emitBkUpload(n, cfg, ".archive-uploaded", [archive], { gzip: !cfg.windows }));
-    }
-  }
 
   // ─── Step 6: link ───
   n.comment("─── Link ───");
@@ -457,10 +426,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
   const shims = emitShims(n, cfg);
-  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
+  const depLink = lazyDepObjects(cfg, depObjects);
+  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
+    lazyObjects: depLink.lazy,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
@@ -472,42 +443,35 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
+    ...linkObjects,
+    ...depLink.lazy,
+    ...depLibs,
+  ]);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
+  return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
 }
 
-function registerBkUploadRules(n: Ninja, cfg: Config): void {
-  n.pool("bk_upload", 1);
-  // Paths are buildDir-relative, which is what names the artifact; `;` is the agent's path delimiter.
-  const win = cfg.host.os === "windows";
-  n.rule("bk_upload", {
-    command: win
-      ? `cmd /c buildkite-agent artifact upload "$paths" && type nul > $out`
-      : `buildkite-agent artifact upload '$paths' && touch $out`,
-    description: "buildkite upload $out",
-    pool: "bk_upload",
-  });
-  if (!win) {
-    n.rule("bk_upload_gz", {
-      command: `gzip -1 -k -f $in && buildkite-agent artifact upload '$paths' && touch $out`,
-      description: "gzip + buildkite upload $out",
-      pool: "bk_upload",
-    });
-  }
-}
-
-function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { gzip = false } = {}): string {
-  const useGz = gzip && cfg.host.os !== "windows";
-  const rel = files.map(p => relative(cfg.buildDir, p));
-  const out = resolve(cfg.buildDir, stamp);
-  n.build({
-    outputs: [out],
-    rule: useGz ? "bk_upload_gz" : "bk_upload",
-    inputs: files,
-    vars: { paths: (useGz ? rel.map(p => `${p}.gz`) : rel).join(";") },
-  });
-  return out;
+/**
+ * Split the link's dependency objects into the ones passed eagerly and the ones
+ * the linker may leave out (LinkOpts.lazyObjects): a dependency is a library,
+ * and only the translation units something references belong in bun.
+ *
+ * On COFF the lazy ones are the assembler-produced objects: their sections are
+ * not COMDATs, so /OPT:REF cannot drop them and one nothing calls (BoringSSL's
+ * AES-GCM-SIV, unused on Windows by design) would ship whole. Compiled objects
+ * stay eager there; /OPT:REF drops their unreferenced COMDATs.
+ *
+ * Elsewhere every dependency object is lazy. `--gc-sections` / `-dead_strip`
+ * would remove the unreferenced code anyway, but only after LTO has seen it:
+ * a call from a file nothing uses (spake25519.cc calling
+ * x25519_ge_frombytes_vartime) counts as a second caller and stops the helper
+ * being inlined into the one that ships.
+ */
+export function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
+  if (!cfg.windows) return { eager: [], lazy: depObjects };
+  const isAssemblerOutput = (obj: string) => /\.(asm|S)\.obj$/i.test(obj);
+  return { eager: depObjects.filter(o => !isAssemblerOutput(o)), lazy: depObjects.filter(isAssemblerOutput) };
 }
 
 /**

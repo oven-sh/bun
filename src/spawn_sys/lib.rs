@@ -191,6 +191,6 @@ pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]
 pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
-    Dup2, ExtraPipe, FdT, IoCounters, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio,
-    Rusage, RusageFields, StdioKind, WinRusage, WinTimeval, rusage_zeroed,
+    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, RusageFields,
+    StdioKind, rusage_zeroed,
 };

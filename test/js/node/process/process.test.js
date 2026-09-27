@@ -3286,83 +3286,52 @@ it.each([undefined, "throw", "strict"])(
   },
 );
 
-// With no 'unhandledRejection' listener and no --unhandled-rejections flag,
-// node raises the rejection as an uncaught exception (origin
-// "unhandledRejection"). A listener or capture callback that takes it keeps
-// the process alive with exit code 0; with neither, 'exit' listeners see 1.
-// A reason that is not an error reaches the listeners inside node's
-// ERR_UNHANDLED_REJECTION wrapper, and the report prints the reason itself.
+// Bun's default mode prints an unhandled rejection and ends the process. It
+// does not ask the 'uncaughtException' listeners or the capture callback: that
+// is its difference from --unhandled-rejections=throw. Only 'exit' listeners
+// run after the report.
 it.each([
   {
-    name: "an 'uncaughtException' listener",
-    setup: `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
-            process.on("uncaughtException", (e, origin) => console.log("uncaughtException", e.message, origin));`,
+    name: "when nothing listens",
+    setup: "",
     reason: `new Error("oops")`,
-    stdout: [
-      "monitor oops unhandledRejection",
-      "uncaughtException oops unhandledRejection",
-      "immediate",
-      "exit 0 undefined",
-    ],
-    stderr: "",
-    exitCode: 0,
+    stderr: expect.stringContaining("error: oops"),
   },
   {
-    name: "the uncaught exception capture callback",
+    name: "and prints a reason that is not an error as it is",
+    setup: "",
+    reason: `{ plain: "object" }`,
+    stderr: expect.stringMatching(/^error\n\{\n  plain: "object",\n\}\n\nBun v/),
+  },
+  {
+    name: "and does not ask an 'uncaughtException' listener",
+    setup: `process.on("uncaughtException", e => console.log("uncaughtException", e.message));`,
+    reason: `new Error("oops")`,
+    stderr: expect.stringContaining("error: oops"),
+  },
+  {
+    name: "and does not ask the capture callback",
     setup: `process.setUncaughtExceptionCaptureCallback(e => console.log("captured", e.message));`,
     reason: `new Error("oops")`,
-    stdout: ["captured oops", "immediate", "exit 0 undefined"],
-    stderr: "",
-    exitCode: 0,
+    stderr: expect.stringContaining("error: oops"),
   },
-  {
-    name: "an 'uncaughtException' listener as node's wrapper when the reason is not an error",
-    setup: `process.on("uncaughtException", (e, origin) => console.log(e.name, e.code, origin));`,
-    reason: `{ plain: "object" }`,
-    stdout: ["UnhandledPromiseRejection ERR_UNHANDLED_REJECTION unhandledRejection", "immediate", "exit 0 undefined"],
-    stderr: "",
-    exitCode: 0,
-  },
-  {
-    name: "the fatal path when nothing listens",
-    setup: "",
-    reason: `new Error("oops")`,
-    stdout: ["exit 1 1"],
-    stderr: expect.stringContaining("oops"),
-    exitCode: 1,
-  },
-  {
-    name: "the fatal path, which prints a reason that is not an error as it is",
-    setup: "",
-    reason: `{ plain: "object" }`,
-    stdout: ["exit 1 1"],
-    stderr: expect.stringMatching(/^error\n\{\n  plain: "object",\n\}\n\nBun v/),
-    exitCode: 1,
-  },
-])(
-  "a default-mode unhandled rejection reaches $name",
-  async ({ setup, reason, stdout: lines, stderr: errors, exitCode: code }) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `${setup}
+])("a default-mode unhandled rejection ends the process $name", async ({ setup, reason, stderr: errors }) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `${setup}
        process.on("exit", code => console.log("exit", code, process.exitCode));
        setImmediate(() => console.log("immediate"));
        Promise.reject(${reason});`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
-      stdout: lines,
-      stderr: errors,
-      exitCode: code,
-    });
-  },
-);
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 1 1\n", stderr: errors, exitCode: 1 });
+});
 
 // expect() from bun:test also works in a script. toThrow() reads the rejection
 // of an async function itself, so that rejection is not an uncaught error.

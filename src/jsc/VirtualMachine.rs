@@ -1700,7 +1700,7 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::Exit)
+        self.uncaught_exception_impl(global_object, err, origin, Unhandled::Exit)
     }
 
     /// The report of a caller that goes on when no listener takes the error: `reportError()`, and
@@ -1713,16 +1713,13 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::KeepAlive)
+        self.uncaught_exception_impl(global_object, err, origin, Unhandled::KeepAlive)
     }
 
-    /// `err` is what the listeners receive. `report` is what is printed, or handed to a worker's
-    /// parent, when none of them takes it.
     fn uncaught_exception_impl(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
-        report: JSValue,
         origin: UncaughtExceptionOrigin,
         unhandled: Unhandled,
     ) -> bool {
@@ -1734,7 +1731,7 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, report);
+            (self.on_unhandled_rejection)(self, global_object, err);
             return true;
         }
 
@@ -1747,10 +1744,10 @@ impl VirtualMachine {
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
                 self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, report);
+                (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }
-            self.run_error_handler(report, None);
+            self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
@@ -1764,8 +1761,8 @@ impl VirtualMachine {
             origin as c_int,
             &raw mut substitute,
         ) > 0;
-        let report = if substitute.is_empty() {
-            report
+        let err = if substitute.is_empty() {
+            err
         } else {
             substitute
         };
@@ -1776,7 +1773,7 @@ impl VirtualMachine {
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
             if self.exit_on_uncaught_exception && self.is_main_thread() {
-                self.run_error_handler(report, None);
+                self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
@@ -1785,28 +1782,11 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            // The field, not `is_main_thread()`: a macro VM on the bundler thread and the
-            // debugger's VM have no worker either, and must not end the process.
             if unhandled == Unhandled::Exit
-                && !self.suppress_fatal_uncaught
-                && !self.unhandled_rejections_quiet
-                && self.is_main_thread
-                && self.hot_reload == HotReload::None
                 && origin != UncaughtExceptionOrigin::EntryPointRejection
+                && self.unhandled_report_ends_the_run()
             {
-                self.unhandled_error_counter += 1;
-                self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, report);
-                bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-                bun_core::pretty_errorln!(
-                    "<r>\n<d>{}<r>",
-                    bun_core::Global::unhandled_error_bun_version_string,
-                );
-                self.is_handling_uncaught_exception = false;
-                self.exit_on_uncaught_exception = true;
-                // SAFETY: see above.
-                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-                panic!("made it past process.exit()");
+                self.report_and_exit(global_object, err);
             }
             // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
             // The counter says that the run ended on an error: `on_before_exit` then skips
@@ -1818,7 +1798,7 @@ impl VirtualMachine {
                 self.unhandled_error_counter += 1;
             }
             self.exit_handler.exit_code = 1;
-            (self.on_unhandled_rejection)(self, global_object, report);
+            (self.on_unhandled_rejection)(self, global_object, err);
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
@@ -1829,6 +1809,35 @@ impl VirtualMachine {
         // `panic!`, which never returns), so a linear reset here suffices.
         self.is_handling_uncaught_exception = false;
         handled
+    }
+
+    /// Whether a report that nothing takes ends the process in this VM. Only the VM of the main
+    /// run does that. The field, not `is_main_thread()`: a macro VM on the bundler thread and the
+    /// debugger's VM have no worker either, and must not end the process.
+    fn unhandled_report_ends_the_run(&self) -> bool {
+        !self.suppress_fatal_uncaught
+            && !self.unhandled_rejections_quiet
+            && self.is_main_thread
+            && self.hot_reload == HotReload::None
+    }
+
+    /// Prints `err` and ends the process with status 1. Only 'exit' listeners run after it.
+    fn report_and_exit(&mut self, global_object: &JSGlobalObject, err: JSValue) -> ! {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        self.unhandled_error_counter += 1;
+        self.exit_handler.exit_code = 1;
+        (self.on_unhandled_rejection)(self, global_object, err);
+        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
+        bun_core::pretty_errorln!(
+            "<r>\n<d>{}<r>",
+            bun_core::Global::unhandled_error_bun_version_string,
+        );
+        self.is_handling_uncaught_exception = false;
+        self.exit_on_uncaught_exception = true;
+        // SAFETY: `global_object` is the live VM global; `process_exit` is
+        // `bun_runtime::node::process::exit` (main-thread `noreturn`).
+        unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+        panic!("made it past process.exit()");
     }
 
     pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {
@@ -3916,28 +3925,10 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                // `expect(fn).toThrow()` reads the rejection itself, and a macro VM or the
-                // debugger's VM runs no program: there the rejection goes to the hook below.
-                if self.hot_reload == HotReload::None
-                    && !self.unhandled_rejections_quiet
-                    && (self.is_main_thread || self.worker.is_some())
-                {
-                    // The listeners get node's wrapper for a reason that is not an error. The
-                    // report shows the reason itself: a ResolveMessage, a BuildMessage or a plain
-                    // value says more than the wrapper's "[object Object]".
-                    let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                    if self.uncaught_exception_impl(
-                        global_object,
-                        wrapped,
-                        reason,
-                        UncaughtExceptionOrigin::Rejection,
-                        Unhandled::Exit,
-                    ) {
-                        drain(self);
-                        return;
-                    }
-                    let _ = self.event_loop_mut().drain_microtasks();
-                    return;
+                // Bun's default mode does not ask the 'uncaughtException' listeners, which is
+                // its difference from `throw`. `expect(fn).toThrow()` reads the rejection itself.
+                if self.unhandled_report_ends_the_run() {
+                    self.report_and_exit(global_object, reason);
                 }
             }
             Mode::None => {
@@ -7042,7 +7033,7 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
     })
 }
 
-/// What `--unhandled-rejections=bun|strict|throw` hand to the uncaught-exception path for `reason`. If describing the
+/// What `--unhandled-rejections=strict|throw` hand to the uncaught-exception path for `reason`. If describing the
 /// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
 /// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
 /// thrown is a termination, which has to win.

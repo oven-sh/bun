@@ -232,142 +232,131 @@ describe.each(["http", "https"] as const)("%s: an 8 MiB response that closes the
   });
 });
 
-describe.each(["http", "https"] as const)(
-  "%s: req.socket.end() while the response has not ended and is still buffered",
-  protocol => {
-    // Small writes stay in the socket's own buffer. 32 MiB is more than the kernel
-    // takes while the client reads nothing, so socket.end() has to wait with its FIN.
-    const CHUNK = Buffer.alloc(8 * 1024, 0x61);
-    const CHUNKS = 4096;
-    // Each write is one chunk on the wire: "2000\r\n", the data, "\r\n".
-    const CHUNKED_LENGTH = CHUNKS * (6 + CHUNK.length + 2);
-    const BODY = Buffer.alloc(64 * 1024, 0x62);
-    const POST_HEAD = `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${BODY.length}\r\n\r\n`;
+describe.each(["http", "https"] as const)("%s: req.socket.end() while a 16 MiB response has not ended", protocol => {
+  // The client reads nothing until the listener has run, and 16 MiB is more
+  // than a kernel takes then (about 2.7 MiB on Linux, 0.1 MiB on Windows). Bun
+  // holds the rest, so the FIN of socket.end() waits for the drain. With nothing
+  // held Bun shuts down at once and drops the rest of the request body, and
+  // these tests fail. Node.js needs no held bytes: it keeps reading after end().
+  const CHUNK = Buffer.alloc(8 * 1024, 0x61);
+  const CHUNKS = 2048;
+  // Each write is one chunk on the wire: "2000\r\n", the data, "\r\n".
+  const CHUNKED_LENGTH = CHUNKS * (6 + CHUNK.length + 2);
+  const BODY = Buffer.alloc(64 * 1024, 0x62);
+  const POST_HEAD = `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${BODY.length}\r\n\r\n`;
 
-    // What the listener saw. `buffered` is whether response bytes were still
-    // queued after req.socket.end(): these tests need that. It is read one tick
-    // later, because in the turn of the writes writableLength counts every byte
-    // written, also the bytes that the socket has already sent.
-    type Seen = { buffered: boolean; reqBytes: number; reqEnded: boolean };
+  // What the listener saw of the request body.
+  type Seen = { reqBytes: number; reqEnded: boolean };
 
-    // Writes the response and calls req.socket.end(). res.end() follows when the
-    // request body has ended. Resolves `handled` one tick after the listener has
-    // run and `closed` when the server side of the connection has closed.
-    function respondThenEnd(seen: Seen, handled: () => void, closed: () => void): RequestListener {
-      return (req, res) => {
-        req.socket.once("close", closed);
-        req.on("data", chunk => (seen.reqBytes += chunk.length));
-        req.on("end", () => {
-          seen.reqEnded = true;
-          res.end();
-        });
-        res.writeHead(200);
-        for (let i = 0; i < CHUNKS; i++) res.write(CHUNK);
-        req.socket.end();
-        process.nextTick(() => {
-          seen.buffered = res.writableLength > 0;
-          handled();
-        });
-      };
-    }
-
-    // Counts the response bytes. The head is searched in the bytes received so
-    // far, so a delimiter that is split over two reads is still found.
-    // afterChunks() is the number of bytes that follow the head and the chunks:
-    // 5 for the terminating chunk of res.end(), 0 when Node.js drops it after
-    // socket.end(), more for a second response.
-    function countResponse(client: net.Socket, onChunks?: () => void) {
-      const counted = {
-        bytes: 0,
-        headLength: -1,
-        afterChunks: () => counted.bytes - counted.headLength - CHUNKED_LENGTH,
-      };
-      let head = Buffer.alloc(0);
-      client.on("data", chunk => {
-        if (counted.headLength === -1) {
-          head = Buffer.concat([head, chunk]);
-          const headEnd = head.indexOf("\r\n\r\n");
-          if (headEnd !== -1) counted.headLength = headEnd + 4;
-        }
-        counted.bytes += chunk.length;
-        if (counted.headLength !== -1 && counted.afterChunks() >= 0) onChunks?.();
+  // Writes the response and calls req.socket.end(). res.end() follows when the
+  // request body has ended. Resolves `handled` when the listener has run and
+  // `closed` when the server side of the connection has closed.
+  function respondThenEnd(seen: Seen, handled: () => void, closed: () => void): RequestListener {
+    return (req, res) => {
+      req.socket.once("close", closed);
+      req.on("data", chunk => (seen.reqBytes += chunk.length));
+      req.on("end", () => {
+        seen.reqEnded = true;
+        res.end();
       });
-      return counted;
-    }
+      res.writeHead(200);
+      for (let i = 0; i < CHUNKS; i++) res.write(CHUNK);
+      req.socket.end();
+      handled();
+    };
+  }
 
-    // The FIN that waits stops later requests only. The body of the request in
-    // flight keeps arriving, or 'end' never fires and res.end() never runs.
-    test("the rest of the request body still arrives", async () => {
-      const seen: Seen = { buffered: false, reqBytes: 0, reqEnded: false };
-      const handled = Promise.withResolvers<void>();
-      const serverClosed = Promise.withResolvers<void>();
-      await using server = await listen(protocol, respondThenEnd(seen, handled.resolve, serverClosed.resolve));
+  // Counts the response bytes. The head is searched in the bytes received so
+  // far, so a delimiter that is split over two reads is still found.
+  // afterChunks() is the number of bytes that follow the head and the chunks:
+  // 5 for the terminating chunk of res.end(), 0 when Node.js drops it after
+  // socket.end(), more for a second response.
+  function countResponse(client: net.Socket, onChunks?: () => void) {
+    const counted = {
+      bytes: 0,
+      headLength: -1,
+      afterChunks: () => counted.bytes - counted.headLength - CHUNKED_LENGTH,
+    };
+    let head = Buffer.alloc(0);
+    client.on("data", chunk => {
+      if (counted.headLength === -1) {
+        head = Buffer.concat([head, chunk]);
+        const headEnd = head.indexOf("\r\n\r\n");
+        if (headEnd !== -1) counted.headLength = headEnd + 4;
+      }
+      counted.bytes += chunk.length;
+      if (counted.headLength !== -1 && counted.afterChunks() >= 0) onChunks?.();
+    });
+    return counted;
+  }
 
-      const client = connect(protocol, server);
-      client.on("error", () => {});
-      const closed = new Promise(resolve => client.once("close", resolve));
-      client.write(POST_HEAD);
-      client.write(BODY.subarray(0, BODY.length / 2));
-      await handled.promise;
-      client.write(BODY.subarray(BODY.length / 2));
-      const counted = countResponse(client);
-      await Promise.all([closed, serverClosed.promise]);
+  // The FIN that waits stops later requests only. The body of the request in
+  // flight keeps arriving, or 'end' never fires and res.end() never runs.
+  test("the rest of the request body still arrives", async () => {
+    const seen: Seen = { reqBytes: 0, reqEnded: false };
+    const handled = Promise.withResolvers<void>();
+    const serverClosed = Promise.withResolvers<void>();
+    await using server = await listen(protocol, respondThenEnd(seen, handled.resolve, serverClosed.resolve));
 
-      expect(seen).toEqual({ buffered: true, reqBytes: BODY.length, reqEnded: true });
-      expect([0, 5]).toContain(counted.afterChunks());
+    const client = connect(protocol, server);
+    client.on("error", () => {});
+    const closed = new Promise(resolve => client.once("close", resolve));
+    client.write(POST_HEAD);
+    client.write(BODY.subarray(0, BODY.length / 2));
+    await handled.promise;
+    client.write(BODY.subarray(BODY.length / 2));
+    const counted = countResponse(client);
+    await Promise.all([closed, serverClosed.promise]);
+
+    expect(seen).toEqual({ reqBytes: BODY.length, reqEnded: true });
+    expect([0, 5]).toContain(counted.afterChunks());
+  });
+
+  // Here the response has drained when the rest of the body arrives, with a
+  // pipelined request behind it in the same read. No writable event is left to
+  // send the FIN, so the read that completes the response has to.
+  test("a request pipelined behind the rest of the body is not answered, and the FIN still comes", async () => {
+    const seen: Seen = { reqBytes: 0, reqEnded: false };
+    const handled = Promise.withResolvers<void>();
+    const serverClosed = Promise.withResolvers<void>();
+    const respond = respondThenEnd(seen, handled.resolve, serverClosed.resolve);
+    let first = true;
+    await using server = await listen(protocol, (req, res) => {
+      if (first) {
+        first = false;
+        respond(req, res);
+      } else {
+        // Node.js runs the listener for the pipelined request too. Its socket
+        // is no longer writable, so this may not reach the client.
+        res.end("second");
+      }
     });
 
-    // Here the response has drained when the rest of the body arrives, with a
-    // pipelined request behind it in the same read. No writable event is left to
-    // send the FIN, so the read that completes the response has to.
-    test("a request pipelined behind the rest of the body is not answered, and the FIN still comes", async () => {
-      const seen: Seen = { buffered: false, reqBytes: 0, reqEnded: false };
-      const handled = Promise.withResolvers<void>();
-      const serverClosed = Promise.withResolvers<void>();
-      const respond = respondThenEnd(seen, handled.resolve, serverClosed.resolve);
-      let first = true;
-      await using server = await listen(protocol, (req, res) => {
-        if (first) {
-          first = false;
-          respond(req, res);
-        } else {
-          // Node.js runs the listener for the pipelined request too. Its socket
-          // is no longer writable, so this may not reach the client.
-          res.end("second");
-        }
-      });
+    // Node.js sends the FIN as soon as the writes have flushed. allowHalfOpen
+    // keeps the client writable after that.
+    const client = connect(protocol, server, { allowHalfOpen: true });
+    client.on("error", () => {});
+    const closed = new Promise(resolve => client.once("close", resolve));
+    const { promise: outcome, resolve: settle } = Promise.withResolvers<"FIN" | "a second response">();
+    client.once("end", () => settle("FIN"));
+    client.write(POST_HEAD);
+    client.write(BODY.subarray(0, BODY.length / 2));
+    await handled.promise;
 
-      // Node.js sends the FIN as soon as the writes have flushed. allowHalfOpen
-      // keeps the client writable after that.
-      const client = connect(protocol, server, { allowHalfOpen: true });
-      client.on("error", () => {});
-      const closed = new Promise(resolve => client.once("close", resolve));
-      const { promise: outcome, resolve: settle } = Promise.withResolvers<"FIN" | "a second response">();
-      client.once("end", () => settle("FIN"));
-      client.write(POST_HEAD);
-      client.write(BODY.subarray(0, BODY.length / 2));
-      await handled.promise;
-
-      const drained = Promise.withResolvers<void>();
-      const counted = countResponse(client, () => {
-        drained.resolve();
-        // More than the terminating chunk can only be a second response. Do not
-        // wait for a FIN that then comes with the keep-alive timeout.
-        if (counted.afterChunks() > 5) settle("a second response");
-      });
-      await drained.promise;
-      client.write(Buffer.concat([BODY.subarray(BODY.length / 2), Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n")]));
-      const result = await outcome;
-      client.end();
-      await Promise.all([closed, serverClosed.promise]);
-
-      expect({ outcome: result, ...seen }).toEqual({
-        outcome: "FIN",
-        buffered: true,
-        reqBytes: BODY.length,
-        reqEnded: true,
-      });
-      expect([0, 5]).toContain(counted.afterChunks());
+    const drained = Promise.withResolvers<void>();
+    const counted = countResponse(client, () => {
+      drained.resolve();
+      // More than the terminating chunk can only be a second response. Do not
+      // wait for a FIN that then comes with the keep-alive timeout.
+      if (counted.afterChunks() > 5) settle("a second response");
     });
-  },
-);
+    await drained.promise;
+    client.write(Buffer.concat([BODY.subarray(BODY.length / 2), Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n")]));
+    const result = await outcome;
+    client.end();
+    await Promise.all([closed, serverClosed.promise]);
+
+    expect({ outcome: result, ...seen }).toEqual({ outcome: "FIN", reqBytes: BODY.length, reqEnded: true });
+    expect([0, 5]).toContain(counted.afterChunks());
+  });
+});

@@ -44,7 +44,7 @@ pub(crate) struct Handler {
     /// The context of the script that gave these handlers: a websocket event is dispatched inside it.
     pub(crate) context: bun_jsc::ContextId,
 
-    /// Read by publish() and for each message, ping and pong.
+    /// Read by publish(), by `ServerWebSocket::behavior`, and for each event of a socket of node:http.
     pub(crate) flags: HandlerFlags,
 }
 

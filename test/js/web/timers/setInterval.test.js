@@ -171,28 +171,28 @@ it.concurrent("refresh() on an interval that stopped itself does not start it or
     const { heapStats } = require("bun:jsc");
     const N = 200;
     let fired = 0;
-    let timers = [];
+    let refreshed = 0;
     await new Promise(resolve => {
       for (let i = 0; i < N; i++) {
-        timers.push(
-          setInterval(function () {
-            if (i % 2) this._repeat = null;
-            else this._idleTimeout = -1;
-            if (++fired === N) resolve();
-          }, 1),
-        );
+        setInterval(function () {
+          fired++;
+          if (i % 2) this._repeat = null;
+          else this._idleTimeout = -1;
+          // The immediate runs after this fire has ended, so the interval has stopped.
+          setImmediate(() => {
+            this.refresh();
+            if (++refreshed === N) resolve();
+          });
+        }, 1);
       }
     });
-    // Every interval has fired once and has stopped.
-    await new Promise(r => setTimeout(r, 10));
-    for (const timer of timers) timer.refresh();
-    timers = undefined;
-    await new Promise(r => setTimeout(r, 10));
-    Bun.gc(true);
-    await new Promise(r => setTimeout(r, 10));
-    Bun.gc(true);
+    // Nothing in JS holds a timer now.
+    for (let turn = 0; turn < 2; turn++) {
+      await new Promise(r => setImmediate(r));
+      Bun.gc(true);
+    }
     const left = heapStats().objectTypeCounts.Timeout ?? 0;
-    console.log(fired, left < N / 2 ? "collected" : "leaked " + left);
+    console.log(fired, refreshed, left < N / 2 ? "collected" : "leaked " + left);
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
@@ -201,6 +201,6 @@ it.concurrent("refresh() on an interval that stopped itself does not start it or
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout.trim()).toBe("200 collected");
+  expect(stdout.trim()).toBe("200 200 collected");
   expect(exitCode).toBe(0);
 });

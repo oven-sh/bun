@@ -85,7 +85,8 @@ pub use bun_jsc::system_error::verify_error_to_js;
 /// code `BORINGSSL`. Body mirrors `bun_runtime::crypto::boringssl_jsc::err_to_js`
 /// (unreachable from here without a cycle).
 fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
-    let mut buf = [0u8; 128];
+    // 128 bytes of text and the NUL.
+    let mut buf = [0u8; 128 + 1];
     let reason = bun_boringssl_sys::err_error_string_n(err_code, &mut buf);
     if reason.is_empty() {
         return global

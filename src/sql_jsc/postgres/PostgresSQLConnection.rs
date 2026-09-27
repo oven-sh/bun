@@ -710,7 +710,8 @@ impl PostgresSQLConnection {
 
         self.status.set(Status::Failed);
 
-        let guard = self.ref_guard();
+        // Held past the last use of `self` below: `ref_and_close` can release every other ref.
+        let _guard = self.ref_guard();
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
@@ -735,7 +736,6 @@ impl PostgresSQLConnection {
             );
         }
         self.ref_and_close(Some(value));
-        drop(guard);
         self.update_has_pending_activity();
     }
 

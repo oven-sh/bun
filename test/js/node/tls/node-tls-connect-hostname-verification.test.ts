@@ -1,7 +1,7 @@
 import { tls as ipSanCert } from "harness";
 import assert from "node:assert";
 import { X509Certificate } from "node:crypto";
-import { once } from "node:events";
+import { once, type EventEmitter } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -230,18 +230,29 @@ function pinned<T extends object>(callerOptions: T) {
   return { options, seen, receiver: () => receiver };
 }
 
+// Resolves with the arguments of `event`. Rejects when 'error' or 'close' comes first.
+function eventOf(emitter: EventEmitter, event: string) {
+  const { promise, resolve, reject } = Promise.withResolvers<any[]>();
+  emitter.once(event, (...args) => resolve(args));
+  emitter.on("error", reject);
+  emitter.once("close", () => reject(new Error(`'close' came before '${event}'`)));
+  return promise;
+}
+
 async function secureConnect(socket: tls.TLSSocket) {
   try {
-    await once(socket, "secureConnect");
+    await eventOf(socket, "secureConnect");
   } finally {
     socket.destroy();
   }
 }
 
+// The first of 'secureConnect', 'error' and 'close'.
 function outcomeOf(socket: tls.TLSSocket) {
   const { promise, resolve } = Promise.withResolvers<string>();
   socket.on("secureConnect", () => resolve(`secureConnect, authorized=${socket.authorized}`));
   socket.on("error", error => resolve(`error: ${error.message}`));
+  socket.on("close", () => resolve("close"));
   return promise.finally(() => socket.destroy());
 }
 
@@ -289,9 +300,9 @@ describe("checkServerIdentity is called with the connect options as `this`", () 
     await once(server, "listening");
     try {
       const { options, seen } = pinned({ ca, host: "127.0.0.1", port: (server.address() as AddressInfo).port });
-      const [res] = await once(https.request(options).end(), "response");
+      const [res] = await eventOf(https.request(options).end(), "response");
       res.resume();
-      await once(res, "end");
+      await eventOf(res, "end");
       assert.deepStrictEqual(seen(), connectOptions("127.0.0.1"));
     } finally {
       server.close();
@@ -307,7 +318,7 @@ describe("checkServerIdentity is called with the connect options as `this`", () 
       const { options, seen } = pinned({ ca });
       const session = http2.connect(`https://127.0.0.1:${(server.address() as AddressInfo).port}`, options);
       try {
-        await once(session, "connect");
+        await eventOf(session, "connect");
       } finally {
         session.destroy();
       }
@@ -360,13 +371,13 @@ describe("checkServerIdentity is called with the connect options as `this`", () 
     try {
       const { port } = server.address() as AddressInfo;
       const first = tls.connect({ host: "127.0.0.1", port, ca, servername: "agent1" });
-      const [session] = await once(first, "session");
+      const [session] = await eventOf(first, "session");
       first.destroy();
 
       const { options, seen } = pinned({ host: "127.0.0.1", port, ca, servername: "agent1", session });
       const resumed = tls.connect(options);
       try {
-        await once(resumed, "secureConnect");
+        await eventOf(resumed, "secureConnect");
         assert.deepStrictEqual(
           { ...seen(), isSessionReused: resumed.isSessionReused() },
           { ...connectOptions("127.0.0.1"), isSessionReused: true },

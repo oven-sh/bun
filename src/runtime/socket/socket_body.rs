@@ -465,7 +465,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// The slot of a TLS socket's `SSL` through which `on_open` points back at
     /// the owning socket (read by the ALPN select callback). `None` for
-    /// `TCPSocket`, which has no `SSL`.
+    /// `TCPSocket`, which has no `SSL`. Nothing clears the slot: its one
+    /// reader runs inside the handshake, and the socket is open until that ends.
     fn tls_socket_slot() -> Option<&'static boringssl_sys::ExDataSlot<Self>> {
         // SAFETY: uSockets and `SSLWrapper` create the `SSL` of a `TLSSocket`;
         // neither of them nor anything else uses its application slot.

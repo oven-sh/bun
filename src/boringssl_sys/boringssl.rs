@@ -284,9 +284,9 @@ impl<T> ExDataSlot<T> {
 
     /// # Safety
     /// An `SSL` has one application slot, so it has one `T`. On every `SSL`
-    /// this slot is used with, nothing else reads or writes index 0 (lsquic
-    /// keeps its connection there on the `SSL`s it creates), and no
-    /// `ExDataSlot` of another type exists for them.
+    /// this slot is used with, nothing else reads or writes index 0, and no
+    /// `ExDataSlot` of another type exists for them. (uSockets and lsquic
+    /// register their indices, and BoringSSL numbers those from 1.)
     pub const unsafe fn app_data() -> Self {
         ExDataSlot {
             _marker: core::marker::PhantomData,
@@ -561,8 +561,9 @@ impl SSL {
     }
 
     /// Store a back-reference to `data` in `slot`. The `BackRef` obligation
-    /// applies to the connection: `data` outlives this `SSL`, or the slot is
-    /// cleared first. Returns whether BoringSSL accepted the write.
+    /// applies to the readers: nothing calls [`ex_data`](Self::ex_data) on
+    /// this `SSL` after `data` is freed, unless the slot is cleared first.
+    /// BoringSSL never reads the slot. Returns whether it accepted the write.
     pub fn set_ex_data<T>(&self, slot: &ExDataSlot<T>, data: Option<bun_ptr::BackRef<T>>) -> bool {
         let p = data.map_or(core::ptr::null_mut(), |r| {
             r.as_const_ptr().cast_mut().cast()
@@ -1177,13 +1178,6 @@ unsafe extern "C" {
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
     pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
     pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
-    pub fn SSL_get_ex_new_index(
-        argl: core::ffi::c_long,
-        argp: *mut c_void,
-        unused: *mut c_void,
-        dup_unused: Option<unsafe extern "C" fn()>,
-        free_func: Option<unsafe extern "C" fn()>,
-    ) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);

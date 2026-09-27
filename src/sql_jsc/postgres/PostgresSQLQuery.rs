@@ -8,7 +8,7 @@ use crate::jsc::{
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
-use bun_ptr::{BackRef, RefPtr, ThisPtr};
+use bun_ptr::{RefPtr, ThisPtr};
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -30,7 +30,7 @@ bun_core::declare_scope!(Postgres, visible);
 pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self` or `ThisPtr<Self>`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut PostgresSQLQuery` —
 // `&mut T` auto-derefs to `&T` so the impls below compile against either.
@@ -49,14 +49,15 @@ pub struct PostgresSQLQuery {
     pub(crate) status: Cell<Status>,
 
     // Intrusive single-thread refcount (`CellRefCounted`): held as `RefPtr`
-    // (connection request queue, JS wrapper) / `ref_guard()` (re-entrant paths).
+    // (connection request queue, JS wrapper, the guards of re-entrant paths).
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
-    /// This allocation's root pointer, for the `&self` paths that take refs
-    /// on it (`ref_guard`, the connection's request queue).
-    this_ptr: Cell<Option<BackRef<PostgresSQLQuery, bun_ptr::Root>>>,
 }
+
+// mimalloc rounds 65 bytes up to its 80-byte size class.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(mem::size_of::<PostgresSQLQuery>() <= 64);
 
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
@@ -68,18 +69,15 @@ impl PostgresSQLQuery {
     /// Heap-allocate a query; the returned ref is the one its JS wrapper
     /// adopts (`js::to_js`; released by `finalize`).
     fn new(query: BunString, flags: Flags) -> ThisPtr<Self> {
-        let this = RefPtr::new(Self {
+        RefPtr::new(Self {
             statement: JsCell::new(None),
             query,
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(flags),
-            this_ptr: Cell::new(None),
         })
-        .into_this_ptr();
-        this.this_ptr.set(Some(this.into()));
-        this
+        .into_this_ptr()
     }
 }
 
@@ -138,21 +136,6 @@ impl PostgresSQLQuery {
         self.flags.set(v);
     }
 
-    /// This allocation's root pointer (see the `this_ptr` field).
-    #[inline]
-    pub(crate) fn this_ptr(&self) -> ThisPtr<Self> {
-        self.this_ptr
-            .get()
-            .expect("PostgresSQLQuery used before PostgresSQLQuery::new")
-            .this_ptr()
-    }
-
-    /// Holds a ref on `self` for the guard's scope.
-    #[inline]
-    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
-        RefPtr::from_this(self.this_ptr())
-    }
-
     /// This query's statement, if it has one yet.
     #[inline]
     pub(crate) fn statement(&self) -> Option<&PostgresSQLStatement> {
@@ -187,22 +170,19 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_write_fail(
-        &self,
+        this: ThisPtr<Self>,
         err: AnyPostgresError,
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
-        // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
-        // is sufficient and `noalias` is suppressed. `ref_guard()` brackets the
-        // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
-        // `*self` mid-body.
-        let _guard = self.ref_guard();
-        self.status.set(Status::Fail);
-        let Some(this_value) = self.this_value.get().try_get() else {
+        // The JS that `run_callback` runs can release every other ref on `this`.
+        let _guard = RefPtr::from_this(this);
+        this.status.set(Status::Fail);
+        let Some(this_value) = this.this_value.get().try_get() else {
             return;
         };
-        let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else {
+        let _downgrade = scopeguard::guard((), |_| this.this_value.with_mut(|r| r.downgrade()));
+        let Some(target_value) = this.get_target(global_object, true) else {
             return;
         };
 
@@ -225,29 +205,33 @@ impl PostgresSQLQuery {
         );
     }
 
-    pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        self.status.set(Status::Fail);
-        self.reject(err, global_object);
+    pub(crate) fn on_js_error(this: ThisPtr<Self>, err: JSValue, global_object: &JSGlobalObject) {
+        this.status.set(Status::Fail);
+        Self::reject(this, err, global_object);
     }
 
     /// Rejects now, but `status` stays in flight: the server is still answering this query.
-    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
-        self.update_flags(|f| f.discard_response = true);
-        self.reject(err, global_object);
+    pub(crate) fn on_undecodable_row(
+        this: ThisPtr<Self>,
+        err: JSValue,
+        global_object: &JSGlobalObject,
+    ) {
+        this.update_flags(|f| f.discard_response = true);
+        Self::reject(this, err, global_object);
     }
 
     pub(crate) fn is_rejected(&self) -> bool {
         self.status.get() == Status::Fail || self.flags.get().discard_response
     }
 
-    fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, `ref_guard()` brackets re-entry.
-        let _guard = self.ref_guard();
-        let Some(this_value) = self.this_value.get().try_get() else {
+    fn reject(this: ThisPtr<Self>, err: JSValue, global_object: &JSGlobalObject) {
+        // See `on_write_fail`.
+        let _guard = RefPtr::from_this(this);
+        let Some(this_value) = this.this_value.get().try_get() else {
             return;
         };
-        let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else {
+        let _downgrade = scopeguard::guard((), |_| this.this_value.with_mut(|r| r.downgrade()));
+        let Some(target_value) = this.get_target(global_object, true) else {
             return;
         };
 
@@ -266,14 +250,14 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_error(
-        &self,
+        this: ThisPtr<Self>,
         err: &super::postgres_sql_statement::Error,
         global_object: &JSGlobalObject,
     ) {
         let Ok(e) = err.to_js(global_object) else {
             return;
         };
-        self.on_js_error(e, global_object);
+        Self::on_js_error(this, e, global_object);
     }
 
     pub(crate) fn allow_gc(this_value: JSValue, global_object: &JSGlobalObject) {
@@ -288,15 +272,15 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_result(
-        &self,
+        this: ThisPtr<Self>,
         command_tag_str: &[u8],
         global_object: &JSGlobalObject,
         connection: JSValue,
         is_last: bool,
     ) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, `ref_guard()` brackets re-entry.
-        let _guard = self.ref_guard();
-        self.status.set(if is_last {
+        // See `on_write_fail`.
+        let _guard = RefPtr::from_this(this);
+        this.status.set(if is_last {
             Status::Success
         } else {
             Status::PartialResponse
@@ -304,20 +288,22 @@ impl PostgresSQLQuery {
         let tag = CommandTag::init(command_tag_str);
         let js_tag: JSValue = match tag.to_js_tag(global_object) {
             Ok(v) => v,
-            Err(e) => return self.on_js_error(global_object.take_exception(e), global_object),
+            Err(e) => {
+                return Self::on_js_error(this, global_object.take_exception(e), global_object);
+            }
         };
         js_tag.ensure_still_alive();
 
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = this.this_value.get().try_get() else {
             return;
         };
         let _last = scopeguard::guard((), |_| {
             if is_last {
                 Self::allow_gc(this_value, global_object);
-                self.this_value.with_mut(|r| r.downgrade());
+                this.this_value.with_mut(|r| r.downgrade());
             }
         });
-        let Some(target_value) = self.get_target(global_object, is_last) else {
+        let Some(target_value) = this.get_target(global_object, is_last) else {
             return;
         };
 
@@ -447,7 +433,7 @@ impl PostgresSQLQuery {
     // The connection's request queue takes its own ref on `this` (`RefPtr::from_this`)
     // once the query is enqueued; the JS wrapper (on-stack for this call) holds the other.
     pub fn do_run(
-        this: &Self,
+        this: ThisPtr<Self>,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -533,7 +519,7 @@ impl PostgresSQLQuery {
             } else {
                 this.status.set(Status::Pending);
             }
-            connection.enqueue_request(this.this_ptr());
+            connection.enqueue_request(this);
             if this.status.get() == Status::Pending {
                 connection.note_request_pending();
             }
@@ -788,7 +774,7 @@ impl PostgresSQLQuery {
             }
         }
 
-        connection.enqueue_request(this.this_ptr());
+        connection.enqueue_request(this);
         if this.status.get() == Status::Pending {
             connection.note_request_pending();
         }

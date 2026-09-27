@@ -1427,9 +1427,10 @@ impl PostgresSQLConnection {
                     ));
                     let global = self.global();
                     if let Some(reason) = js_reason {
-                        request.on_js_error(reason, global);
+                        PostgresSQLQuery::on_js_error(request, reason, global);
                     } else {
-                        request.on_error(
+                        PostgresSQLQuery::on_error(
+                            request,
                             &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                             global,
                         );
@@ -1440,9 +1441,10 @@ impl PostgresSQLConnection {
                     self.finish_request(&request);
                     let global = self.global();
                     if let Some(reason) = js_reason {
-                        request.on_js_error(reason, global);
+                        PostgresSQLQuery::on_js_error(request, reason, global);
                     } else {
-                        request.on_error(
+                        PostgresSQLQuery::on_error(
+                            request,
                             &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                             global,
                         );
@@ -1815,18 +1817,18 @@ impl PostgresSQLConnection {
     /// Reject `req`. A non-JS error also fails `new_statement`, first parsed in the failed write.
     fn reject_failed_write(
         &self,
-        req: &PostgresSQLQuery,
+        req: ThisPtr<PostgresSQLQuery>,
         new_statement: Option<&PostgresSQLStatement>,
         err: AnyPostgresError,
     ) {
         if let Some(err_) = self.global().try_take_exception() {
-            req.on_js_error(err_, self.global());
+            PostgresSQLQuery::on_js_error(req, err_, self.global());
             return;
         }
         if let Some(statement) = new_statement {
             statement.fail(StatementError::PostgresError(err));
         }
-        req.on_write_fail(err, self.global(), self.get_queries_array());
+        PostgresSQLQuery::on_write_fail(req, err, self.global(), self.get_queries_array());
     }
 
     fn advance(&self) {
@@ -1893,7 +1895,7 @@ impl PostgresSQLConnection {
                         if let Err(err) =
                             PostgresRequest::execute_query(query_str.slice(), self.writer())
                         {
-                            self.reject_failed_write(&req, None, err);
+                            self.reject_failed_write(req, None, err);
                             if offset == 0 {
                                 self.discard_request(req_ptr);
                             } else {
@@ -1925,7 +1927,7 @@ impl PostgresSQLConnection {
                                             Ok(v) => v,
                                             Err(err) => self.global().take_error(err),
                                         };
-                                        req.on_js_error(ev, self.global());
+                                        PostgresSQLQuery::on_js_error(req, ev, self.global());
                                     }
                                     if offset == 0 {
                                         self.discard_request(req_ptr);
@@ -1983,7 +1985,7 @@ impl PostgresSQLConnection {
                                                 include_describe: false,
                                             },
                                         ) {
-                                            self.reject_failed_write(&req, None, err);
+                                            self.reject_failed_write(req, None, err);
                                             if offset == 0 {
                                                 self.discard_request(req_ptr);
                                             } else {
@@ -2008,7 +2010,7 @@ impl PostgresSQLConnection {
                                                 columns_value,
                                             },
                                         ) {
-                                            self.reject_failed_write(&req, None, err);
+                                            self.reject_failed_write(req, None, err);
                                             if offset == 0 {
                                                 self.discard_request(req_ptr);
                                             } else {
@@ -2087,7 +2089,7 @@ impl PostgresSQLConnection {
                                                 binding_value,
                                             },
                                         ) {
-                                            self.reject_failed_write(&req, Some(statement), err);
+                                            self.reject_failed_write(req, Some(statement), err);
                                             if offset == 0 {
                                                 self.discard_request(req_ptr);
                                             } else {
@@ -2149,7 +2151,7 @@ impl PostgresSQLConnection {
                                                 include_describe: true,
                                             },
                                         ) {
-                                            self.reject_failed_write(&req, Some(statement), err);
+                                            self.reject_failed_write(req, Some(statement), err);
                                             debug_assert!(offset == 0);
                                             self.discard_request(req_ptr);
                                             debug!(
@@ -2184,14 +2186,14 @@ impl PostgresSQLConnection {
                                         &statement.signature.fields,
                                         connection_writer,
                                     ) {
-                                        self.reject_failed_write(&req, Some(statement), err);
+                                        self.reject_failed_write(req, Some(statement), err);
                                         debug_assert!(offset == 0);
                                         self.discard_request(req_ptr);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
                                     if let Err(err) = connection_writer.write(&protocol::SYNC) {
-                                        self.reject_failed_write(&req, Some(statement), err);
+                                        self.reject_failed_write(req, Some(statement), err);
                                         debug_assert!(offset == 0);
                                         self.discard_request(req_ptr);
                                         debug!(
@@ -2368,7 +2370,7 @@ impl PostgresSQLConnection {
                         return Err(err);
                     }
                     let js_err = self.undecodable_row_error(err)?;
-                    request.on_undecodable_row(js_err, self.global());
+                    PostgresSQLQuery::on_undecodable_row(request, js_err, self.global());
                     return Ok(());
                 }
 
@@ -2390,7 +2392,7 @@ impl PostgresSQLConnection {
                     Ok(result) => result,
                     Err(err) => {
                         let js_err = self.undecodable_row_error(err)?;
-                        request.on_undecodable_row(js_err, self.global());
+                        PostgresSQLQuery::on_undecodable_row(request, js_err, self.global());
                         return Ok(());
                     }
                 };
@@ -2445,7 +2447,8 @@ impl PostgresSQLConnection {
                     } else if request.status.get() == QueryStatus::PartialResponse {
                         self.finish_request(&request);
                         // if is a partial response, just signal that the query is now complete
-                        request.on_result(
+                        PostgresSQLQuery::on_result(
+                            request,
                             b"",
                             self.global(),
                             self.js_value.get().try_get().unwrap_or_default(),
@@ -2468,7 +2471,8 @@ impl PostgresSQLConnection {
                 cmd.decode_internal(reader.reborrow())?;
                 debug!("-> {}", bstr::BStr::new(cmd.command_tag.slice()));
 
-                request.on_result(
+                PostgresSQLQuery::on_result(
+                    request,
                     cmd.command_tag.slice(),
                     self.global(),
                     self.js_value.get().try_get().unwrap_or_default(),
@@ -2938,7 +2942,7 @@ impl PostgresSQLConnection {
 
                 self.finish_request(&request);
                 self.update_ref();
-                request.on_js_error(js_err, self.global());
+                PostgresSQLQuery::on_js_error(request, js_err, self.global());
             }
             MessageType::PortalSuspended => {
                 reader.skip_message()?;
@@ -2950,7 +2954,8 @@ impl PostgresSQLConnection {
                 if request.is_rejected() {
                     return Ok(());
                 }
-                request.on_result(
+                PostgresSQLQuery::on_result(
+                    request,
                     b"CLOSECOMPLETE",
                     self.global(),
                     self.js_value.get().get(),
@@ -2977,7 +2982,13 @@ impl PostgresSQLConnection {
                 if request.is_rejected() {
                     return Ok(());
                 }
-                request.on_result(b"", self.global(), self.js_value.get().get(), false);
+                PostgresSQLQuery::on_result(
+                    request,
+                    b"",
+                    self.global(),
+                    self.js_value.get().get(),
+                    false,
+                );
                 self.update_ref();
             }
             MessageType::CopyOutResponse => {

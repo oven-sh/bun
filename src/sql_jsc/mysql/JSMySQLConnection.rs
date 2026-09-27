@@ -702,13 +702,17 @@ impl JSMySQLConnection {
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub(crate) fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
-        request.resolve(self.get_queries_array(), result);
+    pub(crate) fn on_query_result(
+        &self,
+        request: ThisPtr<JSMySQLQuery>,
+        result: &MySQLQueryResult,
+    ) {
+        JSMySQLQuery::resolve(request, self.get_queries_array(), result);
     }
 
     pub(crate) fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
         &self,
-        request: &JSMySQLQuery,
+        request: ThisPtr<JSMySQLQuery>,
         statement: &MySQLStatement,
         reader: NewReader<C>,
     ) -> Result<(), OnResultRowError> {
@@ -744,8 +748,8 @@ impl JSMySQLConnection {
             self.connection
                 .get()
                 .queue
-                .mark_current_request_as_finished(request);
-            request.reject(self.get_queries_array(), e);
+                .mark_current_request_as_finished(&request);
+            JSMySQLQuery::reject(request, self.get_queries_array(), e);
             return Ok(());
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
@@ -765,8 +769,8 @@ impl JSMySQLConnection {
             self.connection
                 .get()
                 .queue
-                .mark_current_request_as_finished(request);
-            request.reject_with_js_value(self.get_queries_array(), err);
+                .mark_current_request_as_finished(&request);
+            JSMySQLQuery::reject_with_js_value(request, self.get_queries_array(), err);
             return Ok(());
         }
         statement.result_count.set(statement.result_count.get() + 1);
@@ -777,12 +781,12 @@ impl JSMySQLConnection {
         Ok(())
     }
 
-    pub(crate) fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
+    pub(crate) fn on_error(&self, request: Option<ThisPtr<JSMySQLQuery>>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
             if let Some(err_) = self.global_object.try_take_exception() {
-                request.reject_with_js_value(self.get_queries_array(), err_);
+                JSMySQLQuery::reject_with_js_value(request, self.get_queries_array(), err_);
             } else {
-                request.reject(self.get_queries_array(), err);
+                JSMySQLQuery::reject(request, self.get_queries_array(), err);
             }
         } else {
             if let Some(err_) = self.global_object.try_take_exception() {
@@ -801,13 +805,20 @@ impl JSMySQLConnection {
         }
     }
 
-    pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
+    pub(crate) fn on_error_packet(
+        &self,
+        request: Option<ThisPtr<JSMySQLQuery>>,
+        err: &ErrorPacket,
+    ) {
         if let Some(request) = request {
             if let Some(err_) = self.global_object.try_take_exception() {
-                request.reject_with_js_value(self.get_queries_array(), err_);
+                JSMySQLQuery::reject_with_js_value(request, self.get_queries_array(), err_);
             } else {
-                request
-                    .reject_with_js_value(self.get_queries_array(), err.to_js(&self.global_object));
+                JSMySQLQuery::reject_with_js_value(
+                    request,
+                    self.get_queries_array(),
+                    err.to_js(&self.global_object),
+                );
             }
         } else {
             if let Some(err_) = self.global_object.try_take_exception() {

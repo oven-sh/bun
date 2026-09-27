@@ -981,10 +981,7 @@ impl MySQLConnection {
         };
         // Queue holds a ref on every request; bump it for the body's duration so
         // re-entrant `deref()` cannot free it.
-        let _request_guard = request.ref_guard();
-        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`, so the
-        // shared `&JSMySQLQuery` is sound across the `&mut self` calls below.
-        let request: &JSMySQLQuery = request.get();
+        let _request_guard = RefPtr::from_this(request);
 
         debug!("handleCommand");
         if request.is_simple() {
@@ -1035,7 +1032,7 @@ impl MySQLConnection {
                     // `on_error_packet` below.
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
-                    self.queue.mark_current_request_as_finished(request);
+                    self.queue.mark_current_request_as_finished(&request);
                     // R-2: `on_error_packet` is `&self`; route through the
                     // audited `js_connection_ref()` container_of accessor.
                     // `*self` sits inside the parent's `JsCell`, so re-entrant
@@ -1252,9 +1249,7 @@ impl MySQLConnection {
         };
         // Queue holds a ref on every request; bump it for the body's duration so
         // re-entrant `deref()` cannot free it.
-        let _request_guard = request.ref_guard();
-        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
-        let request: &JSMySQLQuery = request.get();
+        let _request_guard = RefPtr::from_this(request);
         // The statement is a separate heap allocation held by the request's
         // ref; the borrow is rooted in the local `request`, not `self.queue`,
         // so `&mut self` calls below do not conflict.
@@ -1377,7 +1372,7 @@ impl MySQLConnection {
                         .map_err(|_| AnyMySQLError::OutOfMemory)?,
                 });
                 self.queue.mark_as_ready_for_query();
-                self.queue.mark_current_request_as_finished(request);
+                self.queue.mark_current_request_as_finished(&request);
 
                 // R-2: `on_error_packet` is `&self`; `js_connection_ref()` is
                 // the audited container_of accessor. The `&JSMySQLConnection`
@@ -1403,11 +1398,11 @@ impl MySQLConnection {
 
     // reshaped for borrowck — `request` comes from `self.queue` so
     // passing `&mut self` alongside `&mut JSMySQLQuery` would alias. `request`
-    // is `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
+    // lends `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
     // sound across the re-entrant `on_query_result` callback).
     fn handle_result_set_ok(
         &mut self,
-        request: &JSMySQLQuery,
+        request: ThisPtr<JSMySQLQuery>,
         status_flags: StatusFlags,
         last_insert_id: u64,
         affected_rows: u64,
@@ -1424,7 +1419,7 @@ impl MySQLConnection {
             .set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
         if is_last_result {
             self.queue.mark_as_ready_for_query();
-            self.queue.mark_current_request_as_finished(request);
+            self.queue.mark_current_request_as_finished(&request);
         }
 
         let result_count = request.get_statement().map_or(0, |s| s.result_count.get());
@@ -1471,9 +1466,7 @@ impl MySQLConnection {
         };
         // Queue holds a ref on every request; bump it for the body's duration so
         // re-entrant `deref()` cannot free it.
-        let _request_guard = request.ref_guard();
-        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
-        let request: &JSMySQLQuery = request.get();
+        let _request_guard = RefPtr::from_this(request);
         let mut ok = OKPacket {
             header: 0,
             affected_rows: 0,
@@ -1492,7 +1485,7 @@ impl MySQLConnection {
 
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
-                self.queue.mark_current_request_as_finished(request);
+                self.queue.mark_current_request_as_finished(&request);
 
                 // R-2: `on_error_packet` is `&self`; route through the audited
                 // `js_connection_ref()` container_of accessor. `*self` lives

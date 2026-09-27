@@ -167,7 +167,7 @@ impl MySQLRequestQueue {
                 // `Cell`-wrapped fields — overlapping shared reads are sound.
                 if let Err(err) = req.run(connection) {
                     debug!("run failed");
-                    connection.on_error(Some(req.get()), err);
+                    connection.on_error(Some(req), err);
                     // `on_error` completed the request: the branch above retires it.
                     continue;
                 }
@@ -268,9 +268,13 @@ impl MySQLRequestQueue {
             // Each request's ref is released at the end of the loop body.
             if !request.is_completed() {
                 if let Some(r) = reason {
-                    request.reject_with_js_value(queries_array, r);
+                    JSMySQLQuery::reject_with_js_value(request.this_ptr(), queries_array, r);
                 } else {
-                    request.reject(queries_array, AnyMySQLError::ConnectionClosed);
+                    JSMySQLQuery::reject(
+                        request.this_ptr(),
+                        queries_array,
+                        AnyMySQLError::ConnectionClosed,
+                    );
                 }
             }
             drop(request);
@@ -282,7 +286,7 @@ impl Drop for MySQLRequestQueue {
     fn drop(&mut self) {
         while let Some(request) = self.requests.get_mut_unique().pop_front() {
             // We cannot touch JS here
-            request.mark_as_failed();
+            JSMySQLQuery::mark_as_failed(request.this_ptr());
             drop(request);
         }
         self.pipelined_requests.set(0);

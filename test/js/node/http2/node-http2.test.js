@@ -5518,13 +5518,17 @@ it("http2 allowHTTP1 fallback ends the connection after answering an HTTP/1.0 ke
     );
     const chunks = [];
     socket.on("error", reject);
+    socket.on("close", () => reject(new Error("the connection closed before the server ended it")));
     socket.on("data", chunk => chunks.push(chunk));
     // Never arrives while the server keeps the connection open.
     socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
     const raw = await promise;
-    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4).toLowerCase()).toContain("\r\nconnection: close\r\n");
-    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("served 1.0 /first");
+    const headEnd = raw.indexOf("\r\n\r\n");
+    expect({
+      statusLine: raw.slice(0, raw.indexOf("\r\n")),
+      connection: Array.from(raw.slice(0, headEnd).matchAll(/^connection: (.*)$/gim), match => match[1]),
+      body: raw.slice(headEnd + 4),
+    }).toEqual({ statusLine: "HTTP/1.1 200 OK", connection: ["close"], body: "served 1.0 /first" });
   } finally {
     // server.close() does not end a connection that is still open.
     socket?.destroy();

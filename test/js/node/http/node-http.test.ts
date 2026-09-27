@@ -6330,7 +6330,9 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
   // response itself did, or (httpAllowHalfOpen) the peer half-closed while the
   // response was in flight: Node's res._last.
   type Handler = (req: IncomingMessage, res: ServerResponse) => void;
-  type Outcome = { connection: string | undefined; responses: number; ended: boolean; served: string[] };
+  // `connection` holds the value of every Connection header of the response.
+  type WireResponse = { connection: string[]; body: string };
+  type Outcome = { responses: WireResponse[]; ended: boolean; served: string[] };
   type Case = {
     name: string;
     version?: string;
@@ -6340,6 +6342,39 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
     peerEndsFirst?: boolean;
     expected: Outcome;
   };
+
+  // Splits what the client received into responses. A body has Content-Length bytes and a 204 has
+  // none. Any other body has no length of its own: it ends where the next response starts.
+  // `complete` is false while a head or a body is cut short.
+  function splitResponses(wire: string) {
+    const responses: WireResponse[] = [];
+    let complete = true;
+    while (complete && wire.length > 0) {
+      const headEnd = wire.indexOf("\r\n\r\n");
+      if (headEnd === -1) {
+        complete = false;
+        break;
+      }
+      const head = wire.slice(0, headEnd);
+      const rest = wire.slice(headEnd + 4);
+      const contentLength = /^content-length: (\d+)$/im.exec(head)?.[1];
+      const nextResponse = rest.search(/HTTP\/1\.1 \d{3} /);
+      const length = head.startsWith("HTTP/1.1 204 ")
+        ? 0
+        : contentLength !== undefined
+          ? Number(contentLength)
+          : nextResponse !== -1
+            ? nextResponse
+            : rest.length;
+      complete = rest.length >= length;
+      responses.push({
+        connection: Array.from(head.matchAll(/^connection: (.*)$/gim), match => match[1]),
+        body: rest.slice(0, length),
+      });
+      wire = rest.slice(length);
+    }
+    return { responses, complete };
+  }
 
   async function serve({
     version = "1.1",
@@ -6359,20 +6394,21 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
     try {
       const { promise, resolve, reject } = Promise.withResolvers<void>();
       let wire = "";
-      let responses = 0;
       let ended = false;
       let firstResponseSeen = false;
       clientSide.on("error", reject);
+      clientSide.on("close", () => reject(new Error("the connection closed before the server ended it")));
       clientSide.on("end", () => {
         ended = true;
         resolve();
       });
       clientSide.on("data", chunk => {
         wire += chunk;
-        responses = wire.match(/HTTP\/1\.1 \d{3} /g)?.length ?? 0;
-        if (responses >= 2) {
+        const { responses, complete } = splitResponses(wire);
+        if (!complete) return;
+        if (responses.length >= 2) {
           resolve();
-        } else if (responses === 1 && !firstResponseSeen) {
+        } else if (!firstResponseSeen) {
           firstResponseSeen = true;
           // A server that ends the connection does so as the first response
           // finishes, so its 'end' settles this before the immediate runs. One
@@ -6388,7 +6424,7 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
       if (peerEndsFirst) clientSide.end(requestFor("/1"));
       else clientSide.write(requestFor("/1"));
       await promise;
-      return { connection: wire.match(/^connection: ([^\r\n]*)/im)?.[1], responses, ended, served };
+      return { responses: splitResponses(wire).responses, ended, served };
     } finally {
       clientSide.destroy();
       serverSide.destroy();
@@ -6398,8 +6434,10 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
   function endBody(_req: IncomingMessage, res: ServerResponse) {
     res.end("served");
   }
-  const closes: Outcome = { connection: "close", responses: 1, ended: true, served: ["/1"] };
-  const closesAdvertisingKeepAlive: Outcome = { ...closes, connection: "keep-alive" };
+  const answered = (connection: string[], body = "served"): WireResponse => ({ connection, body });
+  const ends = (response: WireResponse): Outcome => ({ responses: [response], ended: true, served: ["/1"] });
+  const closes = ends(answered(["close"]));
+  const closesAdvertisingKeepAlive = ends(answered(["keep-alive"]));
   let manyOtherHeaders = "";
   for (let i = 0; i < 40; i++) manyOtherHeaders += `X-Filler-${i}: ${i}\r\n`;
 
@@ -6446,7 +6484,7 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
         res.shouldKeepAlive = false;
         res.end("served");
       },
-      expected: { ...closes, connection: undefined },
+      expected: ends(answered([])),
     },
     {
       name: "ends it after a 204 response carrying a Transfer-Encoding header",
@@ -6454,7 +6492,7 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
         res.writeHead(204, { "Transfer-Encoding": "chunked" });
         res.end();
       },
-      expected: closes,
+      expected: ends(answered(["close"], "")),
     },
     {
       // An HTTP/1.0 response without a Content-Length ends where the connection
@@ -6481,7 +6519,11 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
     },
     {
       name: "keeps a kept-alive HTTP/1.1 connection open for the next request",
-      expected: { connection: "keep-alive", responses: 2, ended: false, served: ["/1", "/2"] },
+      expected: {
+        responses: [answered(["keep-alive"]), answered(["keep-alive"])],
+        ended: false,
+        served: ["/1", "/2"],
+      },
     },
   ];
   it.each(cases)("$name", async testCase => {

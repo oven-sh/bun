@@ -343,6 +343,43 @@ describe.concurrent("compile include", () => {
       TIMEOUT,
     );
 
+    // Same name without the `./`: still a relative path off Windows.
+    test.skipIf(isWindows)(
+      "accepts a bare relative path with a colon in its second character",
+      async () => {
+        using dir = tempDir(`compile-include-bare-colon-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const mod = await import(join(import.meta.dirname, "c:d", "target.js"));
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "c:d/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["c:d"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    // On Windows `c:d` is a drive-relative path, which is not relative to the cwd.
+    test.skipIf(!isWindows)(
+      "rejects a bare drive-relative pattern",
+      async () => {
+        using dir = tempDir(`compile-include-drive-relative-${via}`, {
+          "index.ts": `console.log("x");`,
+          "c/d.js": `export default 1;`,
+        });
+        const built = await build(String(dir), via, ["c:d"]);
+        expect(built.message).toContain('--include pattern "c:d" must be relative to cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
     // Backslashes separate components on Windows, including next to a `./` prefix.
     test.skipIf(!isWindows)(
       "a glob mixing / and \\ separators matches",

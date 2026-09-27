@@ -342,10 +342,8 @@ inline WTF::Lock sqlite3_handle_lock;
 // is built without SQLITE_ENABLE_SESSION, so node:sqlite session/changeset
 // APIs must be runtime-gated on this instead of compiled out.
 inline bool lazy_sqlite3_has_session = false;
-// True when sqlite3_stmt_status(SQLITE_STMTSTATUS_REPREPARE) is real: the
-// op was added in SQLite 3.20.0. An older library returns SQLITE_MISUSE for
-// it, and the stub below returns 0, so callers must not key a cache on the
-// value unless this is set.
+// SQLITE_STMTSTATUS_REPREPARE exists since SQLite 3.20.0. An older library
+// returns SQLITE_MISUSE for it, and the stub below returns 0.
 inline bool lazy_sqlite3_has_stmt_status_reprepare = false;
 
 inline void unloadSQLiteHandleUnlocked()

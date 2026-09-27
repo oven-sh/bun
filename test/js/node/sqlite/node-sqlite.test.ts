@@ -1,4 +1,4 @@
-import { heapStats, describe as jscDescribe } from "bun:jsc";
+import { heapStats, jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, statSync } from "node:fs";

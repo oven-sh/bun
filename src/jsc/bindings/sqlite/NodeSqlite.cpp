@@ -2518,13 +2518,8 @@ void JSStatementSync::invalidateRowStructure()
     m_rowReprepareCount = -1;
 }
 
-// The column names of a prepared statement change only when SQLite
-// re-prepares it (sqlite3VdbeSwap, which also bumps the statement's
-// SQLITE_STMTSTATUS_REPREPARE counter). That happens inside
-// sqlite3_step() on SQLITE_SCHEMA (after ALTER TABLE … RENAME COLUMN,
-// from this or another connection) and when a bound parameter that
-// affects the query plan changes (LIMIT ?, LIKE ?). Called after step():
-// true when the cached names still match the statement.
+// Column names change only when SQLite re-prepares the statement inside
+// sqlite3_step(), which bumps SQLITE_STMTSTATUS_REPREPARE. Call after step().
 bool JSStatementSync::cachedRowNamesMatch()
 {
     int reprepares = -1;
@@ -2546,13 +2541,7 @@ bool JSStatementSync::cachedRowNamesMatch()
 // 1:1 to this statement's distinct column names. Returns nullptr when
 // the column set is too wide for JSFinalObject's inline capacity —
 // callers fall back to the generic rowToObject() in that case.
-//
-// The cache is validated once per reset cycle (m_rowResetGeneration
-// changes on every run/get/all/iterate) with cachedRowNamesMatch(),
-// so rows 2..N of one .all() / .iterate() and every later call that
-// did not re-prepare the statement reuse the same Structure. Within
-// a single .all() / .iterate() the generation is constant, so the
-// hot loop still hits the cache for every row after the first.
+// The cache is validated once per reset cycle (m_rowResetGeneration).
 Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);

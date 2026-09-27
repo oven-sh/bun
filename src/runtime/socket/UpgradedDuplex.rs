@@ -57,12 +57,9 @@ pub(crate) struct UpgradedDuplex {
     /// forever, so stage them here and replay them from
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: JsCell<Vec<u8>>,
-    /// Peer EOF that arrived before the TLS engine existed. Same race as
-    /// [`Self::pending_data`]: a duplex that writes its last bytes and calls
-    /// `end()` in the tick before `StartTLS` runs would otherwise have the EOF
-    /// dropped, leaving the readable side waiting on data that will never come.
-    /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
-    /// the original data-then-EOF order.
+    /// The transport's EOF, held behind the bytes in [`Self::pending_data`] so
+    /// that [`Self::drain_pending`] reports it after them. An EOF with nothing
+    /// staged ahead of it is reported when the transport ends.
     pub pending_end: Cell<bool>,
     /// The transport closed before the TLS engine existed (same window as
     /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
@@ -336,7 +333,6 @@ impl UpgradedDuplex {
             return;
         }
         if self.pending_data.get().is_empty() {
-            self.drain_pending_end();
             return;
         }
         // Taking ownership is load-bearing: a re-entrant `teardown()` clears
@@ -360,9 +356,7 @@ impl UpgradedDuplex {
         self.drain_pending_end();
     }
 
-    /// Replay an EOF that landed before the engine came up. Split out so both
-    /// `drain_pending` exits report it, and kept after the staged bytes so the
-    /// engine sees data-then-EOF in the order the peer sent it.
+    /// Report the EOF that was held behind the staged bytes.
     fn drain_pending_end(&self) {
         if !self.pending_end.get() {
             return;
@@ -759,13 +753,13 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
         this.transport_eof.set(true);
-        if this.wrapper_ref().is_some() {
-            (this.handlers.on_end)(this.handlers.ctx);
-        } else {
-            // EOF before `start_tls` ran. Hold it so `drain_pending` reports it
-            // in order, after any bytes staged in the same window.
+        if this.wrapper_ref().is_none() && !this.pending_data.get().is_empty() {
             this.pending_end.set(true);
+            return Ok(JSValue::UNDEFINED);
         }
+        // Node reports the EOF inside the transport's 'end':
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L82-L86
+        (this.handlers.on_end)(this.handlers.ctx);
     }
     Ok(JSValue::UNDEFINED)
 }

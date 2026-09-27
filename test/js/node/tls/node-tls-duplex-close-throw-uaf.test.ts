@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-async function run(script: string) {
+async function run(script: string, expected = "ok") {
   // Spawn a subprocess so an ASAN use-after-poison report shows up as a
   // non-zero exit + stderr dump rather than killing the test runner itself.
   await using proc = Bun.spawn({
@@ -27,7 +27,7 @@ async function run(script: string) {
   // On failure stderr carries the ASAN "use-after-poison" report; include
   // it in the assertion so the diff shows the crash rather than just an
   // empty stdout.
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 }
 
 // The freed pointer is only reliably caught under ASAN (which the debug
@@ -117,4 +117,49 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
       });
     `);
   });
+
+  // The transport's EOF reaches the TLS socket when the transport ends, which
+  // can be before the queued .StartTLS task has run. 'readable' is emitted
+  // from inside that dispatch and 'end' one tick after it.
+  test.each(["readable", "end"])(
+    "when the '%s' listener destroys the socket and throws before StartTLS",
+    async event => {
+      await run(
+        `
+      const tls = require("node:tls");
+      const { Duplex } = require("node:stream");
+
+      const duplex = new Duplex({
+        read() {},
+        write(chunk, enc, cb) { cb(); },
+        final(cb) { cb(); },
+      });
+
+      const sock = tls.connect({
+        socket: duplex,
+        rejectUnauthorized: false,
+      });
+      sock.on("error", () => {});
+      sock.on("close", () => {});
+      sock.once(${JSON.stringify(event)}, () => {
+        console.log("eof");
+        sock.destroy();
+        throw new Error("listener throws");
+      });
+      process.on("uncaughtException", () => {});
+
+      duplex.push(null);
+      duplex.end();
+
+      setImmediate(() => {
+        setImmediate(() => {
+          console.log("ok");
+          process.exit(0);
+        });
+      });
+    `,
+        "eof\nok",
+      );
+    },
+  );
 });

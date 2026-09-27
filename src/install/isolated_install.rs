@@ -21,6 +21,67 @@ pub use store::Store;
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
 pub use store::entry::Id as EntryId;
 
+/// `mkdir -p` and open a directory that the isolated linker is about to write
+/// into.
+///
+/// Inside the project, the installer creates every component at and below the
+/// first `node_modules` component of `path`, so a symlink there is unlinked
+/// and replaced with a real directory. Otherwise the symlink redirects the
+/// install out of the project. The components above it are the project's own
+/// directories (a workspace member can be a symlink), and a path outside the
+/// project is the global store, so those are followed as before.
+pub(crate) fn make_store_path(path: &[u8]) -> sys::Maybe<sys::Dir> {
+    let cwd = sys::Dir::cwd();
+    let Some(offset) = project_node_modules_offset(path) else {
+        return cwd.make_open_path(path, Default::default());
+    };
+    let (above, below) = path.split_at(offset);
+    let above = strip_trailing_separators(above);
+    if above.is_empty() {
+        return cwd.make_open_real_path(below);
+    }
+    cwd.make_open_path(above, Default::default())?
+        .make_open_real_path(below)
+}
+
+/// Byte offset of the first `node_modules` component of `path` inside the
+/// project, or `None` when there is none. `path` is relative to the top level
+/// directory or absolute.
+fn project_node_modules_offset(path: &[u8]) -> Option<usize> {
+    let top = strip_trailing_separators(crate::bun_fs::FileSystem::instance().top_level_dir());
+    let mut offset =
+        if path.len() > top.len() && path[..top.len()] == *top && is_separator(path[top.len()]) {
+            top.len() + 1
+        } else if paths::is_absolute(path) {
+            return None;
+        } else {
+            0
+        };
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    for component in paths::strings::split_any(&path[offset..], separators) {
+        if component == b"node_modules" {
+            return Some(offset);
+        }
+        // Every component but the last is followed by one separator.
+        offset += component.len() + 1;
+    }
+    None
+}
+
+fn is_separator(byte: u8) -> bool {
+    byte == b'/' || (cfg!(windows) && byte == b'\\')
+}
+
+fn strip_trailing_separators(mut path: &[u8]) -> &[u8] {
+    while let [rest @ .., last] = path {
+        if !is_separator(*last) {
+            break;
+        }
+        path = rest;
+    }
+    path
+}
+
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
@@ -1681,6 +1742,25 @@ pub(crate) fn install_isolated_packages(
         // matches `Installer::NODE_MODULES_BUN`.
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
+        // A symlink at `node_modules` is not an install tree. Say so, because a
+        // person can have put it there on purpose, then drop the link (never
+        // its target) so the directory below is created fresh instead of the
+        // old tree being moved aside through it.
+        match sys::Dir::cwd().remove_symlink(b"node_modules") {
+            Ok(false) => {}
+            Ok(true) => bun_core::warn!(
+                "replaced the <b>\"node_modules\"<r> symlink with a real directory: bun install writes inside the project"
+            ),
+            Err(err) => {
+                Output::err(
+                    err,
+                    "could not replace the <b>\"node_modules\"<r> symlink with a directory",
+                    (),
+                );
+                Global::crash();
+            }
+        }
+
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {
                 // fallthrough to creating bun_modules below
@@ -1924,11 +2004,20 @@ pub(crate) fn install_isolated_packages(
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
+    //
+    // This delete is recursive and `.bun` is the installer's directory, so open
+    // it without following a symlink: by path, a link at `.bun` empties the
+    // link target's own `node_modules` instead. A link there is replaced, and a
+    // project without `node_modules` has no fallback to remove.
     if !manager.options.hoist && !is_new_bun_modules {
-        use bun_sys::FdExt as _;
-        if let Err(err) =
-            Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
-        {
+        let cleanup = match sys::Dir::cwd().open_real_dir(b"node_modules") {
+            Ok(node_modules) => node_modules
+                .make_open_real_dir(b".bun")
+                .and_then(|bun_modules| bun_modules.delete_tree(b"node_modules")),
+            Err(err) if err.get_errno() == sys::E::ENOENT => Ok(()),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = cleanup {
             Output::err(
                 err,
                 "hoist is disabled, but the existing './node_modules/.bun/node_modules' could not be removed",

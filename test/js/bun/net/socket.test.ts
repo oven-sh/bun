@@ -2053,20 +2053,17 @@ it.each(["end", "terminate"])(
           const h = { data() {}, open() {}, close() {}, error() {} };
           const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
           const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
-          // Let the event loop idle once so the socket is fully settled. On a
-          // settled socket end()/terminate() closes it and drops its handlers
-          // synchronously, which is what triggers the bug from inside reload().
-          await Bun.sleep(20);
-          sock.reload({
+          // Leave the socket's own callback. Inside one, the dispatch holds the
+          // handlers, so the getter cannot drop them before reload() reads them.
+          await new Promise(resolve => setImmediate(resolve));
+          const result = sock.reload({
             get socket() {
               sock.${verb}();
               return h;
             },
           });
-          console.log("reload-ok");
-          sock.end();
+          console.log("reload returned", result);
           listener.stop(true);
-          process.exit(0);
         `,
       ],
       env: bunEnv,
@@ -2075,9 +2072,9 @@ it.each(["end", "terminate"])(
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("reload-ok");
+    expect(stdout).toBe("reload returned undefined\n");
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    void stderr;
   },
 );
 
@@ -2095,37 +2092,28 @@ it("upgradeTLS() backs out when an option getter re-enters upgradeTLS on the sam
         const h = { data() {}, open() {}, close() {}, error() {}, handshake() {}, drain() {} };
         const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
         const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
-        // Settle the socket first: upgradeTLS only adopts an established fd.
-        await Bun.sleep(20);
-        let inner = null;
-        let reentered = false;
+        // Leave the socket's own callback, as in the reload() test above.
+        await new Promise(resolve => setImmediate(resolve));
+        let inner;
         const opts = {
           data: {},
           socket: { ...h },
           get tls() {
-            if (!reentered) {
-              reentered = true;
-              try {
-                inner = sock.upgradeTLS({ data: {}, socket: { ...h }, tls: true });
-              } catch {}
-            }
+            inner ??= sock.upgradeTLS({ data: {}, socket: { ...h }, tls: true });
             return true;
           },
         };
-        let outerThrew = false;
+        let outer;
         try {
-          const r = sock.upgradeTLS(opts);
-          if (r && r[0]) r[0].write("a");
-          if (r && r[1]) r[1].write("b");
-        } catch {
-          outerThrew = true;
+          outer = sock.upgradeTLS(opts);
+        } catch (e) {
+          console.log("outer upgradeTLS threw:", e.message);
         }
-        if (inner && inner[0]) inner[0].write("c");
-        if (inner && inner[1]) inner[1].write("d");
-        try { sock.write("z"); } catch {}
-        console.log("upgrade-ok:" + outerThrew);
+        console.log("inner upgradeTLS returned", inner.length, "sockets");
+        // Every wrapper that exists must still be safe to use.
+        for (const s of [...(outer ?? []), ...inner, sock]) s.write("x");
+        for (const s of [...(outer ?? []), ...inner, sock]) s.terminate();
         listener.stop(true);
-        process.exit(0);
       `,
     ],
     env: bunEnv,
@@ -2134,9 +2122,11 @@ it("upgradeTLS() backs out when an option getter re-enters upgradeTLS on the sam
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("upgrade-ok:true");
+  expect(stdout).toBe(
+    "outer upgradeTLS threw: upgradeTLS requires an established socket\n" + "inner upgradeTLS returned 2 sockets\n",
+  );
+  if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  void stderr;
 });
 
 it("node:net connect() reusing a server-accepted handle keeps the listener's handlers working", async () => {

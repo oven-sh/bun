@@ -598,6 +598,63 @@ it("start() with a path/fd getter that closes the writer throws instead of crash
   expect(exitCode).toBe(0);
 });
 
+// write() resolves the native sink only after the chunk is converted. A String
+// object's Symbol.toPrimitive / toString runs user JS, and that JS can close()
+// the writer, which frees it (ASAN: heap-use-after-free in FileSink::write_latin1).
+it.each([
+  ["Symbol.toPrimitive", "[Symbol.toPrimitive]"],
+  ["toString", "toString"],
+])("write() with a %s hook that closes the writer throws instead of crashing", async (_hook, key) => {
+  const dir = tmpdirSync();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { join } = require("node:path");
+      for (const ret of ["payload", "pay\u4f60"]) {
+        const w = Bun.file(join(process.argv[1], "close-" + ret.length + ".txt")).writer();
+        w.write("seed");
+        const chunk = Object.assign(new String("x"), { ${key}() { w.close(); return ret; } });
+        for (const label of ["closing write", "write after"]) {
+          try { console.log(label, w.write(label === "closing write" ? chunk : "y")); }
+          catch (e) { console.log(label, "threw", /already been closed/.test(e.message)); }
+        }
+      }
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("closing write threw true\nwrite after threw true\n".repeat(2));
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// The accepted chunk types do not change. fs.promises.writeFile() with an
+// iterable reaches this write() and node writes a String object too.
+it("write() still accepts a String object", async () => {
+  const dir = tmpdirSync();
+  class Sub extends String {}
+  for (const [label, chunk] of [
+    ["new String", new String("abc")],
+    ["Object()", Object("abc")],
+    ["subclass", new Sub("abc")],
+  ] as const) {
+    const path = join(dir, "benign-" + label.replace(/\W/g, "") + ".txt");
+    const writer = Bun.file(path).writer();
+    expect(writer.write(chunk as any)).toBe(3);
+    await writer.end();
+    expect(await Bun.file(path).text()).toBe("abc");
+  }
+  const iterablePath = join(dir, "iterable.txt");
+  await fs.promises.writeFile(iterablePath, [new String("abc"), "def"] as any);
+  expect(await Bun.file(iterablePath).text()).toBe("abcdef");
+});
+
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
   const dir = tmpdirSync();
   const target = join(dir, "ro.txt");

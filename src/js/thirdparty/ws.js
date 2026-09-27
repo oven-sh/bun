@@ -1,7 +1,31 @@
 // Hardcoded module "ws"
-// Mocking https://github.com/websockets/ws
-// this just wraps WebSocket to look like an EventEmitter
-// without actually using an EventEmitter polyfill
+// Bun's implementation of https://github.com/websockets/ws over the native WebSocket and the
+// ServerWebSocket of Bun.serve.
+//
+// Parts of this file are ported from ws 8.21.0: the EventTarget interface of the server socket
+// (lib/event-target.js and the on<event> accessors of lib/websocket.js) and parts of
+// lib/websocket-server.js.
+//
+// Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
+// Copyright (c) 2013 Arnout Kazemier and contributors
+// Copyright (c) 2016 Luigi Pinca and contributors
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the "Software"), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+// the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 const ReadyState_CONNECTING = 0;
 const ReadyState_OPEN = 1;
@@ -9,6 +33,8 @@ const ReadyState_CLOSING = 2;
 const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
+const ObjectDefineProperty = Object.defineProperty;
+const SymbolFunction = Symbol;
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -986,6 +1012,219 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
+// The EventTarget interface of npm ws: lib/event-target.js, and the on<event> accessors of
+// lib/websocket.js. A listener is an adapter in the socket's own EventEmitter list. The tags
+// tell an adapter from a listener that on() added, and an on<event> handler from an
+// addEventListener() one.
+const kForOnEventAttribute = Symbol("kIsForOnEventAttribute");
+const kListener = Symbol("kListener");
+
+// The event classes of npm ws, not the global ones. The first addEventListener() or on<event>
+// assignment of the process creates them.
+let Event, CloseEvent, ErrorEvent, MessageEvent, kTarget;
+
+function createEventClasses() {
+  const kCode = SymbolFunction("kCode");
+  const kData = SymbolFunction("kData");
+  const kError = SymbolFunction("kError");
+  const kMessage = SymbolFunction("kMessage");
+  const kReason = SymbolFunction("kReason");
+  const kType = SymbolFunction("kType");
+  const kWasClean = SymbolFunction("kWasClean");
+  kTarget = SymbolFunction("kTarget");
+
+  Event = class Event {
+    [kTarget] = null;
+    [kType] = "";
+
+    constructor(type) {
+      this[kType] = type;
+    }
+
+    get target() {
+      return this[kTarget];
+    }
+
+    get type() {
+      return this[kType];
+    }
+  };
+
+  ObjectDefineProperty(Event.prototype, "target", { enumerable: true });
+  ObjectDefineProperty(Event.prototype, "type", { enumerable: true });
+
+  CloseEvent = class CloseEvent extends Event {
+    [kCode] = 0;
+    [kReason] = "";
+    [kWasClean] = false;
+
+    constructor(type, options = {}) {
+      super(type);
+
+      this[kCode] = options.code === undefined ? 0 : options.code;
+      this[kReason] = options.reason === undefined ? "" : options.reason;
+      this[kWasClean] = options.wasClean === undefined ? false : options.wasClean;
+    }
+
+    get code() {
+      return this[kCode];
+    }
+
+    get reason() {
+      return this[kReason];
+    }
+
+    get wasClean() {
+      return this[kWasClean];
+    }
+  };
+
+  ObjectDefineProperty(CloseEvent.prototype, "code", { enumerable: true });
+  ObjectDefineProperty(CloseEvent.prototype, "reason", { enumerable: true });
+  ObjectDefineProperty(CloseEvent.prototype, "wasClean", { enumerable: true });
+
+  ErrorEvent = class ErrorEvent extends Event {
+    [kError] = null;
+    [kMessage] = "";
+
+    constructor(type, options = {}) {
+      super(type);
+
+      this[kError] = options.error === undefined ? null : options.error;
+      this[kMessage] = options.message === undefined ? "" : options.message;
+    }
+
+    get error() {
+      return this[kError];
+    }
+
+    get message() {
+      return this[kMessage];
+    }
+  };
+
+  ObjectDefineProperty(ErrorEvent.prototype, "error", { enumerable: true });
+  ObjectDefineProperty(ErrorEvent.prototype, "message", { enumerable: true });
+
+  MessageEvent = class MessageEvent extends Event {
+    [kData] = null;
+
+    constructor(type, options = {}) {
+      super(type);
+
+      this[kData] = options.data === undefined ? null : options.data;
+    }
+
+    get data() {
+      return this[kData];
+    }
+  };
+
+  ObjectDefineProperty(MessageEvent.prototype, "data", { enumerable: true });
+}
+
+function callListener(listener, thisArg, event) {
+  let handleEvent;
+  if (typeof listener === "object" && (handleEvent = listener.handleEvent)) {
+    handleEvent.$call(listener, event);
+  } else {
+    listener.$call(thisArg, event);
+  }
+}
+
+function createMessageAdapter(handler) {
+  return function onMessage(data, isBinary) {
+    const event = new MessageEvent("message", {
+      data: isBinary ? data : data.toString(),
+    });
+
+    event[kTarget] = this;
+    callListener(handler, this, event);
+  };
+}
+
+function createCloseAdapter(handler) {
+  return function onClose(code, message) {
+    const event = new CloseEvent("close", {
+      code,
+      reason: message.toString(),
+      // npm ws: `this._closeFrameReceived && this._closeFrameSent`. The ServerWebSocket keeps
+      // neither flag. It reports 1006 when the connection ended with no close frame, and a
+      // socket that is not closed has not completed a close handshake.
+      wasClean: this.readyState === ReadyState_CLOSED && code !== 1006,
+    });
+
+    event[kTarget] = this;
+    callListener(handler, this, event);
+  };
+}
+
+function createErrorAdapter(handler) {
+  return function onError(error) {
+    const event = new ErrorEvent("error", {
+      error,
+      message: error.message,
+    });
+
+    event[kTarget] = this;
+    callListener(handler, this, event);
+  };
+}
+
+function createOpenAdapter(handler) {
+  return function onOpen() {
+    const event = new Event("open");
+
+    event[kTarget] = this;
+    callListener(handler, this, event);
+  };
+}
+
+function addEventListener(type, handler, options = {}) {
+  for (const listener of this.listeners(type)) {
+    if (!options[kForOnEventAttribute] && listener[kListener] === handler && !listener[kForOnEventAttribute]) {
+      return;
+    }
+  }
+
+  let wrapper;
+
+  if (type === "message") {
+    wrapper = createMessageAdapter(handler);
+  } else if (type === "close") {
+    wrapper = createCloseAdapter(handler);
+  } else if (type === "error") {
+    wrapper = createErrorAdapter(handler);
+  } else if (type === "open") {
+    wrapper = createOpenAdapter(handler);
+  } else {
+    return;
+  }
+
+  if (Event === undefined) createEventClasses();
+
+  wrapper[kForOnEventAttribute] = !!options[kForOnEventAttribute];
+  wrapper[kListener] = handler;
+
+  if (options.once) {
+    this.once(type, wrapper);
+  } else {
+    this.on(type, wrapper);
+  }
+}
+
+function removeEventListener(type, handler) {
+  for (const listener of this.listeners(type)) {
+    // npm ws tests `!listener[kForOnEventAttribute]`. That also holds for a listener that on()
+    // added, so removeEventListener(type, undefined) removes one there: for 'close', the listener
+    // that takes the socket out of `wss.clients`.
+    if (listener[kListener] === handler && listener[kForOnEventAttribute] === false) {
+      this.removeListener(type, listener);
+      break;
+    }
+  }
+}
+
 class BunWebSocketMocked extends EventEmitter {
   #ws;
   #state;
@@ -996,11 +1235,6 @@ class BunWebSocketMocked extends EventEmitter {
   #bufferedAmount = 0;
   // The default of the ServerWebSocket. The setter keeps both sides in sync.
   #binaryType = "nodebuffer";
-
-  #onclose;
-  #onerror;
-  #onmessage;
-  #onopen;
 
   constructor(url, protocol, extensions) {
     super();
@@ -1043,14 +1277,8 @@ class BunWebSocketMocked extends EventEmitter {
 
     let isBinary = false;
     if (typeof message === "string") {
-      if (this.#binaryType === "arraybuffer") {
-        message = encoder.encode(message).buffer;
-      } else if (this.#binaryType === "blob") {
-        message = new Blob([message], { type: "text/plain" });
-      } else {
-        // nodebuffer
-        message = Buffer.from(message);
-      }
+      // binaryType selects the shape of a binary frame only.
+      message = Buffer.from(message);
     } else {
       // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
       isBinary = true;
@@ -1249,71 +1477,38 @@ class BunWebSocketMocked extends EventEmitter {
   setSocket(_socket, _head, _options) {
     throw new Error("Not implemented");
   }
-
-  set onclose(cb) {
-    if (this.#onclose) {
-      this.removeListener("close", this.#onclose);
-    }
-    this.on("close", cb);
-    this.#onclose = cb;
-  }
-
-  set onerror(cb) {
-    if (this.#onerror) {
-      this.removeListener("error", this.#onerror);
-    }
-    this.on("error", cb);
-    this.#onerror = cb;
-  }
-
-  set onmessage(cb) {
-    if (this.#onmessage) {
-      this.removeListener("message", this.#onmessage);
-    }
-    const l = data => cb({ data });
-    this.on("message", l);
-    this.#onmessage = l;
-  }
-
-  set onopen(cb) {
-    if (this.#onopen) {
-      this.removeListener("open", this.#onopen);
-    }
-    this.on("open", cb);
-    this.#onopen = cb;
-  }
-
-  get onclose() {
-    return this.#onclose;
-  }
-
-  get onerror() {
-    return this.#onerror;
-  }
-
-  get onmessage() {
-    return this.#onmessage;
-  }
-
-  get onopen() {
-    return this.#onopen;
-  }
-
-  // TODO: implement this more proper
-  addEventListener(type, listener, _options) {
-    if (type === "message") {
-      const l = data => listener({ data });
-      l.listener = listener;
-      this.on(type, l);
-      return;
-    }
-    this.on(type, listener);
-  }
-
-  removeEventListener(type, listener) {
-    this.off(type, listener);
-  }
 }
+
+for (const method of ["open", "error", "close", "message"]) {
+  ObjectDefineProperty(BunWebSocketMocked.prototype, `on${method}`, {
+    enumerable: true,
+    configurable: true,
+    get() {
+      for (const listener of this.listeners(method)) {
+        if (listener[kForOnEventAttribute]) return listener[kListener];
+      }
+
+      return null;
+    },
+    set(handler) {
+      for (const listener of this.listeners(method)) {
+        if (listener[kForOnEventAttribute]) {
+          this.removeListener(method, listener);
+          break;
+        }
+      }
+
+      if (typeof handler !== "function") return;
+
+      addEventListener.$call(this, method, handler, {
+        [kForOnEventAttribute]: true,
+      });
+    },
+  });
+}
+
+BunWebSocketMocked.prototype.addEventListener = addEventListener;
+BunWebSocketMocked.prototype.removeEventListener = removeEventListener;
 
 class WebSocketServer extends EventEmitter {
   _server;

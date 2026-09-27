@@ -143,8 +143,7 @@ function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
 }
 
-// The options object of the native WebSocket. It offers permessage-deflate by default, so
-// `perMessageDeflate: false` is passed only when the caller turned the offer off.
+// The native WebSocket offers permessage-deflate unless `perMessageDeflate` is false.
 function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
   const wsOptions = { protocols };
   if (headers) wsOptions.headers = headers;

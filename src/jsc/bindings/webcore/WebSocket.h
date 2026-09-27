@@ -107,8 +107,7 @@ private:
     void* m_ptr { nullptr };
 };
 
-// The `options` of `new WebSocket(url, options)`. Every entry point takes them whole, so an
-// option that is added here reaches each of them.
+// The `options` of `new WebSocket(url, options)`.
 struct WebSocketOptions {
     Vector<String> protocols;
     // -1 when the options do not say.
@@ -120,8 +119,7 @@ struct WebSocketOptions {
     String proxyUrl;
     std::optional<FetchHeaders::Init> proxyHeadersInit;
 
-    // Reads them from script (JSWebSocket.cpp). False, with an exception pending, when a getter
-    // or a conversion threw.
+    // Defined in JSWebSocket.cpp. False when it leaves an exception pending.
     bool parse(JSC::JSGlobalObject*, JSC::JSValue);
 };
 

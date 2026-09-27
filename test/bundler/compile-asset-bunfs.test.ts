@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { dirname, join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -517,6 +517,17 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
       expect(second.code).toBe(0);
       expect(extracted(extractDir, ".node")).toEqual(addons);
       expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
+
+      // A temp sweeper that removes one file, not the tree: the next run puts
+      // the set back and leaves no scratch directory behind.
+      rmSync(join(extractDir, libs[0]));
+      const third = await runIsolated(String(dir), extractDir);
+      expect(third.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(third.stdout.trim()).toBe("[42,42,42]");
+      expect(third.code).toBe(0);
+      expect(extracted(extractDir, ".node")).toEqual(addons);
+      expect(extracted(extractDir, "libfoo." + soExt)).toEqual(libs);
+      expect(readdirSync(extractDir)).toHaveLength(1);
     },
     TIMEOUT,
   );

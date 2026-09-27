@@ -1516,18 +1516,18 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
 }
 
 /// `Flags::HAS_NATIVE_LIBRARY_SET`: every shared library among `module_files`, by name
-/// (`native_libs::is_shared_library_name`), whatever its loader. A member read from the
-/// same source file as another member at a deeper path becomes an alias of it: the bundler
-/// hoists a required `.node` to the root as `[name]-[hash].node`, and the `--asset` tree
-/// carries the same file next to the libraries it links (`collect_compile_assets` records
-/// its real path). The runtime loads the copy with the neighbours, and the executable
-/// stores the bytes once.
+/// (`native_libs::is_shared_library_name`), whatever its loader. Members read from one
+/// source file (by real path) share one copy: the bundler hoists a required `.node` to
+/// `[name]-[hash].node`, and the `--asset` tree carries the same file next to the
+/// libraries it links. The `--asset` copy (deepest, if several) is the one the runtime
+/// loads, every other copy aliases it, and the executable stores the bytes once.
 fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
     struct Candidate<'a> {
         file_index: u32,
         rel_name: &'a [u8],
-        src_path: &'a [u8],
-        depth: usize,
+        real_path: Option<Vec<u8>>,
+        /// `--asset` copies rank above hoisted ones, then deeper above shallower.
+        rank: (bool, usize),
         content_hash: u64,
         alias_index: u32,
     }
@@ -1537,31 +1537,42 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
         if is_stored_as_string(output_file) || !native_libs::is_shared_library_name(rel_name) {
             continue;
         }
+        let src_path = output_file.src_path.text;
+        let real_path = (!src_path.is_empty()).then(|| {
+            let mut z_buf = bun_paths::path_buffer_pool::get();
+            let mut real_buf = bun_paths::path_buffer_pool::get();
+            Syscall::realpath(path::resolve_path::z(src_path, &mut z_buf), &mut real_buf)
+                .ok()
+                .map(<[u8]>::to_vec)
+        });
         candidates.push(Candidate {
             file_index: i as u32,
             rel_name,
-            src_path: output_file.src_path.text,
-            depth: strings::count_char(rel_name, b'/'),
+            real_path: real_path.flatten(),
+            rank: (
+                output_file.source_index.is_none(),
+                strings::count_char(rel_name, b'/'),
+            ),
             content_hash: bun_wyhash::hash(output_file.value.as_slice()),
             alias_index: NativeLibrarySet::NO_ALIAS,
         });
     }
     for i in 0..candidates.len() {
-        for j in 0..i {
-            let (a, b) = (&candidates[i], &candidates[j]);
-            if a.depth == b.depth
-                || a.src_path.is_empty()
-                || a.src_path != b.src_path
-                || a.content_hash != b.content_hash
-            {
-                continue;
+        let Some(real_path) = candidates[i].real_path.as_deref() else {
+            continue;
+        };
+        let same_file = |c: &Candidate| {
+            c.real_path.as_deref() == Some(real_path)
+                && c.content_hash == candidates[i].content_hash
+        };
+        let mut best = i;
+        for (j, c) in candidates.iter().enumerate() {
+            if j != i && same_file(c) && c.rank > candidates[best].rank {
+                best = j;
             }
-            let (shallow, deep) = if a.depth < b.depth { (i, j) } else { (j, i) };
-            if candidates[shallow].alias_index == NativeLibrarySet::NO_ALIAS
-                && candidates[deep].alias_index == NativeLibrarySet::NO_ALIAS
-            {
-                candidates[shallow].alias_index = candidates[deep].file_index;
-            }
+        }
+        if best != i {
+            candidates[i].alias_index = candidates[best].file_index;
         }
     }
     let set_hash = native_libs::hash_set(candidates.iter().map(|c| (c.rel_name, c.content_hash)));

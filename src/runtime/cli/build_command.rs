@@ -1307,23 +1307,21 @@ pub(crate) fn collect_compile_assets(
         }
         let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
     }
-    // A shared library's source path: the standalone graph uses it to tell that
-    // the bundler's hoisted `[name]-[hash].node` and an `--asset` copy are the
-    // same file (`native_libs`). The resolver records the real path of a hoisted
-    // file, so this is the real path too.
-    let src_path_of = |dir: Fd, name: &[u8], dest: &[u8]| -> Option<Box<[u8]>> {
+    // A shared library's source path lets the standalone graph tell that the
+    // bundler's hoisted `[name]-[hash].node` and an `--asset` copy are one file.
+    let src_path_in = |dir: Fd, name: &[u8], dest: &[u8]| -> Option<Box<[u8]>> {
         if !bun_standalone_graph::native_libs::is_shared_library_name(dest) {
             return None;
         }
-        let mut abs = bun_paths::path_buffer_pool::get();
-        let mut real = bun_paths::path_buffer_pool::get();
-        let abs_z = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            bun_sys::get_fd_path(dir, &mut abs).ok()?,
-            &mut real[..],
+        let mut dir_buf = bun_paths::path_buffer_pool::get();
+        let dir_path = bun_sys::get_fd_path(dir, &mut dir_buf).ok()?;
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let abs = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            dir_path,
+            &mut abs_buf[..],
             &[name],
         );
-        let mut resolved = bun_paths::path_buffer_pool::get();
-        bun_sys::realpath(abs_z, &mut resolved).ok().map(Box::from)
+        Some(Box::from(abs))
     };
     let mut push = |out: &mut Vec<options::OutputFile>,
                     asset: &[u8],
@@ -1438,7 +1436,7 @@ pub(crate) fn collect_compile_assets(
                         Ok(b) => b,
                         Err(e) => return fail(e.with_path(&rel)),
                     };
-                    let src_path = src_path_of(entry.dir, base_z.as_bytes(), &rel);
+                    let src_path = src_path_in(entry.dir, base_z.as_bytes(), &rel);
                     (rel, bytes, src_path)
                 };
                 #[cfg(not(windows))]
@@ -1449,7 +1447,7 @@ pub(crate) fn collect_compile_assets(
                         Ok(b) => b,
                         Err(e) => return fail(e.with_path(entry.path.as_bytes())),
                     };
-                    let src_path = src_path_of(entry.dir, entry.basename.as_bytes(), &rel);
+                    let src_path = src_path_in(entry.dir, entry.basename.as_bytes(), &rel);
                     (rel, bytes, src_path)
                 };
                 let mut dest = Vec::with_capacity(base.len() + 1 + rel.len());
@@ -1463,7 +1461,14 @@ pub(crate) fn collect_compile_assets(
                 Ok(b) => b,
                 Err(e) => return fail(e.with_path(asset)),
             };
-            let src_path = src_path_of(cwd, asset_trimmed, base);
+            let src_path = bun_standalone_graph::native_libs::is_shared_library_name(base)
+                .then(|| {
+                    let mut real_buf = bun_paths::path_buffer_pool::get();
+                    bun_sys::realpath(asset_z, &mut real_buf)
+                        .ok()
+                        .map(Box::from)
+                })
+                .flatten();
             push(out, asset, base.to_vec(), bytes, src_path)?;
         } else {
             return Err(format!(

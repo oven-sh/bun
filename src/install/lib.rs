@@ -990,6 +990,11 @@ impl RunCommand {
     }
 
     /// Makes the shim as `<dest>.<pid>.tmp`, then renames it over `<dest>`.
+    ///
+    /// NTFS refuses to remove the last link of an image a process has mapped, but
+    /// lets it be renamed. A stale `<dest>` that a `--bun` child still runs is moved
+    /// to `<dest>.old` (or `<dest>.<pid>.old` when `.old` is itself still mapped) so
+    /// the name stays in this directory instead of dropping to the next tier.
     fn replace_windows_node_shim(
         buf: &mut [u16],
         dest_len: usize,
@@ -1006,6 +1011,11 @@ impl RunCommand {
         dest[..dest_len].copy_from_slice(&buf[..dest_len]);
         dest[dest_len] = 0;
 
+        let mut aside = bun_paths::w_path_buffer_pool::get();
+        let old = strings::w!(".old\0");
+        let old_len = Self::with_suffix(&mut aside, &dest[..dest_len], old);
+        let _ = bun_sys::unlink_w(WStr::from_buf(&aside[..], old_len));
+
         let mut tmp_len = dest_len;
         buf[tmp_len] = b'.' as u16;
         tmp_len += 1;
@@ -1014,6 +1024,7 @@ impl RunCommand {
             buf[tmp_len] = b as u16;
             tmp_len += 1;
         }
+        let pid_len = tmp_len;
         let suffix = strings::w!(".tmp\0");
         buf[tmp_len..][..suffix.len()].copy_from_slice(suffix);
         tmp_len += suffix.len() - 1;
@@ -1029,16 +1040,45 @@ impl RunCommand {
             }
         }
         // SAFETY: both arguments are NUL-terminated wide strings.
-        if unsafe {
-            win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING)
-        } == 0
-        {
-            let err = bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::rename);
+        let replace = || unsafe {
+            if win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING)
+                != 0
+            {
+                Ok(())
+            } else {
+                Err(win::Win32Error::get())
+            }
+        };
+        let mut result = replace();
+        if let Err(win::Win32Error::ACCESS_DENIED | win::Win32Error::SHARING_VIOLATION) = result {
+            // SAFETY: both arguments are NUL-terminated wide strings.
+            let mut moved =
+                unsafe { win::kernel32::MoveFileExW(dest.as_ptr(), aside.as_ptr(), 0) != 0 };
+            if !moved && win::Win32Error::get() == win::Win32Error::ALREADY_EXISTS {
+                let old_len = Self::with_suffix(&mut aside, &buf[..pid_len], old);
+                let _ = bun_sys::unlink_w(WStr::from_buf(&aside[..], old_len));
+                // SAFETY: both arguments are NUL-terminated wide strings.
+                moved =
+                    unsafe { win::kernel32::MoveFileExW(dest.as_ptr(), aside.as_ptr(), 0) != 0 };
+            }
+            if moved {
+                result = replace();
+            }
+        }
+        if let Err(code) = result {
+            let err = bun_sys::Error::from_win32(code, bun_sys::Tag::rename);
             let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
             return Err(err);
         }
         buf[dest_len] = 0;
         Ok(())
+    }
+
+    /// Writes `<base><suffix>` into `out` and returns its length without the NUL.
+    fn with_suffix(out: &mut [u16], base: &[u16], suffix: &[u16]) -> usize {
+        out[..base.len()].copy_from_slice(base);
+        out[base.len()..][..suffix.len()].copy_from_slice(suffix);
+        base.len() + suffix.len() - 1
     }
 
     fn windows_node_shim_at(dir: &[u16], image: &bun_core::WStr) -> WindowsNodeShim {

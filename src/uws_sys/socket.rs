@@ -60,14 +60,9 @@ pub enum InternalSocket {
     UpgradedDuplex(*mut UpgradedDuplex),
     #[cfg(windows)]
     Pipe(*mut WindowsNamedPipe),
-    #[cfg(not(windows))]
-    Pipe,
 }
 
-// Variant + pointer-identity equality. The `Pipe` arm intentionally returns
-// `false` even for `(Pipe, Pipe)` on non-Windows (the variant carries no
-// payload there, so identity is meaningless) — debug-asserts that compare
-// sockets rely on this matching the original `InternalSocket.eq` semantics.
+// Variant + pointer-identity equality.
 impl PartialEq for InternalSocket {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
@@ -79,8 +74,6 @@ impl PartialEq for InternalSocket {
             }
             #[cfg(windows)]
             (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
-            #[cfg(not(windows))]
-            (InternalSocket::Pipe, InternalSocket::Pipe) => false,
             _ => false,
         }
     }
@@ -104,7 +97,7 @@ impl InternalSocket {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]
-        return matches!(self, InternalSocket::Pipe);
+        return false;
     }
 }
 
@@ -161,8 +154,6 @@ macro_rules! on_socket {
             InternalSocket::UpgradedDuplex(__d) => { let $d = duplex(__d); $dup }
             #[cfg(windows)]
             InternalSocket::Pipe(__p) => { let $p = pipe(__p); $pip }
-            #[cfg(not(windows))]
-            InternalSocket::Pipe => $det,
         }
     };
     // Short form: connecting/detached/pipe-absent collapse to one default.
@@ -409,9 +400,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connected(s) => {
                 sock(s).write_fd(data, Fd::from_native(file_descriptor))
             }
-            // Duplex/pipe fall back to a plain write (the fd is silently
-            // dropped).
-            InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
+            // A duplex falls back to a plain write (the fd is silently dropped).
+            InternalSocket::UpgradedDuplex(_) => self.write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
     }
@@ -628,8 +618,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
             #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
-            #[cfg(not(windows))]
-            InternalSocket::Pipe => None,
             InternalSocket::Detached => None,
         }
     }

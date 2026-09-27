@@ -915,35 +915,13 @@ fn spawn_maybe_sync(
     }
     let _ = &inherited_env_storage;
 
+    // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd() {
-            if stdio[fd_index].use_memfd(fd_index as u32) {
-                jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
-            }
+        if stdio[fd_index].can_use_memfd() && stdio[fd_index].use_memfd(fd_index as u32) {
+            jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
         }
     }
-    let mut should_close_memfd = bun_core::env::IS_LINUX;
-
-    let mut memfd_guard = scopeguard::guard(
-        (&mut should_close_memfd, &mut stdio),
-        |(should_close_memfd, stdio): (&mut bool, &mut [Stdio; 3])| {
-            if *should_close_memfd {
-                for fd_index in 0..stdio.len() {
-                    if matches!(stdio[fd_index], Stdio::Memfd(_)) {
-                        // Note: closing the fd first and then assigning would
-                        // Drop the old `Stdio::Memfd` and re-close the same fd
-                        // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
-                        // closes a Memfd, so just replace with `Ignore` and
-                        // let Drop perform the single close.
-                        drop(core::mem::replace(&mut stdio[fd_index], Stdio::Ignore));
-                    }
-                }
-            }
-        },
-    );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
-    // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
-    let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
@@ -1750,8 +1728,6 @@ fn spawn_maybe_sync(
         let _ = subprocess.try_kill(subprocess.kill_signal);
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }
-
-    **should_close_memfd = false;
 
     // Every `return Err` above is past; the Subprocess will be returned to
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so

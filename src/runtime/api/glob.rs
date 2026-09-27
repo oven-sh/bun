@@ -469,8 +469,6 @@ impl Glob {
             return Ok(None);
         };
 
-        let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
-
         fn init_walker<A: walk::Accessor>(
             global_this: &JSGlobalObject,
             pattern: &[u8],

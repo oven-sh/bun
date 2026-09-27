@@ -597,7 +597,6 @@ impl SourceMapStore {
             key.get(),
             entry_ref_count
         );
-        let _ = entry_ref_count;
         true
     }
 
@@ -622,8 +621,6 @@ impl SourceMapStore {
     // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
     // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
     // the deref is of that recovered parent pointer, not the parameter.
-    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,

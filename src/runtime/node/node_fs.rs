@@ -785,6 +785,27 @@ mod _async_tasks {
             Some(done)
         }
 
+        fn closed(this: &mut Self) {
+            use NodeFSFunctionEnum::*;
+            let syscall = match F {
+                Close => sys::Tag::close,
+                Fchmod => sys::Tag::fchmod,
+                Fchown => sys::Tag::fchown,
+                Fdatasync => sys::Tag::fdatasync,
+                Fstat => sys::Tag::fstat,
+                Fsync => sys::Tag::fsync,
+                Ftruncate | Truncate => sys::Tag::ftruncate,
+                Futimes => sys::Tag::futime,
+                Read | ReadFile | Readv => sys::Tag::read,
+                _ => sys::Tag::write,
+            };
+            let mut err = sys::Error::from_code(sys::E::EBADF, syscall);
+            if let Some(fd_use) = this.args.fd_use() {
+                err = err.with_fd(fd_use.fd());
+            }
+            this.result = Err(err);
+        }
+
         fn then(
             mut this: Self,
             js: AsyncFSJs,

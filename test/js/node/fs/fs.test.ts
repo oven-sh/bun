@@ -8197,21 +8197,63 @@ describe("fs.close() that is not waited for", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("runs before what is given the descriptor after it", async () => {
+  it("has closed the descriptor for what is given it afterwards", async () => {
     using dir = tempDir("fs-close-then-use", {});
     const file = join(String(dir), "file.txt");
     const fd = openSync(file, "w");
-    const codes = await Promise.all([
-      codeOf(cb => fs.write(fd, "before", cb)),
-      codeOf(cb => fs.close(fd, cb)),
-      codeOf(cb => fs.write(fd, "after", cb)),
-      codeOf(cb => fs.fstat(fd, cb)),
-      codeOf(cb => fs.close(fd, cb)),
+    const errorOf = (start: (callback: Callback) => void) =>
+      new Promise(resolve =>
+        start(err => resolve(err && { code: err.code, syscall: err.syscall, fd: (err as any).fd })),
+      );
+    const errors = await Promise.all([
+      errorOf(cb => fs.write(fd, "before", cb)),
+      errorOf(cb => fs.close(fd, cb)),
+      errorOf(cb => fs.write(fd, "after", cb)),
+      errorOf(cb => fs.fstat(fd, cb)),
+      errorOf(cb => fs.readFile(fd, cb)),
+      errorOf(cb => fs.close(fd, cb)),
     ]);
-    expect({ codes, contents: readFileSync(file, "utf8") }).toEqual({
-      codes: [null, null, "EBADF", "EBADF", "EBADF"],
+    expect({ errors, contents: readFileSync(file, "utf8") }).toEqual({
+      errors: [null, null, ...["write", "fstat", "read", "close"].map(syscall => ({ code: "EBADF", syscall, fd }))],
       contents: "before",
     });
+  });
+
+  // A log that is written to while it is rotated. The pool has other work, so it is not at once
+  // that it gets to a job.
+  it("does not let what is given the descriptor afterwards reach the file its callback opens", async () => {
+    using dir = tempDir("fs-close-reopen", {});
+    const outcomes: unknown[] = [];
+    const rounds = 60;
+    const otherWork = Array(os.availableParallelism() * 2).fill((cb: Callback) => fs.readdir(import.meta.dir, cb));
+    for (let round = 0; round < rounds; round++) {
+      const next = join(String(dir), `${round}.next.txt`);
+      const fd = openSync(join(String(dir), `${round}.txt`), "w");
+      const [, opened, late] = await Promise.all([
+        codeOf(cb => fs.write(fd, "before", cb)),
+        new Promise<number>(resolve => fs.close(fd, () => resolve(openSync(next, "w")))),
+        codeOf(cb => fs.write(fd, "late", cb)),
+        ...otherWork.map(codeOf),
+      ]);
+      closeSync(opened);
+      outcomes.push({ late, next: readFileSync(next, "utf8") });
+    }
+    expect(outcomes).toEqual(Array(rounds).fill({ late: "EBADF", next: "" }));
+  });
+
+  // The pool may have closed the number by the time the next line of script opens a file.
+  it("does not take the next file to get the number for the one it is closing", async () => {
+    using dir = tempDir("fs-close-number-reused", {});
+    const outcomes: unknown[] = [];
+    const rounds = 200;
+    for (let round = 0; round < rounds; round++) {
+      const next = join(String(dir), `${round}.next.txt`);
+      const closed = codeOf(cb => fs.close(openSync(join(String(dir), `${round}.txt`), "w"), cb));
+      const fd = openSync(next, "w");
+      const codes = await Promise.all([closed, codeOf(cb => fs.write(fd, "next", cb)), codeOf(cb => fs.close(fd, cb))]);
+      outcomes.push({ codes, next: readFileSync(next, "utf8") });
+    }
+    expect(outcomes).toEqual(Array(rounds).fill({ codes: [null, null, null], next: "next" }));
   });
 
   it("leaves other descriptors alone", async () => {
@@ -8245,11 +8287,11 @@ describe("fs.close() that is not waited for", () => {
         `const fs = require("fs");
            const say = what => err => console.log(what, err ? err.code : null);
            ${read};
-           fs.close(0, say("closed"));
-           fs.fstat(0, () => {
-             console.log("used after it");
+           fs.close(0, err => {
+             say("closed")(err);
              fs.close(fs.openSync(process.execPath, "r"), say("closed the next"));
-           });`,
+           });
+           fs.fstat(0, say("used after it"));`,
       ],
       env: bunEnv,
       stdin: "pipe",
@@ -8265,9 +8307,46 @@ describe("fs.close() that is not waited for", () => {
       if (stdout.includes("closed the next")) proc.stdin.end();
     }
     expect({ stdout, stderr: await stderr }).toEqual({
-      stdout: "closed null\nused after it\nclosed the next null\n",
+      stdout: "used after it EBADF\nclosed null\nclosed the next null\n",
       stderr: "",
     });
+    expect(await proc.exited).toBe(0);
+  });
+
+  // The script that asked for the close is gone before the pool has said what the descriptor is.
+  it("does not wait for a read on a pipe when its test file is over either", async () => {
+    using dir = tempDir("fs-close-isolate", {
+      "a.test.js": `
+        import fs from "node:fs";
+        import { test } from "bun:test";
+        test("a", () => {
+          fs.read(0, Buffer.alloc(1), 0, 1, null, () => {});
+          fs.close(0, () => {});
+        });`,
+      "b.test.js": `
+        import fs from "node:fs";
+        import { test } from "bun:test";
+        test("b", async () => {
+          await new Promise(resolve => fs.fstat(0, resolve));
+          console.log("used the number");
+        });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const decoder = new TextDecoder();
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      // Ends the read, and with it the child.
+      if (stdout.includes("used the number")) proc.stdin.end();
+    }
+    expect(stdout).toContain("used the number");
     expect(await proc.exited).toBe(0);
   });
 

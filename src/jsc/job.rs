@@ -21,7 +21,6 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
-use std::collections::VecDeque;
 
 use bun_collections::HashMap;
 use bun_core::Fd;
@@ -228,6 +227,19 @@ pub trait JobContext: Sized + 'static {
     /// [`Completion::finish`] queues it: do not touch it after finishing.
     fn run(off: &mut Self::OffThread, done: Completion<Self>) -> Option<Completion<Self>>;
 
+    /// JS thread, in place of [`run`](Self::run): the descriptor the job was
+    /// given ([`Job::schedule_on_fd`]) is closed as far as it goes. What `run`
+    /// would have found, without going near the number.
+    fn closed(off: &mut Self::OffThread) {
+        let _ = off;
+        unreachable!("not a job on a descriptor");
+    }
+
+    /// JS thread: the job is back, whether or not [`then`](Self::then) follows.
+    fn back(off: &Self::OffThread, vm: &VirtualMachine) {
+        let _ = (off, vm);
+    }
+
     /// JS thread, VM still running script: the completion. Both halves are
     /// handed over to use and drop normally.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
@@ -328,9 +340,9 @@ impl JobList {
 pub enum FdUse {
     Uses(Fd),
     /// Goes to the pool once every job that was given the descriptor before it
-    /// is back, and before any that is given it afterwards. The pool starts
-    /// jobs in no particular order, and a number that is closed early is the
-    /// next file's: what was still to be written would land there.
+    /// is back. The pool starts jobs in no particular order, and a number that
+    /// is closed early is the next file's: what was still to be written would
+    /// land there.
     Closes(Fd),
 }
 
@@ -342,122 +354,106 @@ impl FdUse {
     }
 }
 
-/// Where a job that went to the pool through a descriptor's line is counted.
+/// Where a job that uses a descriptor is counted.
 #[derive(Clone, Copy)]
 struct FdPlace {
     fd: Fd,
-    /// [`FdLine::stretch`] when it went.
-    stretch: u64,
+    line: u64,
 }
 
-/// A job in line: its task, and where its [`FdPlace`] goes.
-type InLine = (*mut WorkPoolTask, FdUse, *mut Option<FdPlace>);
-
+/// The jobs that are out on a descriptor.
 struct FdLine {
-    /// What `running` counts: the jobs that went to the pool since the last
-    /// close, or since a close stopped waiting for those before them.
-    stretch: u64,
-    /// Handed to the pool and not back yet.
+    /// Tells it from the lines the number had before.
+    id: u64,
+    /// Handed to the pool and not back yet; never 0.
     running: u32,
-    /// The one that is running closes the descriptor.
-    closing: bool,
-    waiting: VecDeque<InLine>,
+    /// Goes to the pool when they are back.
+    close: Option<*mut WorkPoolTask>,
+}
+
+/// What is to become of a job that was given a descriptor.
+enum Entered {
+    /// The pool's now.
+    Goes(Option<FdPlace>),
+    /// A close: the pool's when the jobs of this line are back.
+    Waits(u64),
+    /// Given the descriptor behind a close that is waiting. The number is
+    /// still open, so it is not another file's yet: this is the descriptor
+    /// that is being closed.
+    Closed,
 }
 
 /// A VM's live jobs on file descriptors (JS thread only, and without a system
 /// call: one on a network file system can take as long as the server likes).
+///
+/// Once a close is the pool's, its number can be the next file's at any moment,
+/// and nothing that is given the number is held up or turned away.
 #[derive(Default)]
 pub struct FdJobs {
     lines: HashMap<Fd, FdLine>,
-    stretches: u64,
+    ids: u64,
 }
 
 impl FdJobs {
-    /// Hands the job to the pool, now or when its turn comes. For a close that
-    /// waits for jobs that are out, the stretch to ask [`FdKind`] about.
-    ///
-    /// # Safety
-    /// The job is live until it has been to the pool.
-    unsafe fn enter(&mut self, job: InLine) -> Option<u64> {
-        let line = self.lines.entry(job.1.fd()).or_insert_with(|| {
-            self.stretches += 1;
+    fn enter(&mut self, task: *mut WorkPoolTask, fd_use: FdUse) -> Entered {
+        let fd = fd_use.fd();
+        if matches!(fd_use, FdUse::Closes(_)) {
+            return match self.lines.get_mut(&fd) {
+                None => Entered::Goes(None),
+                Some(FdLine { close: Some(_), .. }) => Entered::Closed,
+                Some(line) => {
+                    line.close = Some(task);
+                    Entered::Waits(line.id)
+                }
+            };
+        }
+        let line = self.lines.entry(fd).or_insert_with(|| {
+            self.ids += 1;
             FdLine {
-                stretch: self.stretches,
+                id: self.ids,
                 running: 0,
-                closing: false,
-                waiting: VecDeque::new(),
+                close: None,
             }
         });
-        if line.waiting.is_empty() && line.admits(job.1) {
-            line.start(job);
-            return None;
+        if line.close.is_some() {
+            return Entered::Closed;
         }
-        let waits_for_uses = line.waiting.is_empty() && !line.closing;
-        line.waiting.push_back(job);
-        waits_for_uses.then_some(line.stretch)
+        line.running += 1;
+        Entered::Goes(Some(FdPlace { fd, line: line.id }))
     }
 
-    /// A job that [`enter`](Self::enter)ed is back from the pool.
+    /// A job that was counted is back from the pool.
     fn leave(&mut self, place: FdPlace) {
-        let Some(line) = self.lines.get_mut(&place.fd) else {
-            return;
-        };
-        if line.stretch != place.stretch {
-            return;
-        }
-        line.running -= 1;
-        if core::mem::take(&mut line.closing) {
-            self.stretches += 1;
-            line.stretch = self.stretches;
-        }
-        line.advance();
-        if line.running == 0 {
-            self.lines.remove(&place.fd);
-        }
-    }
-
-    /// The close at the head of `fd`'s line goes ahead of the jobs of `stretch`
-    /// that are out. They are not counted any more: they can outlive the
-    /// descriptor, into the life of the next file to get the number.
-    fn stop_waiting(&mut self, fd: Fd, stretch: u64) {
-        let Some(line) = self.lines.get_mut(&fd) else {
-            return;
-        };
-        if line.stretch != stretch || line.closing {
-            return;
-        }
-        self.stretches += 1;
-        line.stretch = self.stretches;
-        line.running = 0;
-        line.advance();
-    }
-}
-
-impl FdLine {
-    /// Whether the job that is first in line goes to the pool now.
-    fn admits(&self, fd_use: FdUse) -> bool {
-        !self.closing && (self.running == 0 || matches!(fd_use, FdUse::Uses(_)))
-    }
-
-    fn start(&mut self, (task, fd_use, place): InLine) {
-        self.closing = matches!(fd_use, FdUse::Closes(_));
-        self.running += 1;
-        // SAFETY: `enter`'s contract; the job is this thread's until scheduled.
-        unsafe {
-            *place = Some(FdPlace {
-                fd: fd_use.fd(),
-                stretch: self.stretch,
-            });
-        }
-        WorkPool::schedule(task);
-    }
-
-    fn advance(&mut self) {
-        while let Some(&job) = self.waiting.front()
-            && self.admits(job.1)
+        // A close went ahead of it otherwise.
+        if let Some(line) = self.lines.get_mut(&place.fd)
+            && line.id == place.line
         {
-            self.waiting.pop_front();
-            self.start(job);
+            line.running -= 1;
+            if line.running == 0 {
+                self.end(place.fd);
+            }
+        }
+    }
+
+    /// The close that waits for the jobs of `line` goes ahead of them. They
+    /// are not counted any more: they can outlive the descriptor, into the life
+    /// of the next file to get the number.
+    fn stop_waiting(&mut self, place: FdPlace) {
+        if self
+            .lines
+            .get(&place.fd)
+            .is_some_and(|line| line.id == place.line)
+        {
+            self.end(place.fd);
+        }
+    }
+
+    fn end(&mut self, fd: Fd) {
+        if let Some(FdLine {
+            close: Some(task), ..
+        }) = self.lines.remove(&fd)
+        {
+            WorkPool::schedule(task);
         }
     }
 }
@@ -478,8 +474,7 @@ fn is_regular_file(fd: Fd) -> bool {
 enum FdKind {}
 
 struct FdKindQuery {
-    fd: Fd,
-    stretch: u64,
+    place: FdPlace,
     regular: bool,
 }
 
@@ -487,15 +482,17 @@ impl JobContext for FdKind {
     type OffThread = FdKindQuery;
     type Js = ();
     fn run(query: &mut FdKindQuery, done: Completion<Self>) -> Option<Completion<Self>> {
-        query.regular = is_regular_file(query.fd);
+        query.regular = is_regular_file(query.place.fd);
         Some(done)
     }
-    fn then(query: FdKindQuery, _: (), cx: &JsThread<'_>) -> JsResult<()> {
+    /// Not `then`: the close is on its way also when the script that asked for
+    /// it is not there to hear of it any more.
+    fn back(query: &FdKindQuery, vm: &VirtualMachine) {
         if !query.regular {
-            cx.vm()
-                .fd_jobs
-                .with_mut(|jobs| jobs.stop_waiting(query.fd, query.stretch));
+            vm.fd_jobs.with_mut(|jobs| jobs.stop_waiting(query.place));
         }
+    }
+    fn then(_: FdKindQuery, _: (), _: &JsThread<'_>) -> JsResult<()> {
         Ok(())
     }
 }
@@ -512,7 +509,7 @@ pub struct Job<C: JobContext> {
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     keep_alive: KeepAlive,
-    /// Its place in the VM's [`FdJobs`], from when it goes to the pool.
+    /// Its place in the VM's [`FdJobs`].
     place: Option<FdPlace>,
     off: C::OffThread,
     js: C::Js,
@@ -581,14 +578,30 @@ impl<C: JobContext> Job<C> {
             let Some(fd_use) = fd_use else {
                 return WorkPool::schedule(task);
             };
-            let in_line = (task, fd_use, &raw mut (*job).place);
-            if let Some(stretch) = cx.vm().fd_jobs.with_mut(|jobs| jobs.enter(in_line)) {
-                let query = FdKindQuery {
-                    fd: fd_use.fd(),
-                    stretch,
-                    regular: true,
-                };
-                Job::<FdKind>::schedule(cx, query, ());
+            match cx.vm().fd_jobs.with_mut(|jobs| jobs.enter(task, fd_use)) {
+                Entered::Goes(place) => {
+                    (*job).place = place;
+                    WorkPool::schedule(task);
+                }
+                Entered::Waits(line) => {
+                    let place = FdPlace {
+                        fd: fd_use.fd(),
+                        line,
+                    };
+                    let query = FdKindQuery {
+                        place,
+                        regular: true,
+                    };
+                    Job::<FdKind>::schedule(cx, query, ());
+                }
+                Entered::Closed => {
+                    C::closed(&mut (*job).off);
+                    Completion {
+                        job: NonNull::new(job).expect("job"),
+                        ticket: (*job).ticket.take().expect("job"),
+                    }
+                    .finish();
+                }
             }
         }
     }
@@ -648,6 +661,7 @@ impl<C: JobContext> Job<C> {
         if let Some(place) = place {
             vm.fd_jobs.with_mut(|jobs| jobs.leave(place));
         }
+        C::back(&off, vm);
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }

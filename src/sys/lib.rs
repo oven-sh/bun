@@ -1257,16 +1257,15 @@ impl Tag {
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
     pub const copyfile: Tag = Tag(10);
-    pub(crate) const fchmod: Tag = Tag(11);
+    pub const fchmod: Tag = Tag(11);
     pub const fchmodat: Tag = Tag(12);
-    #[cfg(not(windows))]
-    pub(crate) const fchown: Tag = Tag(13);
+    pub const fchown: Tag = Tag(13);
     pub(crate) const fcntl: Tag = Tag(14);
     pub const fdatasync: Tag = Tag(15);
     pub const fstat: Tag = Tag(16);
     pub const fstatat: Tag = Tag(17);
     pub const fsync: Tag = Tag(18);
-    pub(crate) const ftruncate: Tag = Tag(19);
+    pub const ftruncate: Tag = Tag(19);
     #[cfg(not(windows))]
     pub(crate) const futimens: Tag = Tag(20);
     pub const getdents64: Tag = Tag(21);

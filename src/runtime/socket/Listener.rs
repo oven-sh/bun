@@ -92,6 +92,8 @@ pub(crate) struct Listener {
     pub(crate) reject_unauthorized: bool,
     /// Accepted sockets carry `Flags::PAUSE_ON_CONNECT` (see `NewSocket::on_open`).
     pub(crate) pause_on_connect: bool,
+    /// `allowHalfOpen`: unless set, accepted sockets carry `Flags::ENDS_ON_PEER_FIN`.
+    pub(crate) allow_half_open: bool,
     pub(crate) strong_data: JsCell<Strong>,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
@@ -212,6 +214,7 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
+        let allow_half_open = socket_config.allow_half_open;
 
         #[cfg(windows)]
         if port.is_none() {
@@ -254,6 +257,7 @@ impl Listener {
                         true,
                     ),
                     pause_on_connect,
+                    allow_half_open,
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
                     secure_ctx: JsCell::new(None),
@@ -382,6 +386,7 @@ impl Listener {
                 true,
             ),
             pause_on_connect,
+            allow_half_open,
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
@@ -612,6 +617,7 @@ impl Listener {
         let mut flags = SocketFlags::empty();
         flags.set(SocketFlags::REJECT_UNAUTHORIZED, self.reject_unauthorized);
         flags.set(SocketFlags::PAUSE_ON_CONNECT, self.pause_on_connect);
+        flags.set(SocketFlags::ENDS_ON_PEER_FIN, !self.allow_half_open);
         flags
     }
 

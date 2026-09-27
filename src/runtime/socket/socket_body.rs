@@ -615,11 +615,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             uws::SocketKind::BunSocketTcp
         };
-        let flags: i32 = if self.flags.get().contains(Flags::ENDS_ON_PEER_FIN) {
-            0
-        } else {
-            uws::LIBUS_SOCKET_ALLOW_HALF_OPEN
-        };
+        // The loop never closes on a FIN: `on_end` applies `Flags::ENDS_ON_PEER_FIN`.
+        let flags: i32 = uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
             self.owned_ssl_ctx
                 .get()
@@ -3674,7 +3671,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 server_ctx_rejects_unauthorized(ctx_ptr),
             ),
         };
-        let mut initial_flags = Flags::initial(reject_unauthorized);
+        let ends_on_peer_fin = this.flags.get() & Flags::ENDS_ON_PEER_FIN;
+        let mut initial_flags = Flags::initial(reject_unauthorized) | ends_on_peer_fin;
         initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
@@ -3814,7 +3812,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            flags: Cell::new(
+                Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS | ends_on_peer_fin,
+            ),
             write_errno: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),

@@ -1884,7 +1884,6 @@ pub struct PendingPartRange<'a> {
 ///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
 ///   - all other access through `c` / `chunk` during codegen is read-only.
 #[inline]
-#[allow(clippy::type_complexity)]
 pub(crate) unsafe fn pending_part_range_prologue<'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (

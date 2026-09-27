@@ -21,7 +21,6 @@
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
 #![allow(internal_features)]
-#![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;

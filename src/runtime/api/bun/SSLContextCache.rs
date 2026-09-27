@@ -219,7 +219,6 @@ impl SSLContextCache {
 // a live `*Entry`; the deref is null-guarded. The C `CRYPTO_EX_free` ABI fixes
 // the parameter as `void*`, so the function cannot be marked `unsafe` or take a
 // reference — not_unsafe_ptr_arg_deref is a false positive here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
     parent: *mut c_void,

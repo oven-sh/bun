@@ -2,7 +2,7 @@
 // bun_sys is a T0 foundation crate that bun_collections depends on; importing
 // it to satisfy disallowed-types would create a dependency cycle. `File` here
 // IS the bun_sys::File the lint routes everyone else through.
-#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
+#![allow(clippy::disallowed_methods)]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
 
@@ -2157,7 +2157,6 @@ mod posix_impl {
         // Linux ABI.
         #[cfg(any(target_env = "musl", target_os = "android"))]
         mod raw {
-            #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
 
             // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.

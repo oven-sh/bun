@@ -43,7 +43,6 @@ impl ShellCondExprStatTask {
     /// site. Ownership of `*this` is consumed.
     // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
     // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -100,7 +99,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
     }
     // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
     // contract; signature is fixed by the `ShellTaskCtx` trait.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
         let mut me = unsafe { bun_core::heap::take(this) };

@@ -1205,7 +1205,6 @@ pub(crate) fn bun_resolve_sync(
 // (ImportMetaObject.cpp / NodeModuleModule.cpp), which upholds the contract
 // above. clippy excludes `extern "C"` fns from this lint; the export wrapper
 // lives in generated code, so allow it here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,

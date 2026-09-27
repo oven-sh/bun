@@ -515,7 +515,7 @@ impl CompileC {
             // capture stdout, treat any spawn/exit failure as "not found".
             // `Command::new("xcrun")` does PATH lookup, and
             // /usr/bin is always in PATH on macOS.
-            #[allow(clippy::disallowed_types, clippy::disallowed_methods)]
+            #[allow(clippy::disallowed_types)]
             let out = match std::process::Command::new("xcrun")
                 .arg("-sdk")
                 .arg("macosx")
@@ -2525,7 +2525,6 @@ impl CompilerRT {
         // we only need the symbol addresses to hand to TCC. The canonical
         // signatures use `*mut NapiHandleScope` (an opaque type not re-exported
         // here); `*mut c_void` is ABI-identical for address-taking purposes.
-        #[allow(clashing_extern_declarations)]
         unsafe extern "C" {
             fn NapiHandleScope__open(env: *mut napi::NapiEnv, escapable: bool) -> *mut c_void;
             fn NapiHandleScope__close(env: *mut napi::NapiEnv, current: *mut c_void);

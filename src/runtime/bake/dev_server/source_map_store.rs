@@ -617,7 +617,6 @@ impl SourceMapStore {
     // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
     // the deref is of that recovered parent pointer, not the parameter.
     // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,

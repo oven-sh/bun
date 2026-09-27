@@ -305,7 +305,6 @@ impl IOWriter {
     // Forwards `interp` to `ParentRef::from_nullable` (shared provenance)
     // without dereferencing it here; not_unsafe_ptr_arg_deref is a false
     // positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.

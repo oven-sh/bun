@@ -1156,7 +1156,6 @@ pub enum WriteResult {
 
 pub use c::uws_res;
 
-#[allow(non_camel_case_types)]
 pub mod c {
     use super::*;
 

@@ -38,7 +38,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // (see `${TypeName}__fromJS` etc. in build/*/codegen/ZigGeneratedClasses.cpp);
 // replace with the macro-derived modules once the .rs codegen backend lands.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_snake_case, non_camel_case_types)]
+#[allow(non_snake_case)]
 pub(crate) mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
 

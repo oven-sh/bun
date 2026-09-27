@@ -174,7 +174,6 @@ impl Default for Blob {
 // `improper_ctypes` lint recurses through `Option<RefPtr<Store>>` → `NonNull<Store>`
 // and complains `Store` lacks `#[repr(C)]`, but `Store` never crosses FFI by
 // value, so silence it for the whole anon-const.
-#[allow(improper_ctypes)]
 const _: () = {
     use crate::generated::JSBlob;
 

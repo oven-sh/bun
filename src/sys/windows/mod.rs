@@ -4,7 +4,7 @@
 //! it does not belong in this namespace.
 
 #![cfg(windows)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::{MaybeUninit, size_of};

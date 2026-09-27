@@ -260,7 +260,6 @@ impl ShellSubprocess {
     /// The shell is single-threaded; `process` is set for the lifetime of
     /// `ShellSubprocess` until `close_process`.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn proc(&self) -> &mut Process {
         self.process.as_ref().expect("process closed").process_mut()
     }

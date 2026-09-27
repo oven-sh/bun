@@ -3290,7 +3290,6 @@ where
         this.do_render_blob();
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn write_chunk(
         this: *mut Self,
         stream: &WebCore::streams::Result,
@@ -3329,7 +3328,6 @@ where
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
         let _ref = RequestContextRef::adopt(this);
         // SAFETY: caller passes the live `*mut RequestContext` stored as the
@@ -4300,7 +4298,6 @@ where
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
         // SAFETY: `this` is the registered live `*mut RequestContext`.
         let this = unsafe { &*this };

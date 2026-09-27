@@ -95,7 +95,6 @@ where
 /// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
 /// can be written without naming the concrete `RequestContext<_, SSL, DBG, MUX>`
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
-#[allow(clippy::too_many_arguments)]
 trait RequestCtxOps: RequestCtx {
     type Server;
     fn create_in(

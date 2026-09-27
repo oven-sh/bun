@@ -1944,7 +1944,6 @@ impl napi_async_work {
 
     // Forwards `this` to `heap::take` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
@@ -2670,7 +2669,6 @@ impl ThreadSafeFunction {
     /// The threadsafe function's queue drain is a dispatcher: each queued call
     /// is a JS entry of its own, so what one leaves pending is folded per call
     /// (`dispatch_one`) and the drain goes on; the VM's termination ends it.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop
         // dispatch; `env_dead` is atomic so a shared reborrow suffices.
@@ -5515,7 +5513,6 @@ impl NapiFinalizerTask {
 
     // Forwards `this` to `heap::take` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
         let mut this_box = unsafe { bun_core::heap::take(this) };

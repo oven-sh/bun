@@ -999,7 +999,6 @@ fn source_writer_escape(project: fn(&mut Source) -> &mut io::Writer) -> &'static
     unsafe { &mut *p }
 }
 
-#[allow(clippy::mut_from_ref)]
 pub fn error_writer() -> &'static mut io::Writer {
     source_writer_escape(Source::error_stream)
 }

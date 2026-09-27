@@ -7,8 +7,6 @@
 //! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
 //! `impl super::All { … }` surface plus the C-ABI export thunks.
 
-#![allow(clippy::missing_safety_doc)]
-
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -45,7 +43,6 @@ impl All {
     // the raw pointer is intentional (avoids aliased-`&mut` across the
     // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
     // forwarding makes not_unsafe_ptr_arg_deref a false positive.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,

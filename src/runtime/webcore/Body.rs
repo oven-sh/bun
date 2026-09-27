@@ -594,7 +594,6 @@ pub enum Tag {
 
 // Constructed/matched across several modules; boxing `SystemError` would
 // ripple through those callers.
-#[allow(clippy::large_enum_variant)]
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),

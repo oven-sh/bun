@@ -128,7 +128,6 @@ pub(crate) use bun_jsc::generated::JSBlob as js;
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(non_snake_case, clippy::too_many_arguments)]
 pub(crate) trait BlobExt {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
     // `has_content_type_from_user`/`content_type_or_mime_type`/`is_s3`/
@@ -391,7 +390,6 @@ pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
     view.as_ptr()
 }
 
-#[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
@@ -788,7 +786,6 @@ impl BlobExt for Blob {
 
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
     // trait signature is fixed, so the deref is documented with the SAFETY comment below.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -5869,7 +5866,6 @@ pub(crate) struct ToFormDataWithBytesFn;
 
 // `ReadFileToJs::call`'s `by: *mut [u8]` is fixed by the trait; each impl forwards
 // it to the matching unsafe `*_with_bytes` body, so the deref is documented there.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
@@ -5884,7 +5880,6 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5898,7 +5893,6 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5914,7 +5908,6 @@ impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5930,7 +5923,6 @@ impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.

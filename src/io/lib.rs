@@ -2019,7 +2019,7 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
         kq: i32,
-        machport: bun_core::mach_port,
+        machport: libc::mach_port_t,
         pub machport_buf: Box<[u8]>,
     }
 
@@ -2030,8 +2030,8 @@ pub mod waker {
     unsafe extern "C" {
         // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
-        safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> libc::mach_port_t;
+        safe fn io_darwin_schedule_wakeup(port: libc::mach_port_t) -> bool;
     }
 
     #[cfg(target_os = "macos")]

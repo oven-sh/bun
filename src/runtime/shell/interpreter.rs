@@ -1673,7 +1673,6 @@ impl Interpreter {
     /// `command_ctx` must be null or point to a live `ContextData` that
     /// outlives this call.
     // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn append_var_argv(
         out: &mut Vec<u8>,
         original_int: u8,
@@ -1977,7 +1976,6 @@ impl ShellExecEnv {
     /// `this` must have been returned by `dupe_for_subshell` (or otherwise
     /// `heap::alloc`'d) and not yet freed.
     // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deinit_impl(this: *mut ShellExecEnv) {
         log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
@@ -2227,7 +2225,6 @@ impl CowFd {
     /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
     /// refcount to 0, `this` is freed and must not be used again.
     // `*mut T` sig forced by trait/callback contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deref(this: *mut CowFd) {
         // SAFETY: caller upholds the precondition above (`this` is a live `CowFd`).
         unsafe {

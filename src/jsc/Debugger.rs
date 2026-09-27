@@ -912,7 +912,6 @@ impl TestReporterAgent {
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {
         debug_assert!(!self.handle.is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap

@@ -1238,7 +1238,6 @@ impl GetAddrInfoRequest {
 
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
     #[cfg(target_os = "macos")]
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn complete_dns_sd(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and exclusively owned here.
         unsafe {
@@ -1291,7 +1290,6 @@ impl GetAddrInfoRequest {
     // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
     // `&mut *this` at entry would invalidate the pointer's allocation
     // provenance, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         // SAFETY: called on the JS thread with the heap request the lookup was
@@ -1356,7 +1354,6 @@ impl GetAddrInfoRequest {
     // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
     // `&mut *this` at entry would invalidate the pointer's allocation
     // provenance, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
@@ -2222,7 +2219,6 @@ pub(crate) mod internal {
         // `this` is reclaimed via `heap::take` (Box::from_raw); forming
         // `&mut *this` at entry would invalidate the pointer's allocation
         // provenance, so the param must stay `*mut`.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn deinit(this: *mut Self) {
             // SAFETY: this is a heap-allocated Request with refcount==0
             unsafe {
@@ -2481,7 +2477,6 @@ pub(crate) mod internal {
         /// callee may take ownership and free it.
         // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
         // is a false positive on opaque-token forwarding.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify_threadsafe(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2500,7 +2495,6 @@ pub(crate) mod internal {
         /// callee may take ownership and free it.
         // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
         // is a false positive on opaque-token forwarding.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2527,7 +2521,6 @@ pub(crate) mod internal {
     // `request` is forwarded to `owner.notify`, which may free it inline
     // (see fn doc); forming `&mut *request` at entry would be unsound across
     // that hand-off, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
@@ -3245,7 +3238,6 @@ pub(crate) mod internal {
     /// for the duration of the call.
     // `hostname` is null-guarded before the deref; the non-null contract is
     // documented above and on the `bun_dns` extern decl.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[unsafe(no_mangle)]
     fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {

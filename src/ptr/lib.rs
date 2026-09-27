@@ -8,7 +8,6 @@
 // bun_ptr is a T0 foundation crate that bun_threading and bun_collections
 // depend on; importing either to satisfy disallowed-types would create a
 // dependency cycle.
-#![allow(clippy::disallowed_types)]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!

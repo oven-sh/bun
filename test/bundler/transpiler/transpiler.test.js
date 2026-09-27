@@ -2391,6 +2391,19 @@ export default class {
           `export default 1;\nexport { b } from "x";\n`,
           ["b", "default"],
         ],
+        // The entry that makes `export default` is the only entry that applies to it.
+        [
+          replace({ a: ["default", 1], default: 2 }),
+          `export { a, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          replace({ a: ["default", 1], default: ["N", 2] }),
+          `export { a, b } from "x"`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
         [
           replace({ a: ["N", true] }),
           `export { a, b } from "x"`,
@@ -2461,13 +2474,12 @@ export default class {
           });
           const print = async (rows, rowsWithUsing, rowsThatCannotBind, dir) => {
             const modules = [];
-            for (const loader of ["ts", "js"]) {
-              for (const [options, source] of rows) {
-                const transpiler = new Bun.Transpiler({ loader, ...options });
-                modules.push([transpiler.transformSync(source), transpiler.scan(source).exports]);
-              }
+            for (const [options, source] of rows) {
+              const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
+              modules.push([transpiler.transformSync(source), transpiler.scan(source).exports]);
             }
             const [options, source] = rows[0];
+            modules.push(new Bun.Transpiler({ loader: "js", ...options }).transformSync(source));
             modules.push(await new Bun.Transpiler({ loader: "ts", ...options }).transform(source));
             for (const [i, [options, source]] of rowsWithUsing.entries()) {
               const file = require("path").join(dir, "module-" + i + ".mjs");
@@ -2495,7 +2507,7 @@ export default class {
         const exported = rowsWithUsing.map(([, , exported]) => exported);
         const result = await run();
         expect({ ...result, stdout: result.stdout.split("\n")[0] }).toEqual(
-          printed(JSON.stringify([...modules, ...modules, rows[0][2], ...exported])),
+          printed(JSON.stringify([...modules, rows[0][2], rows[0][2], ...exported])),
         );
       });
 

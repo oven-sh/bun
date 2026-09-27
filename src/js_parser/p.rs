@@ -716,6 +716,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
+    /// The statement in visit is the export that an entry of `exports.replace` made, so no entry applies to it.
+    pub(crate) is_visiting_replaced_export: bool,
+
     /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
     pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
     // Lifetime caution: points at a stack local saved/restored across calls.
@@ -9908,6 +9911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_enums: BumpVec::new_in(arena),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
+            is_visiting_replaced_export: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
 

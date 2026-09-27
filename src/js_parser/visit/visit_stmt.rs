@@ -290,8 +290,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 );
+                p.is_visiting_replaced_export = true;
                 p.visit_and_append_stmt(stmts, &mut export_default)
                     .expect("unreachable");
+                p.is_visiting_replaced_export = false;
             }
             ReplaceableExport::Replace(_) => {
                 let declared = p
@@ -415,7 +417,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut mark_for_replace: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
-        if p.options.features.replace_exports.count() > 0 {
+        if p.options.features.replace_exports.count() > 0 && !p.is_visiting_replaced_export {
             if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
                 p.is_control_flow_dead =
                     p.options.features.dead_code_elimination && !entry.is_replace();

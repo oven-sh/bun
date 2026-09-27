@@ -1402,7 +1402,7 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         // Normalize before validating: collapse repeated slashes (`.//x` is `./x`) and drop
         // leading `./` components, so every branch below sees the same cwd-relative path and
         // a pattern that only looks relative (`.//tmp/*.js`) cannot turn absolute once its
-        // `./` prefix is removed. `..` segments are left alone in all three branches.
+        // `./` prefix is removed.
         let mut norm: Vec<u8> = Vec::with_capacity(to_check.len());
         for &b in to_check {
             if b == b'/' && norm.last() == Some(&b'/') {
@@ -1424,6 +1424,35 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         if is_absolute {
             return Err(format!(
                 "--include pattern {} must be relative to cwd",
+                bun_fmt::quote(trimmed),
+            ));
+        }
+
+        // `..` is allowed when it nets to a path inside the cwd (`a/../b.js` is just `b.js`),
+        // but rejected the moment it would climb above the cwd itself (`../x`, `a/../../x`) —
+        // that is exactly the "relative to cwd" contract this function documents, applied to
+        // `..` the same way it is already applied to a leading `/`. Track depth across the
+        // normalized components so this one check covers all three branches below: the literal
+        // path, the recursive directory, and the glob's literal prefix (a metachar component
+        // only ever increases depth, so it can't hide a later escape).
+        let mut depth: i32 = 0;
+        let mut escapes_cwd = false;
+        for part in norm.split(|&b| b == b'/') {
+            match part {
+                b".." => {
+                    if depth == 0 {
+                        escapes_cwd = true;
+                        break;
+                    }
+                    depth -= 1;
+                }
+                b"." | b"" => {}
+                _ => depth += 1,
+            }
+        }
+        if escapes_cwd {
+            return Err(format!(
+                "--include pattern {} must not escape cwd",
                 bun_fmt::quote(trimmed),
             ));
         }

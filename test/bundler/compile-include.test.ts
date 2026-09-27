@@ -292,6 +292,69 @@ describe.concurrent("compile include", () => {
       TIMEOUT,
     );
 
+    // `..` that climbs above the cwd is the same escape as a leading `/`, just spelled
+    // differently — reject it the same way, for a literal path, a directory, and a glob.
+    test(
+      "rejects a literal path that climbs above the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-literal-${via}`, {
+          "index.ts": `console.log("x");`,
+        });
+        const built = await build(String(dir), via, ["../etc/passwd"]);
+        expect(built.message).toContain('--include pattern "../etc/passwd" must not escape cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "rejects a directory that climbs above the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-dir-${via}`, {
+          "index.ts": `console.log("x");`,
+        });
+        const built = await build(String(dir), via, ["../../etc"]);
+        expect(built.message).toContain('--include pattern "../../etc" must not escape cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "rejects a glob that climbs above the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-glob-${via}`, {
+          "index.ts": `console.log("x");`,
+        });
+        const built = await build(String(dir), via, ["../*.js"]);
+        expect(built.message).toContain('--include pattern "../*.js" must not escape cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    // A `..` that nets back inside the cwd is not an escape — reject only what actually
+    // climbs above the cwd, not the token itself.
+    test(
+      "accepts a glob whose .. nets back inside the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-netzero-${via}`, {
+          "index.ts": /* ts */ `
+            const mod = await import("./plugins/" + "target" + ".js");
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["./plugins/../plugins/*.js"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
     // Patterns are relative to the cwd: an absolute path is rejected, glob or not.
     test(
       "rejects an absolute pattern",

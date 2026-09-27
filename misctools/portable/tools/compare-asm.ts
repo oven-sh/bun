@@ -317,7 +317,8 @@ function compareFiles(
 /** The pairs of numbers in which two lists of lines differ, when they differ in nothing else. */
 function otherNumbers(before: string[], after: string[]): [number, number][] | undefined {
   if (before.length !== after.length) return undefined;
-  const number = /(?<![A-Za-z_.$0-9])\d+(?![A-Za-z_.0-9])/g;
+  // `3832u32` in the expanded source, `$3832` and `#3832` in assembly.
+  const number = /(?<![A-Za-z_.0-9])\d+(?=(?:[iu](?:8|16|32|64|128|size))?(?![A-Za-z_.0-9]))/g;
   const pairs: [number, number][] = [];
   for (let i = 0; i < before.length; i++) {
     if (before[i] === after[i]) continue;

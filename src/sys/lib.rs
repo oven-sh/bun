@@ -1082,11 +1082,10 @@ pub enum RenameMode {
 
 /// Flags for [`renameat2`].
 /// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
-/// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
+/// `RENAME_SWAP`/`RENAME_EXCL`.
 #[derive(Clone, Copy, Default)]
 pub struct Renameat2Flags {
     pub mode: RenameMode,
-    pub nofollow: bool,
 }
 
 impl Renameat2Flags {
@@ -1096,14 +1095,11 @@ impl Renameat2Flags {
         let mut flags: u32 = 0;
         #[cfg(target_os = "macos")]
         {
-            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
+            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4
             match self.mode {
                 RenameMode::Normal => {}
                 RenameMode::Exchange => flags |= 2,
                 RenameMode::NoReplace => flags |= 4,
-            }
-            if self.nofollow {
-                flags |= 0x10;
             }
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1113,7 +1109,6 @@ impl Renameat2Flags {
                 RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
                 RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
             }
-            let _ = self.nofollow;
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
@@ -1122,7 +1117,6 @@ impl Renameat2Flags {
                 RenameMode::Exchange => flags |= 1,
                 RenameMode::NoReplace => flags |= 2,
             }
-            let _ = self.nofollow;
         }
         flags
     }
@@ -3894,12 +3888,6 @@ mod windows_impl {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::dup).with_fd(fd));
         }
         Ok(Fd::from_native(target as _))
-    }
-    pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
-        // No POSIX dup2 on Windows.
-        // Return ENOTSUP so callers that branch on platform fall back.
-        let _ = (old, new);
-        Err(Error::new(E::ENOTSUP, Tag::dup2))
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.

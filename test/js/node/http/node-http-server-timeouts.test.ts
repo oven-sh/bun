@@ -277,8 +277,9 @@ describe("node:http server timeout enforcement", () => {
       socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
       await done;
       // Node clears the inactivity timer in Socket._destroy, so the callback
-      // never runs for a socket destroyed before the expired timer fired.
-      expect(timeoutCalls).toEqual([]);
+      // never runs for a destroyed socket. A call for the live socket is not
+      // the bug: the 5ms timer can expire before the request arrives.
+      expect(timeoutCalls).not.toContain(true);
     } finally {
       server.closeAllConnections();
       server.close();

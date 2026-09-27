@@ -42,12 +42,12 @@ import { rustPlanFiles } from "./rust.ts";
 import { quote } from "./shell.ts";
 import {
   checkImageTools,
-  findBun,
   edgeSearchPath,
+  findBun,
   findCargo,
   findMsvcLinker,
-  findNpm,
   findNamedPrograms,
+  findNpm,
   findSystemTool,
   resolveLlvmToolchain,
   writeToolIdentities,

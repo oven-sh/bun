@@ -244,6 +244,43 @@ describe("new File() lastModified option", () => {
   });
 });
 
+describe("in-memory Blob.lastModified", () => {
+  // 2**52 - 1 is the internal "not yet stat'd" marker. It must never reach JS.
+  // A plain Blob has no modification time. The File API puts `lastModified`
+  // on File only, so `undefined` is also acceptable here.
+  const SENTINEL = 4503599627370495;
+  const expectNoTimestamp = (blob: Blob) => {
+    expect(blob.lastModified).not.toBe(SENTINEL);
+    expect(blob.lastModified).toBeOneOf([0, undefined]);
+  };
+
+  test("new Blob()", () => {
+    expectNoTimestamp(new Blob(["x"]));
+    expectNoTimestamp(new Blob([]));
+    expectNoTimestamp(new Blob());
+  });
+
+  test("slice()", () => {
+    expectNoTimestamp(new Blob(["abc"]).slice(0, 1));
+  });
+
+  test("Response.blob() and Request.blob()", async () => {
+    expectNoTimestamp(await new Response("x").blob());
+    expectNoTimestamp(await new Request("http://localhost/", { method: "POST", body: "x" }).blob());
+  });
+
+  test("structuredClone of a Blob, and of a File with a timestamp", () => {
+    expectNoTimestamp(structuredClone(new Blob(["x"])));
+    const file = new File(["x"], "a.txt", { lastModified: 123 });
+    expect(structuredClone(file).lastModified).toBe(123);
+  });
+
+  test("new File() default is still the current time", () => {
+    const file = new File(["x"], "a.txt");
+    expect(Math.abs(file.lastModified - Date.now())).toBeLessThan(60_000);
+  });
+});
+
 test("new Blob('123') is NOT supported", async () => {
   expect(() => new Blob("123")).toThrow();
 });

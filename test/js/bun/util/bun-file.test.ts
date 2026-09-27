@@ -1,7 +1,39 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import fsPromises from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+describe("Bun.file().lastModified", () => {
+  // 2**52 - 1 is the internal "not yet stat'd" marker. It must never reach JS.
+  const SENTINEL = 4503599627370495;
+
+  test("is 0 for a path that does not exist, like .size", async () => {
+    await using dir = tempDir("lastmodified-missing", {});
+    const missing = Bun.file(join(String(dir), "does-not-exist.txt"));
+    expect(missing.lastModified).toBe(0);
+    expect(missing.size).toBe(0);
+    expect(await missing.exists()).toBe(false);
+    expect(missing.lastModified).toBe(0);
+  });
+
+  test("a missing file is older than a real one", async () => {
+    await using dir = tempDir("lastmodified-compare", { "real.txt": "x" });
+    const real = Bun.file(join(String(dir), "real.txt"));
+    const missing = Bun.file(join(String(dir), "nope.txt"));
+    expect(real.lastModified).toBeGreaterThan(0);
+    expect(real.lastModified).toBeLessThan(SENTINEL);
+    expect(missing.lastModified).toBeLessThan(real.lastModified);
+  });
+
+  test("is the mtime once the file is written", async () => {
+    await using dir = tempDir("lastmodified-written", {});
+    const file = Bun.file(join(String(dir), "later.txt"));
+    expect(file.lastModified).toBe(0);
+    await Bun.write(file, "x");
+    expect(file.lastModified).toBeGreaterThan(0);
+    expect(file.lastModified).toBeLessThan(SENTINEL);
+  });
+});
 
 test("delete() and stat() should work with unicode paths", async () => {
   await using dir = tempDir("delete-stat-unicode-path", {

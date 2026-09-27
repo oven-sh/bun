@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { DEFAULT_CREDENTIALS, S3Server, serve, SigningClient, spawnServer, type RequestRecord } from "../index.ts";
 import { parseBucketOption } from "../src/spawn.ts";
@@ -373,5 +373,62 @@ describe.concurrent("the server as a process", () => {
     expect(stdout).toMatch(/^http:\/\/127\.0\.0\.1:\d+\n$/);
     expect(exitCode).toBe(0);
     expect(await answers(stdout.trim())).toBe(false);
+  });
+
+  test("Bun.S3Client signs for the region auto when its options and its environment have no region", async () => {
+    await using server = serve({ region: "us-east-1", buckets: ["bucket"] });
+    // Bun reads the .env files of its directory. This directory has none.
+    using dir = tempDir("s3-default-region", {});
+    // Windows reads `s3_region` as `S3_REGION`.
+    const absent = ["S3_REGION", "AWS_REGION", "S3_SESSION_TOKEN", "AWS_SESSION_TOKEN"];
+    const env = Object.fromEntries(Object.entries(bunEnv).filter(([name]) => !absent.includes(name.toUpperCase())));
+    const { endpoint, accessKeyId, secretAccessKey } = server.clientOptions();
+    const program = `
+      import { s3 } from "bun";
+      const file = s3.file("default-region.txt");
+      const outcome = error => error.code + ": " + error.message;
+      const presigned = await fetch(file.presign());
+      console.log(
+        JSON.stringify([
+          await file.text().catch(outcome),
+          await file.write("Hello Bun!").catch(outcome),
+          presigned.status,
+          presigned.headers.get("content-type"),
+          await presigned.text(),
+        ]),
+      );
+    `;
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: {
+        ...env,
+        S3_ENDPOINT: endpoint,
+        S3_BUCKET: "bucket",
+        S3_ACCESS_KEY_ID: accessKeyId,
+        S3_SECRET_ACCESS_KEY: secretAccessKey,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect(stderr).toBe("");
+    // The server has the region us-east-1. Its error tells the region of the signature.
+    const refused =
+      "AuthorizationHeaderMalformed: The authorization header is malformed; the region 'auto' is wrong; expecting 'us-east-1'";
+    const message =
+      "Error parsing the X-Amz-Credential parameter; the region &apos;auto&apos; is wrong; expecting &apos;us-east-1&apos;";
+    const [read, write, status, type, document] = JSON.parse(stdout);
+    // Each response has its own IDs.
+    const ids = /<RequestId>[0-9A-F]{16}<\/RequestId><HostId>[A-Za-z0-9+\/]{56}<\/HostId>/;
+    expect([read, write, status, type, document.replace(ids, "<RequestId/><HostId/>")]).toEqual([
+      refused,
+      refused,
+      400,
+      "application/xml",
+      `<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AuthorizationQueryParametersError</Code><Message>${message}</Message><Region>us-east-1</Region><RequestId/><HostId/></Error>`,
+    ]);
+    expect(exitCode).toBe(0);
+    expect(server.buckets.get("bucket")!.isEmpty).toBe(true);
   });
 });

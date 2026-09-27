@@ -217,7 +217,9 @@ describe("ArrayBufferSink", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const expected = ["toPrimitive", "toString"]
-        .flatMap(key => [7, 4].flatMap(len => ["closing write", "write after"].map(l => `${key} ${len} ${l} threw true`)))
+        .flatMap(key =>
+          [7, 4].flatMap(len => ["closing write", "write after"].map(l => `${key} ${len} ${l} threw true`)),
+        )
         .join("\n");
       expect(stdout.trim()).toBe(expected);
       if (exitCode !== 0) expect(stderr).toBe("");

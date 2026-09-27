@@ -700,8 +700,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     if (this->m_upgradeClient == nullptr) {
         dispatchConnectFailure("Failed to connect"_s);
-        // create(), or the wrapper that start() was called on, still holds a Ref, so releasing
-        // connect()'s claim here cannot destroy `this`.
+        // create() or the wrapper still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
         m_pendingActivity = nullptr;
         return {};
     }

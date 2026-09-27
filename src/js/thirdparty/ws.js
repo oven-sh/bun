@@ -154,23 +154,6 @@ function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
   return wsOptions;
 }
 
-// validateHeaderName() and validateHeaderValue() of node:_http_common, which costs as much to load as node:http.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L678-L685
-const RegExpPrototypeExec = RegExp.prototype.exec;
-let invalidHeaderCharRegex;
-function validateHeader(name, value) {
-  if (typeof name !== "string" || !name || !require("internal/validators").checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
-  }
-  if (value === undefined) {
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
-  }
-  invalidHeaderCharRegex ??= /[^\t\x20-\x7e\x80-\xff]/;
-  if (RegExpPrototypeExec.$call(invalidHeaderCharRegex, value) !== null) {
-    throw $ERR_INVALID_CHAR("header content", name);
-  }
-}
-
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 // `new WebSocket()` in two steps, for `finishRequest`: the socket exists before `request.end()` dials it.
@@ -273,7 +256,10 @@ class BunWebSocket extends EventEmitter {
       const nodeHttpClientRequestSimulated = {
         __proto__: Object.create(EventEmitter.prototype),
         setHeader: function (name, value) {
-          validateHeader(name, value);
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L678-L685
+          const { validateHeaderName, validateHeaderValue } = require("internal/validators");
+          validateHeaderName(name);
+          validateHeaderValue(name, value);
           if (!headers) headers = Object.create(null);
           headers[name.toLowerCase()] = value;
         },
@@ -330,7 +316,7 @@ class BunWebSocket extends EventEmitter {
       if (!didCallEnd && EventEmitter.prototype.listenerCount.$call(nodeHttpClientRequestSimulated, "socket") > 0) {
         emitWarning(
           "finishRequest-socket",
-          "ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun, so a request.end() that waits for it does not run and the WebSocket does not connect. Call request.end() without waiting for 'socket'.",
+          "ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun. If request.end() runs only from a 'socket' listener, it never runs and the WebSocket stays CONNECTING. Call request.end() without waiting for 'socket'.",
         );
       }
       return;

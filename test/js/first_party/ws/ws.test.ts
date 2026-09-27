@@ -1061,8 +1061,8 @@ describe("WebSocket finishRequest", () => {
     expect({ stdout, stderr }).toEqual({
       stdout: "",
       stderr:
-        "[bun] Warning: ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun, " +
-        "so a request.end() that waits for it does not run and the WebSocket does not connect. " +
+        "[bun] Warning: ws.WebSocket 'finishRequest': the request does not emit 'socket' in bun. " +
+        "If request.end() runs only from a 'socket' listener, it never runs and the WebSocket stays CONNECTING. " +
         "Call request.end() without waiting for 'socket'.\n",
     });
     expect(exitCode).toBe(0);

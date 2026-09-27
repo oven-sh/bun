@@ -139,12 +139,9 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
-    // create() in two steps, for a caller that learns its headers after it needs the socket.
-    // prepare() makes the checks of create() and returns a CONNECTING socket that has dialed
-    // nothing. It keeps the URL only, so start() takes the options again.
+    // create() without the dial. Keeps the URL only, so start() takes the options again.
     static ExceptionOr<Ref<WebSocket>> prepare(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
-    // Dials. Does nothing unless this is the first call and the socket is still CONNECTING.
-    // Options that do not pass the checks any more fail the connection. start() does not throw.
+    // Dials once. Options that no longer pass the checks fail the connection, with no throw.
     void start(WebSocketOptions&&);
     // For a start() whose options could not be read.
     void failToStart(String&& reason);

@@ -1357,10 +1357,14 @@ describe("pathological autolink inputs", () => {
       // Each "www." comes after a paired delimiter, so it is a candidate. Each
       // candidate reads up to the "(", and "(" is no boundary, so no candidate
       // is a link.
+      const paths = "www.a.bc/" + fill(n, "*www.a.bc/x*") + "y";
       const cases = [
-        ["path", "www.a.bc/" + fill(n, "*www.a.bc/x*") + "y("],
+        ["path", paths + "("],
         ["path behind emphasis", "www.a.bc/x" + fill(n, "*y*www.a.bc/x") + "("],
         ["host", "www.a" + fill(n, "._www.b_") + ".c("],
+        ["query", paths + "?a" + fill(400000, "b") + "("],
+        ["parentheses in a query", paths + "?a" + fill(130000, "(x)") + "("],
+        ["fragment", paths + "#a" + fill(400000, "b") + "("],
       ];
       for (const [name, input] of cases) {
         const html = Bun.markdown.html(input, { autolinks: true });

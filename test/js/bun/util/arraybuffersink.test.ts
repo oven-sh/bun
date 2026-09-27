@@ -189,24 +189,25 @@ describe("ArrayBufferSink", () => {
   // close() the sink, which frees it. Before, write() held the freed sink and
   // read it (ASAN: heap-use-after-free in ArrayBufferSink::write_latin1).
   describe("write() converts the chunk before it resolves the sink", () => {
-    it.each([
-      ["Symbol.toPrimitive", "latin1", "[Symbol.toPrimitive]", '"payload"'],
-      ["Symbol.toPrimitive", "utf16", "[Symbol.toPrimitive]", '"pay\\u4f60"'],
-      ["toString", "latin1", "toString", '"payload"'],
-      ["toString", "utf16", "toString", '"pay\\u4f60"'],
-    ])("a %s hook that closes the sink, %s result", async (_hook, _enc, key, ret) => {
+    it("a conversion hook that closes the sink reports the closed sink", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `
-          const s = new Bun.ArrayBufferSink();
-          s.start({ highWaterMark: 64 });
-          s.write("seed");
-          const chunk = Object.assign(new String("x"), { ${key}() { s.close(); return ${ret}; } });
-          for (const label of ["closing write", "write after"]) {
-            try { console.log(label, s.write(label === "closing write" ? chunk : "y")); }
-            catch (e) { console.log(label, "threw", /already been closed/.test(e.message)); }
+          for (const key of ["toPrimitive", "toString"]) {
+            for (const ret of ["payload", "pay\u4f60"]) {
+              const s = new Bun.ArrayBufferSink();
+              s.start({ highWaterMark: 64 });
+              s.write("seed");
+              const hook = () => { s.close(); return ret; };
+              const chunk = Object.assign(new String("x"), key === "toPrimitive" ? { [Symbol.toPrimitive]: hook } : { toString: hook });
+              for (const label of ["closing write", "write after"]) {
+                const arg = label === "closing write" ? chunk : "y";
+                try { console.log(key, ret.length, label, s.write(arg)); }
+                catch (e) { console.log(key, ret.length, label, "threw", /already been closed/.test(e.message)); }
+              }
+            }
           }
           `,
         ],
@@ -215,7 +216,10 @@ describe("ArrayBufferSink", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("closing write threw true\nwrite after threw true\n");
+      const expected = ["toPrimitive", "toString"]
+        .flatMap(key => [7, 4].flatMap(len => ["closing write", "write after"].map(l => `${key} ${len} ${l} threw true`)))
+        .join("\n");
+      expect(stdout.trim()).toBe(expected);
       if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

@@ -2038,45 +2038,43 @@ it("reload() backs out cleanly when a handler getter closes the socket mid-reloa
   void stderr;
 });
 
-it.each(["end", "terminate"])(
-  "reload() backs out when the top-level socket getter %ss the socket mid-reload",
-  async verb => {
-    // reload() reads opts.socket before it reads the current handlers. A
-    // getter on that property can run JS that closes the socket and drops
-    // its handlers, so reading them with an unchecked accessor panicked with
-    // "No handlers set on Socket". reload() must back out instead.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const h = { data() {}, open() {}, close() {}, error() {} };
-          const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
+it("reload() backs out when the top-level socket getter closes the socket mid-reload", async () => {
+  // reload() reads opts.socket before it reads the current handlers. A getter
+  // on that property can run JS that closes the socket and drops its handlers,
+  // so reading them with an unchecked accessor panicked with "No handlers set
+  // on Socket". reload() must back out instead.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const h = { data() {}, open() {}, close() {}, error() {} };
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { ...h } });
+        for (const verb of ["end", "terminate"]) {
           const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { ...h } });
           // Leave the socket's own callback. Inside one, the dispatch holds the
           // handlers, so the getter cannot drop them before reload() reads them.
           await new Promise(resolve => setImmediate(resolve));
-          const result = sock.reload({
+          console.log(verb, "reload returned", sock.reload({
             get socket() {
-              sock.${verb}();
+              sock[verb]();
               return h;
             },
-          });
-          console.log("reload returned", result);
-          listener.stop(true);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+          }));
+        }
+        listener.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("reload returned undefined\n");
-    if (exitCode !== 0) expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("end reload returned undefined\nterminate reload returned undefined\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
 
 it("upgradeTLS() backs out when an option getter re-enters upgradeTLS on the same socket", async () => {
   // upgradeTLS() captured the raw us_socket_t, then ran user JS through the

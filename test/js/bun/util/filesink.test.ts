@@ -601,10 +601,7 @@ it("start() with a path/fd getter that closes the writer throws instead of crash
 // write() resolves the native sink only after the chunk is converted. A String
 // object's Symbol.toPrimitive / toString runs user JS, and that JS can close()
 // the writer, which frees it (ASAN: heap-use-after-free in FileSink::write_latin1).
-it.each([
-  ["Symbol.toPrimitive", "[Symbol.toPrimitive]"],
-  ["toString", "toString"],
-])("write() with a %s hook that closes the writer throws instead of crashing", async (_hook, key) => {
+it("write() with a conversion hook that closes the writer throws instead of crashing", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({
     cmd: [
@@ -612,13 +609,17 @@ it.each([
       "-e",
       `
       const { join } = require("node:path");
-      for (const ret of ["payload", "pay\u4f60"]) {
-        const w = Bun.file(join(process.argv[1], "close-" + ret.length + ".txt")).writer();
-        w.write("seed");
-        const chunk = Object.assign(new String("x"), { ${key}() { w.close(); return ret; } });
-        for (const label of ["closing write", "write after"]) {
-          try { console.log(label, w.write(label === "closing write" ? chunk : "y")); }
-          catch (e) { console.log(label, "threw", /already been closed/.test(e.message)); }
+      for (const key of ["toPrimitive", "toString"]) {
+        for (const ret of ["payload", "pay\u4f60"]) {
+          const w = Bun.file(join(process.argv[1], key + ret.length + ".txt")).writer();
+          w.write("seed");
+          const hook = () => { w.close(); return ret; };
+          const chunk = Object.assign(new String("x"), key === "toPrimitive" ? { [Symbol.toPrimitive]: hook } : { toString: hook });
+          for (const label of ["closing write", "write after"]) {
+            const arg = label === "closing write" ? chunk : "y";
+            try { console.log(key, ret.length, label, w.write(arg)); }
+            catch (e) { console.log(key, ret.length, label, "threw", /already been closed/.test(e.message)); }
+          }
         }
       }
       `,
@@ -629,7 +630,10 @@ it.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("closing write threw true\nwrite after threw true\n".repeat(2));
+  const expected = ["toPrimitive", "toString"]
+    .flatMap(key => [7, 4].flatMap(len => ["closing write", "write after"].map(l => `${key} ${len} ${l} threw true`)))
+    .join("\n");
+  expect(stdout.trim()).toBe(expected);
   if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

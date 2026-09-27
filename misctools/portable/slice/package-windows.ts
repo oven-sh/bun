@@ -8,6 +8,8 @@
 //   bun_fs_slice.img                        the image (x86-64), as build.ts made it
 //   host/host_win.c, host/host_win_uv.c     the Windows host and its table of libuv functions
 //   host/linux_abi.h, host/memory.h         what host_win.c includes
+//   host_win.diff                           what changed in the host since the one that ran on
+//                                           Windows ($HOST_THAT_RAN, a commit)
 //   patches/*.patch                         bun's patches of libuv
 //   bindings/                               windows_layout.c, verify.ts, compare.ts and the layout
 //                                           of the bindings in the image (layout.image.json)
@@ -23,6 +25,9 @@ const here = dirname(import.meta.path);
 const args = process.argv.slice(2);
 const { slice, image } = places(args);
 const out = resolve(args[0] ?? join(slice, "windows-package"));
+// The host of the first merge: it was built natively and ran this slice on Windows x64.
+const hostThatRan = process.env.HOST_THAT_RAN ?? "6165b36e55";
+const hostFiles = ["host_win.c", "host_win_uv.c", "linux_abi.h", "memory.h"];
 
 const libuvCommit = /const LIBUV_COMMIT = "([0-9a-f]+)"/.exec(
   readFileSync(join(repo, "scripts/build/deps/libuv.ts"), "utf8"),
@@ -36,8 +41,13 @@ const libuvSources = (name: string) => {
 rmSync(out, { recursive: true, force: true });
 for (const dir of ["host", "patches", "bindings", "expected"]) mkdirSync(join(out, dir), { recursive: true });
 copyFileSync(image, join(out, "bun_fs_slice.img"));
-for (const name of ["host_win.c", "host_win_uv.c", "linux_abi.h", "memory.h"])
-  copyFileSync(join(tree, "host", name), join(out, "host", name));
+for (const name of hostFiles) copyFileSync(join(tree, "host", name), join(out, "host", name));
+const changed = Bun.spawnSync(
+  ["git", "--no-pager", "diff", hostThatRan, "--", ...hostFiles.map(name => `misctools/portable/host/${name}`)],
+  { cwd: repo, stdout: "pipe" },
+);
+if (changed.exitCode !== 0) throw new Error(`git diff ${hostThatRan}: exit code ${changed.exitCode}`);
+writeFileSync(join(out, "host_win.diff"), changed.stdout);
 cpSync(join(repo, "patches/libuv"), join(out, "patches"), { recursive: true });
 for (const name of ["windows_layout.c", "verify.ts", "compare.ts"])
   copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
@@ -91,9 +101,11 @@ the bytes the program wrote (PowerShell's own ">" re-encodes them).
 
    host_win_uv.c names every libuv function of bun's bindings: "undefined symbol uv_.." here means
    that this libuv does not have a function that the bindings declare. Please send the message.
-   host_win.c was written where no Windows SDK is: it was compiled for this target against
-   declarations written by hand, never against the headers. What the compiler says here, an error
-   or a warning, is a finding: please send it as it is.
+   The host of commit ${hostThatRan} was built with these commands on Windows x64 and ran this
+   slice there. This host is that one with what the event loop and the image for arm64 need:
+   host_win.diff is what changed. It compiles for this target, x64 and arm64, against the headers
+   of the Windows SDK without a message where the image is built, and it has not run on Windows.
+   What the compiler says here, an error or a warning, is a finding: please send it as it is.
 
 4. every import of the image against this Windows (it binds each one and prints the ones that fail)
 

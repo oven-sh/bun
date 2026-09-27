@@ -121,9 +121,14 @@ Linux (uSockets on epoll, bun's POSIX pipes, posix_spawn) and the code bun compi
 it takes the code for Windows, which calls libuv, ws2_32, kernel32 and ntdll through addresses that the
 host resolves (${total} imports).
 
-NOTHING OF THE CODE FOR WINDOWS IN THIS IMAGE HAS RUN BEFORE, AND NEITHER HAS THIS HOST. On Linux the
-image was made to take the code for Windows (BUN_PORTABLE_HOST_OS=win32), where it stops at its first
-call of libuv. Every result below is news, also a failure of the first step.
+WHAT HAS RUN ON WINDOWS, AND WHAT HAS NOT. This program ran on Windows x64 before the work on the event
+loop was merged with the rest of the portable image: with the image and the host of that work, every
+step passed and every import was bound (expected\\differences.json, "ran"). THIS image and THIS host
+are built from the merged tree, and they have not run on Windows: the C library of the image, the
+flags it is compiled with and the host are the merged ones. host_win.diff is what the host has more
+than the host that ran the file system slice on Windows x64 (commit ${base}). On Linux the image
+was made to take the code for Windows (BUN_PORTABLE_HOST_INTERFACE=win32), where it stops at its first
+call of libuv. A step that fails here and is not in expected\\differences.json is a finding.
 
 What was done on the machine that built the image, without running anything (checked-on-linux\\):
   ${summary.compiler}, target ${summary.target},

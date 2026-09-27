@@ -53,6 +53,7 @@ export const SocketConfig = b.dictionary(
       internalName: "handlers",
     },
     data: b.RawAny,
+    // Applied in NewSocket::on_end. The usockets socket is always half-open.
     allowHalfOpen: {
       type: b.bool,
       default: false,

@@ -405,7 +405,13 @@ impl DirEntry {
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
         // transcoded `slice_u8()`.
-        self.add_entry_named(prev_map, entry.name.slice_u8(), entry.kind, filename_store, iterator)
+        self.add_entry_named(
+            prev_map,
+            entry.name.slice_u8(),
+            entry.kind,
+            filename_store,
+            iterator,
+        )
     }
 
     /// Fills `self` with the entries of the embedded directory `self.dir` and returns whether the graph has that
@@ -428,9 +434,13 @@ impl DirEntry {
             } else {
                 bun_sys::FileKind::File
             };
-            if let Err(err) =
-                self.add_entry_named(prev_map.as_deref_mut(), name, kind, &mut filename_store, &iterator)
-            {
+            if let Err(err) = self.add_entry_named(
+                prev_map.as_deref_mut(),
+                name,
+                kind,
+                &mut filename_store,
+                &iterator,
+            ) {
                 failed = Some(err);
             }
         });

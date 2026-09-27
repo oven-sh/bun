@@ -102,6 +102,18 @@ function takePackageName(segments: string[]): { name: PackageName; rest: string[
   return parsed && { name: parsed, rest };
 }
 
+/**
+ * The host of the URL of a registry that listens on `hostname`. `localhost` reaches the IPv4 loopback, which is
+ * the default, and a registry that listens on every address. It does not reach another address: bun connects to
+ * 127.0.0.1 for `localhost`.
+ */
+export function urlHost(hostname: string | undefined): string {
+  if (hostname === undefined) return "localhost";
+  if (["localhost", "127.0.0.1", "0.0.0.0", "::"].includes(hostname)) return "localhost";
+  // An IPv6 address has brackets in a URL.
+  return hostname.includes(":") ? `[${hostname}]` : hostname;
+}
+
 function validDate(value: unknown, fallback: Date): Date {
   const date = typeof value === "string" ? new Date(value) : fallback;
   return Number.isNaN(date.getTime()) ? fallback : date;
@@ -185,9 +197,12 @@ export class Registry {
     return port;
   }
 
-  /** `http://localhost:<port>/`, the value for `registry=` in an `.npmrc` or a `bunfig.toml`. */
+  /**
+   * The value for `registry=` in an `.npmrc` or a `bunfig.toml`. It is `http://localhost:<port>/` for a registry
+   * that listens on the loopback or on every address, and names the `hostname` of the options for each other one.
+   */
   get url(): string {
-    return `${this.options.tls ? "https" : "http"}://localhost:${this.port}/`;
+    return `${this.options.tls ? "https" : "http"}://${urlHost(this.options.hostname)}:${this.port}/`;
   }
 
   /** Answers one request. `start` passes every request of the port to it. */

@@ -267,7 +267,7 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
     }
   }
   publishToCache(libs, libDir, isComplete);
-  rmSync(stagingDir, { recursive: true, force: true });
+  remove(stagingDir);
 }
 
 /** Download xwin and splat the MSVC CRT + Windows SDK into `dest`. */
@@ -351,7 +351,7 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
   const attempts = 3;
   let result;
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    rmSync(splat, { recursive: true, force: true });
+    remove(splat);
     mkdirSync(splat, { recursive: true });
     // xwin draws progress bars to stdout even when it isn't a terminal, which
     // floods CI logs with megabytes of redraws. Keep stderr (real errors);
@@ -369,7 +369,7 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     }
   }
   if (result!.error || result!.status !== 0) {
-    rmSync(staging, { recursive: true, force: true });
+    remove(staging);
     throw new BuildError(`xwin splat failed${result!.status !== null ? ` (exit ${result!.status})` : ""}`, {
       cause: result!.error,
       hint: "The MSVC CRT / Windows SDK download from Microsoft's CDN failed — check network access, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
@@ -383,7 +383,7 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     }
     publishToCache(splat, dest, dir => isCompleteWindowsSysroot(dir, cfg.arch));
   } finally {
-    rmSync(staging, { recursive: true, force: true });
+    remove(staging);
   }
 }
 
@@ -399,19 +399,36 @@ export function publishToCache(
   rename: (from: string, to: string) => void = renameSync,
 ): void {
   if (isComplete(dest)) return;
-  rmSync(dest, { recursive: true, force: true });
+  remove(dest);
+  try {
+    whileHeld(() => {
+      // Another build may publish between the check above and here, or between two tries.
+      if (!isComplete(dest)) rename(staged, dest);
+    });
+  } catch (cause) {
+    if (!isComplete(dest)) throw new BuildError(`Could not move ${staged} to ${dest}`, { cause });
+  }
+}
+
+/**
+ * Windows refuses to move or delete a directory while anything in it is open,
+ * and an antivirus opens what is new. It lets go within moments, and what was
+ * just fetched is too much to lose to that.
+ */
+export function whileHeld<T>(action: () => T): T {
   for (let attempt = 1; ; attempt++) {
     try {
-      return rename(staged, dest);
-    } catch (cause) {
-      // Published between the check and here.
-      if (isComplete(dest)) return;
-      // Windows refuses to move a directory while anything in it is open, and an antivirus opens what is new.
-      const held = ["EPERM", "EACCES", "EBUSY"].includes((cause as NodeJS.ErrnoException).code ?? "");
-      if (!held || attempt === 10) throw new BuildError(`Could not move ${staged} to ${dest}`, { cause });
+      return action();
+    } catch (error) {
+      const held = ["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "");
+      if (!held || attempt === 10) throw error;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
     }
   }
+}
+
+function remove(dir: string): void {
+  whileHeld(() => rmSync(dir, { recursive: true, force: true }));
 }
 
 /**
@@ -425,7 +442,7 @@ export function stagingBeside(dest: string): string {
   for (const name of listDir(dirname(dest))) {
     if (!name.startsWith(prefix)) continue;
     const pid = Number(name.slice(prefix.length));
-    if (pid === process.pid || !isRunning(pid)) rmSync(join(dirname(dest), name), { recursive: true, force: true });
+    if (pid === process.pid || !isRunning(pid)) remove(join(dirname(dest), name));
   }
   const staging = `${dest}.staging-${process.pid}`;
   mkdirSync(staging, { recursive: true });

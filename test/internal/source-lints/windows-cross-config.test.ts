@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { generateCargoConfig } from "../../../scripts/build/cargo-config.ts";
@@ -29,6 +29,7 @@ import {
   publishToCache,
   stagingBeside,
   UCRT_SERVICING_VERSION,
+  whileHeld,
   windowsSysrootCachePath,
 } from "../../../scripts/build/winsysroot.ts";
 
@@ -327,6 +328,43 @@ describe("publishing a fetch to a cache other builds share", () => {
       BuildError,
     );
     expect(rename.calls).toBe(1);
+  });
+
+  test("stops trying once another build has published, and keeps that one", () => {
+    using dir = tempDir("publish", { "staged/done": "", "staged/from": "this build" });
+    const dest = join(String(dir), "dest");
+    let calls = 0;
+    publishToCache(join(String(dir), "staged"), dest, isComplete, () => {
+      calls++;
+      mkdirSync(dest);
+      writeFileSync(join(dest, "done"), "");
+      writeFileSync(join(dest, "from"), "the faster build");
+      throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+    });
+    expect(calls).toBe(1);
+    expect(readFileSync(join(dest, "from"), "utf8")).toBe("the faster build");
+  });
+
+  // Moves and removals both go through this: a removal that fails after publishing would fail a build that has its sysroot.
+  test.each(["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"])("what fails with %s is tried again", code => {
+    let calls = 0;
+    const result = whileHeld(() => {
+      if (++calls < 3) throw Object.assign(new Error(code), { code });
+      return "done";
+    });
+    expect({ result, calls }).toEqual({ result: "done", calls: 3 });
+  });
+
+  test("what fails otherwise is not, and the error is the caller's to read", () => {
+    let calls = 0;
+    const error = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    expect(() =>
+      whileHeld(() => {
+        calls++;
+        throw error;
+      }),
+    ).toThrow(error);
+    expect(calls).toBe(1);
   });
 });
 

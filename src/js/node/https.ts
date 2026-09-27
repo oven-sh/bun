@@ -313,9 +313,11 @@ function createConnection(...args) {
       // An error occurred during tunnel establishment, in that case just destroy the socket
       // and propagate the error to the callback.
 
-      // When the error comes from unexpected status code, the stream is still in good shape,
-      // in that case let req.onSocket handle the destruction instead.
-      if (err && err.code === "ERR_PROXY_TUNNEL" && err.statusCode === undefined) {
+      // Node leaves the connection of a proxy that answered with a status code to req.onSocket:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L389-L393
+      // Its Agent gives req.onSocket only the error, so that connection stays open:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L383-L385
+      if (err && err.code === "ERR_PROXY_TUNNEL") {
         socket.destroy();
       }
       // This error should go to:

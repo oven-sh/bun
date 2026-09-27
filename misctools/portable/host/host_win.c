@@ -60,23 +60,25 @@
 #if defined(__x86_64__)
 #define SYSV __attribute__((sysv_abi))
 #define CONTEXT_PC(c) ((c)->Rip)
-/* What is read of a thread that is stopped for a signal. x64: the other registers are saved by signal_landing(). */
-#define CONTEXT_OF_STOPPED (CONTEXT_CONTROL | CONTEXT_INTEGER)
-#define STOPPED_IN_THE_KERNEL(c) 0
+/* The registers that are read of a thread that is stopped for a signal, and put back. x64: the
+   other registers are saved by signal_landing(). arm64: every register. */
+#define REGISTERS_OF_STOPPED (CONTEXT_CONTROL | CONTEXT_INTEGER)
 #else
 #define SYSV
 #define CONTEXT_PC(c) ((c)->Pc)
-/* arm64: every register, and the word of Windows on where the thread was stopped. A thread
-   that is on its way into an exception (a fault of a page, a trap of WebAssembly) has the
-   program counter of the image and is inside of the kernel: what Windows does next with
-   its registers is not ours to change. The sender tries again. The runtime of .NET asks
-   the same question before it points a thread somewhere else (coreclr,
-   vm/threadsuspend.cpp, IsContextSafeToRedirect). A system that does not answer
-   (CONTEXT_EXCEPTION_REPORTING is not set) is taken as before. */
-#define CONTEXT_OF_STOPPED (CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST)
+#define REGISTERS_OF_STOPPED CONTEXT_FULL
+#endif
+/* What is asked of a thread that is stopped for a signal: its registers, and the word of
+   Windows on where the thread was stopped. A thread that is on its way into an exception
+   (a fault of a page, a trap of WebAssembly) has the program counter of the image and is
+   inside of the kernel: what Windows does next with its registers is not ours to change.
+   The sender tries again. The runtime of .NET asks the same question before it points a
+   thread somewhere else, on both processors (coreclr, vm/threadsuspend.cpp,
+   IsContextSafeToRedirect). A system that does not answer (CONTEXT_EXCEPTION_REPORTING is
+   not set) is taken as before. */
+#define CONTEXT_OF_STOPPED (REGISTERS_OF_STOPPED | CONTEXT_EXCEPTION_REQUEST)
 #define STOPPED_IN_THE_KERNEL(c) \
   (((c)->ContextFlags & CONTEXT_EXCEPTION_REPORTING) && ((c)->ContextFlags & (CONTEXT_EXCEPTION_ACTIVE | CONTEXT_SERVICE_ACTIVE)))
-#endif
 #define PAGE 4096ull
 
 /* Offsets in the TEB, the same on x64 and on arm64. The image reads its thread
@@ -1302,6 +1304,8 @@ static int stop_and_point(struct host_thread *target, CONTEXT *context) {
   uintptr_t below = context->Rsp - 128;
   CONTEXT *saved = (CONTEXT *)((below - sizeof(CONTEXT)) & ~(uintptr_t)63);
   *saved = *context;
+  /* What is kept is what was read: not the flags of the question above. */
+  saved->ContextFlags = REGISTERS_OF_STOPPED;
   uintptr_t frame = (((uintptr_t)saved - 64) & ~(uintptr_t)15) - 8; /* as after a call */
   *(uintptr_t *)frame = 0;
   CONTEXT go = *context;
@@ -1333,7 +1337,7 @@ static int stop_and_point(struct host_thread *target, CONTEXT *context) {
   CONTEXT *saved = (CONTEXT *)((context->Sp - 128 - sizeof(CONTEXT)) & ~(uintptr_t)15);
   *saved = *context;
   /* What is put back is what was read: not the flags of the question above. */
-  saved->ContextFlags = CONTEXT_FULL;
+  saved->ContextFlags = REGISTERS_OF_STOPPED;
   CONTEXT go = *context;
   go.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
   go.Pc = (DWORD64)(uintptr_t)signal_landing;

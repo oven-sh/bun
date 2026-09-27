@@ -620,7 +620,7 @@ mod platform {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = io.Information;
+                    self.end_index = io.Information.min(self.buf.len());
 
                     sys::syslog!("NtQueryDirectoryFile({}) = {}", self.dir, self.end_index);
                 }

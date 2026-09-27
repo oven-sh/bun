@@ -659,7 +659,7 @@ pub mod dir_iterator {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = io.Information;
+                    self.end_index = io.Information.min(BUF_SIZE);
                 }
 
                 let entry_offset = self.index;

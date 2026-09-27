@@ -38,14 +38,22 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
   process.exit(1);
 }
 
-const registry = new Registry({
-  storage: values.storage === undefined ? undefined : resolve(values.storage),
-  port,
-  hostname: values.hostname,
-  publicUrl: values["public-url"],
-  access: Object.fromEntries(values.restricted.map(pattern => [pattern, { read: "authenticated" as const }])),
-  intercept: values.verbose ? request => console.log(`${request.method} ${new URL(request.url).pathname}`) : undefined,
-});
+let registry: Registry;
+try {
+  registry = new Registry({
+    storage: values.storage === undefined ? undefined : resolve(values.storage),
+    port,
+    hostname: values.hostname,
+    publicUrl: values["public-url"],
+    access: Object.fromEntries(values.restricted.map(pattern => [pattern, { read: "authenticated" as const }])),
+    intercept: values.verbose
+      ? request => console.log(`${request.method} ${new URL(request.url).pathname}`)
+      : undefined,
+  });
+} catch (error) {
+  console.error(`${error instanceof Error ? error.message : error}\n\n${usage}`);
+  process.exit(1);
+}
 
 for (const entry of values.user) {
   const colon = entry.indexOf(":");

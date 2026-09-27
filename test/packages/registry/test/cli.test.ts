@@ -321,4 +321,19 @@ describe("cli.ts", () => {
     const authorized = await request(`${url}@needs-auth%2ftest-pkg`, { headers: { authorization: `Bearer ${token}` } });
     expect(authorized.status).toBe(200);
   });
+
+  test("refuses a storage that is not a directory", async () => {
+    using dir = tempDir("registry-cli-", {});
+    const missing = join(String(dir), "pakcages");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "..", "cli.ts"), "--port=0", `--storage=${missing}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toStartWith(`The storage is not a directory: ${missing}\n\nUsage: bun cli.ts [options]`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

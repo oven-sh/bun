@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Credentials, User } from "./auth.ts";
@@ -104,6 +105,10 @@ export class Packages {
     readonly storage: string | undefined,
     rules: AccessRules = {},
   ) {
+    // Without this check, a path with a typing error gives a registry that answers 404 for every package.
+    if (storage !== undefined && !statSync(storage, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`The storage is not a directory: ${storage}`);
+    }
     this.#rules = Object.entries(rules).map(([pattern, rule]) => [patternToRegExp(pattern), rule]);
   }
 
@@ -114,6 +119,11 @@ export class Packages {
       if (parsed === null) return null;
       loading = this.#read(parsed);
       this.#loaded.set(name, loading);
+      // A read that failed says nothing about the package. The next request reads again.
+      const read = loading;
+      read.catch(() => {
+        if (this.#loaded.get(name) === read) this.#loaded.delete(name);
+      });
     }
     return loading;
   }
@@ -570,12 +580,14 @@ export class Packages {
   }
 }
 
-/** The names in a directory, or nothing when it is not a directory. */
+/** The names in a directory, or nothing when it is not a directory. Each other error is an error. */
 async function entries(directory: string): Promise<string[]> {
   try {
     return await readdir(directory);
-  } catch {
-    return [];
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw error;
   }
 }
 

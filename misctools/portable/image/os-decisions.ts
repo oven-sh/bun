@@ -20,6 +20,11 @@
 //          (one decision per directive: an #else belongs to its #if)
 //   JS     process.platform in src/js
 //
+// What is read is what the image compiles. A build for one OS has the tokens of bun's main, and where the
+// image has other tokens the source has both: cfg_select! { bun_portable => .., _ => .. }, an item under
+// #[cfg(not(bun_portable))], the #else of #if defined(BUN_PORTABLE). What the image does not compile of
+// them is not a decision of the image; the report says how many there are (not_of_the_image).
+//
 // The class of a decision comes from the first rule of os-decisions.rules.ts that matches its file, its
 // predicate and the code it guards. Every decision names its rule, so that a wrong class is a wrong rule.
 import { lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -209,8 +214,194 @@ function contextAfter(lines: string[], line: number): string {
   return "";
 }
 
-export function scanRust(file: string, source: string): Decision[] {
-  const code = blankCommentsAndStrings(source, "rust");
+/** The index of the bracket that closes the one at `open`, in code without comments and strings. */
+function closing(code: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return code.length - 1;
+}
+
+/** A predicate of `cfg` in the portable image: true, false, or undefined when it asks for more. */
+function inTheImage(predicate: string): boolean | undefined {
+  const text = predicate.replace(/\s+/g, "");
+  const list = /^(not|any|all)\((.*)\)$/.exec(text);
+  if (list !== null) {
+    const parts: string[] = [];
+    let depth = 0;
+    let from = 0;
+    for (let i = 0; i < list[2]!.length; i++) {
+      const c = list[2]![i];
+      if (c === "(") depth++;
+      else if (c === ")") depth--;
+      else if (c === "," && depth === 0) {
+        parts.push(list[2]!.slice(from, i));
+        from = i + 1;
+      }
+    }
+    if (from < list[2]!.length) parts.push(list[2]!.slice(from));
+    const values = parts.map(inTheImage);
+    if (list[1] === "not") return values.length === 1 && values[0] !== undefined ? !values[0] : undefined;
+    const decides = list[1] === "any";
+    if (values.some(value => value === decides)) return decides;
+    return values.every(value => value === !decides) ? !decides : undefined;
+  }
+  return text === "bun_portable" ? true : undefined;
+}
+
+/**
+ * Code (comments and strings are blank already) without what the portable image does not compile of the
+ * places that have the tokens of two builds: blank, so that offsets and lines stay.
+ */
+export function whatTheImageCompiles(code: string): string {
+  const out = code.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  const skipSpace = (at: number) => {
+    while (at < code.length && /\s/.test(code[at]!)) at++;
+    return at;
+  };
+  // cfg_select! { predicate => { .. } predicate => .., }: the first arm that holds stays.
+  const select = /\bcfg_select\s*!\s*\{/g;
+  for (let m = select.exec(code); m !== null; m = select.exec(code)) {
+    const open = m.index + m[0].length - 1;
+    const close = closing(code, open);
+    const arms: { value: boolean | undefined; from: number; to: number }[] = [];
+    let at = skipSpace(open + 1);
+    while (at < close) {
+      const arrow = code.indexOf("=>", at);
+      if (arrow < 0 || arrow > close) break;
+      const predicate = code.slice(at, arrow).trim();
+      let from = skipSpace(arrow + 2);
+      let to: number;
+      if (code[from] === "{") {
+        to = closing(code, from) + 1;
+        from++;
+        arms.push({ value: predicate === "_" ? true : inTheImage(predicate), from, to: to - 1 });
+      } else {
+        to = from;
+        for (let depth = 0; to < close; to++) {
+          const c = code[to];
+          if (c === "(" || c === "[" || c === "{") depth++;
+          else if (c === ")" || c === "]" || c === "}") depth--;
+          else if (c === "," && depth === 0) break;
+        }
+        arms.push({ value: predicate === "_" ? true : inTheImage(predicate), from, to });
+      }
+      at = skipSpace(to);
+      if (code[at] === ",") at = skipSpace(at + 1);
+    }
+    const chosen = arms.findIndex(arm => arm.value !== false);
+    if (chosen < 0 || arms[chosen]!.value === undefined) continue;
+    arms.forEach((arm, index) => {
+      if (index !== chosen) blank(arm.from, arm.to);
+    });
+  }
+  // #[cfg(predicate)] that the image does not meet: the attribute and what it stands in front of.
+  const attribute = /#\s*\[\s*cfg\s*\(/g;
+  for (let m = attribute.exec(code); m !== null; m = attribute.exec(code)) {
+    const open = m.index + m[0].length - 1;
+    const end = closing(code, open);
+    if (inTheImage(code.slice(open + 1, end)) !== false) continue;
+    let at = skipSpace(code.indexOf("]", end) + 1);
+    // More attributes, and `pub`, `pub(crate)`.
+    for (;;) {
+      if (code[at] === "#" && code[skipSpace(at + 1)] === "[") at = skipSpace(closing(code, skipSpace(at + 1)) + 1);
+      else if (/^pub\b/.test(code.slice(at, at + 4))) {
+        at = skipSpace(at + 3);
+        if (code[at] === "(") at = skipSpace(closing(code, at) + 1);
+      } else break;
+    }
+    const word = /^[A-Za-z_]+/.exec(code.slice(at, at + 16))?.[0] ?? "";
+    const toSemicolon = ["let", "const", "static", "use", "type"].includes(word);
+    const item = [
+      "fn",
+      "impl",
+      "struct",
+      "enum",
+      "union",
+      "trait",
+      "mod",
+      "extern",
+      "unsafe",
+      "async",
+      "macro_rules",
+    ].includes(word);
+    let to = at;
+    for (; to < code.length; to++) {
+      const c = code[to];
+      if (c === "(" || c === "[") to = closing(code, to);
+      else if (c === "{") {
+        to = closing(code, to);
+        if (toSemicolon) continue;
+        const next = skipSpace(to + 1);
+        // `if .. {} else {}`, `{ .. }.method()`: the expression goes on.
+        if (!item && (/^else\b/.test(code.slice(next, next + 5)) || code[next] === "." || code[next] === "?")) continue;
+        to++;
+        if (code[skipSpace(to)] === ";" || (!item && code[skipSpace(to)] === ",")) to = skipSpace(to) + 1;
+        break;
+      } else if (c === ";" || (c === "," && !item && !toSemicolon)) {
+        to++;
+        break;
+      } else if (c === ")" || c === "]" || c === "}") break;
+    }
+    blank(m.index, to);
+  }
+  return out.join("");
+}
+
+/** For each line of C or C++: does the portable image (BUN_PORTABLE is defined) read it. */
+export function linesOfTheImage(lines: string[]): boolean[] {
+  // For each open conditional: is it one of BUN_PORTABLE, and is its branch read.
+  const open: { ours: boolean; read: boolean; wasRead: boolean }[] = [];
+  return lines.map(line => {
+    const directive = /^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$/.exec(line);
+    const reading = open.every(level => level.read);
+    if (directive === null) return reading;
+    const condition = directive[2]!
+      .replace(/\/\/.*$/, "")
+      .replace(/\/\*.*?\*\//g, "")
+      .replace(/\s+/g, "");
+    const word = directive[1]!;
+    if (word === "if" || word === "ifdef" || word === "ifndef") {
+      let value: boolean | undefined;
+      if (/^\(?defined\(?BUN_PORTABLE\)?\)?$/.test(condition)) value = word !== "ifndef";
+      else if (/^!\(?defined\(?BUN_PORTABLE\)?\)?$/.test(condition)) value = false;
+      else if (condition === "BUN_PORTABLE") value = word === "ifdef";
+      open.push(
+        value === undefined ? { ours: false, read: true, wasRead: true } : { ours: true, read: value, wasRead: value },
+      );
+      return reading && value === undefined;
+    }
+    const level = open[open.length - 1];
+    if (level === undefined) return reading;
+    if (word === "endif") {
+      open.pop();
+      return !level.ours && open.every(l => l.read);
+    }
+    if (!level.ours) return reading;
+    // #else and #elif of a condition with BUN_PORTABLE: what follows is read when nothing in front was.
+    level.read = !level.wasRead;
+    if (word === "elif") {
+      // What follows is a conditional of its own, which the image reads or not as a whole.
+      level.ours = false;
+      return false;
+    }
+    level.wasRead = true;
+    return false;
+  });
+}
+
+export function scanRust(file: string, source: string, all = false): Decision[] {
+  const blanked = blankCommentsAndStrings(source, "rust");
+  const code = all ? blanked : whatTheImageCompiles(blanked);
   const lineOf = lineIndex(source);
   const lines = source.split("\n");
   const found: Decision[] = [];
@@ -264,10 +455,12 @@ const cOsCondition =
 const cRuntimeHost =
   /\bBun::(hostOS|hostIsWindows|hostIsMac|hostIsLinux|hostPlatformName)\s*\(|\b(hostIsWindows|hostIsMac|hostIsLinux)\s*\(\)/g;
 
-export function scanC(file: string, source: string): Decision[] {
+export function scanC(file: string, source: string, all = false): Decision[] {
   const lines = source.split("\n");
+  const read = linesOfTheImage(lines);
   const found: Decision[] = [];
   for (let i = 0; i < lines.length; i++) {
+    if (!all && !read[i]) continue;
     const directive = /^\s*#\s*(if|ifdef|ifndef|elif|elifdef|elifndef)\b(.*)$/.exec(lines[i]!);
     if (directive !== null) {
       let condition = directive[2]!;
@@ -332,7 +525,8 @@ export function scanJs(file: string, source: string, platformIsRuntime: boolean)
   return found;
 }
 
-export function scanTree(root: string): Decision[] {
+/** `all`: also what only a build that is not the image compiles. */
+export function scanTree(root: string, all = false): Decision[] {
   // With TARGET_PLATFORM_AT_RUNTIME the built-in modules read process.platform when they run.
   const replacements = readFileSync(join(root, "src/codegen/replacements.ts"), "utf8");
   const platformIsRuntime = replacements.includes("TARGET_PLATFORM_AT_RUNTIME");
@@ -341,8 +535,8 @@ export function scanTree(root: string): Decision[] {
     for (const path of walk(join(root, top))) {
       const file = relative(root, path);
       const extension = extensionOf(file);
-      if (rustExtensions.has(extension)) found.push(...scanRust(file, readFileSync(path, "utf8")));
-      else if (cExtensions.has(extension)) found.push(...scanC(file, readFileSync(path, "utf8")));
+      if (rustExtensions.has(extension)) found.push(...scanRust(file, readFileSync(path, "utf8"), all));
+      else if (cExtensions.has(extension)) found.push(...scanC(file, readFileSync(path, "utf8"), all));
       else if (jsExtensions.has(extension) && file.startsWith("src/js/"))
         found.push(...scanJs(file, readFileSync(path, "utf8"), platformIsRuntime));
     }
@@ -384,6 +578,7 @@ if (import.meta.main) {
     process.exit(2);
   }
   const classified = classify(scanTree(root));
+  const notOfTheImage = scanTree(root, true).length - classified.length;
   classified.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
 
   const classes: Class[] = ["A", "B", "C", "D", "R", "U"];
@@ -423,6 +618,7 @@ if (import.meta.main) {
       U: "no rule matches",
     },
     total: classified.length,
+    not_of_the_image: notOfTheImage,
     totals_by_class: totalsByClass,
     totals_by_kind: totalsByKind,
     totals_by_directory: Object.fromEntries(Object.entries(totalsByDirectory).sort(([a], [b]) => (a < b ? -1 : 1))),
@@ -447,6 +643,7 @@ if (import.meta.main) {
     rows.push(`${pad(directory, 34)}${classes.map(c => num(t[c] === 0 ? "." : t[c], 7)).join("")}${num(t.total, 8)}`);
   }
   rows.push(`${pad("TOTAL", 34)}${classes.map(c => num(totalsByClass[c], 7)).join("")}${num(classified.length, 8)}`);
+  rows.push(`not counted: ${notOfTheImage} decisions in what only a build that is not the portable image compiles`);
   rows.push("");
   rows.push(`${pad("kind", 34)}${classes.map(c => num(c, 7)).join("")}`);
   for (const [kind, t] of Object.entries(totalsByKind)) {

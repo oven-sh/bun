@@ -76,6 +76,68 @@ test("calling without new throws", () => {
   expect(() => (Bun.WebView as any)({ width: 100, height: 100 })).toThrow(/without 'new'/);
 });
 
+// The first four lines are the prefix that the Bun profile of Fuzzilli (codePrefix in
+// BunProfile.swift, oven-sh/fuzzilli) puts in front of every fuzzed program and every crash file.
+// The last of them keeps a fuzzed program from starting a browser.
+const fuzzilliProgram = `
+delete globalThis.Loader;
+Bun.generateHeapSnapshot = console.profile = console.profileEnd = process.abort = () => {};
+Bun.FFI = undefined;
+Bun.WebView = undefined;
+
+console.log(JSON.stringify({
+  strict: (function () { return this === undefined; })(),
+  FFI: typeof Bun.FFI,
+  WebView: typeof Bun.WebView,
+  descriptor: { ...Object.getOwnPropertyDescriptor(Bun, "WebView"), value: typeof Bun.WebView },
+}));
+`;
+const readFirst = `globalThis.WebView = Bun.WebView;`;
+const usesCommonJS = `require("node:os");`;
+
+test.concurrent.each([
+  // `bun crash.js` runs a crash file as an ES module (strict mode), or as CommonJS (sloppy mode)
+  // when the program uses a CommonJS feature.
+  { name: "ES module, write first", source: fuzzilliProgram, strict: [true] },
+  { name: "ES module, read first", source: readFirst + fuzzilliProgram, strict: [true] },
+  { name: "CommonJS, write first", source: fuzzilliProgram + usesCommonJS, strict: [false] },
+  { name: "CommonJS, read first", source: readFirst + fuzzilliProgram + usesCommonJS, strict: [false] },
+  // The REPRL loop (src/js/eval/fuzzilli-reprl.ts) runs every program with indirect eval (sloppy
+  // mode) in one global.
+  {
+    name: "indirect eval, two programs in one global",
+    source: `for (let i = 0; i < 2; i++) (0, eval)(${JSON.stringify(fuzzilliProgram)});`,
+    strict: [false, false],
+  },
+])("the Fuzzilli prefix disables Bun.WebView: $name", async ({ source, strict }) => {
+  using dir = tempDir("webview-fuzzilli-prefix", { "crash.js": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "crash.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    programs: stdout
+      .split("\n")
+      .filter(Boolean)
+      .map(line => JSON.parse(line)),
+    stderr,
+    exitCode,
+  }).toEqual({
+    programs: strict.map(strict => ({
+      strict,
+      FFI: "undefined",
+      WebView: "undefined",
+      descriptor: { value: "undefined", writable: true, enumerable: true, configurable: false },
+    })),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("is an EventTarget", () => {
   const view = new Bun.WebView({ width: 100, height: 100 });
   try {

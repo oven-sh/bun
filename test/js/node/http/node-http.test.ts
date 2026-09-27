@@ -6332,7 +6332,8 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
   type Handler = (req: IncomingMessage, res: ServerResponse) => void;
   // `connection` holds the value of every Connection header of the response.
   type WireResponse = { connection: string[]; body: string };
-  type Outcome = { responses: WireResponse[]; ended: boolean; served: string[] };
+  // `destroyed`: the server destroyed its side of the connection in place of ending it.
+  type Outcome = { responses: WireResponse[]; ended: boolean; destroyed: boolean; served: string[] };
   type Case = {
     name: string;
     version?: string;
@@ -6395,36 +6396,35 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
       const { promise, resolve, reject } = Promise.withResolvers<void>();
       let wire = "";
       let ended = false;
-      let firstResponseSeen = false;
+      let destroyed = false;
+      let observed = 0;
       clientSide.on("error", reject);
       clientSide.on("close", () => reject(new Error("the connection closed before the server ended it")));
       clientSide.on("end", () => {
         ended = true;
+        // Read in this listener: a side that has ended in both directions destroys itself right after it.
+        destroyed = serverSide.destroyed;
         resolve();
       });
       clientSide.on("data", chunk => {
         wire += chunk;
         const { responses, complete } = splitResponses(wire);
-        if (!complete) return;
-        if (responses.length >= 2) {
-          resolve();
-        } else if (!firstResponseSeen) {
-          firstResponseSeen = true;
-          // A server that ends the connection does so as the first response
-          // finishes, so its 'end' settles this before the immediate runs. One
-          // that keeps it open is sent a second request and answers it (or, once
-          // the client has half-closed, is simply observed to still be open).
-          setImmediate(() => {
-            if (ended) return;
-            if (peerEndsFirst) resolve();
-            else clientSide.write(requestFor("/2"));
-          });
-        }
+        if (!complete || responses.length === observed) return;
+        observed = responses.length;
+        // A server that ends the connection does so as the response finishes,
+        // so its 'end' settles this before the immediate runs. One that keeps
+        // it open is sent a second request and answers it (or, once the client
+        // has half-closed, is simply observed to still be open).
+        setImmediate(() => {
+          if (ended) return;
+          if (peerEndsFirst || observed >= 2) resolve();
+          else clientSide.write(requestFor("/2"));
+        });
       });
       if (peerEndsFirst) clientSide.end(requestFor("/1"));
       else clientSide.write(requestFor("/1"));
       await promise;
-      return { responses: splitResponses(wire).responses, ended, served };
+      return { responses: splitResponses(wire).responses, ended, destroyed, served };
     } finally {
       clientSide.destroy();
       serverSide.destroy();
@@ -6435,7 +6435,12 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
     res.end("served");
   }
   const answered = (connection: string[], body = "served"): WireResponse => ({ connection, body });
-  const ends = (response: WireResponse): Outcome => ({ responses: [response], ended: true, served: ["/1"] });
+  const ends = (response: WireResponse): Outcome => ({
+    responses: [response],
+    ended: true,
+    destroyed: false,
+    served: ["/1"],
+  });
   const closes = ends(answered(["close"]));
   const closesAdvertisingKeepAlive = ends(answered(["keep-alive"]));
   let manyOtherHeaders = "";
@@ -6522,6 +6527,7 @@ describe("connectionListener closes the connection like Node's resOnFinish", () 
       expected: {
         responses: [answered(["keep-alive"]), answered(["keep-alive"])],
         ended: false,
+        destroyed: false,
         served: ["/1", "/2"],
       },
     },

@@ -198,6 +198,30 @@ async function downloadPacker(): Promise<string> {
   return packer;
 }
 
+/** Whether what Packer printed says Azure would not create the VM for want of cores. */
+export function isQuotaRefusal(output: string): boolean {
+  return output.includes("QuotaExceeded");
+}
+
+/**
+ * A push cancels the branch's build and starts another at once. The cancelled
+ * bake's VM keeps its cores until Packer has deleted it, which takes minutes,
+ * so the new bake finds the quota used up. Azure refuses before it creates
+ * anything, so asking again costs nothing, and a bake that fails takes every
+ * step that waits for its image with it.
+ */
+export async function untilQuotaAllows<T extends { refusedForQuota: boolean }>(
+  build: () => Promise<T>,
+  attempts: number,
+  wait: () => Promise<void>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const result = await build();
+    if (!result.refusedForQuota || attempt === attempts) return result;
+    await wait();
+  }
+}
+
 /**
  * Packer creates the VM, uploads the bake directory, runs bootstrap.ps1, runs
  * Sysprep and publishes to the gallery.
@@ -283,24 +307,40 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
   // Packer deletes the VM, disk and network it created when it is
   // interrupted, but only if the signal reaches it and it is given the time:
   // run() does not forward signals, so this spawns it directly.
-  console.log(`[packer] Baking ${name}`);
-  const child = spawn(packer, args, { stdio: "inherit" });
-  let cancelled = false;
-  const forward = (signal: NodeJS.Signals) => {
-    cancelled = true;
-    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
-    child.kill(signal);
+  const build = async () => {
+    console.log(`[packer] Baking ${name}`);
+    const child = spawn(packer, args, { stdio: ["inherit", "pipe", "inherit"] });
+    let refusedForQuota = false;
+    let recent = ""; // with the end of the chunk before, which may have the start of the word
+    child.stdout.on("data", (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      recent = recent.slice(-32) + chunk.toString();
+      refusedForQuota ||= isQuotaRefusal(recent);
+    });
+    let cancelled = false;
+    const forward = (signal: NodeJS.Signals) => {
+      cancelled = true;
+      console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
+      child.kill(signal);
+    };
+    process.on("SIGINT", forward);
+    process.on("SIGTERM", forward);
+    const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(done =>
+      child.on("close", (c, s) => done([c, s])),
+    );
+    process.off("SIGINT", forward);
+    process.off("SIGTERM", forward);
+    if (cancelled) {
+      process.exit(1);
+    }
+    return { code, signal, refusedForQuota: code !== 0 && refusedForQuota };
   };
-  process.on("SIGINT", forward);
-  process.on("SIGTERM", forward);
-  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(done =>
-    child.on("close", (c, s) => done([c, s])),
-  );
-  process.off("SIGINT", forward);
-  process.off("SIGTERM", forward);
-  if (cancelled) {
-    process.exit(1);
-  }
+  const { code, signal } = await untilQuotaAllows(build, 10, async () => {
+    console.log(
+      "[packer] No cores free for the bake's VM. A cancelled bake may be releasing its own: waiting 2 minutes",
+    );
+    await new Promise(done => setTimeout(done, 2 * 60_000));
+  });
   if (code !== 0) {
     throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
   }

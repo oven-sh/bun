@@ -24,7 +24,7 @@
  * An aarch64 image ends with an ad-hoc Apple code signature (tools/apple_sign.ts).
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MEMORY_FUNCTIONS,
@@ -43,10 +43,30 @@ import { BuildError, type GitSource, fetchGit, run, sha256File } from "./run.ts"
 import { cmakeToolchain } from "./sysroot.ts";
 
 /**
- * mi_new, mi_new_n and mi_mallocn hand the default heap of the thread to mi_theap_malloc, which does not
- * take the NULL that a thread has there before its first allocation in the pthreads model.
+ * What the image changes in mimalloc: the files patches/mimalloc/portable-* of the repository, which bun's
+ * own build of the image applies too (scripts/build/deps/mimalloc.ts). They are applied in the order in
+ * which that script names them, and it has to name every one of them: the two builds link one allocator.
  */
-const MIMALLOC_PATCH = join(TREE, "patches", "mimalloc-theap-null-in-new.diff");
+export function mimallocPatches(): string[] {
+  const dir = join(REPOSITORY, "patches", "mimalloc");
+  const script = join(REPOSITORY, "scripts", "build", "deps", "mimalloc.ts");
+  if (!existsSync(dir) || !existsSync(script)) {
+    throw new BuildError(`${dir} or ${script} is not there: build.ts has to run from bun's repository`);
+  }
+  const files = readdirSync(dir)
+    .filter(name => name.startsWith("portable-"))
+    .sort();
+  const named = [...readFileSync(script, "utf8").matchAll(/"patches\/mimalloc\/(portable-[^"]+)"/g)].map(
+    match => match[1]!,
+  );
+  if (files.length === 0 || [...named].sort().join() !== files.join()) {
+    throw new BuildError(
+      `${dir} has ${files.join(", ") || "no file portable-*"}, ${script} names ${named.join(", ") || "none"}`,
+      { hint: "both builds of the image apply the same patches of mimalloc" },
+    );
+  }
+  return named.map(name => join(dir, name));
+}
 
 /** aarch64: the list of registers of JavaScriptCore that keeps x18 free can be asked for by a definition. */
 const RESERVE_X18_PATCH = join(TREE, "patches", "webkit-arm64-registers-reserve-x18.diff");
@@ -141,11 +161,12 @@ function tlsModel(): string {
 // mimalloc
 // ───────────────────────────────────────────────────────────────────────────
 
-function mimallocObject(ctx: Context): string {
+export function mimallocObject(ctx: Context): string {
   return inOut(ctx, "build", `mimalloc-${tlsModel()}`, "mimalloc.o");
 }
 
 function mimalloc(ctx: Context, before: string): Step {
+  const patches = mimallocPatches();
   const source: GitSource = {
     url: "https://github.com/oven-sh/mimalloc",
     urlVariable: "MIMALLOC_GIT",
@@ -196,11 +217,11 @@ function mimalloc(ctx: Context, before: string): Step {
   const object = mimallocObject(ctx);
   return {
     name: `mimalloc-${tlsModel()}`,
-    inputs: [before, source.commit, sha256File(MIMALLOC_PATCH), flags],
+    inputs: [before, source.commit, patches.map(sha256File), flags],
     outputs: [object],
     make() {
       const dir = inOut(ctx, "src", "mimalloc");
-      fetchGit("mimalloc", source, dir, [MIMALLOC_PATCH], inOut(ctx, "logs"));
+      fetchGit("mimalloc", source, dir, patches, inOut(ctx, "logs"));
       mkdirSync(join(object, ".."), { recursive: true });
       run(
         [tool(ctx, "clang++"), ...flags, `-I${join(dir, "include")}`, "-c", join(dir, "src", "static.c"), "-o", object],

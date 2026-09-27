@@ -14,6 +14,16 @@ import type { Dependency, DirectBuild } from "../source.ts";
 
 const MIMALLOC_COMMIT = "eab09015a5850ae18fc43ccfaa5bbe8272992314";
 
+/**
+ * What the portable image changes in mimalloc. misctools/portable/steps/jsc.ts reads the names from this
+ * file and applies the same files in the same order: both builds of the image link one allocator.
+ *
+ * theap-null-in-new: in the pthread-key TLS model (below) the default heap of a thread that has not
+ * allocated yet is NULL, and mi_new/mi_new_n/mi_mallocn hand it to mi_theap_malloc, which does not accept
+ * NULL.
+ */
+const PORTABLE_PATCHES = ["patches/mimalloc/portable-theap-null-in-new.patch"];
+
 export const mimalloc: Dependency = {
   name: "mimalloc",
   versionMacro: "MIMALLOC",
@@ -24,9 +34,7 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
-  // Portable: in the pthread-key TLS model (below) the default heap of a thread that has not allocated yet is
-  // NULL, and mi_new/mi_new_n/mi_mallocn hand it to mi_theap_malloc, which does not accept NULL.
-  patches: cfg => (cfg.portable ? ["patches/mimalloc/portable-theap-null-in-new.patch"] : []),
+  patches: cfg => (cfg.portable ? PORTABLE_PATCHES : []),
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───

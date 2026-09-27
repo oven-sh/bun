@@ -25,9 +25,9 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
-/// How long a byte-type pipe is still read after [`shutdown`], with nothing
-/// arriving, before it is closed: libuv's `eof_timeout` (`src/win/pipe.c`),
-/// which is what `socket.end()` does to a named pipe in Node.
+/// How long a pipe is still read after [`shutdown`], with nothing arriving,
+/// before it is closed: libuv's `eof_timeout` (`src/win/pipe.c`), which is
+/// what `socket.end()` does to a named pipe in Node.
 ///
 /// A named pipe has one state for both directions, so the other end cannot be
 /// told that writing is over while this end stays open to read: all it can see
@@ -47,7 +47,10 @@ pub(crate) enum EndOfWrite {
     /// Waiting to hear that the other end has read everything.
     Flushing,
     /// A message-type pipe: the other end has been sent the zero-length
-    /// message that means the end of writing. It closes when it is done.
+    /// message that means the end of writing, and closes when it is done. That
+    /// meaning is a convention (go-winio's, .NET's) which not every server
+    /// knows, and one that does not waits for this end to close: so this is
+    /// [`Idle`](Self::Idle) too, unless the owner asked for a half-open pipe.
     Told,
     /// A byte-type pipe, or a HANDLE that cannot be asked whether the other
     /// end has read everything: closed once nothing has arrived for
@@ -82,10 +85,14 @@ pub(crate) struct WindowsNamedPipe {
     pub(crate) flags: Cell<Flags>,
 
     pub(crate) end_of_write: Cell<EndOfWrite>,
-    /// Armed in [`EndOfWrite::Idle`] while the pipe is being read.
+    /// Armed while the pipe [`closes_when_idle`](Self::closes_when_idle) and
+    /// is being read.
     pub(crate) end_of_write_timer: JsCell<EventLoopTimer>,
     /// The other end sent its end-of-write message.
     pub(crate) peer_ended_writing: Cell<bool>,
+    /// `allowHalfOpen`: once told of the end of writing, the other end has as
+    /// long as it likes.
+    stays_half_open: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(WindowsNamedPipe;
@@ -324,10 +331,20 @@ impl WindowsNamedPipe {
             self.end_of_write.set(EndOfWrite::Told);
             let root: *mut Self = self.root_ptr();
             let _ = self.with_pipe(|pipe| pipe.write_end_marker(root, Self::on_end_marker_written));
-            return;
+        } else {
+            self.end_of_write.set(EndOfWrite::Idle);
         }
-        self.end_of_write.set(EndOfWrite::Idle);
         self.arm_end_of_write_timer();
+    }
+
+    /// Whether the pipe is closed once nothing has arrived for
+    /// [`END_OF_WRITE_IDLE_MS`].
+    fn closes_when_idle(&self) -> bool {
+        match self.end_of_write.get() {
+            EndOfWrite::Idle => true,
+            EndOfWrite::Told => !self.stays_half_open.get(),
+            EndOfWrite::Open | EndOfWrite::Writing | EndOfWrite::Flushing => false,
+        }
     }
 
     /// # Safety
@@ -346,10 +363,10 @@ impl WindowsNamedPipe {
     /// owner is gone.
     unsafe fn on_end_marker_written(_this: *mut Self, _written: bun_sys::Result<usize>) {}
 
-    /// (Re)start the idle timer of [`EndOfWrite::Idle`]. It runs only while
-    /// the pipe is being read: a paused pipe is not closed under its owner.
+    /// (Re)start the idle timer. It runs only while the pipe is being read: a
+    /// paused pipe is not closed under its owner.
     fn arm_end_of_write_timer(&self) {
-        if self.end_of_write.get() != EndOfWrite::Idle {
+        if !self.closes_when_idle() {
             return;
         }
         self.cancel_end_of_write_timer();
@@ -375,16 +392,16 @@ impl WindowsNamedPipe {
         }
     }
 
-    /// Nothing arrived for [`END_OF_WRITE_IDLE_MS`]: close, which is the only
-    /// end of stream the other end of a byte-type pipe can see. The owner
-    /// hears `on_end` first, as it does when the other end closes.
+    /// Nothing arrived for [`END_OF_WRITE_IDLE_MS`]: close, which is the one
+    /// end of stream every server can see. The owner hears `on_end` first, as
+    /// it does when the other end closes.
     pub(crate) fn on_end_of_write_idle(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onEndOfWriteIdle");
         self.end_of_write_timer.with_mut(|t| {
             t.state = EventLoopTimerState::FIRED;
             t.heap = Default::default();
         });
-        if self.end_of_write.get() != EndOfWrite::Idle || self.flags.get().is_closed() {
+        if !self.closes_when_idle() || self.flags.get().is_closed() {
             return;
         }
         // A read that finished in the kernel is delivered next: data re-arms
@@ -619,7 +636,12 @@ impl WindowsNamedPipe {
                 EventLoopTimerTag::WindowsNamedPipeEndOfWrite,
             )),
             peer_ended_writing: Cell::new(false),
+            stays_half_open: Cell::new(false),
         }
+    }
+
+    pub(crate) fn set_stays_half_open(&self, stays_half_open: bool) {
+        self.stays_half_open.set(stays_half_open);
     }
 
     pub(crate) fn r#ref(&self) {

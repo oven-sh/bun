@@ -1149,6 +1149,7 @@ impl Inner {
         /// `FILE_PIPE_LOCAL_INFORMATION`, whose first field is the pipe's type.
         const FILE_PIPE_LOCAL_INFORMATION_CLASS: win::FILE_INFORMATION_CLASS =
             win::FILE_INFORMATION_CLASS(24);
+        /// One bit of it: `FILE_PIPE_REJECT_REMOTE_CLIENTS` is another.
         const FILE_PIPE_MESSAGE_TYPE: u32 = 1;
         // SAFETY: caller contract; the out-parameters are live locals of the
         // class's size (ten `ULONG`s).
@@ -1164,7 +1165,7 @@ impl Inner {
                     FILE_PIPE_LOCAL_INFORMATION_CLASS,
                 );
                 (*this).flags.insert(Flags::TYPE_KNOWN);
-                if status == win::NTSTATUS::SUCCESS && info[0] == FILE_PIPE_MESSAGE_TYPE {
+                if status == win::NTSTATUS::SUCCESS && info[0] & FILE_PIPE_MESSAGE_TYPE != 0 {
                     (*this).flags.insert(Flags::MESSAGE_TYPE);
                 }
             }

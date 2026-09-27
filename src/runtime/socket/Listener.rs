@@ -1424,6 +1424,8 @@ impl Listener {
                             return Ok(promise_value);
                         }
                     };
+                    // SAFETY: the pipe of the context just made, which is live.
+                    unsafe { &*named_pipe }.set_stays_half_open(socket_config.allow_half_open);
                     tcp_ref.socket.set(uws::NewSocketHandler {
                         socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                     });

@@ -3234,6 +3234,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
         } else {
+            // node:net makes every native socket half-open and keeps the
+            // user's `allowHalfOpen` to itself.
+            #[cfg(windows)]
+            if let uws::InternalSocket::Pipe(pipe) = this.socket.get().socket
+                && let [_, stays_half_open] = callframe.arguments_as_array::<2>()
+                && stays_half_open.is_boolean()
+            {
+                // SAFETY: a socket's pipe is live while the socket refers to it.
+                unsafe { &*pipe.cast::<super::windows_named_pipe::WindowsNamedPipe>() }
+                    .set_stays_half_open(stays_half_open.to_boolean());
+            }
             this.socket.get().shutdown();
         }
 

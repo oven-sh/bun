@@ -1,10 +1,13 @@
 // A message-type named pipe server made of blocking Win32 calls, for node-net.test.ts.
-// argv: <pipe name> <"reply-after-end" | "disconnect-after-end" | "end-first" | "end-then-close">.
+// argv: <pipe name> <"reply-after-end" | "disconnect-after-end" | "ignore-end" | "end-first" | "end-then-close">
+//       <"plain" | "reject-remote">.
 // Prints one line per thing it sees.
 import { dlopen, ptr } from "bun:ffi";
 
 const PIPE_ACCESS_DUPLEX = 3;
 const PIPE_TYPE_MESSAGE = 4;
+// go-winio (the Docker engine's and Podman's pipes) and mpv set it on every pipe.
+const PIPE_REJECT_REMOTE_CLIENTS = 8;
 
 const { CreateNamedPipeW, ConnectNamedPipe, DisconnectNamedPipe, ReadFile, WriteFile, FlushFileBuffers, CloseHandle } =
   dlopen("kernel32.dll", {
@@ -17,11 +20,11 @@ const { CreateNamedPipeW, ConnectNamedPipe, DisconnectNamedPipe, ReadFile, Write
     CloseHandle: { args: ["i64"], returns: "i32" },
   }).symbols;
 
-const [name, scenario] = process.argv.slice(2);
+const [name, scenario, flags] = process.argv.slice(2);
 const handle = CreateNamedPipeW(
   ptr(Buffer.from(name + "\0", "utf16le")),
   PIPE_ACCESS_DUPLEX,
-  PIPE_TYPE_MESSAGE,
+  PIPE_TYPE_MESSAGE | (flags === "reject-remote" ? PIPE_REJECT_REMOTE_CLIENTS : 0),
   1,
   4096,
   4096,
@@ -57,9 +60,17 @@ function readUntilEndOrClose() {
 
 if (scenario === "reply-after-end") {
   readUntilEndOrClose();
-  // Longer than the 50 ms for which a byte-type pipe is still read after end().
+  // Longer than the 50 ms for which a pipe that is not to stay half-open is still read after end().
   Bun.sleepSync(150);
   console.log("wrote:" + write("late reply"));
+} else if (scenario === "ignore-end") {
+  // What mpv's IPC server does: a read of no bytes is nothing to it, and the client closing is the end.
+  while (true) {
+    const message = read();
+    if (message === null) break;
+    if (message !== "") console.log("data:" + message);
+  }
+  console.log("closed");
 } else if (scenario === "disconnect-after-end") {
   // What Microsoft's "Multithreaded Pipe Server" sample does when a read returns no bytes.
   readUntilEndOrClose();

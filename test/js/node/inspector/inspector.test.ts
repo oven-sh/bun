@@ -601,12 +601,14 @@ function insideTheCall(call) {
   globalThis.insideTheCall = false;
 }
 
-// close() comes first: the debugger thread then frees the sockets of the
-// frontends that left. Node waits in it for the frontends to leave, so the
-// test closes them when it has read the report.
+// Bun: close() comes first, the debugger thread then frees the sockets of the
+// frontends that left. Node v26.3.0 can abort in close() while a frontend is
+// attached ("pure virtual method called"), so it only exits. Its exit waits
+// until every frontend has left: the test closes its frontends when it has
+// read the report.
 function finish(more = {}) {
   writeSync(1, JSON.stringify({ ranInsideTheCall: ranInsideTheCall.sort(), ...more }) + "\\n");
-  inspector.close();
+  if (process.versions.bun) inspector.close();
   process.exit(0);
 }
 `;
@@ -805,9 +807,6 @@ describe.each([
   ["node", nodeExe()],
 ])("the wait for a debugger (%s)", (runtime, exe) => {
   const inspectedTest = test.concurrent.skipIf(!exe);
-  // Node v26.3.0 can end with a segmentation fault after it has reported, so
-  // its exit code is not a part of what the cases pin.
-  const exitCode = runtime === "node" ? expect.any(Number) : 0;
   const spawn = (fixture: string, options?: Parameters<typeof spawnInspected>[2]) =>
     spawnInspected(exe!, fixture, options);
 
@@ -839,7 +838,7 @@ finish({ evaluatedByClient: globalThis.evaluatedByClient });
 
       expect(await inspected.finished()).toEqual({
         reported: { ...nothingRan, evaluatedByClient: "inside the call: true" },
-        exitCode,
+        exitCode: 0,
       });
     });
   });
@@ -894,7 +893,7 @@ finish({ beforeItReturned: order.slice(0, returned), afterItReturned: order.slic
         beforeItReturned: ["first data"],
         afterItReturned: ["microtask", "second data", "timer"],
       },
-      exitCode,
+      exitCode: 0,
     });
   });
 
@@ -929,7 +928,7 @@ finish({ afterTheStatement });
 
     expect(await inspected.finished()).toEqual({
       reported: { ...nothingRan, afterTheStatement: true },
-      exitCode,
+      exitCode: 0,
     });
   });
 
@@ -958,7 +957,7 @@ finish({ afterTheStatement });
 
     expect(await inspected.finished()).toEqual({
       reported: { ...nothingRan, afterTheStatement: true },
-      exitCode,
+      exitCode: 0,
     });
   });
 
@@ -973,7 +972,7 @@ finish();
     frontend.send("Runtime.runIfWaitingForDebugger");
     await frontend.close();
 
-    expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode });
+    expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode: 0 });
   });
 
   // The resume arrives while an expression of the same client runs, and the
@@ -1005,7 +1004,7 @@ finish({ evaluated: globalThis.evaluated });
 
     expect(await inspected.finished()).toEqual({
       reported: { ...nothingRan, evaluated: ["slow expression"] },
-      exitCode,
+      exitCode: 0,
     });
   });
 
@@ -1026,6 +1025,10 @@ finish();
           "helper.mjs": `
 const ws = new WebSocket(process.argv[2]);
 ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+// The program does not exit on Node while a frontend is attached.
+ws.onmessage = event => {
+  if (JSON.parse(event.data).id === 1) ws.close();
+};
 ws.onclose = () => process.exit(0);
 ws.onerror = () => process.exit(1);
 `,
@@ -1033,7 +1036,7 @@ ws.onerror = () => process.exit(1);
       },
     );
 
-    expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode });
+    expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode: 0 });
   });
 
   // A call inside the wait returns at once, and the second expression runs
@@ -1063,7 +1066,7 @@ finish({ evaluated: globalThis.evaluated });
 
     expect(await inspected.finished()).toEqual({
       reported: { ...nothingRan, evaluated: ["the nested call", "the next expression"] },
-      exitCode,
+      exitCode: 0,
     });
   });
 
@@ -1092,7 +1095,7 @@ finish({ evaluatedByClient: globalThis.evaluatedByClient });
 
       expect(await inspected.finished()).toEqual({
         reported: { ...nothingRan, evaluatedByClient: "inside the call: true" },
-        exitCode,
+        exitCode: 0,
       });
     },
   );
@@ -1137,7 +1140,7 @@ finish({ evaluated: globalThis.evaluated });
 
     expect(await inspected.finished()).toEqual({
       reported: { ...nothingRan, evaluated: ["the nested call", "the next expression"] },
-      exitCode,
+      exitCode: 0,
     });
   });
 });

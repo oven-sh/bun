@@ -1266,6 +1266,8 @@ describe("concurrent terminals on one Image", () => {
         const secrets = [16, 64, 100].map(s => bmp(s, s, markPixels));
         // The marker as the RGBA bytes an output would carry.
         const want = Buffer.from([...MARK].map((c, i) => (i % 4 === 3 ? 255 : c))).subarray(0, 12);
+        // 16 pixels of the byte ASAN fills a new allocation with: canvas that no decode wrote.
+        const blank = Buffer.alloc(64, Number(process.env.WEBP_RACE_FILL));
 
         // One 16x16 and one 200x211 file per bitstream: VP8L and VP8 size
         // their output in different branches of the decoder.
@@ -1282,14 +1284,15 @@ describe("concurrent terminals on one Image", () => {
         }
         const buf = new Uint8Array(n);
 
-        let outputs = 0, leaked = 0, rejected = 0, rounds = 0;
-        // Every round is an independent try. Keep going past the minimum only
-        // while no decode has seen the rewrite at all, so a box where the
-        // writer and the pool rarely overlap neither passes on "nothing
-        // raced" nor fails for want of tries.
+        let outputs = 0, leaked = 0, unwritten = 0, rejected = 0, rounds = 0;
+        // Every round is an independent try. Keep going past the minimum
+        // while few decodes have seen the rewrite, so a box where the writer
+        // and the pool rarely overlap neither passes on "nothing raced" nor
+        // fails for want of tries. About one in four of those decodes
+        // completes as the small picture, which is the case the fill finds.
         const minRounds = Number(process.env.WEBP_RACE_ROUNDS);
         const withMarker = process.env.WEBP_RACE_MARKER === "1";
-        for (let round = 0; round < minRounds * 8 && (round < minRounds || rejected === 0); round++) {
+        for (let round = 0; round < minRounds * 8 && (round < minRounds || rejected < 16); round++) {
           rounds++;
           const [small, large] = pairs[round % pairs.length];
           buf.set(large);
@@ -1326,6 +1329,7 @@ describe("concurrent terminals on one Image", () => {
             if (!out) continue;
             outputs++;
             if (Buffer.from(out).includes(want)) leaked++;
+            if (Buffer.from(out).includes(blank)) unwritten++;
           }
         }
 
@@ -1336,12 +1340,25 @@ describe("concurrent terminals on one Image", () => {
           const png = Buffer.from(await new Bun.Image(buf).png().bytes());
           calm.push(png.readUInt32BE(16) + "x" + png.readUInt32BE(20));
         }
-        console.log(JSON.stringify({ rounds, outputs, leaked, rejected, calm }));
+        console.log(JSON.stringify({ rounds, outputs, leaked, unwritten, rejected, calm }));
       `,
       ],
       // ASAN stops on the over-read itself, in the first rounds. Without it the
       // marker is the only witness, and it takes more tries to catch.
-      env: { ...bunEnv, WEBP_RACE_ROUNDS: isASAN || isDebug ? "3" : "12", WEBP_RACE_MARKER: isASAN ? "0" : "1" },
+      //
+      // A decode of the small picture into the canvas of the large one is no
+      // over-read: it completes, and leaves most of the canvas as the
+      // allocator gave it. Under ASAN that is the fill byte, so an output
+      // that carries a run of it was accepted with canvas nothing wrote.
+      env: {
+        ...bunEnv,
+        WEBP_RACE_ROUNDS: isASAN || isDebug ? "6" : "12",
+        WEBP_RACE_MARKER: isASAN ? "0" : "1",
+        WEBP_RACE_FILL: "167",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "malloc_fill_byte=167", "max_malloc_fill_size=1073741824"]
+          .filter(Boolean)
+          .join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1349,9 +1366,10 @@ describe("concurrent terminals on one Image", () => {
     // A sanitizer stop on the over-read leaves no summary line behind.
     const summary = stdout.trim().split("\n").at(-1) ?? "";
     expect({ summary, stderr: stderr.slice(-3000), exitCode }).toMatchObject({ exitCode: 0 });
-    const { leaked, rejected, calm } = JSON.parse(summary);
-    expect({ leaked, sawTheRewrite: rejected > 0, calm }).toEqual({
+    const { leaked, unwritten, rejected, calm } = JSON.parse(summary);
+    expect({ leaked, unwritten, sawTheRewrite: rejected > 0, calm }).toEqual({
       leaked: 0,
+      unwritten: 0,
       sawTheRewrite: true,
       calm: ["200x211", "200x211"],
     });
@@ -1478,6 +1496,12 @@ describe("concurrent terminals on one Image", () => {
 const bareWebp = Buffer.from(
   await new Bun.Image(makePng(32, 32, () => [9, 9, 9, 255])).webp({ lossless: true }).bytes(),
 );
+// A lossy picture with transparency: the encoder writes VP8X + ALPH + "VP8 ".
+const lossyAlphaWebp = Buffer.from(
+  await new Bun.Image(makePng(32, 32, (x, y) => [x * 8, y * 8, 40, 100 + ((x * 7 + y * 3) % 100)]))
+    .webp({ quality: 80 })
+    .bytes(),
+);
 
 describe("WebP container walk", () => {
   const W = 32;
@@ -1512,6 +1536,24 @@ describe("WebP container walk", () => {
   const payload = bare.subarray(20, 20 + bare.readUInt32LE(16));
   // An odd-length picture payload, for the pad-byte rules.
   const oddImage = Buffer.concat([payload, Buffer.alloc((payload.length & 1) ^ 1)]);
+  /** One chunk of a file the encoder wrote, header and pad byte included. */
+  function chunkOf(file: Buffer, tag: string): Buffer {
+    for (let at = 12; at + 8 <= file.length; ) {
+      const size = file.readUInt32LE(at + 4);
+      const end = at + 8 + size + (size & 1);
+      if (file.toString("latin1", at, at + 4) === tag) return file.subarray(at, end);
+      at = end;
+    }
+    throw new Error(`no ${tag} chunk`);
+  }
+  const alph = chunkOf(lossyAlphaWebp, "ALPH");
+  const lossy = chunkOf(lossyAlphaWebp, "VP8 ");
+  // Stands for a chunk that holds no alpha plane: nothing decodes it after the picture.
+  const stray = chunk("ALPH", profile(8));
+  const anim = chunk("ANIM", Buffer.alloc(6));
+  /** A frame of an animation: 16 bytes of position, size and timing, then the frame's own chunks. */
+  const frame = (parts: Uint8Array[], w = W, h = H) =>
+    chunk("ANMF", Buffer.concat([le24(0), le24(0), le24(w - 1), le24(h - 1), le24(100), Buffer.alloc(1), ...parts]));
 
   const cases: [name: string, file: Uint8Array, want: number | "none" | "rejects"][] = [
     ["no container", bare, "none"],
@@ -1584,6 +1626,130 @@ describe("WebP container walk", () => {
     ],
     ["VP8X and ICCP with no picture", riff([vp8x(ICCP), chunk("ICCP", profile(512))]), "rejects"],
     ["a VP8X header alone", riff([vp8x(ICCP)]), "rejects"],
+
+    // An alpha plane belongs right before a lossy picture.
+    ["a lossy picture with its alpha plane", riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, lossy]), 512],
+    ["the same without the alpha flag", riff([vp8x(ICCP), chunk("ICCP", profile(512)), alph, lossy]), 512],
+    [
+      "ICCP after a picture with its alpha plane",
+      riff([vp8x(ICCP | ALPHA), alph, lossy, chunk("ICCP", profile(512))]),
+      512,
+    ],
+    [
+      "an alpha plane before a lossless picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, image]),
+      "none",
+    ],
+    [
+      "two alpha planes before the picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, alph, lossy]),
+      "none",
+    ],
+    [
+      "a chunk between the alpha plane and the picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), alph, chunk("XTRA", profile(4)), lossy]),
+      "none",
+    ],
+    [
+      "ICCP between the alpha plane and the picture",
+      riff([vp8x(ICCP | ALPHA), alph, chunk("ICCP", profile(512)), lossy]),
+      "none",
+    ],
+    // After the picture it is dropped, and an error when the container flags alpha.
+    [
+      "an alpha plane after a lossy picture",
+      riff([vp8x(ICCP | ALPHA), chunk("ICCP", profile(512)), lossy, stray]),
+      "none",
+    ],
+    [
+      "an alpha plane after the picture, alpha flag clear",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, stray]),
+      512,
+    ],
+    [
+      "ICCP after an alpha plane that follows the picture",
+      riff([vp8x(ICCP), image, stray, chunk("ICCP", profile(512))]),
+      512,
+    ],
+    [
+      "two alpha planes after the picture",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, stray, stray]),
+      "none",
+    ],
+    [
+      "a chunk between the picture and an alpha plane",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, chunk("XTRA", profile(4)), stray]),
+      "none",
+    ],
+
+    // ANIM after the picture is read and ignored: it needs its 6 bytes, pad byte counted.
+    ["an ANIM chunk after the picture", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim]), 512],
+    [
+      "an ANIM chunk of 5 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, chunk("ANIM", profile(5))]),
+      512,
+    ],
+    [
+      "an ANIM chunk of 4 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, chunk("ANIM", profile(4))]),
+      "none",
+    ],
+
+    // A frame in a still container is parsed and dropped. One that does not parse is an error.
+    ["a frame after the picture", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([image])]), 512],
+    [
+      "a frame with its alpha plane",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph, lossy])]),
+      512,
+    ],
+    ["two frames", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([image]), frame([lossy])]), 512],
+    [
+      "a frame that holds an unknown chunk",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([chunk("XTRA", profile(10))])]),
+      512,
+    ],
+    [
+      "a frame with no ANIM chunk before it",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, frame([image])]),
+      "none",
+    ],
+    [
+      "a frame chunk shorter than its 16 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, chunk("ANMF", profile(12))]),
+      "none",
+    ],
+    [
+      "a frame chunk with nothing after its 16 bytes",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([])]),
+      "none",
+    ],
+    [
+      "a frame of 65536 by 65536",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([image], 65536, 65536)]),
+      "none",
+    ],
+    [
+      "a frame whose picture has no header",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([chunk("VP8L", profile(8))])]),
+      "none",
+    ],
+    [
+      "a frame of a lossless picture after an alpha plane",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph, image])]),
+      "none",
+    ],
+    // The frame takes the picture that follows its chunk, which then ends before the frame does.
+    [
+      "a frame whose picture is outside its chunk",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph]), lossy]),
+      "none",
+    ],
+    // The walk goes on from the frame's last chunk, not from the end of the frame chunk.
+    [
+      "ICCP inside a frame chunk, after the frame's picture",
+      riff([vp8x(ICCP), image, anim, frame([image, chunk("ICCP", profile(64))])]),
+      64,
+    ],
   ];
 
   test.each(cases)("%s", async (_name, file, want) => {

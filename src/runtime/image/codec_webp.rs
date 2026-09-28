@@ -129,6 +129,8 @@ struct WebPDecoderConfig {
 }
 // SAFETY: integers, raw pointers and arrays of integers only; all-zero is valid.
 unsafe impl bun_core::Zeroable for WebPDecoderConfig {}
+// SAFETY: integers only; all-zero is valid.
+unsafe impl bun_core::Zeroable for WebPBitstreamFeatures {}
 
 // `WebPInitDecoderConfigInternal` clears `sizeof(WebPDecoderConfig)` bytes.
 #[cfg(target_pointer_width = "64")]
@@ -282,12 +284,15 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     })
 }
 
+const CHUNK_HEADER_SIZE: usize = 8;
+
 /// Reads each tag once. libwebp's demuxer re-reads them and dereferences NULL when one changed.
 fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
     const RIFF_HEADER_SIZE: usize = 12;
-    const CHUNK_HEADER_SIZE: usize = 8;
     const VP8X_CHUNK_SIZE: usize = 10;
     const ANIM_CHUNK_SIZE: usize = 6;
+    const ANMF_CHUNK_SIZE: usize = 16;
+    const MAX_IMAGE_AREA: u64 = 1 << 32;
 
     if bytes.len() < RIFF_HEADER_SIZE || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
         return None;
@@ -321,32 +326,43 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
                 }
                 seen_anim = true;
             }
-            // With the animation flag clear, the demuxer's answer depends on the frame's contents.
-            b"ANMF" => return None,
+            // The animation flag is clear, so the demuxer parses the frame and keeps none of it.
+            b"ANMF" => {
+                let padded = payload.len() + (payload.len() & 1);
+                if !seen_anim || padded < ANMF_CHUNK_SIZE {
+                    return None;
+                }
+                let le24 = |at: usize| {
+                    u64::from(payload[at])
+                        | (u64::from(payload[at + 1]) << 8)
+                        | (u64::from(payload[at + 2]) << 16)
+                };
+                if (1 + le24(6)) * (1 + le24(9)) >= MAX_IMAGE_AREA {
+                    return None;
+                }
+                let body = &rest[CHUNK_HEADER_SIZE + ANMF_CHUNK_SIZE..];
+                let frame = split_frame(body)?;
+                let taken = body.len() - frame.after.len();
+                if taken > padded - ANMF_CHUNK_SIZE
+                    || frame.picture.is_some_and(|p| !has_picture_header(p))
+                {
+                    return None;
+                }
+                // Not the chunk's end: the demuxer goes on from the last chunk the frame took.
+                after = frame.after;
+            }
             // The one picture: `VP8L`, or `VP8 ` with its alpha plane before it.
             b"ALPH" | b"VP8 " | b"VP8L" => {
                 if seen_picture || seen_anim {
                     return None;
                 }
-                let mut alpha_before = false;
-                if tag == *b"ALPH" {
-                    let ((next, _), after_picture) = split_chunk(after)?;
-                    if next != *b"VP8 " {
-                        return None;
-                    }
-                    after = after_picture;
-                    alpha_before = true;
-                }
+                let frame = split_frame(rest)?;
+                frame.picture?;
                 // An alpha plane after the picture is an error only when the container flags alpha.
-                if !alpha_before
-                    && let Some(((next, _), after_alpha)) = split_chunk(after)
-                    && next == *b"ALPH"
-                {
-                    if flags & ALPHA_FLAG != 0 {
-                        return None;
-                    }
-                    after = after_alpha;
+                if frame.alpha_after && flags & ALPHA_FLAG != 0 {
+                    return None;
                 }
+                after = frame.after;
                 seen_picture = true;
             }
             // The first one is the profile, whatever follows it.
@@ -363,13 +379,59 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
 
 /// One chunk off the front, or `None` when its header, payload or pad byte does not fit.
 fn split_chunk(rest: &[u8]) -> Option<(([u8; 4], &[u8]), &[u8])> {
-    let (header, body) = rest.split_at_checked(8)?;
+    let (header, body) = rest.split_at_checked(CHUNK_HEADER_SIZE)?;
     let tag: [u8; 4] = header[0..4].try_into().expect("infallible: size matches");
     let size =
         u32::from_le_bytes(header[4..8].try_into().expect("infallible: size matches")) as usize;
     let payload = body.get(..size)?;
     let next = body.get(size.checked_add(size & 1)?..)?;
     Some(((tag, payload), next))
+}
+
+struct Frame<'a> {
+    /// The `VP8 ` or `VP8L` chunk, header and pad byte included.
+    picture: Option<&'a [u8]>,
+    alpha_after: bool,
+    after: &'a [u8],
+}
+
+/// The chunks the demuxer takes as one frame (`StoreFrame`): one alpha plane and one picture.
+fn split_frame(mut rest: &[u8]) -> Option<Frame<'_>> {
+    let (mut alpha, mut alpha_after, mut picture) = (false, false, None);
+    loop {
+        let ((tag, _), next) = split_chunk(rest)?;
+        match &tag {
+            b"ALPH" if !alpha => (alpha, alpha_after) = (true, picture.is_some()),
+            b"VP8L" if alpha => return None,
+            b"VP8 " | b"VP8L" if picture.is_none() => {
+                picture = Some(&rest[..rest.len() - next.len()]);
+            }
+            _ => break,
+        }
+        rest = next;
+        if rest.is_empty() {
+            break;
+        }
+    }
+    Some(Frame {
+        picture,
+        alpha_after,
+        after: rest,
+    })
+}
+
+fn has_picture_header(chunk: &[u8]) -> bool {
+    let mut features: WebPBitstreamFeatures = bun_core::ffi::zeroed();
+    // SAFETY: chunk.ptr/len describe a valid readable slice; features is a valid out-param.
+    let status = unsafe {
+        WebPGetFeaturesInternal(
+            chunk.as_ptr(),
+            chunk.len(),
+            &raw mut features,
+            WEBP_DECODER_ABI_VERSION,
+        )
+    };
+    status == VP8_STATUS_OK
 }
 
 pub(crate) fn encode(

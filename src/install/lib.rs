@@ -404,6 +404,7 @@ impl RunCommand {
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// Basename of the shared `node` / `bun` shim directory (ASCII-only).
+    #[cfg(not(windows))]
     pub const BUN_NODE_DIR_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bun-node-debug"
     } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
@@ -723,11 +724,10 @@ impl RunCommand {
 
         let mut buf = bun_paths::w_path_buffer_pool::get();
 
-        // Running as a shim already (nested `--bun`): reuse its directory.
+        // Running as a shim already (nested `--bun`): reuse its directory for every tier.
+        let nested = Self::is_shim_dir(exe_dir);
         buf[..exe_dir.len()].copy_from_slice(exe_dir);
-        let len = if Self::ends_with_dir_name(exe_dir, Self::BESIDE_EXE_DIR_NAME)
-            || Self::ends_with_dir_name(exe_dir, Self::BUN_NODE_DIR_NAME)
-        {
+        let len = if nested {
             exe_dir.len()
         } else {
             Self::append_dir_name(&mut buf, exe_dir.len(), Self::BESIDE_EXE_DIR_NAME)?
@@ -743,16 +743,26 @@ impl RunCommand {
             Err(e) => e,
         };
 
-        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs into `buf`.
-        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
-        if temp_len == 0 || temp_len >= buf.len() {
-            return Err(beside_exe_err);
-        }
-        let mut temp_dir_len = temp_len;
-        while temp_dir_len > 0 && bun_paths::is_sep_any_t::<u16>(buf[temp_dir_len - 1]) {
-            temp_dir_len -= 1;
-        }
-        let len = Self::append_dir_name(&mut buf, temp_dir_len, Self::BUN_NODE_DIR_NAME)?;
+        let len = if nested {
+            len
+        } else {
+            // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs into `buf`.
+            let temp_len =
+                unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+            if temp_len == 0 || temp_len >= buf.len() {
+                return Err(beside_exe_err);
+            }
+            let mut temp_dir_len = temp_len;
+            while temp_dir_len > 0 && bun_paths::is_sep_any_t::<u16>(buf[temp_dir_len - 1]) {
+                temp_dir_len -= 1;
+            }
+            let mut name_buf = [0u8; Self::TEMP_SHIM_DIR_NAME_LEN];
+            Self::append_dir_name(
+                &mut buf,
+                temp_dir_len,
+                Self::temp_shim_dir_name(&mut name_buf, launched),
+            )?
+        };
         if Self::plant_windows_node_shims_in(
             &mut buf,
             len,
@@ -773,14 +783,53 @@ impl RunCommand {
         Ok(Self::windows_node_shim_at(&buf[..len], image))
     }
 
-    /// `path` ends with `\<name>` (ASCII, case-insensitive).
-    fn ends_with_dir_name(path: &[u16], name: &str) -> bool {
-        path.len() > name.len()
-            && bun_paths::is_sep_any_t::<u16>(path[path.len() - name.len() - 1])
-            && path[path.len() - name.len()..]
+    /// The last component of `path` is `bun-node` or `bun-node-<16 hex>`.
+    fn is_shim_dir(path: &[u16]) -> bool {
+        let start = path
+            .iter()
+            .rposition(|&c| bun_paths::is_sep_any_t::<u16>(c))
+            .map_or(0, |i| i + 1);
+        let name = &path[start..];
+        let prefix = if name.len() == Self::BESIDE_EXE_DIR_NAME.len() {
+            Self::BESIDE_EXE_DIR_NAME
+        } else if name.len() == Self::TEMP_SHIM_DIR_NAME_LEN {
+            Self::TEMP_SHIM_DIR_PREFIX
+        } else {
+            return false;
+        };
+        name[..prefix.len()]
+            .iter()
+            .zip(prefix.bytes())
+            .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&b))
+            && name[prefix.len()..]
                 .iter()
-                .zip(name.bytes())
-                .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&b))
+                .all(|&c| c < 0x80 && (c as u8).is_ascii_hexdigit())
+    }
+
+    const TEMP_SHIM_DIR_PREFIX: &'static str = "bun-node-";
+    /// `bun-node-` + 16 hex digits.
+    const TEMP_SHIM_DIR_NAME_LEN: usize = Self::TEMP_SHIM_DIR_PREFIX.len() + 16;
+
+    /// `bun-node-<hash of the launched exe's directory, ASCII folded>`: one name per install.
+    fn temp_shim_dir_name<'a>(
+        buf: &'a mut [u8; Self::TEMP_SHIM_DIR_NAME_LEN],
+        launched: &bun_core::WStr,
+    ) -> &'a str {
+        let prefix = Self::TEMP_SHIM_DIR_PREFIX.as_bytes();
+        let mut lowered = bun_paths::w_path_buffer_pool::get();
+        let path = bun_paths::resolve_path::dirname_w(launched);
+        let path_len = path.len().min(lowered.len());
+        for (dst, &c) in lowered[..path_len].iter_mut().zip(path) {
+            *dst = if c < 0x80 {
+                (c as u8).to_ascii_lowercase() as u16
+            } else {
+                c
+            };
+        }
+        let hash = bun_wyhash::hash_with_seed(0, bytemuck::cast_slice(&lowered[..path_len]));
+        buf[..prefix.len()].copy_from_slice(prefix);
+        bun_core::fmt::bytes_to_hex_lower(&hash.to_be_bytes(), &mut buf[prefix.len()..]);
+        core::str::from_utf8(buf).expect("prefix and hex digits are ASCII")
     }
 
     /// Appends `\<name>` to `buf[..dir_len]`, keeping room for `SHIM_NAME_ROOM`.
@@ -954,6 +1003,7 @@ impl RunCommand {
     }
 
     /// Makes the shim as `<dest>.<pid>.tmp`, then renames it over `<dest>`.
+    /// A `<dest>` a child still runs cannot be unlinked: it moves to `<dest>.old`.
     fn replace_windows_node_shim(
         buf: &mut [u16],
         dest_len: usize,
@@ -970,6 +1020,11 @@ impl RunCommand {
         dest[..dest_len].copy_from_slice(&buf[..dest_len]);
         dest[dest_len] = 0;
 
+        Self::sweep_old_windows_node_shims(bun_paths::resolve_path::dirname_w(&dest[..dest_len]));
+        let mut aside = bun_paths::w_path_buffer_pool::get();
+        let old = strings::w!(".old\0");
+        Self::with_suffix(&mut aside, &dest[..dest_len], old);
+
         let mut tmp_len = dest_len;
         buf[tmp_len] = b'.' as u16;
         tmp_len += 1;
@@ -978,6 +1033,7 @@ impl RunCommand {
             buf[tmp_len] = b as u16;
             tmp_len += 1;
         }
+        let pid_len = tmp_len;
         let suffix = strings::w!(".tmp\0");
         buf[tmp_len..][..suffix.len()].copy_from_slice(suffix);
         tmp_len += suffix.len() - 1;
@@ -993,16 +1049,109 @@ impl RunCommand {
             }
         }
         // SAFETY: both arguments are NUL-terminated wide strings.
-        if unsafe {
-            win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING)
-        } == 0
-        {
-            let err = bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::rename);
+        let replace = || unsafe {
+            if win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING)
+                != 0
+            {
+                Ok(())
+            } else {
+                Err(win::Win32Error::get())
+            }
+        };
+        let mut result = replace();
+        if let Err(win::Win32Error::ACCESS_DENIED | win::Win32Error::SHARING_VIOLATION) = result {
+            // SAFETY: both arguments are NUL-terminated wide strings.
+            let mut moved =
+                unsafe { win::kernel32::MoveFileExW(dest.as_ptr(), aside.as_ptr(), 0) != 0 };
+            if !moved && win::Win32Error::get() == win::Win32Error::ALREADY_EXISTS {
+                let old_len = Self::with_suffix(&mut aside, &buf[..pid_len], old);
+                let _ = bun_sys::unlink_w(WStr::from_buf(&aside[..], old_len));
+                // SAFETY: both arguments are NUL-terminated wide strings.
+                moved =
+                    unsafe { win::kernel32::MoveFileExW(dest.as_ptr(), aside.as_ptr(), 0) != 0 };
+            }
+            if moved {
+                result = replace();
+                if result.is_err() {
+                    // The new image is what is held (a scanner, say), not the stale one. Put it back.
+                    // SAFETY: both arguments are NUL-terminated wide strings.
+                    unsafe { win::kernel32::MoveFileExW(aside.as_ptr(), dest.as_ptr(), 0) };
+                }
+            }
+        }
+        if let Err(code) = result {
+            let err = bun_sys::Error::from_win32(code, bun_sys::Tag::rename);
             let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
             return Err(err);
         }
         buf[dest_len] = 0;
         Ok(())
+    }
+
+    /// `name` is `<shim>.old` or `<shim>.<pid>.old` for one of this code's shim names.
+    fn is_old_windows_node_shim(name: &[u16]) -> bool {
+        fn strip_ascii_suffix<'a>(name: &'a [u16], suffix: &[u8]) -> Option<&'a [u16]> {
+            let at = name.len().checked_sub(suffix.len())?;
+            name[at..]
+                .iter()
+                .zip(suffix)
+                .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(b))
+                .then(|| &name[..at])
+        }
+        let Some(mut stem) = strip_ascii_suffix(name, Self::OLD_SUFFIX) else {
+            return false;
+        };
+        let digits = stem
+            .iter()
+            .rev()
+            .take_while(|&&c| c < 0x80 && (c as u8).is_ascii_digit())
+            .count();
+        if digits > 0 && stem.len() > digits && stem[stem.len() - digits - 1] == b'.' as u16 {
+            stem = &stem[..stem.len() - digits - 1];
+        }
+        [b"node.exe".as_slice(), b"bun.exe"]
+            .iter()
+            .any(|shim| strip_ascii_suffix(stem, shim).is_some_and(<[u16]>::is_empty))
+    }
+
+    const OLD_SUFFIX: &'static [u8] = b".old";
+
+    /// Unlinks this code's `*.old` shims in `dir`. One a process still maps stays for the next sweep.
+    fn sweep_old_windows_node_shims(dir: &[u16]) {
+        use bun_core::WStr;
+
+        let Ok(fd) = bun_sys::open_dir_at_windows(
+            bun_sys::Fd::cwd(),
+            dir,
+            bun_sys::WindowsOpenDirOptions {
+                iterable: true,
+                ..Default::default()
+            },
+        ) else {
+            return;
+        };
+        let dir_fd = bun_sys::Dir::from_fd(fd);
+        let mut path = bun_paths::w_path_buffer_pool::get();
+        let mut iter = bun_sys::iterate_dir(dir_fd.fd());
+        while let Ok(Some(entry)) = iter.next() {
+            let name = entry.name.slice();
+            if !Self::is_old_windows_node_shim(name) || dir.len() + 1 + name.len() >= path.len() {
+                continue;
+            }
+            path[..dir.len()].copy_from_slice(dir);
+            path[dir.len()] = b'\\' as u16;
+            let len = dir.len() + 1 + name.len();
+            path[dir.len() + 1..len].copy_from_slice(name);
+            path[len] = 0;
+            let _ = bun_sys::unlink_w(WStr::from_buf(&path[..], len));
+        }
+    }
+
+    /// Writes `<base><suffix>` into `out` and returns its length without the NUL.
+    fn with_suffix(out: &mut [u16], base: &[u16], suffix: &[u16]) -> usize {
+        out[..base.len()].copy_from_slice(base);
+        out[base.len()..][..suffix.len()].copy_from_slice(suffix);
+        base.len() + suffix.len() - 1
     }
 
     fn windows_node_shim_at(dir: &[u16], image: &bun_core::WStr) -> WindowsNodeShim {

@@ -1125,6 +1125,45 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  // The executable lives outside the cwd's directory chain. A miss next to
+  // it falls back to the cwd.
+  itBundled("compile/ExecutableOutsideCwdFallsBackToCwd", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(req("dep-in-cwd-44053"));
+      `,
+    },
+    outfile: "../outside-44053-cwd/app",
+    runtimeFiles: {
+      "/node_modules/dep-in-cwd-44053/index.js": `module.exports = "cwd-only";`,
+    },
+    run: {
+      stdout: "cwd-only",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // A directory above both the executable and the cwd is searched after the
+  // cwd, as it was before the executable's directory was added.
+  itBundled("compile/CwdBeforeSharedAncestor", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(req("dep-shared-ancestor-44053"));
+      `,
+    },
+    outfile: "../outside-44053-shared/app",
+    runtimeFiles: {
+      "/node_modules/dep-shared-ancestor-44053/index.js": `module.exports = "cwd";`,
+      "../node_modules/dep-shared-ancestor-44053/index.js": `module.exports = "ancestor";`,
+    },
+    run: {
+      stdout: "cwd",
+      setCwd: true,
+    },
+    compile: true,
+  });
   for (const minify of [true, false] as const) {
     itBundled("compile/platform-specific-binary" + (minify ? "-minify" : ""), {
       minifySyntax: minify,

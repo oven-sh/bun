@@ -46,9 +46,9 @@ test("Response -> import { Response } from 'bun:app' transform in server compone
   // Check that Response import was added from 'bun:app'
   expect(serverResult).toContain('import { Response } from "bun:app"');
   // Each read of Response is a read of the imported binding
-  expect(serverResult).toContain('new Response("Hello"');
-  expect(serverResult).toContain('Response.redirect("/login")');
-  expect(serverResult).toContain('Response.render("/404")');
+  expect(serverResult).toContain('= new Response("Hello"');
+  expect(serverResult).toContain('return Response.redirect("/login")');
+  expect(serverResult).toContain('return Response.render("/404")');
   expect(serverResult).not.toContain("import_bun_app");
 
   // Build client component (should not have the transform)
@@ -96,10 +96,10 @@ test("Response import is added for global Response in various contexts", async (
   // Check that import was added
   expect(result).toContain('import { Response } from "bun:app"');
   // Each read of Response is a read of the imported binding
-  expect(result).toContain("new Response");
-  expect(result).toContain("instanceof Response");
-  expect(result).toContain("Response.prototype.status");
-  expect(result).toContain("Response.json(");
+  expect(result).toContain("= new Response");
+  expect(result).toContain("obj instanceof Response");
+  expect(result).toContain("status = Response.prototype.status");
+  expect(result).toContain("json = Response.json(");
   expect(result).not.toContain("import_bun_app");
 });
 
@@ -217,7 +217,7 @@ test("Response import is NOT added in client components", async () => {
 
   // Server component should have import from bun:app
   expect(serverResult).toContain('import { Response } from "bun:app"');
-  expect(serverResult).toContain('new Response("Server"');
+  expect(serverResult).toContain('= new Response("Server"');
   expect(serverResult).not.toContain("import_bun_app");
 });
 
@@ -317,6 +317,13 @@ describe.concurrent("the built output runs", () => {
     const { output, result } = await buildAndRun({ "entry.js": `console.log(${reads});` }, { args: ["--format=cjs"] });
     expect(result).toEqual({ stdout: "false true function\n", stderr: "", exitCode: 0 });
     expect(output).toContain('var import_bun_app = require("bun:app")');
+  });
+
+  // The same conversion as cjs, with `__require` in place of `require`.
+  test("iife", async () => {
+    const { output, result } = await buildAndRun({ "entry.js": `console.log(${reads});` }, { args: ["--format=iife"] });
+    expect(result).toEqual({ stdout: "false true function\n", stderr: "", exitCode: 0 });
+    expect(output).toContain('var import_bun_app = __require("bun:app")');
   });
 
   test("two files that read Response, minified", async () => {

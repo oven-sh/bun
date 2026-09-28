@@ -70,6 +70,8 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   } catch (e) {
+    // --disallow-code-generation-from-strings=strict: no port would do.
+    if (e instanceof EvalError) throw e;
     // Node prints one diagnostic line and returns instead of throwing when the
     // socket cannot be bound, so a caller can retry with a different port.
     const raw = (e as Error)?.message ?? String(e);

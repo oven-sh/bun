@@ -102,6 +102,12 @@ bun run <file or script>
   Throw an error if <code>bun:ffi</code> <code>cc()</code> is called (disables the C compiler)
 </ParamField>
 
+<ParamField path="--disallow-code-generation-from-strings" type="string">
+  Make <code>eval()</code> and <code>new Function()</code> throw. With <code>=strict</code>, also <code>node:vm</code>,{" "}
+  <code>module._compile</code>, <code>data:</code> and <code>blob:</code> modules, and plugin-supplied source. See{" "}
+  <a href="/runtime/code-generation-from-strings">Code generation from strings</a>.
+</ParamField>
+
 <ParamField path="--unhandled-rejections" type="string">
   One of <code>strict</code>, <code>throw</code>, <code>warn</code>, <code>none</code>, or{" "}
   <code>warn-with-error-code</code>

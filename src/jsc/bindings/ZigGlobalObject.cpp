@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "CodeGenerationFromStrings.h"
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
@@ -2107,6 +2108,9 @@ void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
+        setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();

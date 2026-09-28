@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunDebugger.h"
+#include "CodeGenerationFromStrings.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
@@ -786,6 +787,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The debugger evaluates what its client sends, whatever the engine's eval setting.
+    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
+        return {};
 
     String requestedUrl = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

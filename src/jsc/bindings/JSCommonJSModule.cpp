@@ -71,6 +71,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
+#include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -833,6 +834,8 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope)) [[unlikely]]
+        return {};
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

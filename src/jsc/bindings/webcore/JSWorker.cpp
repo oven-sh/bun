@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "JSWorker.h"
+#include "CodeGenerationFromStrings.h"
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
@@ -156,6 +157,9 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "filename"_s, "string or an instance of URL"_s, argument0.value());
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+    // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
+    if (Bun::isDataOrBlobURL(scriptUrl) && Bun::throwIfMayNotMakeScriptFromStrings(lexicalGlobalObject, throwScope)) [[unlikely]]
+        return {};
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};
@@ -334,6 +338,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                 execArgv.append(str);
             });
             RETURN_IF_EXCEPTION(throwScope, {});
+            // The process's, as in Node.js: a Worker cannot be given it.
+            for (auto& arg : execArgv) {
+                if (arg == "--disallow-code-generation-from-strings"_s || arg.startsWith("--disallow-code-generation-from-strings="_s)) [[unlikely]] {
+                    throwScope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, makeString("Initiated Worker with invalid execArgv flags: "_s, arg)));
+                    return {};
+                }
+            }
             options.execArgv.emplace(WTF::move(execArgv));
         }
     }

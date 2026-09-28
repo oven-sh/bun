@@ -4383,6 +4383,15 @@
       "multiple": false
     },
     {
+      "name": "disallow-code-generation-from-strings",
+      "description": "Make eval() and new Function() throw. With \"=strict\", also node:vm, module._compile, data: and blob: modules, and plugin-supplied source",
+      "hasValue": true,
+      "valueType": "val",
+      "choices": ["strict"],
+      "required": false,
+      "multiple": false
+    },
+    {
       "name": "unhandled-rejections",
       "description": "One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"",
       "hasValue": true,

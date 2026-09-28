@@ -9,6 +9,7 @@
 
 #include "BunClientData.h"
 #include "NodeVM.h"
+#include "CodeGenerationFromStrings.h"
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
@@ -1051,7 +1052,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
         promiseSpeciesWatchpointSet().fireAll(vm, "node:vm microtaskMode afterEvaluate context");
     }
 
-    setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
+    // A context decides for itself, as in Node.js, unless nothing in the process may.
+    setEvalEnabled(m_contextOptions.allowStrings && !Bun::mayNotMakeScriptFromStrings(), Bun::codeGenerationFromStringsDisallowedMessage);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
 
     if (!m_contextOptions.allowWasm) {
@@ -1440,6 +1442,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
+        return {};
 
     // Step 1: Argument validation
     // Get code argument (required)

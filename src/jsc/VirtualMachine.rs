@@ -4131,6 +4131,13 @@ impl VirtualMachine {
             .unwrap_or(true)
     }
 
+    /// `--disallow-code-generation-from-strings`, as a `bun_core::CodeGenerationFromStrings`.
+    /// The process's, so it takes no `VirtualMachine`.
+    #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
+    pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
+        bun_core::code_generation_from_strings() as u8
+    }
+
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi_cc(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;

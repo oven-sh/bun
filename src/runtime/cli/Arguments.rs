@@ -801,10 +801,13 @@ fn disallow_code_generation_from_strings(value: &[u8]) {
 
 /// The level a compiled executable was built with (`--compile-exec-argv`) is a floor. The parser
 /// keeps an option's last value and reads `BUN_OPTIONS` after the embedded flags, so on its own it
-/// would let the environment lower it.
-pub(crate) fn disallow_code_generation_from_strings_as_compiled(compile_exec_argv: &[u8]) {
-    for token in bun_core::strings::tokenize_any(compile_exec_argv, b" \t\n\r") {
-        match token.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()) {
+/// would let the environment lower it. `embedded` is the embedded flags as the parser is given them.
+pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun_core::ZStr]) {
+    for token in embedded {
+        match token
+            .as_bytes()
+            .strip_prefix(b"--disallow-code-generation-from-strings".as_slice())
+        {
             Some(b"") => disallow_code_generation_from_strings(b""),
             Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
             _ => {}

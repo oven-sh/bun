@@ -68,7 +68,7 @@ These keep working at both levels:
 - `Bun.ModuleGraph`.
 - `JSON.parse()`, `RegExp`, and `eval()` of a value that is not a string.
 - WebAssembly.
-- Native addons and `bun:ffi`. Turn those off with `--no-addons` and `--no-ffi-cc`.
+- Native addons and `bun:ffi`. See [What the flag does not cover](#what-the-flag-does-not-cover).
 - A plugin that returns an `exports` object, or `contents` for a data loader such as `json` or `toml`.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
 
@@ -176,5 +176,5 @@ A `Worker` inherits `process.execArgv`, so the same check works inside one. When
 - **Startup.** The entry point, `--preload`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs.
 - **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
-- **Native code.** A native addon can do what native code can do. Use `--no-addons`.
+- **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
 - **Child processes.** A process that the program spawns has its own flags.

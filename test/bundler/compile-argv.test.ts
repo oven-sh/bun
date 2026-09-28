@@ -11,12 +11,20 @@ describe("bundler", () => {
   // --disallow-code-generation-from-strings=strict baked into the executable: it is on with no
   // arguments, a Worker has it and reports it, BUN_OPTIONS cannot lower it, its own command line is
   // not read as flags, and BUN_JSC_useDollarVM does not bring back $vm (which evaluates strings).
-  for (const [name, env, execArgv] of [
-    ["", {}, ["--disallow-code-generation-from-strings=strict"]],
+  for (const [name, embedded, env, execArgv] of [
+    ["", "--disallow-code-generation-from-strings=strict", {}, ["--disallow-code-generation-from-strings=strict"]],
     [
       "BunOptionsCannotLower",
+      "--disallow-code-generation-from-strings=strict",
       { BUN_OPTIONS: "--disallow-code-generation-from-strings" },
       ["--disallow-code-generation-from-strings", "--disallow-code-generation-from-strings=strict"],
+    ],
+    // The embedded flags are unquoted before they are parsed, and the floor is what was parsed.
+    [
+      "QuotedBunOptionsCannotLower",
+      '"--disallow-code-generation-from-strings=strict"',
+      { BUN_OPTIONS: "--disallow-code-generation-from-strings" },
+      ["--disallow-code-generation-from-strings", '"--disallow-code-generation-from-strings=strict"'],
     ],
   ] as const) {
     const refused = "EvalError: Code generation from strings disallowed for this context";
@@ -31,7 +39,7 @@ describe("bundler", () => {
     };
     itBundled("compile/CompileExecArgvDisallowCodeGenerationFromStrings" + name, {
       compile: {
-        execArgv: ["--disallow-code-generation-from-strings=strict"],
+        execArgv: [embedded],
       },
       backend: "cli",
       files: {

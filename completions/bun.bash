@@ -250,6 +250,14 @@ _bun_completions_inner() {
         return
     fi
 
+    if [[ "${prev}" == ":" ]] && (( COMP_CWORD >= 3 )); then
+        case "${COMP_WORDS[$(( COMP_CWORD - 3 ))]}" in
+            -l|--loader)
+                _filter_literal_reply jsx js json tsx ts css
+                return ;;
+        esac
+    fi
+
     case "${prev}" in
         help|--help|-h|-v|--version) return ;;
         -c|--config)          _file_arguments "!*.toml"; return ;;

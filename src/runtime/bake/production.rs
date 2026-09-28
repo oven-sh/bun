@@ -573,9 +573,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
-            // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
-            // `clone()`).
-            style: fsr.style.clone(),
+            style: fsr.style,
             allow_layouts: fsr.allow_layouts,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
@@ -771,6 +769,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::ModuleInfo
                         | OutputKind::BuiltinBytecode
                         | OutputKind::BytecodeStringTable
+                        | OutputKind::BytecodePayload
                         | OutputKind::ModuleInfoStringTable
                         | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}

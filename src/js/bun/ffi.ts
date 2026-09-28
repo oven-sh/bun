@@ -108,9 +108,11 @@ class JSCallback {
 
 const CString = ffi.CString;
 
-function FFIBuilder(params, functionToCall, name) {
-  const toCString = v => (v ? new CString(v) : null);
+function toCString(v) {
+  return v ? new CString(v) : null;
+}
 
+function FFIBuilder(params, functionToCall, name) {
   // variadic arguments can be expensive
   // most FFI functions are going to be < 5 arguments
   // so we just inline it

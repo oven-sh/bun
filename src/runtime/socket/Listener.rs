@@ -1251,6 +1251,9 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        // As on the path that is not a pipe: close the native
+                        // socket or pipe that the wrapper had.
+                        NewSocket::detach_for_reconnect(prev);
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1354,6 +1357,9 @@ impl Listener {
                         // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        // As on the path that is not a pipe: close the native
+                        // socket or pipe that the wrapper had.
+                        NewSocket::detach_for_reconnect(prev);
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,

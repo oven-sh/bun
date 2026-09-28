@@ -1112,33 +1112,52 @@ it.if(isWindows)(
   20_000,
 );
 
-// A named pipe on Windows, a unix socket elsewhere. On Windows the pipe stayed
-// open after the second connect(), with nothing left that could close it.
-it("connect() on a socket that is connected over a path closes that connection", async () => {
-  using dir = tempDir("net-reconnect-path", {});
-  const path = isWindows ? `\\\\.\\pipe\\bun-reconnect-${randomUUID()}` : join(String(dir), "a.sock");
-  const firstClosed = Promise.withResolvers<void>();
-  const pathServer = createServer(connection => {
-    connection.on("error", () => {});
-    connection.on("close", () => firstClosed.resolve());
+// "path" is a named pipe on Windows and a unix socket elsewhere. On Windows a
+// pipe that the socket had, or a socket that then dialed a pipe, stayed open
+// after the second connect(), with nothing left that could close it.
+describe("connect() on a socket that is connected closes that connection", () => {
+  it.each([
+    ["a path", "TCP"],
+    ["TCP", "a path"],
+    ["a path", "a path"],
+  ] as const)("first over %s, then over %s", async (first, second) => {
+    using dir = tempDir("net-reconnect", {});
+    const pathOf = (name: string) =>
+      isWindows ? `\\\\.\\pipe\\bun-reconnect-${name}-${randomUUID()}` : join(String(dir), name + ".sock");
+    const listen = async (server: Server, kind: string, name: string) => {
+      if (kind === "TCP") server.listen(0, "127.0.0.1");
+      else server.listen(pathOf(name));
+      await once(server, "listening");
+      const address = server.address();
+      return typeof address === "string" ? [address] : [address!.port, "127.0.0.1"];
+    };
+
+    const firstClosed = Promise.withResolvers<void>();
+    const firstServer = createServer(connection => {
+      connection.on("error", () => {});
+      connection.on("close", () => firstClosed.resolve());
+    });
+    const secondServer = createServer(connection => {
+      connection.on("error", () => {});
+      connection.end();
+    });
+    const firstAddress = await listen(firstServer, first, "first");
+    const secondAddress = await listen(secondServer, second, "second");
+    try {
+      // @ts-expect-error: a path, or a port and a host
+      const client = connect(...firstAddress);
+      // Node closes the first connection too, and reports an error for the
+      // second connect when the kind of handle differs.
+      client.on("error", () => {});
+      // @ts-expect-error: a path, or a port and a host
+      client.once("connect", () => client.connect(...secondAddress));
+      await firstClosed.promise;
+      client.destroy();
+    } finally {
+      firstServer.close();
+      secondServer.close();
+    }
   });
-  const tcpServer = createServer(connection => {
-    connection.on("error", () => {});
-    connection.end();
-  });
-  await once(pathServer.listen(path), "listening");
-  await once(tcpServer.listen(0, "127.0.0.1"), "listening");
-  try {
-    const client = connect(path);
-    // Node reports ENOENT for the second connect and closes the socket.
-    client.on("error", () => {});
-    client.once("connect", () => client.connect((tcpServer.address() as { port: number }).port, "127.0.0.1"));
-    await firstClosed.promise;
-    client.destroy();
-  } finally {
-    pathServer.close();
-    tcpServer.close();
-  }
 });
 
 // The Windows counterpart of the synchronous-failure test below: a client

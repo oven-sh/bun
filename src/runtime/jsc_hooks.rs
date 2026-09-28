@@ -601,10 +601,13 @@ unsafe fn configure_debugger(
         bun_core::Output::err_generic(
             "{} cannot be used with {}: the inspector evaluates code from strings\n",
             (
-                if matches!(cli_flag, CliDebugger::Enable(_)) {
-                    "--inspect"
-                } else {
-                    "BUN_INSPECT"
+                match cli_flag {
+                    CliDebugger::Enable(enable) if enable.set_breakpoint_on_first_line => {
+                        "--inspect-brk"
+                    }
+                    CliDebugger::Enable(enable) if enable.wait_for_connection => "--inspect-wait",
+                    CliDebugger::Enable(_) => "--inspect",
+                    CliDebugger::Unspecified => "BUN_INSPECT",
                 },
                 STRICT,
             ),

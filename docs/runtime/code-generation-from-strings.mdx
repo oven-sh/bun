@@ -108,13 +108,15 @@ One part of Bun calls `new Function()` itself: the development server. Every oth
 | Part of Bun                                                                              | Flag   | `=strict` |
 | ---------------------------------------------------------------------------------------- | ------ | --------- |
 | The development server: `import()` with import attributes of a module outside the bundle | throws | throws    |
-| `node:repl`: `repl.start()`                                                              | works  | throws    |
+| `node:repl`: `repl.start()`, `REPLServer`                                                | works  | throws    |
 | `node:worker_threads`: `new Worker(code, { eval: true })`                                | works  | throws    |
 | `node:inspector`: `inspector.open()`                                                     | works  | throws    |
 | `bun:jsc`: `startRemoteDebugger()`                                                       | works  | throws    |
 | `node:vm`: everything that takes source text                                             | works  | throws    |
 | `node:module`: `module._compile()`, assigning `Module.wrapper`                           | works  | throws    |
 | `Bun.plugin()`: `onLoad` and `build.module()` that return source text                    | works  | throws    |
+
+Every built-in module still loads with `=strict`. `import { REPLServer } from "node:repl"` is the one import that fails, because it reads `REPLServer`.
 
 Tools that transpile through `require.extensions`, such as `ts-node` and `@babel/register`, do not work with `=strict`. Bun transpiles TypeScript and JSX itself, so a Bun program does not need them.
 

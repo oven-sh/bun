@@ -355,7 +355,7 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       const { stdout, stderr, exitCode } = await run([strict, ...args], env);
       expect({ stdout, stderr: stderr.trim() }).toEqual({
         stdout: "",
-        stderr: `error: ${name.startsWith("--") ? "--inspect" : name} cannot be used with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings`,
+        stderr: `error: ${name} cannot be used with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings`,
       });
       expect(exitCode).toBe(1);
     });

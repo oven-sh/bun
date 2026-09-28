@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bun_jsc::JSValue;
 
 use crate::jsc_hooks::timer_all;

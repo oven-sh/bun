@@ -1,6 +1,7 @@
 //! `Value` union + JSC bridges for MySQL type encoding. Kept separate so the
 //! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
 //! `JSValue` references.
+#![forbid(unsafe_code)]
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,

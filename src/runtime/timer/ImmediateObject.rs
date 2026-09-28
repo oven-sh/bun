@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::{JsCell, SelfRef, ThisPtr};

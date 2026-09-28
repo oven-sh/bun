@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use core::cell::Cell;
 
 use crate::jsc::{JSValue, JsCell, VirtualMachineSqlExt as _};

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use core::mem::ManuallyDrop;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};

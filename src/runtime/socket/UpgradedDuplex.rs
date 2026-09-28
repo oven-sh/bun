@@ -11,6 +11,7 @@
 //! The duplex stream manages the SSL handshake, certificate validation, encryption/decryption,
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
+#![forbid(unsafe_code)]
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_uint};

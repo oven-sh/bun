@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use crate::jsc::JSValue;
 use bun_jsc::JsCell;
 use bun_ptr::{RefPtr, ThisPtr};

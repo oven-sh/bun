@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use core::cell::Cell;

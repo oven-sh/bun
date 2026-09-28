@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]

@@ -12,6 +12,7 @@
 //!   - If the last update was < 1 second ago, just schedule the next update
 //!
 //! Note that we only check for potential updates ot this timer once per event loop tick.
+#![forbid(unsafe_code)]
 
 use crate::jsc_hooks::timer_all_opt;
 use bun_jsc::virtual_machine::VirtualMachine;

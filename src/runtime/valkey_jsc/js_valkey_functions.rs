@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
 use bun_collections::VecExt as _;
 use bun_jsc::{

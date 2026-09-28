@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;

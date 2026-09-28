@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use core::cell::Cell;
 use core::mem;
 

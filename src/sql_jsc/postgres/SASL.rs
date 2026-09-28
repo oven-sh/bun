@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bun_base64;
 
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;

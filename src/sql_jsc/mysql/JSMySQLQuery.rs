@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use core::cell::Cell;
 
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};

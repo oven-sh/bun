@@ -6,6 +6,7 @@
 //! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
 //! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
 //! `impl super::All { … }` surface plus the C-ABI export thunks.
+#![forbid(unsafe_code)]
 
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};

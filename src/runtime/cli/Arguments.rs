@@ -285,7 +285,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
     parse_param!(
-        "--disallow-code-generation-from-strings <STR>?  Make eval() and new Function() throw. With \"=strict\", also node:vm, module._compile, data: and blob: modules, and plugin-supplied source"
+        "--disallow-code-generation-from-strings <STR>?...  Make eval() and new Function() throw. With \"=strict\", also node:vm, module._compile, data: and blob: modules, and plugin-supplied source"
     ),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
@@ -1130,25 +1130,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             opts.allow_ffi_cc = Some(false);
         }
 
-        if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {
+        // Every occurrence counts, so that a later one (BUN_OPTIONS comes after a compiled
+        // executable's own flags) cannot lower what an earlier one asked for.
+        for value in args.options(b"--disallow-code-generation-from-strings") {
             disallow_code_generation_from_strings(value);
-            // The parser keeps the last of several. Every one counts here, so that what comes
-            // later (BUN_OPTIONS comes after a compiled executable's own flags) cannot lower
-            // what came before. `BUN_OPTIONS` and a compiled executable's flags are options
-            // only; on a command line the options end at the first positional.
-            const FLAG: &[u8] = b"--disallow-code-generation-from-strings";
-            let options_only = 1 + bun_core::bun_options_argc();
-            let first_positional = args.positionals().first().copied();
-            for (i, arg) in bun_core::argv().iter().enumerate().skip(1) {
-                if i >= options_only && (arg == b"--" || Some(arg) == first_positional) {
-                    break;
-                }
-                match arg.strip_prefix(FLAG) {
-                    Some(b"") => disallow_code_generation_from_strings(b""),
-                    Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
-                    _ => {}
-                }
-            }
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {

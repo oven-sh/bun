@@ -224,6 +224,8 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    /// `<value>?...`: `OneOptional`, with every occurrence kept. One with no value is `b""`.
+    ManyOptional,
 }
 
 /// Represents a parameter for the command line.
@@ -796,6 +798,7 @@ mod tests {
         parse_param!("--test-name-pattern/--grep <STR>...  Filter tests"),
         parse_param!("<POS> ...  positional"),
         param!("-h, --help  Display this help"),
+        parse_param!("--level <STR>?...  Raise the level"),
     ];
 
     static MACRO_PARAMS_SLICE: &[Param<Help>] = parse_params! {
@@ -827,6 +830,10 @@ mod tests {
         assert_eq!(MACRO_PARAMS[3].names.short, None);
         assert_eq!(MACRO_PARAMS[3].names.long, None);
         assert_eq!(MACRO_PARAMS[3].id.value, b"POS");
+
+        assert_eq!(MACRO_PARAMS[5].takes_value, Values::ManyOptional);
+        assert_eq!(MACRO_PARAMS[5].id.value, b"STR");
+        assert_eq!(MACRO_PARAMS[5].id.msg, b"Raise the level");
 
         // parse_params! slice form.
         assert_eq!(MACRO_PARAMS_SLICE.len(), 3);

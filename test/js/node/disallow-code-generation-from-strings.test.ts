@@ -28,6 +28,7 @@ const files = {
     import inspector from "node:inspector";
     import Module, { createRequire } from "node:module";
     import { Worker as NodeWorker } from "node:worker_threads";
+    import { fileURLToPath } from "node:url";
     const require = createRequire(import.meta.url);
     const here = name => new URL(name, import.meta.url);
     const attempt = async fn => { try { return await fn(); } catch (e) { return e.constructor.name + ": " + e.message; } };
@@ -121,7 +122,7 @@ const files = {
     // inside graph.run(), called by the host directly, and after dispose().
     const graph = async () => {
       const graph = new Bun.ModuleGraph({ globals: { tag: 2 } });
-      const app = await graph.import(here("./graph.mjs").pathname);
+      const app = await graph.import(fileURLToPath(here("./graph.mjs")));
       const inRun = [graph.run(app.viaEval), graph.run(app.viaFunction)];
       const calledByTheHost = [app.viaEval(), app.viaFunction()];
       graph.dispose();
@@ -267,6 +268,9 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     ["=strict, then the flag", [strict, flag], {}],
     ["=strict in BUN_OPTIONS, the flag on the command line", [flag], { BUN_OPTIONS: strict }],
     ["the flag in BUN_OPTIONS, =strict on the command line", [strict], { BUN_OPTIONS: flag }],
+    // An option's value that reads like the script's name, or like "run", is not where the options end.
+    ["after an option whose value is the script's name", ["--title", "routes.mjs", strict, flag], {}],
+    ["after an option whose value is run", ["--title", "run", strict, flag, "run"], {}],
   ] as const) {
     test(`${name}: strict`, async () => {
       const { stdout, exitCode } = await run([...args], env);

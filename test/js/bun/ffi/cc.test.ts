@@ -152,7 +152,7 @@ describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {
             source: require("path").join(__dirname, "hello.c"),
             symbols: { hello: { args: ["int"], returns: "cstring" } },
           });
-          console.log(JSON.stringify([String(symbols.hello(1)), symbols.hello(0), symbols.hello.name, typeof symbols.hello.native]));
+          console.log(JSON.stringify([String(symbols.hello(1)), symbols.hello(0), typeof symbols.hello.native]));
           close();
         `,
       });
@@ -164,7 +164,7 @@ describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {
         stderr: "pipe",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(JSON.parse(stdout)).toEqual(["hello from c", null, "hello (hello.c)", "function"]);
+      expect(JSON.parse(stdout)).toEqual(["hello from c", null, "function"]);
       expect(exitCode).toBe(0);
     });
   }

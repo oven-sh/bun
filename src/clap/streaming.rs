@@ -119,6 +119,7 @@ where
 
                     if param.takes_value == clap::Values::None
                         || param.takes_value == clap::Values::OneOptional
+                        || param.takes_value == clap::Values::ManyOptional
                     {
                         if param.takes_value == clap::Values::None && maybe_value.is_some() {
                             return Err(self.err(arg, None, Some(name), ArgError::DoesntTakeValue));
@@ -244,6 +245,7 @@ where
             };
             if param.takes_value == clap::Values::None
                 || param.takes_value == clap::Values::OneOptional
+                || param.takes_value == clap::Values::ManyOptional
             {
                 if next_is_eql && param.takes_value == clap::Values::None {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));

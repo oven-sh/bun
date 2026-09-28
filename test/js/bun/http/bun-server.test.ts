@@ -1727,9 +1727,10 @@ test.concurrent("late keep-alive request to a node:http server after close() sti
   );
 });
 
-test("node:http close() drops the loop ref once in-flight requests finish, without waiting for the surviving connection", async () => {
+test("node:http close() holds the loop ref while the connection that survived it is open, and drops it when that connection closes", async () => {
+  // Node.js prints the same. A server that dropped the loop ref with the connection open would print true.
   expect(await bunRun(path.join(import.meta.dir, "node-http-close-unref-fixture.ts"))).toSpawn(
-    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: true }),
+    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: false }),
   );
 });
 

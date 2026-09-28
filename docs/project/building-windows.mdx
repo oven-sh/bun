@@ -181,6 +181,6 @@ x64 release cross builds use ThinLTO with cross-language (Rust↔C++) LTO, like 
 - Bun's C/C++ compiles with `-flto=thin`
 - rustc emits LLVM bitcode (`-Clinker-plugin-lto`)
 - the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt is the WebKit that gets linked
-- everything links with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode)
+- everything links with LLVM's `lld-link`, which reads both compilers' bitcode: the build requires clang's LLVM and rustc's to be the same major version
 
 There is no LTO for arm64, because there is no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen.

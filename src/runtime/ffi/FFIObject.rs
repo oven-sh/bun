@@ -30,7 +30,6 @@ unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void
 
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this passes the caller's deallocator through so FFI bytes are only freed when asked.
-#[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
@@ -61,7 +60,6 @@ fn create_buffer_with_ctx(
 }
 
 // ── Put helpers from ZigGeneratedCode.cpp; each installs a host fn over its `*__slowpath` export ──
-#[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
     fn Reader__u8__put(global: *mut JSGlobalObject, value: JSValue);

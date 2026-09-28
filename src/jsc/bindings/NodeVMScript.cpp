@@ -136,7 +136,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
-    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(sourceOriginURL(vm, options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
+    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(sourceOriginURL(vm, options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, providerStartPosition(options.lineOffset, options.columnOffset));
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});

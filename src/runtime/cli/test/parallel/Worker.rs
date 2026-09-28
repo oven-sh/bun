@@ -244,7 +244,6 @@ impl Worker {
                 if let spawn::WindowsStdioResult::Buffer(p) = item {
                     let raw = bun_core::heap::into_raw(p);
                     debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
-                    let _ = raw;
                 }
             }
             this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));

@@ -250,9 +250,11 @@ where
                 if next_is_eql && param.takes_value == clap::Values::None {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));
                 }
+                // `OneOptional` has always dropped what follows the `=`: `-c=path` is read as `-c`.
                 return Ok(Some(Arg {
                     param,
-                    value: next_is_eql.then(|| &arg[next_index + 1..]),
+                    value: (next_is_eql && param.takes_value == clap::Values::ManyOptional)
+                        .then(|| &arg[next_index + 1..]),
                 }));
             }
 
@@ -667,17 +669,13 @@ mod tests {
         test_no_err(
             &params,
             &[
-                b"-a", b"-a=0", b"--aa", b"--aa=0", b"-b", b"-b=0", b"--bb", b"--bb=0", b"-a",
-                b"0", b"--bb", b"0",
+                b"-a", b"--aa", b"--aa=0", b"-b", b"-b=0", b"--bb", b"--bb=0", b"-a", b"0",
+                b"--bb", b"0",
             ],
             &[
                 Arg {
                     param: a,
                     value: None,
-                },
-                Arg {
-                    param: a,
-                    value: Some(b"0"),
                 },
                 Arg {
                     param: a,

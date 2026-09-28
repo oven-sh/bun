@@ -664,14 +664,9 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
         WTF::String string = asString(chunk)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         unsigned length = string.length();
-        if (length) {
-            accumulator.rope.append(string);
-            if (accumulator.rope.hasOverflowed()) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return {};
-            }
-            accumulator.hasString = true;
-            accumulator.estimatedLength += length;
+        if (length && !accumulator.tryAppendString(string)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
         return jsNumber(length);
     }
@@ -688,8 +683,8 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
     if (byteLength) {
         accumulator.hasBuffer = true;
         JSC::JSString* flushedRope = nullptr;
-        if (accumulator.rope.length()) {
-            flushedRope = jsString(vm, accumulator.rope.toString());
+        if (accumulator.hasRope()) {
+            flushedRope = jsString(vm, accumulator.ropeString());
             RETURN_IF_EXCEPTION(scope, {});
         }
         bool appended;
@@ -722,12 +717,12 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
     if (!hasString && !hasBuffer)
         return WTF::emptyString();
     if (hasString && !hasBuffer) {
-        if (exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
+        if (exceedsStringLimit(accumulator.ropeLength())) [[unlikely]] {
             releaseAccumulated();
             throwOutOfMemoryError(globalObject, scope);
             return WTF::String();
         }
-        WTF::String rope = accumulator.rope.toString();
+        WTF::String rope = accumulator.ropeString();
         releaseAccumulated();
         if (rope.length() && rope[0] == 0xFEFF)
             return rope.substring(1);
@@ -757,8 +752,8 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return WTF::String();
         }
     }
-    if (accumulator.rope.length()) {
-        WTF::String rope = accumulator.rope.toString();
+    if (accumulator.hasRope()) {
+        WTF::String rope = accumulator.ropeString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {

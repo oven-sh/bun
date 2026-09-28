@@ -30,15 +30,27 @@ namespace WebStreams {
 // inside its ONE `Locker { cellLock() }` scope and proves that with the AbstractLocker
 // parameter (cellLock() is non-recursive — see StreamQueue.h's discipline comment).
 struct BunTextAccumulator {
-    // the pure-string fast-path rope. RecordOverflow: an append past
-    // StringImpl::MaxLength must surface as a catchable out-of-memory error at the
-    // write site, never as the default policy's process abort.
-    WTF::StringBuilder rope { WTF::OverflowPolicy::RecordOverflow };
     // string + typed-array-view pieces (the mixed path).
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> pieces;
     double estimatedLength { 0 };
     bool hasString { false };
     bool hasBuffer { false };
+
+    // Appends a string chunk to the rope. On false the rope did not take it and the caller throws.
+    ALWAYS_INLINE bool tryAppendString(const WTF::String& chunk)
+    {
+        m_rope.append(chunk);
+        if (m_rope.hasOverflowed()) [[unlikely]]
+            return false;
+        hasString = true;
+        estimatedLength += chunk.length();
+        return true;
+    }
+
+    // The rope holds the string chunks that came after the last binary chunk.
+    bool hasRope() const { return !m_rope.isEmpty(); }
+    unsigned ropeLength() const { return m_rope.length(); }
+    WTF::String ropeString() { return m_rope.toString(); }
 
     // Script adds a piece per write(), so growth is fallible. On false the caller throws after it drops the lock.
     bool tryAppendPieces(const WTF::AbstractLocker&, JSC::VM& vm, JSC::JSCell* owner, JSC::JSString* flushedRope, JSC::JSValue chunk)
@@ -47,7 +59,7 @@ struct BunTextAccumulator {
         if (flushedRope) {
             if (pieces.size() >= Bun::maxVectorSize<Piece>() || !pieces.tryAppend(Piece(vm, owner, flushedRope))) [[unlikely]]
                 return false;
-            rope.clear();
+            m_rope.clear();
         }
         return pieces.size() < Bun::maxVectorSize<Piece>() && pieces.tryAppend(Piece(vm, owner, chunk));
     }
@@ -60,7 +72,7 @@ struct BunTextAccumulator {
     {
         pieces.clear();
         pieces.shrinkToFit();
-        rope.clear();
+        m_rope.clear();
         estimatedLength = 0;
         hasString = false;
         hasBuffer = false;
@@ -85,6 +97,12 @@ struct BunTextAccumulator {
                 analyzer.analyzeIndexEdge(from, v.asCell(), i);
         }
     }
+
+private:
+    // the pure-string fast-path rope. RecordOverflow: an append past
+    // StringImpl::MaxLength must surface as a catchable out-of-memory error at the
+    // write site, never as the default policy's process abort.
+    WTF::StringBuilder m_rope { WTF::OverflowPolicy::RecordOverflow };
 };
 
 } // namespace WebStreams

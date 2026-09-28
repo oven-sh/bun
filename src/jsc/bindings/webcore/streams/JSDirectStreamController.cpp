@@ -402,13 +402,10 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
         if (length > 0) {
             String value = string->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            accumulator.rope.append(value);
-            if (accumulator.rope.hasOverflowed()) [[unlikely]] {
+            if (!accumulator.tryAppendString(value)) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            accumulator.hasString = true;
-            accumulator.estimatedLength += length;
         }
         return jsNumber(length);
     }
@@ -427,8 +424,8 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
     if (byteLength > 0) {
         accumulator.hasBuffer = true;
         JSString* ropeString = nullptr;
-        if (!accumulator.rope.isEmpty()) {
-            ropeString = jsString(vm, accumulator.rope.toString());
+        if (accumulator.hasRope()) {
+            ropeString = jsString(vm, accumulator.ropeString());
             RETURN_IF_EXCEPTION(scope, {});
         }
         // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
@@ -487,11 +484,11 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
     if (hasString && !hasBuffer) {
-        if (Bun::WebStreams::exceedsStringLimit(accumulator.rope.length())) [[unlikely]] {
+        if (Bun::WebStreams::exceedsStringLimit(accumulator.ropeLength())) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();
         }
-        String rope = accumulator.rope.toString();
+        String rope = accumulator.ropeString();
         if (rope.length() && rope[0] == 0xFEFF)
             return rope.substring(1);
         return rope;
@@ -529,8 +526,8 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             return String();
         }
     }
-    if (!accumulator.rope.isEmpty()) {
-        String rope = accumulator.rope.toString();
+    if (accumulator.hasRope()) {
+        String rope = accumulator.ropeString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {

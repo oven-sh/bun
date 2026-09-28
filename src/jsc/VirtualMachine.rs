@@ -489,17 +489,19 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     id: u32,
     bytes: *mut *const u8,
     size: *mut usize,
+    entry_offset: *mut u32,
 ) -> bool {
     let Some(graph) = standalone_module_graph() else {
         return false;
     };
-    let Some(found) = graph.builtin_module_bytecode(id) else {
+    let Some((found, found_entry_offset)) = graph.builtin_module_bytecode(id) else {
         return false;
     };
     // SAFETY: out-params supplied by the C++ caller; `found` points into the executable's mapped section.
     unsafe {
         *bytes = found.cast::<u8>();
         *size = found.len();
+        *entry_offset = found_entry_offset;
     }
     true
 }
@@ -695,9 +697,12 @@ impl VMHolder {
 
     /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
     /// flushes the CPU and heap profiles before sending the (likely fatal)
-    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`
+    /// (the compile cache is written again at a real exit; a bytecode order
+    /// recording is written once and ends there). The recording is the main
+    /// thread's to write: a Worker that sends the signal leaves none.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
+    pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill(signal_ends_process: bool) {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
         let vm = unsafe { &mut *vm_ptr };
@@ -719,6 +724,11 @@ impl VMHolder {
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
         crate::node_compile_cache::persist_now();
+        // Written once, and writing it ends the recording: only before a signal that is sure to end the process, not
+        // one a program sends itself along the way (SIGTSTP on Ctrl-Z, SIGWINCH, one that is being ignored, ...).
+        if signal_ends_process && vm.is_main_thread() {
+            crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
+        }
     }
 }
 
@@ -1427,7 +1437,6 @@ impl VirtualMachine {
     /// `runtime-hostfn-safe` branch; both names funnel into the single audited
     /// `unsafe` deref above.
     #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
     pub fn event_loop_ref(&self) -> &mut EventLoop {
         self.event_loop_mut()
     }
@@ -1571,7 +1580,6 @@ impl VirtualMachine {
     /// contract as [`Self::as_mut`]; keep the borrow short and do not hold
     /// across reentrant JS calls.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn debugger_mut(&self) -> Option<&mut crate::debugger::Debugger> {
         self.as_mut().debugger.as_deref_mut()
     }
@@ -1978,7 +1986,6 @@ impl VirtualMachine {
             // routes through `printErrorlikeObject`
             // (which formats name/message/stack); the closest we can do here
             // without the high tier is the value's own `toString`.
-            let _ = exception_list;
             let writer = bun_core::Output::error_writer();
             let global = self.global();
             let display = result
@@ -2280,6 +2287,7 @@ impl VirtualMachine {
         // module.enableCompileCache()) after user exit handlers ran.
         if self.is_main_thread() {
             crate::node_compile_cache::persist_at_exit();
+            crate::bytecode_order_recorder::write_at_exit(self, standalone_module_graph());
         }
     }
 
@@ -3327,6 +3335,8 @@ impl VirtualMachine {
         if let Some(graph) = standalone_module_graph() {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             unsafe { &*vm }.install_bytecode_string_table(graph);
+            // SAFETY: as above.
+            crate::bytecode_order_recorder::init_vm(unsafe { &*vm }, graph);
         }
 
         Ok(vm)
@@ -4072,14 +4082,12 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 // ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
 // through it is interior to the cell.
 crate::jsc_abi_extern! {
-    #[allow(improper_ctypes)]
     safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
 }
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
 // (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
-#[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
     safe fn Bun__promises__emitUnhandledRejectionWarning(
@@ -4277,6 +4285,7 @@ impl VirtualMachine {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
             // depend on.
+            #[cfg(unix)]
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
                 bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
             }

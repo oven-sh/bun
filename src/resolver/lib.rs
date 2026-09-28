@@ -1053,6 +1053,12 @@ pub mod fs {
         let _ = STANDALONE_MODULE_GRAPH.set(graph);
     }
 
+    /// The mounted graph, if this process is a compiled executable. Any thread.
+    #[inline]
+    pub fn standalone_module_graph() -> Option<&'static dyn crate::StandaloneModuleGraph> {
+        STANDALONE_MODULE_GRAPH.get().copied()
+    }
+
     /// The mounted graph, if `path` is a directory it serves (see [`STANDALONE_MODULE_GRAPH`]).
     #[inline]
     pub(crate) fn standalone_graph_for_dir(

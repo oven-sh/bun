@@ -282,36 +282,42 @@ impl StandaloneModuleGraph {
         if !self.dirs.contains_key(name) {
             return None;
         }
-        let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
-        prefix.extend_from_slice(name);
-        prefix.push(b'/');
+        let mut out: Vec<(Box<[u8]>, bool)> = Vec::new();
+        self.for_each_under(name, recursive, &mut |rel, is_dir| {
+            out.push((Box::<[u8]>::from(rel), is_dir));
+        });
+        Some(out)
+    }
 
-        let mut seen: StringArrayHashMap<bool> = StringArrayHashMap::new();
-        let mut push = |key: &[u8], is_dir: bool| {
-            if key.len() <= prefix.len() || !key.starts_with(&prefix) {
+    /// Calls `each(path relative to dir, is_dir)` for every file and directory under the normalized directory
+    /// `dir` (its direct children only unless `recursive`); returns whether there was one.
+    fn for_each_under(
+        &self,
+        dir: &[u8],
+        recursive: bool,
+        each: &mut dyn FnMut(&[u8], bool),
+    ) -> bool {
+        let mut found = false;
+        let mut child = |key: &[u8], is_dir: bool| {
+            let Some(rel) = key
+                .strip_prefix(dir)
+                .and_then(|rest| rest.strip_prefix(b"/"))
+            else {
+                return;
+            };
+            if rel.is_empty() || (!recursive && strings::contains_char(rel, b'/')) {
                 return;
             }
-            let rel = &key[prefix.len()..];
-            if recursive {
-                let _ = seen.put(rel, is_dir);
-            } else if let Some(sep) = strings::index_of_char(rel, b'/') {
-                let _ = seen.put(&rel[..sep as usize], true);
-            } else {
-                let _ = seen.put(rel, is_dir);
-            }
+            found = true;
+            each(rel, is_dir);
         };
-        for key in self.files.keys() {
-            push(key, false);
-        }
         for key in self.dirs.keys() {
-            push(key, true);
+            child(key, true);
         }
-
-        let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
-        for (k, v) in seen.iter() {
-            out.push((Box::<[u8]>::from(&k[..]), *v));
+        for key in self.files.keys() {
+            child(key, false);
         }
-        Some(out)
+        found
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
@@ -374,27 +380,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn for_each_dir_entry(&self, dir: &[u8], each: &mut dyn FnMut(&[u8], bool)) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let dir = Self::normalize_dir_path(dir, &mut buf);
-        let mut found = false;
-        let mut child = |key: &[u8], is_dir: bool| {
-            let Some(rest) = key.strip_prefix(dir) else {
-                return;
-            };
-            let Some(name) = rest.strip_prefix(b"/") else {
-                return;
-            };
-            if name.is_empty() || strings::contains_char(name, b'/') {
-                return;
-            }
-            found = true;
-            each(name, is_dir);
-        };
-        for key in self.dirs.keys() {
-            child(key, true);
-        }
-        for key in self.files.keys() {
-            child(key, false);
-        }
-        found
+        self.for_each_under(dir, false, each)
     }
     fn file_contents(&self, name: &[u8]) -> Option<&[u8]> {
         self.find_ref(name).map(File::utf8_contents)

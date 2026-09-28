@@ -509,6 +509,37 @@ To disable `.env` or `bunfig.toml` loading for deterministic execution:
 
 ---
 
+## Resolving packages at runtime
+
+A `require()` or `import()` whose specifier is only known at runtime is not bundled. The executable resolves it when it runs. A bare specifier such as `require(name)` from an embedded module is searched for in this order:
+
+1. The `node_modules` directories embedded in the executable, from the importing module's directory up to the embedded root.
+2. The `node_modules` directories of the current working directory and its parents, on disk.
+
+To embed a package, add its files as entry points. Keep their paths with `--root`:
+
+```bash icon="terminal" terminal
+bun build --compile --root . ./app.ts ./node_modules/dep/index.js --outfile myapp
+```
+
+The executable then resolves `require("dep")` from an embedded module to the embedded `node_modules/dep/index.js`, even when no `node_modules` exists beside it. A package's `main` and `exports` fields are read only with `--compile-autoload-package-json`, as for a package on disk. Embed the `package.json` as an asset at its own path for that:
+
+```ts build.ts icon="/icons/typescript.svg"
+// assets.ts
+import pkg from "./node_modules/dep/package.json" with { type: "file" };
+
+await Bun.build({
+  entrypoints: ["./app.ts", "./assets.ts", "./node_modules/dep/lib/main.js"],
+  root: ".",
+  naming: { asset: "[dir]/[name].[ext]" },
+  compile: { outfile: "./myapp", autoloadPackageJson: true },
+});
+```
+
+Entry points are embedded with a `.js` extension whatever their source extension, so a subpath is resolved without one: `require("dep/lib/util")` finds an embedded `lib/util.ts`, `require("dep/lib/util.ts")` does not.
+
+---
+
 ## Act as the Bun CLI
 
 <Note>New in Bun v1.2.16</Note>

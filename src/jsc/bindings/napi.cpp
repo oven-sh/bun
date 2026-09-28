@@ -3057,8 +3057,8 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     JSValue scriptValue = toJS(script);
     NAPI_RETURN_EARLY_IF_FALSE(env, scriptValue.isString(), napi_string_expected);
 
-    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope)) [[unlikely]]
-        return napi_set_last_error(env, napi_pending_exception);
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope);
+    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
 
     WTF::String code = scriptValue.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_generic_failure));

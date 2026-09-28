@@ -1442,8 +1442,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
-        return {};
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Step 1: Argument validation
     // Get code argument (required)

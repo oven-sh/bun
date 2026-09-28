@@ -26,8 +26,8 @@ using namespace NodeVM;
 NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* globalObject, ArgList args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
-        return nullptr;
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue identifierValue = args.at(0);
     if (!identifierValue.isString()) {

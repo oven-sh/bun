@@ -694,17 +694,17 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
 // subclass, as jest-runtime does) is not an override.
-// A wrapper that is not the default is a string compiled around every CommonJS module. False,
-// having thrown, if that is not allowed.
-static bool setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
+// A wrapper that is not the default is a string compiled around every CommonJS module.
+static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
 {
     bool isOverride = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
-    if (isOverride && Bun::throwIfMayNotMakeScriptFromStrings(global, scope)) [[unlikely]]
-        return false;
+    if (isOverride) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(global, scope);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     global->hasOverriddenModuleWrapper = isOverride;
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
-    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -717,8 +717,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!setModuleWrapper(global, scope, WTF::move(aString), WTF::move(bString)))
-        return {};
+    setModuleWrapper(global, scope, WTF::move(aString), WTF::move(bString));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -775,7 +775,9 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     auto bstring = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    return setModuleWrapper(globalObject, scope, WTF::move(astring), WTF::move(bstring));
+    setModuleWrapper(globalObject, scope, WTF::move(astring), WTF::move(bstring));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
 }
 
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)

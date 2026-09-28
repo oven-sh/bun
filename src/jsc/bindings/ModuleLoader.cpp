@@ -667,8 +667,10 @@ JSValue fetchCommonJSModule(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (Bun::isDataOrBlobURL(specifierWtfString) && Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
-        return {};
+    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     BunString specifier = Bun::toString(specifierWtfString);
 
@@ -840,8 +842,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
-    if (Bun::isDataOrBlobURL(specifierWtfString) && Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
-        return {};
+    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {

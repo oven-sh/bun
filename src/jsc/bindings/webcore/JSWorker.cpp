@@ -158,8 +158,10 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
-    if (Bun::isDataOrBlobURL(scriptUrl) && Bun::throwIfMayNotMakeScriptFromStrings(lexicalGlobalObject, throwScope)) [[unlikely]]
-        return {};
+    if (Bun::isDataOrBlobURL(scriptUrl)) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(lexicalGlobalObject, throwScope);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};

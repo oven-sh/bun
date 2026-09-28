@@ -40,13 +40,10 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
     return JSC::createEvalError(globalObject, codeGenerationFromStringsDisallowedMessage);
 }
 
-// True if it threw.
-inline bool throwIfMayNotMakeScriptFromStrings(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+inline void throwIfMayNotMakeScriptFromStrings(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
-    if (!mayNotMakeScriptFromStrings()) [[likely]]
-        return false;
-    JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
-    return true;
+    if (mayNotMakeScriptFromStrings()) [[unlikely]]
+        JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
 }
 
 inline bool isDataOrBlobURL(const WTF::String& specifier)

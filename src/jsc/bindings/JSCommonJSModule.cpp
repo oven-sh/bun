@@ -834,8 +834,8 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope)) [[unlikely]]
-        return {};
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});

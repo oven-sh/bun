@@ -33,6 +33,12 @@ describe("Bun.file().lastModified", () => {
     expect(file.lastModified).toBeGreaterThan(0);
     expect(file.lastModified).toBeLessThan(SENTINEL);
   });
+
+  test("is 0 for an S3 file, which has no local stat", () => {
+    // The getter sends no request. No network is needed.
+    const s3 = new Bun.S3Client({ bucket: "b", accessKeyId: "a", secretAccessKey: "s" }).file("k");
+    expect(s3.lastModified).toBe(0);
+  });
 });
 
 test("delete() and stat() should work with unicode paths", async () => {

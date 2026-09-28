@@ -16,7 +16,7 @@ use crate::api::bun_x509 as X509;
 // Declared here per port rules (call the linked C symbol directly); migrate
 // into `bun_boringssl_sys` once the bindgen pass covers them.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_camel_case_types, non_upper_case_globals)]
+#[allow(non_upper_case_globals)]
 pub(super) mod ffi {
     use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE, X509_STORE_CTX, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
@@ -894,6 +894,10 @@ pub(crate) fn set_key_cert(
     unsafe {
         let ctx = &(*sc).ctx;
         ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
+        // A client keeps no session id context (see `us_internal_ssl_attach`).
+        if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
+        }
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
         // processing has reached ALPN selection, and Node supports calling
         // setKeyCert from ALPNCallback - apply the identity directly.

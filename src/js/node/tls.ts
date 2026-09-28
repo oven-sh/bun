@@ -4,6 +4,7 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
 const { throwNotImplemented } = require("internal/shared");
 const { idnaToASCII } = require("internal/url");
 const {
@@ -1251,6 +1252,8 @@ function Server(options, secureConnectionListener): void {
   this._rejectUnauthorized = serverOptions?.rejectUnauthorized !== false;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
+  // Constructor-only in node, like the two flags above: setSecureContext() never reads it.
+  if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
@@ -1282,14 +1285,6 @@ function Server(options, secureConnectionListener): void {
     if (options) {
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
-      const { ALPNProtocols } = options;
-
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, next);
-      } else {
-        // An omitted ALPNProtocols clears the previous call's protocols.
-        next.ALPNProtocols = undefined;
-      }
 
       let cert = options.cert;
       // Assign unconditionally so a later setSecureContext() that omits an
@@ -1419,13 +1414,19 @@ function Server(options, secureConnectionListener): void {
       // validateSecureContextOptions already rejected unknown method names.
       // Assign unconditionally so a later setSecureContext() without these
       // options clears the previous call's version constraints instead of
-      // re-applying them on the next listen.
+      // re-applying them to the next context built.
       next.secureProtocol = options.secureProtocol;
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
     if (options) {
-      this.ALPNProtocols = next.ALPNProtocols;
+      // Throws on material BoringSSL rejects, so it runs before the fields change.
+      const handle = this._handle;
+      if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
+        // [buntls] reads its receiver: the staged fields over the server's own.
+        const staged = { __proto__: this, ...next };
+        setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
+      }
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;
@@ -1469,6 +1470,7 @@ function Server(options, secureConnectionListener): void {
   };
 
   this[buntls] = function (port, host, isClient) {
+    const requestCert = isClient ? true : this._requestCert;
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
@@ -1482,8 +1484,9 @@ function Server(options, secureConnectionListener): void {
         ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        rejectUnauthorized: this._rejectUnauthorized,
-        requestCert: isClient ? true : this._requestCert,
+        // A server that requests no client certificate has none to reject.
+        rejectUnauthorized: requestCert ? this._rejectUnauthorized : false,
+        requestCert,
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,

@@ -99,20 +99,22 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 
 ## Symbol attribution
 
-| Binary | Primary source                                                  | Fallback                                     |
-| ------ | --------------------------------------------------------------- | -------------------------------------------- |
-| ELF    | `.symtab`                                                       | `.dynsym`                                    |
-| PE     | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>` |
+| Binary | Primary source                                                  | Fallback                                                       |
+| ------ | --------------------------------------------------------------- | -------------------------------------------------------------- |
+| ELF    | `.symtab`                                                       | `.dynsym`                                                      |
+| PE     | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>`, `<lib:NAME.obj>` |
 
 The Windows fallback handles code with no per-function PDB record (stripped
-CRT objects, anonymized staticlib helpers). Section contributions are the
-linker-map data in structured form — they say which `.obj`/`.lib` every byte
-came from. Attribution is by library basename, which doesn't move when
-unrelated code shifts the link layout.
+CRT objects, anonymized staticlib helpers, an asm file's leading local
+routine). Section contributions are the linker-map data in structured form —
+they say which `.obj`/`.lib` every byte came from. Attribution is by
+library/object basename, which doesn't move when unrelated code shifts the
+link layout; a zero-size `S_PUB32`'s synthesized range is also cut at its own
+contribution so it cannot absorb the next object's unnamed code.
 
 PDB coverage for the same code can vary across linker versions — a function
 that gets an `S_LPROC32` record on one toolchain may fall through to `<lib:>`
-on another. If a symbol flips between a mangled name and `<lib:NAME.lib>`
+on another. If a symbol flips between a mangled name and `<lib:NAME.lib>` / `<lib:NAME.obj>`
 across CI runs, allowlist both forms.
 
 Rust v0 mangled names carry a crate-hash (`Cs[base62]_`) that changes across

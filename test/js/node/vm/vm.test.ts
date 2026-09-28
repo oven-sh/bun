@@ -2460,6 +2460,35 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(exitCode).toBe(0);
 });
 
+test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
+  const options = { lineOffset: 5, columnOffset: 10 };
+  const position = (error: unknown) =>
+    /:(\d+):(\d+)\)?$/m
+      .exec((error as Error).stack!)
+      ?.slice(1, 3)
+      .map(Number);
+  for (const [code, line] of [
+    ['throw new Error("first line")', 6],
+    ['1;\nthrow new Error("second line")', 7],
+  ] as const) {
+    let fromScript: number[] | undefined, fromModule: number[] | undefined;
+    try {
+      new Script(code, { filename: "offset.js", ...options }).runInThisContext();
+    } catch (e) {
+      fromScript = position(e);
+    }
+    const module = new SourceTextModule(code, { identifier: "offset.mjs", ...options });
+    await module.link(() => {});
+    try {
+      await module.evaluate();
+    } catch (e) {
+      fromModule = position(e);
+    }
+    expect(fromScript?.[0]).toBe(line);
+    expect(fromModule).toEqual(fromScript);
+  }
+});
+
 describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
   // Node's validator accepts any int32 here. JSC stores positions as ints,
   // converts the offset to one-based and counts the source's own lines on top

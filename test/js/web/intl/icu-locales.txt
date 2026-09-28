@@ -438,7 +438,6 @@ pa-PK
 pcm
 pl
 pms
-pool
 prg
 ps
 ps-PK
@@ -458,7 +457,6 @@ qu
 qu-BO
 qu-EC
 raj
-res-index
 rm
 rn
 ro

@@ -2,8 +2,8 @@
 // in forms of its own, without what nothing can reach (oven-sh/icu, bun/data). Each section names the part of the data
 // it reads.
 //
-// Snapshots are the ground truth: they capture the output of ICU with its stock data. When ICU/CLDR is bumped,
-// regenerate with `-u`.
+// Snapshots are the ground truth: they were taken with ICU's stock data. When ICU/CLDR is bumped, regenerate with `-u`
+// and read the diff, which comes from the data Bun ships: it should be what CLDR changed, as Node with that ICU has it.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
@@ -335,9 +335,8 @@ describe("Intl.getCanonicalLocales", () => {
 // lang/ curr/ unit/ zone/ item. A corrupt item surfaces as a throw or empty
 // string; "everything fell back to root" surfaces as low distinct-value count.
 //
-// Regenerate the fixture when ICU is bumped:
-//   icupkg -l icudt<NN>l.dat | grep -E '^(curr|lang|region|unit|zone)/' \
-//     | sed -E 's|.*/||; s|\.res$||; s|_|-|g' | sort -u > icu-locales.txt
+// Regenerate the fixture when ICU is bumped, in oven-sh/icu:
+//   ls icu4c/source/data/{curr,lang,region,unit,zone} | sed -n 's/\.txt$//p' | tr _ - | LC_ALL=C sort -u > icu-locales.txt
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
@@ -405,6 +404,7 @@ describe("exhaustive locale sweep", () => {
 // written there a second time, so these fail when the engine starts accepting more than it.
 // ---------------------------------------------------------------------------
 
+// Not on macOS, where the data is the system's, of whatever CLDR that has.
 describe.skipIf(isMacOS)("data ICU is built without", () => {
   const unitLabel = (locale: string, unit: string) =>
     new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "long" })
@@ -419,13 +419,17 @@ describe.skipIf(isMacOS)("data ICU is built without", () => {
     expect(unnamed).toEqual([]);
   });
 
-  test("a unit per another that CLDR has no name for is put together from the two", () => {
-    expect(new Intl.NumberFormat("de", { style: "unit", unit: "meter-per-month", unitDisplay: "long" }).format(2)).toBe(
-      "2 Meter pro Monat",
-    );
-    expect(new Intl.NumberFormat("ru", { style: "unit", unit: "gram-per-day", unitDisplay: "long" }).format(5)).toBe(
-      "5 грамм в день",
-    );
+  snapshotIf("a unit per another that CLDR has no name for is put together from the two", () => {
+    const format = (locale: string, unit: string) =>
+      new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "long" }).format(2);
+    // The second unit has a pattern of its own for this.
+    expect(format("de", "meter-per-month")).toBe("2 Meter pro Monat");
+    expect(format("ru", "gram-per-day")).toBe("2 грамма в день");
+    // It has none: the language's pattern for any two units, with the second in the case the language asks for.
+    expect(format("de", "meter-per-hectare")).toBe("2 Meter pro Hektar");
+    expect(format("de", "gram-per-mile")).toBe("2 Gramm pro Meile");
+    expect(format("pl", "meter-per-acre")).toBe("2 metry na akr");
+    expect(format("ru", "gram-per-hectare")).toBe("2 грамма/гектар");
   });
 
   test("what would need the rest is refused", () => {

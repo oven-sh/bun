@@ -61,8 +61,7 @@ test("server.close() completes after res.socket.end() with a 2 MB upload in flig
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
-  // Longer than the 10 s watchdog of the child, so that a hang is reported by the child.
-}, 15_000);
+});
 
 // In Node the response and the raw socket share one net.Socket Writable, so the
 // FIN of socket.end() / destroySoon() follows every byte the response wrote.

@@ -26,6 +26,7 @@ const files = {
   "routes.mjs": `
     import vm from "node:vm";
     import inspector from "node:inspector";
+    import { startRemoteDebugger } from "bun:jsc";
     import Module, { createRequire } from "node:module";
     import { Worker as NodeWorker } from "node:worker_threads";
     import { fileURLToPath } from "node:url";
@@ -91,6 +92,13 @@ const files = {
         return (await import("made:source")).default;
       },
       inspectorOpen: () => { inspector.open(0, "127.0.0.1"); inspector.close(); return 2; },
+      // The refusal does not depend on what script can replace.
+      inspectorOpenWhenInstanceofLies: () => {
+        Object.defineProperty(EvalError, Symbol.hasInstance, { value: () => false, configurable: true });
+        try { inspector.open(0, "127.0.0.1"); inspector.close(); return 2; } finally { delete EvalError[Symbol.hasInstance]; }
+      },
+      // A host that is not a string is refused before anything is bound, so nothing listens when this is allowed.
+      jscStartRemoteDebugger: () => { try { startRemoteDebugger(1); } catch (e) { if (e.name === "EvalError") throw e; } return 2; },
     };
     const notScriptFromAString = {
       evalOfNonString: () => eval(2),
@@ -193,6 +201,8 @@ const everythingElse = {
   pluginOnLoadSource: 2,
   pluginModuleSource: 2,
   inspectorOpen: 2,
+  inspectorOpenWhenInstanceofLies: 2,
+  jscStartRemoteDebugger: 2,
 };
 const notScriptFromAString = {
   evalOfNonString: 2,
@@ -262,21 +272,19 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Given more than once, the strictest counts, wherever each came from and in whichever order.
-  for (const [name, args, env] of [
-    ["the flag, then =strict", [flag, strict], {}],
-    ["=strict, then the flag", [strict, flag], {}],
-    ["=strict in BUN_OPTIONS, the flag on the command line", [flag], { BUN_OPTIONS: strict }],
-    ["the flag in BUN_OPTIONS, =strict on the command line", [strict], { BUN_OPTIONS: flag }],
-    // An option's value that reads like the script's name, or like "run", is not where the options end.
-    ["after an option whose value is the script's name", ["--title", "routes.mjs", strict, flag], {}],
-    ["after an option whose value is run", ["--title", "run", strict, flag, "run"], {}],
+  // Given more than once, the last counts, as for any option. BUN_OPTIONS comes before the command line.
+  // (What a compiled executable was built with is a floor: test/bundler/compile-argv.test.ts.)
+  for (const [name, args, env, vmScript] of [
+    ["the flag, then =strict", [flag, strict], {}, refused],
+    ["=strict, then the flag", [strict, flag], {}, "object"],
+    ["=strict in BUN_OPTIONS, the flag on the command line", [flag], { BUN_OPTIONS: strict }, "object"],
+    ["the flag in BUN_OPTIONS, =strict on the command line", [strict], { BUN_OPTIONS: flag }, refused],
   ] as const) {
-    test(`${name}: strict`, async () => {
+    test(name, async () => {
       const { stdout, exitCode } = await run([...args], env);
       const { everythingElse, evalAndFunction } = JSON.parse(stdout);
       expect({ vmScript: everythingElse.vmScript, directEval: evalAndFunction.directEval }).toEqual({
-        vmScript: refused,
+        vmScript,
         directEval: refused,
       });
       expect(exitCode).toBe(0);
@@ -294,7 +302,7 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual([2, [strict], []]);
     expect(exitCode).toBe(0);
   });
@@ -306,15 +314,6 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       stderr: `error: Invalid value for --disallow-code-generation-from-strings: "strcit". Must be "strict", or no value`,
     });
     expect(exitCode).toBe(1);
-  });
-
-  test.each([[["--help"]], [["run", "--help"]]])("bun %j lists it", async args => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toMatch(
-      /^ +--disallow-code-generation-from-strings=<val>\s+Make eval\(\) and new Function\(\) throw\./m,
-    );
-    expect(exitCode).toBe(0);
   });
 
   // The flag is the process's. As in Node.js, a Worker cannot be given it.
@@ -338,7 +337,7 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const error = ["ERR_WORKER_INVALID_EXEC_ARGV", "Initiated Worker with invalid execArgv flags: " + given];
     expect(JSON.parse(stdout)).toEqual([error, error]);
     expect(exitCode).toBe(0);
@@ -351,7 +350,6 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     ["--inspect-wait", ["--inspect-wait=127.0.0.1:0"], {}],
     ["--inspect-brk", ["--inspect-brk=127.0.0.1:0"], {}],
     ["BUN_INSPECT", [], { BUN_INSPECT: "ws://127.0.0.1:0/x" }],
-    ["BUN_INSPECT_CONNECT_TO", [], { BUN_INSPECT_CONNECT_TO: "ws://127.0.0.1:1/x" }],
   ] as const) {
     test(`=strict with ${name} is a startup error`, async () => {
       const { stdout, stderr, exitCode } = await run([strict, ...args], env);
@@ -362,4 +360,15 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       expect(exitCode).toBe(1);
     });
   }
+
+  // Editors set BUN_INSPECT_CONNECT_TO for everything started from their terminals, so it is not
+  // somebody asking to debug this process: it is refused with a warning, and the program runs.
+  test("=strict ignores BUN_INSPECT_CONNECT_TO, with a warning", async () => {
+    const { stdout, stderr, exitCode } = await run([strict], { BUN_INSPECT_CONNECT_TO: "ws://127.0.0.1:1/x" });
+    expect(stderr.trim()).toBe(
+      "warn: BUN_INSPECT_CONNECT_TO is ignored with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings",
+    );
+    expect(JSON.parse(stdout).evalAndFunction.directEval).toBe(refused);
+    expect(exitCode).toBe(0);
+  });
 });

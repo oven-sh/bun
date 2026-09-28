@@ -1,5 +1,6 @@
 #include "root.h"
 #include "_NativeModule.h"
+#include "CodeGenerationFromStrings.h"
 
 #include "ExceptionOr.h"
 #include "JavaScriptCore/CallData.h"
@@ -73,12 +74,16 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The debugger evaluates what its client sends, whatever the engine's eval setting.
+    if (Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope)) [[unlikely]]
+        return {};
+
 #if ENABLE(REMOTE_INSPECTOR)
     static const char* defaultHost = "127.0.0.1\0";
     static uint16_t defaultPort = 9230; // node + 1
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
@@ -129,8 +134,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 #else
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     throwVMError(globalObject, scope,
         createTypeError(
             globalObject,

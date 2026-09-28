@@ -1353,6 +1353,9 @@ pub(crate) mod command {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
                 if !graph.compile_exec_argv.is_empty() {
                     bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
+                    arguments::disallow_code_generation_from_strings_as_compiled(
+                        graph.compile_exec_argv,
+                    );
                 }
 
                 // Store the full argv including user arguments

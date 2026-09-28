@@ -27,7 +27,9 @@ Bun reads the flag at startup. Nothing turns it off afterwards:
 - There is no API that re-enables code generation.
 - Every `Worker` has the level of the process, whatever `execArgv` you give the `Worker`.
 - Every realm and context the program creates later has it: `ShadowRealm`, `node:vm` contexts under `=strict`, and every [`Bun.ModuleGraph`](/runtime/module-graph).
-- When the flag appears more than once, the strictest level applies. The order does not matter, and neither does where each one came from: the command line, `BUN_OPTIONS`, or the arguments embedded in a compiled executable.
+- The level a [compiled executable](#in-a-compiled-executable) is built with is a floor. `BUN_OPTIONS` can raise it and cannot lower it.
+
+When the flag appears more than once on a command line, the last one counts, as for any option. Bun reads `BUN_OPTIONS` before the command line, so the command line wins.
 
 A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXEC_ARGV`, as in Node.js. Pass the flag to the process.
 
@@ -53,7 +55,7 @@ A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXE
 | `import`, `import()` and `require()` of a `data:` or `blob:` URL                                      | allowed | refused   |
 | A `Worker` started from a `data:` or `blob:` URL, or with `eval: true`                                | allowed | refused   |
 | A [plugin](/runtime/plugins) that returns `contents` for the `js`, `jsx`, `ts` or `tsx` loader        | allowed | refused   |
-| `inspector.open()` from `node:inspector`                                                              | allowed | refused   |
+| `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc`                      | allowed | refused   |
 | `napi_run_script()` in a native addon                                                                 | allowed | refused   |
 
 With the flag and no value, Bun matches Node.js: `node:vm` is not affected, and a `node:vm` context decides for itself with its `codeGeneration` option.
@@ -72,10 +74,16 @@ These keep working at both levels:
 
 ## The inspector
 
-The debugger evaluates the code its client sends. With `=strict`, Bun exits with an error at startup when you also pass `--inspect`, `--inspect-wait` or `--inspect-brk`, or when `BUN_INSPECT` or `BUN_INSPECT_CONNECT_TO` is set:
+The debugger evaluates the code its client sends, so `=strict` refuses it. Bun exits with an error at startup when you also pass `--inspect`, `--inspect-wait` or `--inspect-brk`, or when `BUN_INSPECT` is set:
 
 ```txt
 error: BUN_INSPECT cannot be used with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings
+```
+
+Editors set `BUN_INSPECT_CONNECT_TO` for every process started from their terminals. Bun's VS Code extension does so by default. That variable does not mean that you asked to debug this program, so Bun prints a warning, does not connect, and runs the program:
+
+```txt
+warn: BUN_INSPECT_CONNECT_TO is ignored with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings
 ```
 
 ## Parts of Bun that stop working
@@ -88,6 +96,7 @@ One part of Bun calls `new Function()` itself: the development server. Every oth
 | `node:repl`: `repl.start()`                                                              | works  | throws    |
 | `node:worker_threads`: `new Worker(code, { eval: true })`                                | works  | throws    |
 | `node:inspector`: `inspector.open()`                                                     | works  | throws    |
+| `bun:jsc`: `startRemoteDebugger()`                                                       | works  | throws    |
 | `node:vm`: everything that takes source text                                             | works  | throws    |
 | `node:module`: `module._compile()`, assigning `Module.wrapper`                           | works  | throws    |
 | `Bun.plugin()`: `onLoad` and `build.module()` that return source text                    | works  | throws    |

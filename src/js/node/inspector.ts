@@ -66,12 +66,10 @@ function open(port?: number, host?: string, wait?: boolean) {
     },
   };
 
-  let resolvedUrl: string | null;
+  let resolvedUrl: string | null | EvalError;
   try {
     resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   } catch (e) {
-    // --disallow-code-generation-from-strings=strict: no port would do.
-    if (e instanceof EvalError) throw e;
     // Node prints one diagnostic line and returns instead of throwing when the
     // socket cannot be bound, so a caller can retry with a different port.
     const raw = (e as Error)?.message ?? String(e);
@@ -79,6 +77,10 @@ function open(port?: number, host?: string, wait?: boolean) {
     const detail = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     process.stderr.write(`Starting inspector on ${hostname}:${portNumber} failed: ${detail}\n`);
     return disposable;
+  }
+  if (typeof resolvedUrl === "object" && resolvedUrl !== null) {
+    // --disallow-code-generation-from-strings=strict
+    throw resolvedUrl;
   }
   if (resolvedUrl === null) {
     // A prior inspector.open() success is caught by the top guard above, so

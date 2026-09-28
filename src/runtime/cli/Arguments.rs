@@ -284,9 +284,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
-    parse_param!(
-        "--disallow-code-generation-from-strings <STR>?...  Make eval() and new Function() throw. With \"=strict\", also node:vm, module._compile, data: and blob: modules, and plugin-supplied source"
-    ),
+    // No help text, which hides it: the name is wider than the column `bun --help` prints names in.
+    parse_param!("--disallow-code-generation-from-strings <STR>?"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -800,6 +799,19 @@ fn disallow_code_generation_from_strings(value: &[u8]) {
     }
 }
 
+/// The level a compiled executable was built with (`--compile-exec-argv`) is a floor. The parser
+/// keeps an option's last value and reads `BUN_OPTIONS` after the embedded flags, so on its own it
+/// would let the environment lower it.
+pub(crate) fn disallow_code_generation_from_strings_as_compiled(compile_exec_argv: &[u8]) {
+    for token in bun_core::strings::tokenize_any(compile_exec_argv, b" \t\n\r") {
+        match token.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()) {
+            Some(b"") => disallow_code_generation_from_strings(b""),
+            Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
+            _ => {}
+        }
+    }
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -1130,9 +1142,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             opts.allow_ffi_cc = Some(false);
         }
 
-        // Every occurrence counts, so that a later one (BUN_OPTIONS comes after a compiled
-        // executable's own flags) cannot lower what an earlier one asked for.
-        for value in args.options(b"--disallow-code-generation-from-strings") {
+        if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {
             disallow_code_generation_from_strings(value);
         }
 

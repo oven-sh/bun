@@ -224,8 +224,6 @@ pub enum Values {
     One,
     Many,
     OneOptional,
-    /// `<value>?...`: `OneOptional`, with every occurrence kept. One with no value is `b""`.
-    ManyOptional,
 }
 
 /// Represents a parameter for the command line.
@@ -596,8 +594,17 @@ pub fn simple_help(params: &[Param<Help>]) {
 #[cold]
 #[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
+    // `computed_max_spacing` is not const-evaluable over a
+    // slice param, so the overflow check is a runtime debug_assert below.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
+
+    let computed_max_spacing: usize = compute_max_help_spacing(params);
+
+    debug_assert!(
+        computed_max_spacing <= MAX_SPACING,
+        "a parameter is too long to be nicely printed in `bun --help`"
+    );
 
     for param in params {
         if !(param.names.short.is_none() && param.names.long.is_none()) {
@@ -605,23 +612,17 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
             if !desc_text.is_empty() {
                 simple_print_param(param).expect("unreachable");
 
+                let total_len = param_display_width(param);
+                let num_spaces_after = MAX_SPACING - total_len;
+
                 // `pretty_help_desc`
                 // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
-                match MAX_SPACING.checked_sub(param_display_width(param)) {
-                    Some(num_spaces_after) => bun_core::pretty!(
-                        "{}{}",
-                        bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
-                        bstr::BStr::new(desc.as_ref()),
-                    ),
-                    // Wider than the column: the description goes on the next line, under the
-                    // others. The 8 spaces are what `simple_print_param` puts before the name.
-                    None => bun_core::pretty!(
-                        "\n        {}{}",
-                        bstr::BStr::new(SPACE_BUF),
-                        bstr::BStr::new(desc.as_ref()),
-                    ),
-                }
+                bun_core::pretty!(
+                    "{}{}",
+                    bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
+                    bstr::BStr::new(desc.as_ref()),
+                );
             }
         }
     }
@@ -798,7 +799,6 @@ mod tests {
         parse_param!("--test-name-pattern/--grep <STR>...  Filter tests"),
         parse_param!("<POS> ...  positional"),
         param!("-h, --help  Display this help"),
-        parse_param!("--level <STR>?...  Raise the level"),
     ];
 
     static MACRO_PARAMS_SLICE: &[Param<Help>] = parse_params! {
@@ -830,10 +830,6 @@ mod tests {
         assert_eq!(MACRO_PARAMS[3].names.short, None);
         assert_eq!(MACRO_PARAMS[3].names.long, None);
         assert_eq!(MACRO_PARAMS[3].id.value, b"POS");
-
-        assert_eq!(MACRO_PARAMS[5].takes_value, Values::ManyOptional);
-        assert_eq!(MACRO_PARAMS[5].id.value, b"STR");
-        assert_eq!(MACRO_PARAMS[5].id.msg, b"Raise the level");
 
         // parse_params! slice form.
         assert_eq!(MACRO_PARAMS_SLICE.len(), 3);

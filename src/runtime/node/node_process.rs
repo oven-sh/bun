@@ -316,10 +316,9 @@ mod _impl {
                     let mut set = bun_collections::StringSet::new();
                     for param in crate::cli::arguments::AUTO_PARAMS.iter() {
                         // An optional value is only ever written `--name=value`.
-                        if matches!(
-                            param.takes_value,
-                            bun_clap::Values::One | bun_clap::Values::Many
-                        ) {
+                        if param.takes_value != bun_clap::Values::None
+                            && param.takes_value != bun_clap::Values::OneOptional
+                        {
                             if let Some(name) = param.names.long {
                                 let mut k = Vec::with_capacity(2 + name.len());
                                 k.extend_from_slice(b"--");

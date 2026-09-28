@@ -163,7 +163,7 @@ describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(JSON.parse(stdout)).toEqual(["hello from c", null, "function"]);
       expect(exitCode).toBe(0);
     });

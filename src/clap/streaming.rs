@@ -119,7 +119,6 @@ where
 
                     if param.takes_value == clap::Values::None
                         || param.takes_value == clap::Values::OneOptional
-                        || param.takes_value == clap::Values::ManyOptional
                     {
                         if param.takes_value == clap::Values::None && maybe_value.is_some() {
                             return Err(self.err(arg, None, Some(name), ArgError::DoesntTakeValue));
@@ -245,17 +244,11 @@ where
             };
             if param.takes_value == clap::Values::None
                 || param.takes_value == clap::Values::OneOptional
-                || param.takes_value == clap::Values::ManyOptional
             {
                 if next_is_eql && param.takes_value == clap::Values::None {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));
                 }
-                // `OneOptional` has always dropped what follows the `=`: `-c=path` is read as `-c`.
-                return Ok(Some(Arg {
-                    param,
-                    value: (next_is_eql && param.takes_value == clap::Values::ManyOptional)
-                        .then(|| &arg[next_index + 1..]),
-                }));
+                return Ok(Some(Arg { param, value: None }));
             }
 
             if arg.len() <= next_index {
@@ -627,94 +620,6 @@ mod tests {
                 },
                 Arg {
                     param: dd,
-                    value: Some(b"0"),
-                },
-            ],
-        );
-    }
-
-    #[test]
-    fn optional_value_params() {
-        let params: [clap::Param<u8>; 3] = [
-            clap::Param {
-                id: 0,
-                names: clap::Names {
-                    short: Some(b'a'),
-                    long: Some(b"aa"),
-                    ..Default::default()
-                },
-                takes_value: clap::Values::OneOptional,
-            },
-            clap::Param {
-                id: 1,
-                names: clap::Names {
-                    short: Some(b'b'),
-                    long: Some(b"bb"),
-                    ..Default::default()
-                },
-                takes_value: clap::Values::ManyOptional,
-            },
-            clap::Param {
-                id: 2,
-                takes_value: clap::Values::One,
-                ..Default::default()
-            },
-        ];
-
-        let a = &params[0];
-        let b = &params[1];
-        let positional = &params[2];
-
-        // The value is only ever attached with `=`: what follows is the next argument.
-        test_no_err(
-            &params,
-            &[
-                b"-a", b"--aa", b"--aa=0", b"-b", b"-b=0", b"--bb", b"--bb=0", b"-a", b"0",
-                b"--bb", b"0",
-            ],
-            &[
-                Arg {
-                    param: a,
-                    value: None,
-                },
-                Arg {
-                    param: a,
-                    value: None,
-                },
-                Arg {
-                    param: a,
-                    value: Some(b"0"),
-                },
-                Arg {
-                    param: b,
-                    value: None,
-                },
-                Arg {
-                    param: b,
-                    value: Some(b"0"),
-                },
-                Arg {
-                    param: b,
-                    value: None,
-                },
-                Arg {
-                    param: b,
-                    value: Some(b"0"),
-                },
-                Arg {
-                    param: a,
-                    value: None,
-                },
-                Arg {
-                    param: positional,
-                    value: Some(b"0"),
-                },
-                Arg {
-                    param: b,
-                    value: None,
-                },
-                Arg {
-                    param: positional,
                     value: Some(b"0"),
                 },
             ],

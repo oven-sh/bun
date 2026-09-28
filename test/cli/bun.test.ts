@@ -451,6 +451,24 @@ describe("bun", () => {
     });
   });
 
+  test.each(["--config=other.toml", "-c=other.toml"])("%s reads that config file", async config => {
+    using dir = tempDir("bun-config-flag", {
+      "other.toml": `preload = ["./preload.js"]`,
+      "preload.js": `console.log("preload");`,
+      "main.js": `console.log("main");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), config, "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.replaceAll("\r\n", "\n")).toBe("preload\nmain\n");
+    expect(exitCode).toBe(0);
+  });
+
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

@@ -38,8 +38,6 @@ pub type FdT = libc::c_int;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-pub type PidFdType = ();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
@@ -318,7 +316,6 @@ pub struct PosixSpawnOptions {
     pub uid: Option<u32>,
     /// Run the child as this group id (`setgid` after fork, like libuv/Node).
     pub gid: Option<u32>,
-    pub windows: (),
     pub argv0: Option<*const c_char>,
     pub stream: bool,
     pub sync: bool,
@@ -341,8 +338,6 @@ pub struct PosixSpawnOptions {
     pub new_process_group: bool,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pub pty_slave_fd: i32,
-    /// Windows-only ConPTY handle; void placeholder on POSIX.
-    pub pseudoconsole: (),
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to SIGKILL if
@@ -366,7 +361,6 @@ impl Default for PosixSpawnOptions {
             detached: false,
             uid: None,
             gid: None,
-            windows: (),
             argv0: None,
             stream: true,
             sync: false,
@@ -375,7 +369,6 @@ impl Default for PosixSpawnOptions {
             no_sigpipe: true,
             new_process_group: false,
             pty_slave_fd: -1,
-            pseudoconsole: (),
             linux_pdeathsig: None,
             cgroup_fd: None,
         }
@@ -458,6 +451,7 @@ impl PosixStdio {
 #[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub pidfd: Option<PidFdType>,
     pub stdin: Option<Fd>,
     pub stdout: Option<Fd>,

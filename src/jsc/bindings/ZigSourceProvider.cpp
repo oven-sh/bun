@@ -410,6 +410,20 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 
 }; // namespace Zig
 
+namespace Bun {
+
+// bun:internal-for-testing: whether the source of a function knows where its lines start. Before anything asked for a
+// position in it, that means they came with its code: from the parse, or out of the bytecode.
+JSC_DEFINE_HOST_FUNCTION(jsSourceHasLineStarts, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
+{
+    auto* function = dynamicDowncast<JSC::JSFunction>(callFrame->argument(0));
+    if (!function || function->isHostFunction())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(function->jsExecutable()->source().provider()->lineStartTableIsBuilt()));
+}
+
+} // namespace Bun
+
 // What StringImpl::hash() returns for an 8-bit string with these bytes; `bun build --compile` records it per module.
 extern "C" uint32_t Bun__WTFStringHashLatin1(const Latin1Character* characters, size_t length)
 {

@@ -411,7 +411,38 @@ impl<'a> LinkerContext<'a> {
     /// what the import records of its live parts load
     /// (`file_loaded_by_import`) and the files declaring the bindings those
     /// parts use. A CSS or HTML file has no parts; every record counts.
-    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
+    pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, each: impl FnMut(u32)) {
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        self.for_each_file_loaded_by_parts(
+            source_index,
+            |part_index| parts_live.is_set(part_index),
+            each,
+        );
+    }
+
+    /// `for_each_file_loaded_by`, with the parts live for one entry point when liveness is per entry point.
+    fn for_each_file_loaded_by_entry_point(
+        &self,
+        source_index: u32,
+        entry_point_id: usize,
+        each: impl FnMut(u32),
+    ) {
+        match &self.graph.parts_live_per_entry_point {
+            Some(parts_live) => self.for_each_file_loaded_by_parts(
+                source_index,
+                |part_index| parts_live.is_live(entry_point_id, source_index as usize, part_index),
+                each,
+            ),
+            None => self.for_each_file_loaded_by(source_index, each),
+        }
+    }
+
+    fn for_each_file_loaded_by_parts(
+        &self,
+        source_index: u32,
+        is_part_live: impl Fn(usize) -> bool,
+        mut each: impl FnMut(u32),
+    ) {
         let records = &self.graph.ast.items_import_records()[source_index as usize];
         if self.graph.ast.items_css()[source_index as usize].is_some()
             || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
@@ -423,13 +454,12 @@ impl<'a> LinkerContext<'a> {
             }
             return;
         }
-        let parts_live = &self.graph.parts_live[source_index as usize];
         for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
             .as_slice()
             .iter()
             .enumerate()
         {
-            if !parts_live.is_set(part_index) {
+            if !is_part_live(part_index) {
                 continue;
             }
             for &record_index in part.import_record_indices.iter() {
@@ -2990,7 +3020,7 @@ impl<'a> LinkerContext<'a> {
             bits.set(entry_points_count);
 
             let (file_entry_bits, queue) = (&ctx.file_entry_bits, &mut ctx.queue);
-            self.for_each_file_loaded_by(source_index, |other| {
+            self.for_each_file_loaded_by_entry_point(source_index, entry_points_count, |other| {
                 if !file_entry_bits[other as usize].is_set(entry_points_count) {
                     queue.push_back(other);
                 }

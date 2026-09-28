@@ -331,9 +331,16 @@ enum Edge {
 }
 
 /// Whether the part is live for the given entry point. Liveness is per entry point only for independent multi-entry builds.
-fn is_part_live(c: &LinkerContext, entry_id: u32, source_index: IndexInt, part_index: usize) -> bool {
+fn is_part_live(
+    c: &LinkerContext,
+    entry_id: u32,
+    source_index: IndexInt,
+    part_index: usize,
+) -> bool {
     match &c.graph.parts_live_per_entry_point {
-        Some(parts_live) => parts_live.is_live(entry_id as usize, source_index as usize, part_index),
+        Some(parts_live) => {
+            parts_live.is_live(entry_id as usize, source_index as usize, part_index)
+        }
         None => c.graph.parts_live[source_index as usize].is_set(part_index),
     }
 }
@@ -687,13 +694,19 @@ impl EntryWalk {
                 });
             };
 
-            for_each_edge(c, source_index, runs, loader, |part_index, edge| match edge {
-                Edge::Import(other) => import(part_index, other, loader),
-                Edge::LoadNow(other) => {
-                    import(part_index, other, plan.entry_id_of_file[other as usize])
-                }
-                Edge::LoadLater(_) => {}
-            });
+            for_each_edge(
+                c,
+                source_index,
+                runs,
+                loader,
+                |part_index, edge| match edge {
+                    Edge::Import(other) => import(part_index, other, loader),
+                    Edge::LoadNow(other) => {
+                        import(part_index, other, plan.entry_id_of_file[other as usize])
+                    }
+                    Edge::LoadLater(_) => {}
+                },
+            );
             if let Some(slot) = slot {
                 stack.push(WalkFrame::Place {
                     run: PartRun {

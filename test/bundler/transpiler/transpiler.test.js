@@ -5340,6 +5340,30 @@ describe.concurrent("minify.identifiers on an empty source or a data loader", ()
   });
 });
 
+// The exports keep their names and take every one-character name the minifier
+// can produce, so the import and the parameter each need a longer name.
+// `label(item)` printed as `function label(t) { return t(t.name) }`.
+it.each(["transformSync", "transform"])(
+  "minify.identifiers: %s gives no import or parameter the name of an export",
+  async method => {
+    const exportNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+      [
+        `import { imported } from "./imported.js";`,
+        ...exportNames.map(name => `export const ${name} = "${name}";`),
+        `export function label(item) { return t(item.name) + " #" + item.id + imported; }`,
+      ].join("\n"),
+    );
+    const [, importAlias] = output.match(/import \{ imported as ([\w$]+) \}/);
+    const [, parameter] = output.match(/function label\(([\w$]+)\)/);
+    expect({
+      importAlias: exportNames.includes(importAlias) ? `${importAlias} is an export` : "ok",
+      parameter: exportNames.includes(parameter) ? `${parameter} is an export` : "ok",
+      body: output.includes(`return t(${parameter}.name) + " #" + ${parameter}.id + ${importAlias};`),
+    }).toEqual({ importAlias: "ok", parameter: "ok", body: true });
+  },
+);
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });

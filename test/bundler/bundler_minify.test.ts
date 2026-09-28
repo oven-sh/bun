@@ -82,6 +82,70 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "[]" },
   });
+  // Every kind of export takes one-character names here, and each test below
+  // declares 54 other names, one for each one-character name the minifier can
+  // produce. So every export name is wanted by one of them, whatever the
+  // character frequency of the file is.
+  const exportKinds: ((n: string) => [declaration: string, read: string])[] = [
+    n => [`export const ${n} = "${n}";`, n],
+    n => [`export let ${n} = "${n}";`, n],
+    n => [`export var ${n} = "${n}";`, n],
+    n => [`export function ${n}() { return "${n}"; }`, `${n}()`],
+    n => [`export class ${n} { static value = "${n}"; }`, `${n}.value`],
+    n => [`const ${n} = "${n}"; export { ${n} };`, n],
+    n => [`export const { ${n} } = { ${n}: "${n}" };`, n],
+  ];
+  const everyExportKind = singleCharNames.map((n, i) => exportKinds[i % exportKinds.length](n));
+  const exportDeclarations = everyExportKind.map(([declaration]) => declaration);
+  const exportChecks = singleCharNames.map((n, i) => `if (${everyExportKind[i][1]} !== "${n}") bad.push("${n}");`);
+  // A parameter, a local and a catch binding of a function that reads the
+  // exports: `export const t = ...; export function label(item) { return
+  // t(item.name) }` printed as `function label(t) { return t(t.name) }`.
+  itBundled("minify/NoBundleExportNameNotReusedInFunction", {
+    files: {
+      "/entry.js": [
+        ...exportDeclarations,
+        `export function check(${singleCharNames.map((_, i) => `param${i} = ${i}`).join(", ")}) {`,
+        "  const bad = [];",
+        `  let local = [${singleCharNames.map((_, i) => `param${i}`).join(", ")}].join();`,
+        `  if (local !== "${singleCharNames.map((_, i) => i).join()}") bad.push("params " + local);`,
+        "  try { throw local.length; } catch (caught) { if (caught !== local.length) bad.push('caught ' + caught); }",
+        ...exportChecks,
+        "  return bad;",
+        "}",
+        "console.log(JSON.stringify(check()));",
+      ].join("\n"),
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // An import and a private top-level name: `import { a } from "./x.js";
+  // export const t = a` printed as `import { a as t } from "./x.js"; export
+  // const t = t`, which does not parse.
+  itBundled("minify/NoBundleExportNameNotReusedAtTopLevel", {
+    files: {
+      "/entry.js": [
+        `import fromDefault, { fromNamed } from "./imported.js";`,
+        `import * as fromNamespace from "./imported.js";`,
+        `function privateFunction() { return "function"; }`,
+        `class PrivateClass { static value = "class"; }`,
+        ...singleCharNames.map((_, i) => `const private${i} = ${i};`),
+        ...exportDeclarations,
+        "const bad = [];",
+        `const imports = [fromDefault, fromNamed, fromNamespace.fromNamed, privateFunction(), PrivateClass.value].join();`,
+        `if (imports !== "default,named,named,function,class") bad.push("imports " + imports);`,
+        `const privates = [${singleCharNames.map((_, i) => `private${i}`).join(", ")}].join();`,
+        `if (privates !== "${singleCharNames.map((_, i) => i).join()}") bad.push("privates " + privates);`,
+        ...exportChecks,
+        "console.log(JSON.stringify(bad));",
+      ].join("\n"),
+      "/imported.js": `export const fromNamed = "named"; export default "default";`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

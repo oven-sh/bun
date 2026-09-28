@@ -1910,6 +1910,10 @@ pub mod formatter {
                     | Tag::Event
             )
         }
+
+        pub(crate) fn is_recorded_by_its_printer(self) -> bool {
+            matches!(self, Tag::Error)
+        }
     }
 
     /// Only `CustomFormattedObject` carries a payload.
@@ -3226,6 +3230,11 @@ pub mod formatter {
             let _ = self.map.remove(&value);
         }
 
+        #[inline]
+        pub(crate) fn visited_contains(&self, value: JSValue) -> bool {
+            self.map_node.is_some() && self.map.contains(&value)
+        }
+
         /// Circular-reference / stack-overflow / visited-map prelude for
         /// `print_as`. Outlined so its locals (the pool node, the
         /// `get_or_put` result, the `[Circular]` write path) live in a leaf
@@ -3240,7 +3249,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            can_circ: bool,
+            format: Tag,
             remove_before_recurse: &mut bool,
         ) -> JsResult<bool> {
             if self.failed {
@@ -3249,7 +3258,7 @@ pub mod formatter {
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
-            if !can_circ {
+            if !format.can_have_circular_references() {
                 return Ok(true);
             }
 
@@ -3259,6 +3268,10 @@ pub mod formatter {
                     return Err(self.global_this.throw_stack_overflow());
                 }
                 return Ok(false);
+            }
+
+            if format.is_recorded_by_its_printer() {
+                return Ok(true);
             }
 
             if !self.visited_insert(value) {
@@ -3289,7 +3302,7 @@ pub mod formatter {
             if !self.print_as_prelude::<ENABLE_ANSI_COLORS>(
                 writer_,
                 value,
-                format.can_have_circular_references(),
+                format,
                 &mut remove_before_recurse,
             )? {
                 return Ok(());
@@ -3861,25 +3874,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // Temporarily remove from the visited map to allow
-            // printErrorlikeObject to process it. The circular reference
-            // check is already done in print_as, so we know it's safe.
-            let was_in_map = if self.map_node.is_some() {
-                self.map.remove(&value).is_some()
-            } else {
-                false
-            };
-            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-            scopeguard::defer! {
-                // SAFETY: `self.map` outlives this guard; no other borrow is
-                // live at the drop point.
-                unsafe {
-                    if was_in_map {
-                        let _ = (*map_restore_ptr).insert(value, ());
-                    }
-                }
-            }
-
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();

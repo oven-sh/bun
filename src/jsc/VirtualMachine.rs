@@ -5944,7 +5944,20 @@ impl VirtualMachine {
                 let writer = unsafe { &mut *ctx.writer };
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
-                if formatter.depth > formatter.error_chain_max_depth()
+                if next_value.is_cell()
+                    && next_value.js_type() == crate::JSType::ErrorInstance
+                    && formatter.visited_contains(next_value)
+                {
+                    let _ = if ctx.allow_ansi_color {
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", true).as_bytes(),
+                        )
+                    } else {
+                        writer.write_all(
+                            bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", false).as_bytes(),
+                        )
+                    };
+                } else if formatter.depth > formatter.error_chain_max_depth()
                     || !formatter.stack_check.is_safe_to_recurse()
                 {
                     let _ = if ctx.allow_ansi_color {
@@ -6611,6 +6624,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         let mut default_formatter = crate::console_object::Formatter::new(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
+        let mut recorded = false;
         self.print_error_instance_body(
             zig_exception,
             JSValue::ZERO,
@@ -6619,6 +6633,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            &mut recorded,
         )
         // `defer default_formatter.deinit()` → Drop.
     }
@@ -6667,6 +6682,18 @@ impl VirtualMachine {
             return Ok(());
         }
 
+        if error_instance.is_cell()
+            && error_instance.js_type() == crate::JSType::ErrorInstance
+            && formatter.visited_contains(error_instance)
+        {
+            writer.write_all(if allow_ansi_color {
+                bun_core::pretty_fmt!("<r><cyan>[Circular]<r>", true).as_bytes()
+            } else {
+                bun_core::pretty_fmt!("<r><cyan>[Circular]<r>", false).as_bytes()
+            })?;
+            return Ok(());
+        }
+
         // Note: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
         // ZigException). It sits next to the large runtime-dispatched body, so
         // box it to keep the per-level recursion frame small enough for the
@@ -6690,6 +6717,7 @@ impl VirtualMachine {
         );
         error_instance.ensure_still_alive();
 
+        let mut recorded = false;
         let result = self.print_error_instance_body(
             // SAFETY: see above.
             unsafe { &mut *exception },
@@ -6700,7 +6728,11 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            &mut recorded,
         );
+        if recorded {
+            formatter.visited_remove(error_instance);
+        }
 
         drop(source_code_slice);
         exception_holder.deinit(self);
@@ -6722,6 +6754,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
+        recorded: &mut bool,
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
@@ -7065,7 +7098,9 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
+                let circular = kind == JSType::ErrorInstance
+                    && (value == error_instance || formatter.visited_contains(value));
+                if kind == JSType::ErrorInstance && !prev_had_errors && !circular {
                     if field.eq_ascii(b"cause") {
                         saw_cause = true;
                     }
@@ -7076,6 +7111,12 @@ impl VirtualMachine {
                     || value.is_primitive()
                     || kind.is_string_like()
                 {
+                    if circular && field.eq_ascii(b"cause") {
+                        saw_cause = true;
+                    }
+                    if !*recorded && !value.is_primitive() {
+                        *recorded = formatter.visited_insert(error_instance);
+                    }
                     let prev_disable_inspect_custom = formatter.disable_inspect_custom;
                     let prev_quote_strings = formatter.quote_strings;
                     let prev_max_depth = formatter.max_depth;
@@ -7159,19 +7200,29 @@ impl VirtualMachine {
                 )?;
             }
 
-            if !is_first_property {
-                writer.write_all(b"\n")?;
-            }
-
             // "cause" is not enumerable, so the above loop won't see it.
             if !saw_cause {
                 let key = bun_core::String::static_("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
-                        cause.protect();
-                        errors_to_append.push(cause);
+                        if cause == error_instance || formatter.visited_contains(cause) {
+                            let pad_left = longest_name.saturating_sub(b"cause".len());
+                            is_first_property = false;
+                            splat_space(writer, pad_left as u64)?;
+                            pretty_write!(
+                                writer,
+                                " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"
+                            )?;
+                        } else {
+                            cause.protect();
+                            errors_to_append.push(cause);
+                        }
                     }
                 }
+            }
+
+            if !is_first_property {
+                writer.write_all(b"\n")?;
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
@@ -7200,15 +7251,12 @@ impl VirtualMachine {
             )?;
         }
 
+        if !*recorded && !errors_to_append.is_empty() {
+            *recorded = formatter.visited_insert(error_instance);
+        }
+
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
-            // Circular-ref guard for cause chains.
-            if !formatter.visited_insert(err) {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
-            }
-
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
@@ -7226,7 +7274,6 @@ impl VirtualMachine {
                 )
             };
             formatter.depth = prev_depth;
-            formatter.visited_remove(err);
             result?;
         }
 

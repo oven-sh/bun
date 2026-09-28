@@ -3289,7 +3289,9 @@ it.each([undefined, "throw", "strict"])(
 // Bun's default mode prints an unhandled rejection and ends the process. It
 // does not ask the 'uncaughtException' listeners or the capture callback: that
 // is its difference from --unhandled-rejections=throw. Only 'exit' listeners
-// run after the report.
+// run after the report. The queued immediate ends the process with status 3,
+// so a build that goes on after the report fails here and does not wait for
+// the top-level await.
 it.each([
   {
     name: "when nothing listens",
@@ -3315,15 +3317,26 @@ it.each([
     reason: `new Error("oops")`,
     stderr: expect.stringContaining("error: oops"),
   },
-])("a default-mode unhandled rejection ends the process $name", async ({ setup, reason, stderr: errors }) => {
+  {
+    name: "under a pending top-level await",
+    setup: "",
+    reason: `new Error("oops")`,
+    tail: `await new Promise(() => {});`,
+    stderr: expect.stringContaining("error: oops"),
+  },
+])("a default-mode unhandled rejection ends the process $name", async ({ setup, reason, tail, stderr: errors }) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `${setup}
        process.on("exit", code => console.log("exit", code, process.exitCode));
-       setImmediate(() => console.log("immediate"));
-       Promise.reject(${reason});`,
+       setImmediate(() => {
+         console.log("immediate");
+         process.exit(3);
+       });
+       Promise.reject(${reason});
+       ${tail ?? ""}`,
     ],
     env: bunEnv,
     stdout: "pipe",

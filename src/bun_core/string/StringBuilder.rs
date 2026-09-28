@@ -263,3 +263,30 @@ impl Drop for StringBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_views_are_empty(builder: &mut StringBuilder) {
+        assert!(builder.ptr.is_some());
+        assert!(builder.writable().is_empty());
+        assert!(builder.allocated_slice().is_empty());
+        assert!(builder.append(b"").is_empty());
+        assert!(builder.written_slice().is_empty());
+        assert!(builder.move_to_slice().is_empty());
+    }
+
+    #[test]
+    fn views_are_empty_after_allocate_with_nothing_counted() {
+        let mut builder = StringBuilder::default();
+        builder.count(b"");
+        builder.allocate().unwrap();
+        assert_views_are_empty(&mut builder);
+    }
+
+    #[test]
+    fn views_are_empty_after_init_capacity_zero() {
+        assert_views_are_empty(&mut StringBuilder::init_capacity(0));
+    }
+}

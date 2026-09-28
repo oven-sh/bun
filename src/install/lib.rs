@@ -810,14 +810,14 @@ impl RunCommand {
     /// `bun-node-` + 16 hex digits.
     const TEMP_SHIM_DIR_NAME_LEN: usize = Self::TEMP_SHIM_DIR_PREFIX.len() + 16;
 
-    /// `bun-node-<hash of the launched path, ASCII folded>`: one name per install.
+    /// `bun-node-<hash of the launched exe's directory, ASCII folded>`: one name per install.
     fn temp_shim_dir_name<'a>(
         buf: &'a mut [u8; Self::TEMP_SHIM_DIR_NAME_LEN],
         launched: &bun_core::WStr,
     ) -> &'a str {
         let prefix = Self::TEMP_SHIM_DIR_PREFIX.as_bytes();
         let mut lowered = bun_paths::w_path_buffer_pool::get();
-        let path = launched.as_slice();
+        let path = bun_paths::resolve_path::dirname_w(launched);
         let path_len = path.len().min(lowered.len());
         for (dst, &c) in lowered[..path_len].iter_mut().zip(path) {
             *dst = if c < 0x80 {
@@ -1088,7 +1088,35 @@ impl RunCommand {
         Ok(())
     }
 
-    /// Unlinks every `*.old` in `dir`. One that a process still maps stays for the next sweep.
+    /// `name` is `<shim>.old` or `<shim>.<pid>.old` for one of this code's shim names.
+    fn is_old_windows_node_shim(name: &[u16]) -> bool {
+        fn strip_ascii_suffix<'a>(name: &'a [u16], suffix: &[u8]) -> Option<&'a [u16]> {
+            let at = name.len().checked_sub(suffix.len())?;
+            name[at..]
+                .iter()
+                .zip(suffix)
+                .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(b))
+                .then(|| &name[..at])
+        }
+        let Some(mut stem) = strip_ascii_suffix(name, Self::OLD_SUFFIX) else {
+            return false;
+        };
+        let digits = stem
+            .iter()
+            .rev()
+            .take_while(|&&c| c < 0x80 && (c as u8).is_ascii_digit())
+            .count();
+        if digits > 0 && stem.len() > digits && stem[stem.len() - digits - 1] == b'.' as u16 {
+            stem = &stem[..stem.len() - digits - 1];
+        }
+        [b"node.exe".as_slice(), b"bun.exe"]
+            .iter()
+            .any(|shim| strip_ascii_suffix(stem, shim).is_some_and(<[u16]>::is_empty))
+    }
+
+    const OLD_SUFFIX: &'static [u8] = b".old";
+
+    /// Unlinks this code's `*.old` shims in `dir`. One a process still maps stays for the next sweep.
     fn sweep_old_windows_node_shims(dir: &[u16]) {
         use bun_core::WStr;
 
@@ -1107,13 +1135,7 @@ impl RunCommand {
         let mut iter = bun_sys::iterate_dir(dir_fd.fd());
         while let Ok(Some(entry)) = iter.next() {
             let name = entry.name.slice();
-            let suffix = name.len().checked_sub(4).map(|at| &name[at..]);
-            let is_old = suffix.is_some_and(|tail| {
-                tail.iter()
-                    .zip(b".old")
-                    .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(b))
-            });
-            if !is_old || dir.len() + 1 + name.len() >= path.len() {
+            if !Self::is_old_windows_node_shim(name) || dir.len() + 1 + name.len() >= path.len() {
                 continue;
             }
             path[..dir.len()].copy_from_slice(dir);

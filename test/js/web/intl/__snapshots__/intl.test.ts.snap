@@ -392,7 +392,7 @@ exports[`Intl.Collator sort order across locales 1`] = `
 }
 `;
 
-exports[`Intl.Collator zh pinyin (coll/zh.res, 713 KB raw) 1`] = `
+exports[`Intl.Collator zh pinyin (coll/zh.res) 1`] = `
 [
   "阿",
   "波",

@@ -1,13 +1,9 @@
-// ECMA-402 Intl coverage. Doubles as the regression net for the per-item zstd
-// repack of ICU's display-name trees (curr/ lang/ region/ unit/ zone/): every
-// non-en case in DisplayNames / NumberFormat(unit|currencyDisplay:"name") /
-// DateTimeFormat(timeZoneName) reads a zstd-decompressed item, while Collator /
-// Segmenter / default DateTimeFormat / default NumberFormat / normalize stay raw.
+// ECMA-402 Intl coverage. Doubles as the regression net for the ICU data Bun ships, which is not ICU's as it is: it is
+// in forms of its own, without what nothing can reach (oven-sh/icu, bun/data). Each section names the part of the data
+// it reads.
 //
-// Snapshots are the ground truth: they capture uncompressed-ICU output. If a
-// decompressed item is wrong, the snapshot diff shows exactly which locale/tree.
-// When WEBKIT_VERSION bumps ICU/CLDR, regenerate with `-u` against a build that
-// links the unmodified libicudata.a.
+// Snapshots are the ground truth: they capture the output of ICU with its stock data. When ICU/CLDR is bumped,
+// regenerate with `-u`.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
@@ -22,7 +18,7 @@ const snapshotIf = !isMacOS && process.versions.icu === SNAPSHOT_ICU_VERSION ? t
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;
 
 // ---------------------------------------------------------------------------
-// DisplayNames — region/ lang/ curr/ script (non-en compressed)
+// DisplayNames — region/ lang/ curr/
 // ---------------------------------------------------------------------------
 
 describe("Intl.DisplayNames", () => {
@@ -46,7 +42,7 @@ describe("Intl.DisplayNames", () => {
 });
 
 // ---------------------------------------------------------------------------
-// NumberFormat — default/currency-symbol raw; unit + currencyDisplay:"name" compressed
+// NumberFormat — <loc>.res; unit/ and curr/ for unit and currencyDisplay:"name"
 // ---------------------------------------------------------------------------
 
 describe("Intl.NumberFormat", () => {
@@ -82,7 +78,7 @@ describe("Intl.NumberFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DateTimeFormat — default raw; timeZoneName (zone/<loc>.res) compressed
+// DateTimeFormat — <loc>.res; zone/ for timeZoneName
 // ---------------------------------------------------------------------------
 
 describe("Intl.DateTimeFormat", () => {
@@ -107,7 +103,7 @@ describe("Intl.DateTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Collator — coll/* raw (incl. CJK tailorings)
+// Collator — coll/ (incl. CJK tailorings)
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
@@ -117,7 +113,7 @@ describe("Intl.Collator", () => {
     expect(out).toMatchSnapshot();
   });
 
-  snapshotIf("zh pinyin (coll/zh.res, 713 KB raw)", () => {
+  snapshotIf("zh pinyin (coll/zh.res)", () => {
     expect(["波", "次", "阿"].sort(new Intl.Collator("zh", { collation: "pinyin" }).compare)).toMatchSnapshot();
   });
 
@@ -234,7 +230,7 @@ describe.skipIf(isWindows).concurrent("locale variables in the environment", () 
 });
 
 // ---------------------------------------------------------------------------
-// Segmenter — brkitr/* raw (incl. cjdict)
+// Segmenter — brkitr/ (incl. cjdict)
 // ---------------------------------------------------------------------------
 
 describe("Intl.Segmenter", () => {
@@ -256,7 +252,7 @@ describe("Intl.Segmenter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PluralRules / ListFormat / RelativeTimeFormat — supplemental, raw
+// PluralRules / ListFormat / RelativeTimeFormat — supplemental
 // ---------------------------------------------------------------------------
 
 describe("Intl.PluralRules", () => {
@@ -290,7 +286,7 @@ describe("Intl.RelativeTimeFormat", () => {
 });
 
 // ---------------------------------------------------------------------------
-// String / URL paths through ICU — raw
+// String / URL paths through ICU
 // ---------------------------------------------------------------------------
 
 describe("String.prototype.normalize", () => {
@@ -332,22 +328,21 @@ describe("Intl.getCanonicalLocales", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Exhaustive sweep — load EVERY compressed item.
+// Exhaustive sweep — load every locale's bundle in every tree.
 //
 // icu-locales.txt is the full set of locales present in ICU's display-name
-// trees (extracted from the package at build time). Iterating each × the five
-// tree-touching APIs forces every region/ lang/ curr/ unit/ zone/ item through
-// the decompress hook. A corrupt item surfaces as a throw or empty string;
-// "everything fell back to root" surfaces as low distinct-value count.
+// trees. Iterating each × the five tree-touching APIs reads every region/
+// lang/ curr/ unit/ zone/ item. A corrupt item surfaces as a throw or empty
+// string; "everything fell back to root" surfaces as low distinct-value count.
 //
-// Regenerate the fixture when WEBKIT_VERSION bumps ICU:
+// Regenerate the fixture when ICU is bumped:
 //   icupkg -l icudt<NN>l.dat | grep -E '^(curr|lang|region|unit|zone)/' \
 //     | sed -E 's|.*/||; s|\.res$||; s|_|-|g' | sort -u > icu-locales.txt
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
 
-describe("exhaustive locale sweep (every compressed item)", () => {
+describe("exhaustive locale sweep", () => {
   const all = readFileSync(new URL("./icu-locales.txt", import.meta.url), "utf8")
     .split("\n")
     .map(s => s.trim())
@@ -402,5 +397,46 @@ describe("exhaustive locale sweep (every compressed item)", () => {
       const b = new Intl.DisplayNames(loc, { type: "region" }).of("US");
       expect(a).toBe(b);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bun/data/icu-data.ts in oven-sh/icu leaves out of ICU's data what no API can reach. What it takes to be reachable is
+// written there a second time, so these fail when the engine starts accepting more than it.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(isMacOS)("data ICU is built without", () => {
+  const unitLabel = (locale: string, unit: string) =>
+    new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "long" })
+      .formatToParts(2)
+      .filter(part => part.type === "unit")
+      .map(part => part.value)
+      .join("");
+
+  test("every unit NumberFormat accepts has a name", () => {
+    // Formatting a unit without data throws; one with only root's data reads the same in every language.
+    const unnamed = Intl.supportedValuesOf("unit").filter(unit => unitLabel("ja", unit) === unitLabel("en", unit));
+    expect(unnamed).toEqual([]);
+  });
+
+  test("a unit per another that CLDR has no name for is put together from the two", () => {
+    expect(new Intl.NumberFormat("de", { style: "unit", unit: "meter-per-month", unitDisplay: "long" }).format(2)).toBe(
+      "2 Meter pro Monat",
+    );
+    expect(new Intl.NumberFormat("ru", { style: "unit", unit: "gram-per-day", unitDisplay: "long" }).format(5)).toBe(
+      "5 грамм в день",
+    );
+  });
+
+  test("what would need the rest is refused", () => {
+    expect(() => new Intl.NumberFormat("en", { style: "unit", unit: "ampere" })).toThrow(RangeError);
+    expect(() => new Intl.NumberFormat("en", { style: "unit", unit: "square-meter" })).toThrow(RangeError);
+    // @ts-expect-error
+    expect(() => new Intl.RelativeTimeFormat("en").format(-1, "sunday")).toThrow(RangeError);
+    expect(() => new Intl.DisplayNames("en", { type: "language" }).of("en-u-nu-arab")).toThrow(RangeError);
+    // @ts-expect-error
+    expect(() => new Intl.DisplayNames("en", { type: "numberingSystem" })).toThrow(RangeError);
+    // @ts-expect-error
+    expect(() => new Intl.Segmenter("en", { granularity: "line" })).toThrow(RangeError);
   });
 });

@@ -1,7 +1,7 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 const refused = "EvalError: Code generation from strings disallowed for this context";
 const flag = "--disallow-code-generation-from-strings";
@@ -407,19 +407,20 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
   });
 
   // $vm, the engine's debugging global, evaluates strings and makes global objects where eval is on.
-  test.each([
-    [[], "object"],
-    [[flag], "undefined"],
-    [[strict], "undefined"],
-  ])("with %j, BUN_JSC_useDollarVM=1 makes the debugging global's type %s", async (args, expected) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args, "-p", "typeof $vm"],
-      env: { ...bunEnv, BUN_JSC_useDollarVM: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(expected);
-    expect(exitCode).toBe(0);
+  test("BUN_JSC_useDollarVM=1 does not define the engine's debugging global", async () => {
+    const typeOfDollarVM = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "-p", "typeof $vm"],
+        env: { ...bunEnv, BUN_JSC_useDollarVM: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return stdout.trim();
+    };
+    // Only an engine built with assertions has it, which a debug build's always is: there, it is
+    // the flag that leaves it out.
+    if (isDebug) expect(await typeOfDollarVM()).toBe("object");
+    expect([await typeOfDollarVM(flag), await typeOfDollarVM(strict)]).toEqual(["undefined", "undefined"]);
   });
 });

@@ -381,7 +381,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                     }
                 }
             }
-            // $vm evaluates strings (evaluateWithScopeExtension, createBuiltin) and makes global objects
+            // $vm, which an engine built with assertions has, evaluates strings and makes global objects
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;

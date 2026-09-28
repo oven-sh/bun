@@ -88,18 +88,18 @@ warn: BUN_INSPECT_CONNECT_TO is ignored with --disallow-code-generation-from-str
 
 Every way to reach a debugger, and what `=strict` does with it:
 
-| Route                                                                  | With `=strict`                                      |
-| ---------------------------------------------------------------------- | --------------------------------------------------- |
-| `--inspect`, `--inspect-wait`, `--inspect-brk`, `BUN_INSPECT`          | Bun exits with an error at startup                  |
-| `BUN_INSPECT_CONNECT_TO`                                               | Bun prints a warning and connects to nothing        |
-| `inspector.open()` from `node:inspector`                               | throws                                              |
-| `startRemoteDebugger()` from `bun:jsc`                                 | throws                                              |
-| `new inspector.Session()` from `node:inspector`, which needs no server | evaluates nothing, with or without the flag         |
-| `$vm`, JavaScriptCore's debugging global (`BUN_JSC_useDollarVM=1`)     | not defined, with `=strict` and with the flag alone |
+| Route                                                                  | With `=strict`                               |
+| ---------------------------------------------------------------------- | -------------------------------------------- |
+| `--inspect`, `--inspect-wait`, `--inspect-brk`, `BUN_INSPECT`          | Bun exits with an error at startup           |
+| `BUN_INSPECT_CONNECT_TO`                                               | Bun prints a warning and connects to nothing |
+| `inspector.open()` from `node:inspector`                               | throws                                       |
+| `startRemoteDebugger()` from `bun:jsc`                                 | throws                                       |
+| `new inspector.Session()` from `node:inspector`, which needs no server | evaluates nothing, with or without the flag  |
+| `$vm`, JavaScriptCore's debugging global (`BUN_JSC_useDollarVM=1`)     | not defined                                  |
 
 An in-process `Session` does not implement `Runtime.evaluate`, `Runtime.compileScript`, `Runtime.runScript`, `Runtime.callFunctionOn` or `Debugger.evaluateOnCallFrame`. Its other `Debugger` methods need `inspector.open()` first.
 
-`$vm` has functions that evaluate a string, and it creates global objects in which `eval()` works. Bun leaves it out at both levels, whatever `BUN_JSC_useDollarVM` says.
+Release builds of Bun do not include `$vm`, so `BUN_JSC_useDollarVM` has no effect on them. A debug build of Bun has it, and leaves it out at both levels of the flag.
 
 ## Parts of Bun that stop working
 

@@ -7260,8 +7260,7 @@ impl VirtualMachine {
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
-            let circular = formatter.visited_contains(err);
-            let over_cap = !circular && formatter.depth > formatter.error_chain_max_depth();
+            let over_cap = formatter.depth > formatter.error_chain_max_depth();
             let result: crate::CrateResult<()> = if over_cap {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
             } else {

@@ -3,6 +3,7 @@
 pub mod builtins;
 pub mod elf;
 pub mod error;
+pub mod loader_search_climb;
 pub mod macho;
 pub mod macho_types;
 pub mod pe;

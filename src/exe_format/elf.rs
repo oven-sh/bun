@@ -744,10 +744,10 @@ fn host_uses_nix_store_interpreter() -> bool {
 
 // --- ELF definitions (defined locally for cross-platform use) ---
 
-const EI_CLASS: usize = 4;
-const EI_DATA: usize = 5;
-const ELFCLASS64: u8 = 2;
-const ELFDATA2LSB: u8 = 1;
+pub(crate) const EI_CLASS: usize = 4;
+pub(crate) const EI_DATA: usize = 5;
+pub(crate) const ELFCLASS64: u8 = 2;
+pub(crate) const ELFDATA2LSB: u8 = 1;
 
 use bun_sys::elf::{PT_INTERP, PT_LOAD};
 const PF_W: u32 = 2;

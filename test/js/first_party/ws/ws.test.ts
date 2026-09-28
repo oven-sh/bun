@@ -180,6 +180,28 @@ describe("WebSocket", () => {
       });
     }
   });
+  // once() and on() share one bridge to the native socket. With a bridge for
+  // each of them, the listener added with on() got the first message twice.
+  test("once() and on() on the same event deliver each message once", (ws, done) => {
+    const seen: string[] = [];
+    ws.once("message", data => {
+      seen.push("once:" + data);
+    });
+    ws.on("message", data => {
+      seen.push("on:" + data);
+      if (String(data) !== "second") return;
+      try {
+        expect(seen).toEqual(["once:first", "on:first", "on:second"]);
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+    ws.on("open", () => {
+      ws.send("first");
+      ws.send("second");
+    });
+  });
   describe("ping()", () => {
     test("(no argument)", (ws, done) => {
       ws.on("open", () => {

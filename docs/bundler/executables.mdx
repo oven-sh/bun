@@ -524,10 +524,12 @@ bun build --compile --root . ./app.ts ./node_modules/dep/index.js --outfile myap
 
 The executable then resolves `require("dep")` from an embedded module to the embedded `node_modules/dep/index.js`, even when no `node_modules` exists beside it. A package's `main` and `exports` fields are read only with `--compile-autoload-package-json`, as for a package on disk. Embed the `package.json` as an asset at its own path for that:
 
-```ts build.ts icon="/icons/typescript.svg"
-// assets.ts
+```ts assets.ts icon="/icons/typescript.svg"
 import pkg from "./node_modules/dep/package.json" with { type: "file" };
+export default pkg;
+```
 
+```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
   entrypoints: ["./app.ts", "./assets.ts", "./node_modules/dep/lib/main.js"],
   root: ".",

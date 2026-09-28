@@ -1,6 +1,6 @@
 {
   "src/js/internal/sql/postgres.ts": 1,
-  "src/js_parser_jsc/Macro.rs": 2,
+  "src/js_parser_jsc/Macro.rs": 4,
   "src/jsc/bindings/ExposeNodeModuleGlobals.cpp": 1,
   "src/jsc/bindings/ZigGlobalObject.cpp": 2,
   "src/jsc/event_loop.rs": 1,

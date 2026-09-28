@@ -1789,12 +1789,7 @@ impl VirtualMachine {
                 self.report_and_exit(global_object, err);
             }
             // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
-            // The counter says that the run ended on an error: `on_before_exit` then skips
-            // 'beforeExit'. A report that the main run goes on after does not count.
-            let run_goes_on = (unhandled == Unhandled::KeepAlive || self.suppress_fatal_uncaught)
-                && self.is_main_thread
-                && self.hot_reload == HotReload::None;
-            if !run_goes_on {
+            if !self.run_goes_on_after_report(unhandled) {
                 self.unhandled_error_counter += 1;
             }
             self.exit_handler.exit_code = 1;
@@ -1817,6 +1812,14 @@ impl VirtualMachine {
     fn unhandled_report_ends_the_run(&self) -> bool {
         !self.suppress_fatal_uncaught
             && !self.unhandled_rejections_quiet
+            && self.is_main_thread
+            && self.hot_reload == HotReload::None
+    }
+
+    /// `unhandled_error_counter` says that the run ended on an error: `on_before_exit` then skips
+    /// 'beforeExit'. A report that the main run goes on after does not count.
+    fn run_goes_on_after_report(&self, unhandled: Unhandled) -> bool {
+        (unhandled == Unhandled::KeepAlive || self.suppress_fatal_uncaught)
             && self.is_main_thread
             && self.hot_reload == HotReload::None
     }
@@ -3886,6 +3889,28 @@ impl VirtualMachine {
         reason: JSValue,
         promise: JSValue,
     ) {
+        self.unhandled_rejection_impl(global_object, reason, promise, Unhandled::Exit);
+    }
+
+    /// `unhandled_rejection` for a caller that read the rejection itself and goes on: the macro
+    /// runner, which hands it to its caller as a build error. Each call site is counted in
+    /// test/internal/source-lints/keep-alive-report.inventory.json.
+    pub fn unhandled_rejection_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+    ) {
+        self.unhandled_rejection_impl(global_object, reason, promise, Unhandled::KeepAlive);
+    }
+
+    fn unhandled_rejection_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+        unhandled: Unhandled,
+    ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
@@ -3927,7 +3952,7 @@ impl VirtualMachine {
                 }
                 // Bun's default mode does not ask the 'uncaughtException' listeners, which is
                 // its difference from `throw`. `expect(fn).toThrow()` reads the rejection itself.
-                if self.unhandled_report_ends_the_run() {
+                if unhandled == Unhandled::Exit && self.unhandled_report_ends_the_run() {
                     self.report_and_exit(global_object, reason);
                 }
             }
@@ -3956,10 +3981,11 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception(
+                let _ = self.uncaught_exception_impl(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
+                    unhandled,
                 );
                 if !handle_unhandled() {
                     emit_warning(self);
@@ -3973,10 +3999,11 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception(
+                if self.uncaught_exception_impl(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
+                    unhandled,
                 ) {
                     drain(self);
                     return;
@@ -3985,7 +4012,9 @@ impl VirtualMachine {
                 return;
             }
         }
-        self.unhandled_error_counter += 1;
+        if !self.run_goes_on_after_report(unhandled) {
+            self.unhandled_error_counter += 1;
+        }
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 

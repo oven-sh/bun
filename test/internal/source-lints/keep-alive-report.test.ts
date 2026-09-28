@@ -10,8 +10,9 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // the event loop.
 //
 // A caller that goes on after the report says so by name: `uncaught_exception_keep_alive`,
-// `run_callback_keep_alive` or `report_error_or_terminate_keep_alive` in Rust, `Bun__reportError` in
-// C++, `reportError()` in a builtin. These are `reportError()` itself and the handlers of Bun.serve
+// `unhandled_rejection_keep_alive`, `run_callback_keep_alive` or
+// `report_error_or_terminate_keep_alive` in Rust, `Bun__reportError` in C++, `reportError()` in a
+// builtin. These are `reportError()` itself, the macro runner, and the handlers of Bun.serve
 // websockets, Bun.listen, Bun.connect, Bun.udpSocket, Bun.spawn ipc and Bun.WebView.
 //
 // This is a ratchet: `keep-alive-report.inventory.json` counts those call sites per file. A new one
@@ -23,7 +24,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/keep-alive-report.inventory.json";
 
-const RUST = /\b(?:uncaught_exception_keep_alive|run_callback_keep_alive|report_error_or_terminate_keep_alive)\s*\(/;
+const RUST =
+  /\b(?:uncaught_exception_keep_alive|unhandled_rejection_keep_alive|run_callback_keep_alive|report_error_or_terminate_keep_alive)\s*\(/;
 const CXX = /\bBun__reportError\s*\(/;
 const JS = /(?<![.\w$])reportError\s*\(/;
 

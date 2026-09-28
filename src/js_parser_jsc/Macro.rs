@@ -470,7 +470,11 @@ impl Macro {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
             unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                (*vm).unhandled_rejection_keep_alive(
+                    &*(*vm).global,
+                    result,
+                    (*loaded_result).to_js(),
+                );
             }
             return Err(crate::Error::MacroLoadError);
         }
@@ -872,11 +876,14 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut().unhandled_rejection(
+                    vm.as_mut().unhandled_rejection_keep_alive(
                         self.global,
                         promise_result,
                         promise.as_value(),
                     );
+                    // The caller gets the rejection as a build error, so it is not reported
+                    // a second time when the microtask queue drains.
+                    promise.set_handled(vm.jsc_vm());
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;

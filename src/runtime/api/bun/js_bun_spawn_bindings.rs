@@ -915,35 +915,13 @@ fn spawn_maybe_sync(
     }
     let _ = &inherited_env_storage;
 
+    // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd() {
-            if stdio[fd_index].use_memfd(fd_index as u32) {
-                jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
-            }
+        if stdio[fd_index].can_use_memfd() && stdio[fd_index].use_memfd(fd_index as u32) {
+            jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
         }
     }
-    let mut should_close_memfd = bun_core::env::IS_LINUX;
-
-    let mut memfd_guard = scopeguard::guard(
-        (&mut should_close_memfd, &mut stdio),
-        |(should_close_memfd, stdio): (&mut bool, &mut [Stdio; 3])| {
-            if *should_close_memfd {
-                for fd_index in 0..stdio.len() {
-                    if matches!(stdio[fd_index], Stdio::Memfd(_)) {
-                        // Note: closing the fd first and then assigning would
-                        // Drop the old `Stdio::Memfd` and re-close the same fd
-                        // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
-                        // closes a Memfd, so just replace with `Ignore` and
-                        // let Drop perform the single close.
-                        drop(core::mem::replace(&mut stdio[fd_index], Stdio::Ignore));
-                    }
-                }
-            }
-        },
-    );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
-    // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
-    let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
@@ -1561,7 +1539,6 @@ fn spawn_maybe_sync(
         }
         #[cfg(not(unix))]
         {
-            use crate::node::MaybeExt as _;
             let idx = usize::try_from(ipc_channel).expect("int cast");
             // The IPC channel is always a `buffer` pipe on Windows.
             // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
@@ -1587,9 +1564,8 @@ fn spawn_maybe_sync(
             // for the pipe's lifetime, so it must be the allocation root
             // (write provenance), never one re-derived from `&SendQueue`.
             // SAFETY: `ipc_data` is the live SendQueue owned by `subprocess`.
-            if let Some(err) =
+            if let Err(err) =
                 unsafe { IPC::SendQueue::windows_configure_server(ipc_data.as_ctx_ptr(), ipc_pipe) }
-                    .as_err()
             {
                 let err_js = err.to_js(cx.global());
                 subprocess.deref();
@@ -1752,8 +1728,6 @@ fn spawn_maybe_sync(
         let _ = subprocess.try_kill(subprocess.kill_signal);
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }
-
-    **should_close_memfd = false;
 
     // Every `return Err` above is past; the Subprocess will be returned to
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
@@ -1994,6 +1968,10 @@ fn spawn_maybe_sync(
 
     let signal_code = SubprocessT::get_signal_code(subprocess, cx.global());
     let exit_code = SubprocessT::get_exit_code(subprocess, cx.global());
+    let read_error = subprocess
+        .stdout
+        .with_mut(|s| s.take_read_error())
+        .or_else(|| subprocess.stderr.with_mut(|s| s.take_read_error()));
     // Propagated after `finalize`, which must run even when building the output throws.
     let output = subprocess
         .stdout
@@ -2015,6 +1993,19 @@ fn spawn_maybe_sync(
         bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
     };
     let (stdout, stderr, resource_usage) = output?;
+    if let Some(read_error) = read_error {
+        // The process ran to completion and its output was lost. `pid`, `exitCode` and `signalCode`
+        // on the error say so, as they do on the result: every other error thrown here is from a
+        // process that never ran (it could not be spawned, or its stdin could not be set up and it was
+        // killed), and `node:child_process` reports the two differently, as node does.
+        let error = read_error.to_js(cx.global());
+        error.put(cx.global(), b"pid", result_pid);
+        error.put(cx.global(), b"exitCode", exit_code);
+        if !signal_code.is_empty_or_undefined_or_null() {
+            error.put(cx.global(), b"signalCode", signal_code);
+        }
+        return Err(cx.global().throw_value(error));
+    }
 
     let sync_value = JSValue::create_empty_object(cx.global(), 0);
     sync_value.put(cx.global(), b"exitCode", exit_code);

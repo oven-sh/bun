@@ -330,6 +330,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
+            // Node.js defaults Error.stackTraceLimit to 10.
+            JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
 #if OS(WINDOWS)
             // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
             // the allocation slow path once the heap has ramped; on Windows that
@@ -397,6 +399,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
+// The thread-local default (what defaultGlobalObject() returns on this thread) and the VM's (what defaultGlobalObject(VM&)
+// returns on any thread) change together.
+static void setDefaultGlobalObject(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    Bun__setDefaultGlobalObject(globalObject);
+    WebCore::clientData(vm)->defaultGlobalObject = globalObject;
+}
 
 // Declare the native functions for LazyProperty initializers
 extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
@@ -463,6 +472,13 @@ extern "C" size_t Bun__reported_memory_size;
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
 extern "C" bool Bun__hasStandaloneModuleGraph();
+
+Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
+{
+    if (auto* clientData = WebCore::clientData(vm); clientData && clientData->defaultGlobalObject)
+        return static_cast<Zig::GlobalObject*>(clientData->defaultGlobalObject);
+    return defaultGlobalObject();
+}
 
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
@@ -549,7 +565,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    Bun__setDefaultGlobalObject(globalObject);
+    setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
 
 #ifdef FUZZILLI_ENABLED
@@ -678,7 +694,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    Bun__setDefaultGlobalObject(globalObject);
+    setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
 
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
@@ -1173,22 +1189,9 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, Bun::moduleGraphRejecting(globalObj));
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise);
-        if (removed) break;
-        // handleRejectedPromises() drains the list into a local buffer before
-        // running any handler. A handler may .catch() a later still-queued
-        // promise; that promise is no longer in m_aboutToBeNotifiedRejectedPromises
-        // but has not yet had 'unhandledRejection' fired, so it must not get
-        // 'rejectionHandled'. Check every in-flight tail (handlers can re-enter
-        // handleRejectedPromises(), so there may be more than one).
-        for (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed; inflight; inflight = inflight->outer) {
-            for (size_t i = inflight->index, n = inflight->buffer->size(); i < n; ++i) {
-                if (inflight->buffer->at(i).asCell() == promise)
-                    return;
-            }
-        }
-        // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
-        Bun__handleHandledPromise(globalObj, promise);
+        // Reported as unhandled before it got this handler: queue the rejectionHandled event.
+        if (globalObj->m_aboutToBeNotifiedRejectedPromises.didHandle(globalObj, promise))
+            Bun__handleHandledPromise(globalObj, promise);
         break;
     }
 }
@@ -1861,7 +1864,7 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globa
     auto attributeName = callFrame->uncheckedArgument(1).getString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().data(), attributeName)));
+    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().legacyCStringPointer(), attributeName)));
     error->setNativeGetterTypeError();
     return JSValue::encode(error);
 }
@@ -2102,10 +2105,6 @@ void initLazyClassStructures(GlobalObject* globalObject)
 
 void GlobalObject::finishCreation(VM& vm)
 {
-    // Node.js defaults to 10. Must run before Base::finishCreation() materializes
-    // errorConstructor(), which snapshots this value into Error.stackTraceLimit.
-    setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
-
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
@@ -3120,26 +3119,38 @@ uint8_t GlobalObject::drainMicrotasks()
     if (!vm.entryScope)
         m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
-    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
-        nextTickQueue->drain(vm, this);
-        if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                Bun__VM__takeTerminationOutsideScript(this);
-                return 1;
-            }
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, exception);
-            return 0;
-        }
-    }
-    vm.drainMicrotasks();
-    if (auto* exception = scope.exception()) {
+    // The result of the checkpoint when an exception ends it.
+    auto endedByException = [&]() -> std::optional<uint8_t> {
+        auto* exception = scope.exception();
+        if (!exception)
+            return std::nullopt;
         if (vm.isTerminationException(exception)) {
             Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
+        return 0;
+    };
+
+    // Scheduled ticks run first, and processTicksAndRejections runs the microtasks after them.
+    auto* nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue && !nextTickQueue->isEmpty()) {
+        nextTickQueue->drain(vm, this);
+        if (auto result = endedByException())
+            return *result;
+    }
+
+    vm.drainMicrotasks();
+    if (auto result = endedByException())
+        return *result;
+
+    // A microtask can schedule a tick, and it can create the queue.
+    nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue && !nextTickQueue->isEmpty()) {
+        nextTickQueue->drain(vm, this);
+        if (auto result = endedByException())
+            return *result;
     }
 
     return 0;
@@ -3340,44 +3351,6 @@ RefPtr<Performance> GlobalObject::performance()
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
-void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
-{
-    WTF::Locker locker { owner->cellLock() };
-    m_entries.append({});
-    m_entries.last().promise.set(vm, owner, promise);
-    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSValue(rejectionOwner) : jsNull());
-}
-
-bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
-{
-    WTF::Locker locker { owner->cellLock() };
-    return m_entries.removeFirstMatching([&](Entry& entry) { return entry.promise.get() == promise; });
-}
-
-void GlobalObject::RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
-{
-    WTF::Locker locker { owner->cellLock() };
-    promises.ensureCapacity(promises.size() + m_entries.size());
-    rejectionOwners.ensureCapacity(rejectionOwners.size() + m_entries.size());
-    for (Entry& entry : m_entries) {
-        if (entry.promise.get().isCell()) {
-            promises.append(entry.promise.get());
-            rejectionOwners.append(entry.rejectionOwner.get());
-        }
-    }
-    m_entries.clear();
-}
-
-template<typename Visitor>
-void GlobalObject::RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
-{
-    WTF::Locker locker { owner->cellLock() };
-    for (auto& entry : m_entries) {
-        visitor.append(entry.promise);
-        visitor.append(entry.rejectionOwner);
-    }
-}
-
 void GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
@@ -3393,17 +3366,12 @@ void GlobalObject::handleRejectedPromises()
         JSC::MarkedArgumentBuffer rejectionOwners;
         m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, rejectionOwners);
         RELEASE_ASSERT(!promises.hasOverflowed() && !rejectionOwners.hasOverflowed());
-        // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
-        // can tell "still pending" apart from "already notified". Linked as a
-        // stack so a re-entrant handleRejectedPromises() (a handler that ticks
-        // the event loop) restores the outer frame instead of nulling it.
-        InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
-        WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
             auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
             if (promise->isHandled())
                 continue;
-            inflight.index = i + 1;
+            // From here on a handler on this promise is late: promiseRejectionTracker(Handle) owes it 'rejectionHandled'.
+            m_aboutToBeNotifiedRejectedPromises.markReported(this, promise);
 
             Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {

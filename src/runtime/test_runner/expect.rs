@@ -37,7 +37,7 @@ use bun_jsc::js_error_to_write_error;
 // `&*m_ctx` borrow without aliasing UB. `parent` and `custom_label` are
 // read-only after `call()` constructs the wrapper.
 #[bun_jsc::JsClass]
-pub struct Expect {
+pub(crate) struct Expect {
     pub(crate) flags: Cell<Flags>,
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
@@ -48,7 +48,7 @@ pub struct Expect {
 // governs the standalone discriminant size.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum Promise {
+pub(crate) enum Promise {
     #[default]
     None = 0,
     Resolves = 1,
@@ -57,7 +57,7 @@ pub enum Promise {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum AsymmetricMatcherConstructorType {
+pub(crate) enum AsymmetricMatcherConstructorType {
     #[default]
     None = 0,
     Symbol = 1,
@@ -111,7 +111,7 @@ impl AsymmetricMatcherConstructorType {
 // Bit layout: promise (bits 0..2), not (bit 2), asymmetric_matcher_constructor_type (bits 3..8).
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct Flags(pub(crate) u8);
+pub(crate) struct Flags(pub(crate) u8);
 
 pub(crate) type FlagsCppType = u8;
 const _: () = assert!(core::mem::size_of::<Flags>() == core::mem::size_of::<FlagsCppType>());
@@ -679,7 +679,7 @@ impl Expect {
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
@@ -726,7 +726,7 @@ impl Expect {
     /// user data and is emitted verbatim. `signature` is the pre-processed
     /// header returned by `get_signature` (ANSI or stripped, per stderr
     /// colour state). Nothing here scans bytes for `<…>` markers.
-    pub fn throw_rendered(
+    pub(crate) fn throw_rendered(
         &self,
         global_this: &JSGlobalObject,
         signature: &'static str,
@@ -1745,7 +1745,7 @@ impl Expect {
 /// shared by every `expect().toX()` matcher.
 /// R-2: shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
 /// matcher body take `&self`.
-pub struct PostMatchGuard<'a> {
+pub(crate) struct PostMatchGuard<'a> {
     expect: &'a Expect,
     global: &'a JSGlobalObject,
 }
@@ -1764,7 +1764,7 @@ impl Drop for PostMatchGuard<'_> {
     }
 }
 
-pub struct CustomMatcherParamsFormatter {
+pub(crate) struct CustomMatcherParamsFormatter {
     pub(crate) colors: bool,
     pub(crate) matcher_fn: JSValue,
 }
@@ -1817,7 +1817,7 @@ impl fmt::Display for CustomMatcherParamsFormatter {
 /// Static instance of expect, holding a set of flags.
 /// Returned for example when executing `expect.not`
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectStatic {
+pub(crate) struct ExpectStatic {
     pub(crate) flags: Flags,
 }
 
@@ -1978,7 +1978,7 @@ impl Expect {
     /// `get_value`, `increment_expect_call_counter`, `not`-xor, formatter,
     /// `get_signature`, `throw`.
     #[inline]
-    pub fn run_unary_predicate(
+    pub(crate) fn run_unary_predicate(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -2088,7 +2088,7 @@ impl Expect {
 /// Where `expected.is_array()` runs relative to `get_value` — observable when
 /// both would throw (Keys-family validates *after*, Values-family *before*).
 #[derive(Clone, Copy)]
-pub enum ExpectedArray {
+pub(crate) enum ExpectedArray {
     /// `toContainKey` / `toContainValue`: scalar `expected`, no array check.
     None,
     /// `toContain*Values`: array check happens before `get_value`.
@@ -2102,7 +2102,7 @@ pub enum ExpectedArray {
 /// {verb}: …"`. For most matchers both are `"contain"`; the All/Any variants
 /// override to `"contain all keys"` etc.
 #[derive(Clone, Copy)]
-pub struct ContainMsgs {
+pub(crate) struct ContainMsgs {
     pub(crate) verb: &'static str,
     pub(crate) not_verb: &'static str,
 }
@@ -2218,7 +2218,7 @@ macro_rules! __forward_matcher {
         impl Expect {
             $(
                 #[inline]
-                pub fn $method(
+                pub(crate) fn $method(
                     &self,
                     global: &JSGlobalObject,
                     frame: &CallFrame,
@@ -2265,36 +2265,36 @@ __forward_matcher! {
 
 // Codegen'd `cache: true` accessors (`.classes.ts`) — Rust has no associated
 // modules, so each lives as a sibling module instead of `Self::js::...`.
-pub mod expect_string_matching_js {
+pub(crate) mod expect_string_matching_js {
     bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
 }
-pub mod expect_close_to_js {
+pub(crate) mod expect_close_to_js {
     bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
 }
-pub mod expect_object_containing_js {
+pub(crate) mod expect_object_containing_js {
     bun_jsc::codegen_cached_accessors!("ExpectObjectContaining"; objectValue);
 }
-pub mod expect_string_containing_js {
+pub(crate) mod expect_string_containing_js {
     bun_jsc::codegen_cached_accessors!("ExpectStringContaining"; stringValue);
 }
-pub mod expect_any_js {
+pub(crate) mod expect_any_js {
     bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
 }
-pub mod expect_array_containing_js {
+pub(crate) mod expect_array_containing_js {
     bun_jsc::codegen_cached_accessors!("ExpectArrayContaining"; arrayValue);
 }
-pub mod expect_custom_asymmetric_matcher_js {
+pub(crate) mod expect_custom_asymmetric_matcher_js {
     bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; matcherFn, capturedArgs);
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectAnything {
+pub(crate) struct ExpectAnything {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectAnything {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
         anything_js_value.ensure_still_alive();
 
@@ -2305,13 +2305,13 @@ impl ExpectAnything {
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectStringMatching {
+pub(crate) struct ExpectStringMatching {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectStringMatching {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
         if args.is_empty() || (!args[0].is_string() && !args[0].is_reg_exp()) {
@@ -2332,13 +2332,13 @@ impl ExpectStringMatching {
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectCloseTo {
+pub(crate) struct ExpectCloseTo {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectCloseTo {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_number() {
@@ -2372,13 +2372,13 @@ impl ExpectCloseTo {
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectObjectContaining {
+pub(crate) struct ExpectObjectContaining {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectObjectContaining {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_object() {
@@ -2399,13 +2399,13 @@ impl ExpectObjectContaining {
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectStringContaining {
+pub(crate) struct ExpectStringContaining {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectStringContaining {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].is_string() {
@@ -2426,13 +2426,13 @@ impl ExpectStringContaining {
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectAny {
+pub(crate) struct ExpectAny {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectAny {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = call_frame.arguments();
 
         if arguments.is_empty() {
@@ -2468,13 +2468,13 @@ impl ExpectAny {
 }
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectArrayContaining {
+pub(crate) struct ExpectArrayContaining {
     pub(crate) flags: Cell<Flags>,
 }
 
 impl ExpectArrayContaining {
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
         if args.is_empty() || !args[0].js_type().is_array() {
@@ -2506,7 +2506,7 @@ impl ExpectArrayContaining {
 // `noalias` `&mut Self` across that call is Stacked-Borrows UB even with no
 // field writes. The codegen shim emits `&*__this` for `&self` receivers.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectCustomAsymmetricMatcher {
+pub(crate) struct ExpectCustomAsymmetricMatcher {
     pub(crate) flags: Flags,
 }
 
@@ -2672,7 +2672,7 @@ impl ExpectCustomAsymmetricMatcher {
 
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectMatcherContext {
+pub(crate) struct ExpectMatcherContext {
     pub(crate) flags: Flags,
 }
 
@@ -2718,7 +2718,7 @@ impl ExpectMatcherContext {
 
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub struct ExpectMatcherUtils {}
+pub(crate) struct ExpectMatcherUtils {}
 
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
@@ -2855,7 +2855,7 @@ impl ExpectMatcherUtils {
 }
 
 #[bun_jsc::JsClass]
-pub struct ExpectTypeOf {}
+pub(crate) struct ExpectTypeOf {}
 
 impl ExpectTypeOf {
     pub(crate) fn create(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -2883,12 +2883,12 @@ impl ExpectTypeOf {
         Err(global_this.throw(format_args!("expectTypeOf() cannot be called with new")))
     }
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
-    pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::create(global_this)
     }
 }
 
-pub mod mock {
+pub(crate) mod mock {
     use super::*;
     use bun_jsc::ComptimeStringMapExt as _;
 
@@ -2935,7 +2935,7 @@ pub mod mock {
     /// matchers use the Jest-style `Matcher error:` form routed through
     /// [`Expect::throw`]; everything else uses the bare `global.throw(...)` form.
     #[derive(Clone, Copy)]
-    pub enum MockKind {
+    pub(crate) enum MockKind {
         /// `mock.calls`; not-a-mock → `global.throw("Expected value must be a mock function: …")`.
         /// toHaveBeenCalled / toHaveBeenCalledOnce / toHaveBeenCalledTimes.
         Calls,
@@ -3130,7 +3130,7 @@ pub mod mock {
 
     // split lifetimes — see AllCallsFormatter above for rationale (avoids the
     // `&'a mut T<'a>` invariance trap that locks the Formatter borrow for its entire life).
-    pub struct SuccessfulReturnsFormatter<'g, 'f> {
+    pub(crate) struct SuccessfulReturnsFormatter<'g, 'f> {
         pub(crate) successful_returns: &'f Vec<JSValue>,
         // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub(crate) formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,

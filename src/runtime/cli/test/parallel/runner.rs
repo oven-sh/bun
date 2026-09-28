@@ -467,7 +467,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
-pub struct WorkerCommands {
+pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
@@ -629,7 +629,6 @@ impl<'a> WorkerLoop<'a> {
 // `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
 // while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
 // would alias. The `# Safety` contract above documents the caller's obligation.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,

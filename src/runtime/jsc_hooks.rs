@@ -3660,6 +3660,12 @@ export default db;
             });
         }
 
+        // An embedded asset (a `package.json`, a `.wasm`) goes through the loader its extension names, which
+        // reads the bytes from the graph; only a JavaScript module is served as source here.
+        if !file.loader.is_javascript_like() {
+            return None;
+        }
+
         // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
         let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()

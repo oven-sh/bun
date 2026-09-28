@@ -547,6 +547,8 @@ console.log("PRELOAD");
               }
             };
             console.log(outcome(s("pkg")), outcome(s("pkg/feature")));
+          // The embedded package.json is a JSON module, whatever autoloadPackageJson says.
+          console.log(JSON.stringify(require(s("pkg/package.json"))));
           `,
           "/assets.ts": /* js */ `
             import a from "./node_modules/pkg/package.json" with { type: "file" };
@@ -569,7 +571,7 @@ console.log("PRELOAD");
         root: ".",
         outfile: "dist/out",
         run: {
-          stdout: expected + "\n",
+          stdout: expected + "\n" + JSON.stringify(JSON.parse(packageJson)) + "\n",
           file: "dist/out",
           setCwd: true,
         },

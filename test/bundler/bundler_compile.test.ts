@@ -663,6 +663,8 @@ describe("bundler", () => {
         // A subpath that is not embedded is looked for on disk, like any other miss.
         console.log(JSON.stringify(outcome(() => require(s("dep/package.json")))));
         console.log(outcome(() => require(s("missing-pkg"))));
+        // A relative directory specifier from an embedded module: the embedded index wins over the cwd's.
+        console.log(outcome(() => require(s("./lib")).default), outcome(() => load(s("../lib")).default));
         // An empty cwd: nothing to fall back to on disk.
         process.chdir(tmpdir());
         console.log(outcome(() => require(s("dep")).default), outcome(() => load(s("dep/lib/util")).default));
@@ -672,8 +674,10 @@ describe("bundler", () => {
       "/esm.mjs": `export const load = (n) => import(n);`,
       "/node_modules/dep/index.js": `export default "dep:embedded";`,
       "/node_modules/dep/lib/util.js": `export default "util:embedded";`,
+      "/lib/index.js": `export default "lib:embedded";`,
     },
     runtimeFiles: {
+      "/lib/index.js": `module.exports = { default: "lib:disk" };`,
       "/node_modules/dep/index.js": `module.exports = { default: "dep:disk" };`,
       "/node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
       "/node_modules/disk-only/index.js": `module.exports = { default: "disk-only" };`,
@@ -684,6 +688,7 @@ describe("bundler", () => {
       "./esm.mjs",
       "./node_modules/dep/index.js",
       "./node_modules/dep/lib/util.js",
+      "./lib/index.js",
     ],
     root: ".",
     outfile: "dist/out",
@@ -696,6 +701,7 @@ describe("bundler", () => {
         "true true",
         '{"name":"dep","main":"index.js"}',
         "ResolveMessage",
+        "lib:embedded lib:embedded",
         "dep:embedded util:embedded",
         "ResolveMessage",
         "",

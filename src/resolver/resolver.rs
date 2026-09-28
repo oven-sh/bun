@@ -1316,6 +1316,14 @@ impl<'a> Resolver<'a> {
             Ok(None) => {}
         }
 
+        // A path with a null byte cannot exist on the filesystem. Continuing
+        // anyways would cause assertion failures.
+        if strings::index_of_char(import_path, 0).is_some() {
+            let _ = self.flush_debug_logs(FlushMode::Fail);
+            self.extension_order = original_order;
+            return ResultUnion::NotFound;
+        }
+
         // `bun build --compile`: the embedded module graph first (the graph's own lookup, then the
         // resolver's algorithm over the embedded tree), then the cwd on disk.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
@@ -1331,9 +1339,7 @@ impl<'a> Resolver<'a> {
                         return ResultUnion::Success(Self::embedded_module(kind, file_name));
                     }
                     let top_level_dir = Fs::FileSystem::instance().top_level_dir;
-                    if specifier_is_embedded_path
-                        || (is_package_path(import_path) && self.custom_dir_paths.is_none())
-                    {
+                    if specifier_is_embedded_path || self.custom_dir_paths.is_none() {
                         let embedded_source_dir = if source_dir_is_embedded {
                             source_dir
                         } else {
@@ -1415,14 +1421,6 @@ impl<'a> Resolver<'a> {
                 .resolve_cwd(source_dir)
                 .unwrap_or_else(|_| panic!("Failed to query CWD"));
         };
-
-        // A path with a null byte cannot exist on the filesystem. Continuing
-        // anyways would cause assertion failures.
-        if strings::index_of_char(import_path, 0).is_some() {
-            let _ = self.flush_debug_logs(FlushMode::Fail);
-            self.extension_order = original_order;
-            return ResultUnion::NotFound;
-        }
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);

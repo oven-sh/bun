@@ -307,9 +307,13 @@ function partialOf(input: ConfigureInput): PartialConfig {
   };
 }
 
-/** The mode an input asks for. `codegen` is configured by configureCodegen(), every other mode by configure(). */
+/** The mode an input asks for. `codegen` is configured by configureCodegen(), `full` by configure(). */
 export function modeOf(input: ConfigureInput): Mode {
-  return partialOf(input).mode ?? "full";
+  const mode = partialOf(input).mode ?? "full";
+  if (mode !== "full" && mode !== "codegen") {
+    throw new BuildError(`Unknown mode: "${mode}"`, { hint: "Modes: full, codegen" });
+  }
+  return mode;
 }
 
 /** The Config an input stands for. Writes and fetches nothing: for configure, and for what only needs to find a build directory. */
@@ -519,13 +523,9 @@ async function generate<N extends string | undefined>(
   // dsym: darwin release only — pulled into defaults so ninja actually builds
   // it (no other node depends on it, and unlike cmake's POST_BUILD it doesn't
   // auto-trigger).
-  if (output.exe !== undefined) {
-    const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
-    const targets = [defaultTarget];
-    if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-    for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
-    n.default(targets);
-  }
+  const targets = [output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun"];
+  if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
+  n.default(targets);
 
   const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, mark);
 

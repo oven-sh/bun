@@ -287,7 +287,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-struct DeferredFailure {
+pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -296,7 +296,7 @@ struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    fn run(self) -> JsResult<()> {
+    pub(crate) fn run(self) -> JsResult<()> {
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -310,17 +310,21 @@ impl DeferredFailure {
 
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
-            let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this)
-        }
-        let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
-            .enqueue_task(managed_task);
+            .enqueue_task(bun_event_loop::Task::from_boxed(self));
+    }
+}
+
+impl bun_event_loop::Taskable for DeferredFailure {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredFailure;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

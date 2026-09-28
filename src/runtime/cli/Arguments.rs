@@ -402,6 +402,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--bytecode-order <STR>...        With --compile --bytecode: lay the bytecode out by order file(s) a run of the executable wrote (BUN_BYTECODE_ORDER_OUT); comma-separated or repeated, most important first"
+        ),
+        parse_param!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
@@ -2245,6 +2248,18 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    for order_files in args.options(b"--bytecode-order") {
+        if !ctx.bundler_options.compile || !ctx.bundler_options.bytecode {
+            Output::err_generic("--bytecode-order requires --compile --bytecode", ());
+            Global::crash();
+        }
+        ctx.bundler_options.bytecode_order.extend(
+            strings::split(order_files, b",")
+                .filter(|path| !path.is_empty())
+                .map(Box::<[u8]>::from),
+        );
     }
 
     if let Some(jit_policy) = args.option(b"--compile-jit-policy") {

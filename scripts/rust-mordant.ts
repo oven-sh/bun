@@ -11,7 +11,7 @@
  * check every target once its std is installed.
  *
  * Usage:
- *   bun run rust:mordant               # lint; findings over the baseline are warnings
+ *   bun run rust:mordant               # lint; exits 101 when a crate is over the baseline
  *   bun run rust:mordant -p bun_paths  # extra args go to `cargo mordant`
  *   bun run rust:mordant:baseline      # regenerate mordant-baseline.toml
  */
@@ -56,7 +56,6 @@ if (run("rustup", ["target", "add", "--toolchain", toolchain, ...TARGETS]) !== 0
 
 const args = process.argv.slice(2);
 if (!args.includes("--baseline")) {
-  rmSync(join(repo, "target/mordant/over-baseline.txt"), { force: true });
   process.exit(mordant(TARGETS, ["--keep-going", ...args]));
 }
 
@@ -68,7 +67,7 @@ if (!args.includes("--baseline")) {
 // is the other way round: only a run over all the targets sees every use, and
 // `cargo mordant` writes its entries itself, once, after the build.
 type Doc = Record<string, Record<string, number>>;
-const config = readFileSync(join(repo, "dylint.toml"), "utf8");
+const config = readFileSync(join(repo, "mordant.toml"), "utf8");
 const scratch = "target/mordant/baseline";
 rmSync(join(repo, scratch), { recursive: true, force: true });
 mkdirSync(join(repo, scratch), { recursive: true });
@@ -77,7 +76,7 @@ function write(name: string, targets: string[]): Doc {
   const file = `${scratch}/${name}.toml`;
   const toml = config.replace(/^baseline = .*$/m, `baseline = ${JSON.stringify(file)}`);
   if (toml === config) {
-    console.error("rust-mordant: dylint.toml names no baseline");
+    console.error("rust-mordant: mordant.toml names no baseline");
     process.exit(1);
   }
   if (mordant(targets, [], { MORDANT_TOML: toml, MORDANT_BASELINE_WRITE: "1" }) !== 0) process.exit(1);

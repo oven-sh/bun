@@ -1048,8 +1048,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // field address is stable for the VM lifetime.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1170,8 +1168,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -2425,7 +2421,6 @@ fn transpile_source_code_inner(
                         };
                         virtual_source = Some(&fallback_source);
                     }
-                    let _ = code;
                 }
             }
 
@@ -3161,7 +3156,6 @@ fn transpile_source_code_inner(
                 if written_len > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     *printer =
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                    printer.ctx.append_null_byte = false;
                 }
 
                 // (fd close handled by `_fd_guard` registered above; spec
@@ -3394,7 +3388,6 @@ fn transpile_source_code_inner(
 /// with the dev-server watcher (if enabled, absolute, and not in
 /// `node_modules`). Factored out of the two call sites.
 #[inline]
-#[allow(clippy::too_many_arguments)]
 fn maybe_watch_file(
     jsc_vm: *mut VirtualMachine,
     should_close_input_file_fd: &mut bool,
@@ -3667,9 +3660,8 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
-        // the embedded section (set in `Graph::from_bytes`).
-        let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
+        let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -3682,7 +3674,7 @@ export default db;
             } else {
                 bun_core::String::from_bytes(file.bytecode_origin_path)
             },
-            bytecode_cache: Bytecode::persistent(bytecode),
+            bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
@@ -4230,7 +4222,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                 )
             };
         }
-        let _ = concurrent_loader;
     }
 
     // ── Synchronous-loader fallback ────────────────────────────────────────
@@ -4301,8 +4292,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
@@ -4453,8 +4443,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }

@@ -1970,20 +1970,14 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // do not hold a pattern-bound `&File` across
-                // `resolve_file_stat` — it materializes `&mut File` on the same
-                // memory (Stacked Borrows UB; the optimizer may legally cache the
-                // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
-                // Re-read via `Store::data_mut` (raw-ptr-backed accessor) after
-                // the mutating call.
+                // Read through `Store::data_mut` on both sides of
+                // `resolve_file_stat`: a `&File` held across that call would
+                // alias the `&mut File` it creates.
                 let mut last_modified = Store::data_mut(store).as_file().last_modified;
-                // last_modified can be already set during read.
                 if last_modified == jsc::INIT_TIMESTAMP {
                     resolve_file_stat(store);
-                    // Fresh borrow after possible mutation by `resolve_file_stat`.
                     last_modified = Store::data_mut(store).as_file().last_modified;
-                    // A failed stat (the path may not exist yet) leaves the
-                    // sentinel in place. It is an internal marker, not a time.
+                    // Still the marker: the stat failed (the path may not exist yet).
                     if last_modified == jsc::INIT_TIMESTAMP {
                         return JSValue::js_number(0.0);
                     }

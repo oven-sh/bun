@@ -760,7 +760,6 @@ const EM_AARCH64: u16 = 183;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-#[allow(non_camel_case_types, non_snake_case)]
 pub(crate) struct Elf64_Ehdr {
     pub e_ident: [u8; 16],
     pub e_type: u16,
@@ -780,7 +779,6 @@ pub(crate) struct Elf64_Ehdr {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-#[allow(non_camel_case_types, non_snake_case)]
 pub(crate) struct Elf64_Phdr {
     pub p_type: u32,
     pub p_flags: u32,
@@ -807,7 +805,6 @@ impl Elf64_Phdr {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-#[allow(non_camel_case_types, non_snake_case)]
 pub(crate) struct Elf64_Shdr {
     pub sh_name: u32,
     pub sh_type: u32,

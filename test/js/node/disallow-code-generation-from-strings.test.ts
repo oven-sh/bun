@@ -363,12 +363,63 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
 
   // Editors set BUN_INSPECT_CONNECT_TO for everything started from their terminals, so it is not
   // somebody asking to debug this process: it is refused with a warning, and the program runs.
-  test("=strict ignores BUN_INSPECT_CONNECT_TO, with a warning", async () => {
-    const { stdout, stderr, exitCode } = await run([strict], { BUN_INSPECT_CONNECT_TO: "ws://127.0.0.1:1/x" });
+  test("=strict ignores BUN_INSPECT_CONNECT_TO, with a warning, and connects to nothing", async () => {
+    let connections = 0;
+    let opened = Promise.withResolvers<void>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {
+          connections++;
+          opened.resolve();
+        },
+        data() {},
+      },
+    });
+    const env = { BUN_INSPECT_CONNECT_TO: `tcp://127.0.0.1:${listener.port}` };
+
+    // Without =strict a process does connect, so a connection would be seen here.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "-e", "setInterval(() => {}, 1000)"],
+        env: { ...bunEnv, ...env },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await opened.promise;
+      expect(connections).toBe(1);
+    }
+
+    const { stdout, stderr, exitCode } = await run([strict], env);
     expect(stderr.trim()).toBe(
       "warn: BUN_INSPECT_CONNECT_TO is ignored with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings",
     );
     expect(JSON.parse(stdout).evalAndFunction.directEval).toBe(refused);
+    expect(exitCode).toBe(0);
+
+    // Connections are accepted in the order they were made: one that process had made comes before this one.
+    opened = Promise.withResolvers<void>();
+    const own = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    await opened.promise;
+    own.end();
+    expect(connections).toBe(2);
+  });
+
+  // $vm, the engine's debugging global, evaluates strings and makes global objects where eval is on.
+  test.each([
+    [[], "object"],
+    [[flag], "undefined"],
+    [[strict], "undefined"],
+  ])("with %j, BUN_JSC_useDollarVM=1 makes the debugging global's type %s", async (args, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "-p", "typeof $vm"],
+      env: { ...bunEnv, BUN_JSC_useDollarVM: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
   });
 });

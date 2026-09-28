@@ -86,6 +86,21 @@ Editors set `BUN_INSPECT_CONNECT_TO` for every process started from their termin
 warn: BUN_INSPECT_CONNECT_TO is ignored with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings
 ```
 
+Every way to reach a debugger, and what `=strict` does with it:
+
+| Route                                                                  | With `=strict`                                      |
+| ---------------------------------------------------------------------- | --------------------------------------------------- |
+| `--inspect`, `--inspect-wait`, `--inspect-brk`, `BUN_INSPECT`          | Bun exits with an error at startup                  |
+| `BUN_INSPECT_CONNECT_TO`                                               | Bun prints a warning and connects to nothing        |
+| `inspector.open()` from `node:inspector`                               | throws                                              |
+| `startRemoteDebugger()` from `bun:jsc`                                 | throws                                              |
+| `new inspector.Session()` from `node:inspector`, which needs no server | evaluates nothing, with or without the flag         |
+| `$vm`, JavaScriptCore's debugging global (`BUN_JSC_useDollarVM=1`)     | not defined, with `=strict` and with the flag alone |
+
+An in-process `Session` does not implement `Runtime.evaluate`, `Runtime.compileScript`, `Runtime.runScript`, `Runtime.callFunctionOn` or `Debugger.evaluateOnCallFrame`. Its other `Debugger` methods need `inspector.open()` first.
+
+`$vm` has functions that evaluate a string, and it creates global objects in which `eval()` works. Bun leaves it out at both levels, whatever `BUN_JSC_useDollarVM` says.
+
 ## Parts of Bun that stop working
 
 One part of Bun calls `new Function()` itself: the development server. Every other row is an API that compiles a string you give it.
@@ -123,6 +138,8 @@ await Bun.build({
 
 `BUN_OPTIONS` can raise the level of a compiled executable. It cannot lower it.
 
+A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
+
 ### `data:` URLs written in the source
 
 The bundler resolves a `data:` URL that is written as a literal when it builds. That module is part of the executable, like any file the program imports, so it loads at both levels. A `data:` URL that the program puts together at run time is a string that becomes code, so `=strict` refuses it:
@@ -154,7 +171,7 @@ A `Worker` inherits `process.execArgv`, so the same check works inside one. When
 ## What the flag does not cover
 
 - **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.
-- **Startup.** The entry point, `--preload`, and `bun -e` are the program. The flag applies to what the program does once it runs.
+- **Startup.** The entry point, `--preload`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs.
 - **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
 - **Native code.** A native addon can do what native code can do. Use `--no-addons`.

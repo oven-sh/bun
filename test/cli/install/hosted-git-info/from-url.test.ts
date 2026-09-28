@@ -39,7 +39,8 @@ describe("fromUrl", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
+    // A child that aborts prints no result. Its stderr is the failure message.
+    expect(stdout, stderr).not.toBe("");
     expect(JSON.parse(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
   });

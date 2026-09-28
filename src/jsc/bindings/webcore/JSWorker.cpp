@@ -338,13 +338,6 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                 execArgv.append(str);
             });
             RETURN_IF_EXCEPTION(throwScope, {});
-            // The process's, as in Node.js: a Worker cannot be given it.
-            for (auto& arg : execArgv) {
-                if (arg == "--disallow-code-generation-from-strings"_s || arg.startsWith("--disallow-code-generation-from-strings="_s)) [[unlikely]] {
-                    throwScope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, makeString("Initiated Worker with invalid execArgv flags: "_s, arg)));
-                    return {};
-                }
-            }
             options.execArgv.emplace(WTF::move(execArgv));
         }
     }

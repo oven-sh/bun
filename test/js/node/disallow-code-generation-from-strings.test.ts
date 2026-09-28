@@ -317,12 +317,12 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
   });
 
   // The flag is the process's. As in Node.js, a Worker cannot be given it.
-  test.each([flag, strict])("a Worker's execArgv with %s is ERR_WORKER_INVALID_EXEC_ARGV", async given => {
+  test.each([flag, strict])("a Worker's execArgv with %s throws", async given => {
     using dir = tempDir("disallow-code-generation-worker", {
       "worker.mjs": `postMessage("started")`,
       "main.mjs": `
         import { Worker as NodeWorker } from "node:worker_threads";
-        const attempt = fn => { try { fn().terminate(); return "started"; } catch (e) { return [e.code, e.message]; } };
+        const attempt = fn => { try { fn().terminate(); return "started"; } catch (e) { return [e.name, e.message]; } };
         const execArgv = [process.argv[2]];
         console.log(JSON.stringify([
           attempt(() => new NodeWorker(new URL("./worker.mjs", import.meta.url), { execArgv })),
@@ -338,7 +338,7 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const error = ["ERR_WORKER_INVALID_EXEC_ARGV", "Initiated Worker with invalid execArgv flags: " + given];
+    const error = ["TypeError", "Initiated Worker with invalid execArgv flags: " + flag];
     expect(JSON.parse(stdout)).toEqual([error, error]);
     expect(exitCode).toBe(0);
   });

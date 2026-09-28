@@ -1541,7 +1541,7 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Scan a Worker's `execArgv` for `--no-addons` and `--no-ffi-cc`. Like the
+/// Scan a Worker's `execArgv` for the flags that mean something there. Like the
 /// CLI parser, the scan stops at the first positional.
 ///
 /// # Safety
@@ -1553,6 +1553,7 @@ unsafe fn parse_worker_exec_argv_flags(
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
+        disallow_code_generation_from_strings: false,
     };
     for &arg in exec_argv {
         if arg.is_null() {
@@ -1571,6 +1572,11 @@ unsafe fn parse_worker_exec_argv_flags(
             flags.allow_addons = false;
         } else if bytes == b"--no-ffi-cc" {
             flags.allow_ffi_cc = false;
+        } else if matches!(
+            bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
+            Some([] | [b'=', ..])
+        ) {
+            flags.disallow_code_generation_from_strings = true;
         }
     }
     Some(flags)

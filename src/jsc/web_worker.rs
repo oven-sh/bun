@@ -362,6 +362,12 @@ impl WebWorker {
                 ))
             };
             if let Some(flags) = parsed {
+                if flags.disallow_code_generation_from_strings {
+                    *error_message = BunString::static_(
+                        "Initiated Worker with invalid execArgv flags: --disallow-code-generation-from-strings",
+                    );
+                    return core::ptr::null_mut();
+                }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
                 let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);

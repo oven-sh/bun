@@ -2719,6 +2719,9 @@ pub struct WorkerExecArgvFlags {
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
+    /// `--disallow-code-generation-from-strings` is there. It is the process's and a Worker cannot
+    /// be given it, so `true` here is an error.
+    pub disallow_code_generation_from_strings: bool,
 }
 
 pub struct RuntimeHooks {

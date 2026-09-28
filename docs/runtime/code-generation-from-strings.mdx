@@ -31,7 +31,7 @@ Bun reads the flag at startup. Nothing turns it off afterwards:
 
 When the flag appears more than once on a command line, the last one counts, as for any option. Bun reads `BUN_OPTIONS` before the command line, so the command line wins.
 
-A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXEC_ARGV`, as in Node.js. Pass the flag to the process.
+A `Worker` whose own `execArgv` contains the flag throws a `TypeError`. Node.js refuses it too. Pass the flag to the process.
 
 ### Workers whose code is a string
 

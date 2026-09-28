@@ -140,9 +140,10 @@ function __fish__get_bun_packages
 end
 
 function __fish__get_bun_add_packages
-    if test (commandline -ct) != ""
+    set -l tok (commandline -ct)
+    if test -n "$tok"
         set -lx SHELL fish
-        string split ' ' (bun getcompletes a (commandline -ct) 2>/dev/null)
+        string split ' ' (bun getcompletes a "$tok" 2>/dev/null)
     end
 end
 

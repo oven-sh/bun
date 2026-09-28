@@ -2609,28 +2609,30 @@ impl<'a> Resolver<'a> {
         let mut any_node_modules_folder = false;
         let use_node_module_resolver = global_cache != GlobalCache::force;
 
-        let mut exe_dir_info: Option<DirInfoRef> = None;
+        // Compiled binary: walk up from the executable's directory first, but
+        // only through directories the walk from the source directory does
+        // not reach. Then walk from the source directory as usual.
+        let mut walking_from_exe_dir = false;
         if !is_self_reference
             && let Some(exe_dir) = self.standalone_exe_dir.take()
             && let Ok(Some(info)) = self.dir_info_cached(exe_dir)
         {
-            exe_dir_info = Some(info);
+            walking_from_exe_dir = true;
             dir_info = info;
         }
-        // The chain from here to the root was already walked.
-        let mut probed_chain_root: Option<DirInfoRef> = None;
 
         // Then check for the package in any enclosing "node_modules" directories
         // or in the package root directory if it's a self-reference
         if use_node_module_resolver {
             loop {
-                if let Some(probed) = probed_chain_root
+                if walking_from_exe_dir
                     && ResolvePath::resolve_path::is_parent_or_equal(
                         dir_info.abs_path,
-                        probed.abs_path,
+                        source_dir_info.abs_path,
                     ) != ResolvePath::resolve_path::ParentEqual::Unrelated
                 {
-                    break;
+                    walking_from_exe_dir = false;
+                    dir_info = source_dir_info;
                 }
 
                 // Skip directories that are themselves called "node_modules", since we
@@ -2844,19 +2846,12 @@ impl<'a> Resolver<'a> {
 
                 match dir_info.get_parent() {
                     Some(p) => dir_info = p,
-                    None => {
-                        let Some(exe) = exe_dir_info.take() else {
-                            break;
-                        };
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Continuing the search from \"{}\"",
-                                bstr::BStr::new(source_dir_info.abs_path)
-                            ));
-                        }
-                        probed_chain_root = Some(exe);
+                    // Another drive on Windows: the two chains never meet.
+                    None if walking_from_exe_dir => {
+                        walking_from_exe_dir = false;
                         dir_info = source_dir_info;
                     }
+                    None => break,
                 }
             }
         }

@@ -431,7 +431,7 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
-  /** Expect a certain non-zero exit code */
+  /** Expect this exit code. The check runs on every exit status, zero included. */
   exitCode?: number;
   /** Run a function with stdout and stderr. Use expect to assert exact outputs */
   validate?: (ctx: { stdout: string; stderr: string }) => void;
@@ -1893,12 +1893,10 @@ for (const [key, blob] of build.outputs) {
               }
             }
           }
+        } else if (run.exitCode !== undefined) {
+          expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
         } else if (!success) {
-          if (run.exitCode) {
-            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
-          } else {
-            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
-          }
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
         if (run.validate) {

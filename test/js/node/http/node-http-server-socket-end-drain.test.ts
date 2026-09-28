@@ -247,15 +247,16 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
   const BODY = Buffer.alloc(64 * 1024, 0x62);
   const POST_HEAD = `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${BODY.length}\r\n\r\n`;
 
-  // What the listener wrote, and what it saw of the request body.
-  type Seen = { chunks: number; reqBytes: number; reqEnded: boolean };
+  // What the listener saw of the request body.
+  type Seen = { reqBytes: number; reqEnded: boolean };
 
   // Writes 1 MiB per turn until the response backs up (64 MiB at most), then
-  // calls req.socket.end(). res.end() follows when the request body has ended.
-  // Resolves `handled` after req.socket.end() and `closed` when the server side
-  // of the connection has closed.
-  function respondThenEnd(seen: Seen, handled: () => void, closed: () => void): RequestListener {
+  // calls req.socket.end() and passes the number of chunks to `handled`.
+  // res.end() follows when the request body has ended. `closed` runs when the
+  // server side of the connection has closed.
+  function respondThenEnd(seen: Seen, handled: (chunks: number) => void, closed: () => void): RequestListener {
     return async (req, res) => {
+      let chunks = 0;
       req.socket.once("close", closed);
       req.on("data", chunk => (seen.reqBytes += chunk.length));
       req.on("end", () => {
@@ -265,13 +266,13 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
       res.writeHead(200);
       do {
         for (let i = 0; i < CHUNKS_PER_TURN; i++) res.write(CHUNK);
-        seen.chunks += CHUNKS_PER_TURN;
+        chunks += CHUNKS_PER_TURN;
         // In the turn of the writes writableLength counts every byte written.
         // One tick later it counts what the socket could not send.
         await new Promise<void>(resolve => process.nextTick(resolve));
-      } while (res.writableLength === 0 && seen.chunks < MAX_CHUNKS);
+      } while (res.writableLength === 0 && chunks < MAX_CHUNKS);
       req.socket.end();
-      handled();
+      handled(chunks);
     };
   }
 
@@ -302,8 +303,8 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
   // The FIN that waits stops later requests only. The body of the request in
   // flight keeps arriving, or 'end' never fires and res.end() never runs.
   test("the rest of the request body still arrives", async () => {
-    const seen: Seen = { chunks: 0, reqBytes: 0, reqEnded: false };
-    const handled = Promise.withResolvers<void>();
+    const seen: Seen = { reqBytes: 0, reqEnded: false };
+    const handled = Promise.withResolvers<number>();
     const serverClosed = Promise.withResolvers<void>();
     await using server = await listen(protocol, respondThenEnd(seen, handled.resolve, serverClosed.resolve));
 
@@ -312,12 +313,12 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
     const closed = new Promise(resolve => client.once("close", resolve));
     client.write(POST_HEAD);
     client.write(BODY.subarray(0, BODY.length / 2));
-    await handled.promise;
+    const chunks = await handled.promise;
     client.write(BODY.subarray(BODY.length / 2));
-    const counted = countResponse(client, seen.chunks);
+    const counted = countResponse(client, chunks);
     await Promise.all([closed, serverClosed.promise]);
 
-    expect(seen).toEqual({ chunks: seen.chunks, reqBytes: BODY.length, reqEnded: true });
+    expect(seen).toEqual({ reqBytes: BODY.length, reqEnded: true });
     expect([0, 5]).toContain(counted.afterChunks());
   });
 
@@ -325,8 +326,8 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
   // pipelined request behind it in the same read. No writable event is left to
   // send the FIN, so the read that completes the response has to.
   test("a request pipelined behind the rest of the body is not answered, and the FIN still comes", async () => {
-    const seen: Seen = { chunks: 0, reqBytes: 0, reqEnded: false };
-    const handled = Promise.withResolvers<void>();
+    const seen: Seen = { reqBytes: 0, reqEnded: false };
+    const handled = Promise.withResolvers<number>();
     const serverClosed = Promise.withResolvers<void>();
     const respond = respondThenEnd(seen, handled.resolve, serverClosed.resolve);
     let first = true;
@@ -350,10 +351,10 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
     client.once("end", () => settle("FIN"));
     client.write(POST_HEAD);
     client.write(BODY.subarray(0, BODY.length / 2));
-    await handled.promise;
+    const chunks = await handled.promise;
 
     const drained = Promise.withResolvers<void>();
-    const counted = countResponse(client, seen.chunks, () => {
+    const counted = countResponse(client, chunks, () => {
       drained.resolve();
       // More than the terminating chunk can only be a second response. Do not
       // wait for a FIN that then comes with the keep-alive timeout.
@@ -365,12 +366,7 @@ describe.each(["http", "https"] as const)("%s: req.socket.end() while the respon
     client.end();
     await Promise.all([closed, serverClosed.promise]);
 
-    expect({ outcome: result, ...seen }).toEqual({
-      outcome: "FIN",
-      chunks: seen.chunks,
-      reqBytes: BODY.length,
-      reqEnded: true,
-    });
+    expect({ outcome: result, ...seen }).toEqual({ outcome: "FIN", reqBytes: BODY.length, reqEnded: true });
     expect([0, 5]).toContain(counted.afterChunks());
   });
 });

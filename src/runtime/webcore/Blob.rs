@@ -1970,9 +1970,6 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // Read through `Store::data_mut` on both sides of
-                // `resolve_file_stat`: a `&File` held across that call would
-                // alias the `&mut File` it creates.
                 let mut last_modified = Store::data_mut(store).as_file().last_modified;
                 if last_modified == jsc::INIT_TIMESTAMP {
                     resolve_file_stat(store);

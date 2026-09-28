@@ -10,7 +10,9 @@
 
 #![warn(unused_must_use)]
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::fmt;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::time::Duration;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum TimeoutError {
@@ -68,6 +70,88 @@ pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     }
 
     imp::wake(ptr, max_waiters);
+}
+
+/// The OS, or a layer that filters or emulates system calls, gave `wake()` a code its backend
+/// has no arm for. Whether the wake was done is not known: the waiter is awake, or it stays
+/// blocked until its timeout or the next wake.
+///
+/// `code` is by value: a reference gives the caller a stack slot, which every `wake()` pays for.
+#[cfg(unix)]
+#[cold]
+#[inline(never)]
+fn unexpected_wake(op: &str, code: impl fmt::Display) {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    report_once(&REPORTED, op, &code, WAKE_EFFECT);
+}
+
+#[cfg(unix)]
+const WAKE_EFFECT: &str = "A thread that waits for this wake can stay asleep.";
+
+/// The same for `wait()`. The caller sees a spurious wakeup and checks its word again. The
+/// sleep keeps that loop from spinning when the OS does none of the waits.
+#[cold]
+#[inline(never)]
+fn unexpected_wait(op: &str, code: impl fmt::Display) -> Result<(), TimeoutError> {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    report_once(&REPORTED, op, &code, WAIT_EFFECT);
+    std::thread::sleep(BACK_OFF);
+    Ok(())
+}
+
+const WAIT_EFFECT: &str = "A thread that cannot wait polls.";
+const BACK_OFF: Duration = Duration::from_millis(1);
+
+const REPORT_MAX: usize = 192;
+
+/// Must not allocate: `ThreadPool` waits between `mi_on_thread_idle_start` and
+/// `mi_on_thread_idle_end`.
+fn report_once(reported: &AtomicBool, op: &str, code: &dyn fmt::Display, effect: &str) {
+    if reported.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let mut buf = [0u8; REPORT_MAX];
+    let line = format_report(&mut buf, op, code, effect);
+    // The report is a diagnostic. A stderr that is closed or full must not stop the caller.
+    let _ = bun_sys::write(bun_sys::Fd::stderr(), line);
+}
+
+fn format_report<'a>(
+    buf: &'a mut [u8; REPORT_MAX],
+    op: &str,
+    code: &dyn fmt::Display,
+    effect: &str,
+) -> &'a [u8] {
+    let mut line = bun_core::fmt::SliceCursor::new(buf);
+    // A piece that does not fit ends the line there.
+    let _ = fmt::write(
+        &mut line,
+        format_args!("warn: {op} returned {code}. Bun continues. {effect}\n"),
+    );
+    let len = line.at;
+    &line.buf[..len]
+}
+
+/// An errno as the report prints it: the number, then the name.
+#[cfg(unix)]
+struct Errno(i64);
+
+#[cfg(unix)]
+impl fmt::Display for Errno {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = bun_sys::SystemErrno::init(self.0).map_or("UNKNOWN", <&'static str>::from);
+        write!(f, "errno {} ({name})", self.0)
+    }
+}
+
+#[cfg(windows)]
+struct NtStatus(u32);
+
+#[cfg(windows)]
+impl fmt::Display for NtStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NTSTATUS {:#010X}", self.0)
+    }
 }
 
 #[cfg(target_vendor = "apple")]
@@ -161,11 +245,8 @@ mod windows_impl {
 
         match rc {
             windows::NTSTATUS::SUCCESS => Ok(()),
-            windows::NTSTATUS::TIMEOUT => {
-                debug_assert!(timeout.is_some());
-                Err(TimeoutError::Timeout)
-            }
-            _ => panic!("Unexpected RtlWaitOnAddress() return code"),
+            windows::NTSTATUS::TIMEOUT => Err(TimeoutError::Timeout),
+            windows::NTSTATUS(code) => unexpected_wait("RtlWaitOnAddress", NtStatus(code)),
         }
     }
 
@@ -258,13 +339,12 @@ mod darwin_impl {
             c::E::EFAULT => Ok(()),
             // Only report Timeout if we didn't have to cap the timeout
             c::E::ETIMEDOUT => {
-                debug_assert!(timeout.is_some());
                 if !timeout_overflowed {
                     return Err(TimeoutError::Timeout);
                 }
                 Ok(())
             }
-            _ => panic!("Unexpected __ulock_wait() return code"),
+            _ => unexpected_wait("__ulock_wait2", Errno(i64::from(-status))),
         }
     }
 
@@ -286,10 +366,10 @@ mod darwin_impl {
             }
             match c::E::from_raw((-status) as u16) {
                 c::E::EINTR => continue, // spurious wake()
-                c::E::EFAULT => panic!("__ulock_wake() returned EFAULT unexpectedly"), // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
-                c::E::ENOENT => return, // nothing was woken up
-                c::E::EALREADY => panic!("__ulock_wake() returned EALREADY unexpectedly"), // only for ULF_WAKE_THREAD
-                _ => panic!("Unexpected __ulock_wake() return code"),
+                c::E::ENOENT => return,  // nothing was woken up
+                // EFAULT is one: __ulock_wake doesn't generate it according to darwin
+                // pthread_cond_t. EALREADY is one: it is only for ULF_WAKE_THREAD.
+                _ => return unexpected_wake("__ulock_wake", Errno(i64::from(-status))),
             }
         }
     }
@@ -301,6 +381,9 @@ mod linux_impl {
     use super::*;
     use bun_core::time::NS_PER_S;
 
+    // Out of line, so that `super::wait` inlines into its callers and the ones that pass a
+    // constant timeout drop its check.
+    #[inline(never)]
     pub(super) fn wait(
         ptr: &AtomicU32,
         expect: u32,
@@ -337,19 +420,9 @@ mod linux_impl {
             linux::E::SUCCESS => Ok(()), // notified by `wake()`
             linux::E::INTR => Ok(()),    // spurious wakeup
             linux::E::AGAIN => Ok(()),   // ptr.* != expect
-            linux::E::TIMEDOUT => {
-                debug_assert!(timeout.is_some());
-                Err(TimeoutError::Timeout)
-            }
+            linux::E::TIMEDOUT => Err(TimeoutError::Timeout),
             linux::E::INVAL => Ok(()), // possibly timeout overflow
-            linux::E::FAULT => panic!("futex_wait() returned EFAULT unexpectedly"), // ptr was invalid
-            err => {
-                panic!(
-                    "Unexpected futex_wait() return code: {} - {}",
-                    rc,
-                    <&'static str>::from(err),
-                );
-            }
+            _ => unexpected_wait("FUTEX_WAIT", Errno(-rc as i64)),
         }
     }
 
@@ -376,7 +449,7 @@ mod linux_impl {
             linux::E::SUCCESS => {} // successful wake up
             linux::E::INVAL => {}   // invalid futex_wait() on ptr done elsewhere
             linux::E::FAULT => {}   // word already freed (Miri reports this; see `super::wake_raw`)
-            _ => panic!("Unexpected futex_wake() return code"),
+            _ => unexpected_wake("FUTEX_WAKE", Errno(-rc as i64)),
         }
     }
 }
@@ -424,14 +497,13 @@ mod freebsd_impl {
 
         match bun_sys::get_errno(rc) {
             E::SUCCESS => Ok(()),
-            E::EFAULT => panic!("_umtx_op() WAIT returned EFAULT unexpectedly"),
             E::EINVAL => Ok(()), // possibly timeout overflow
-            E::ETIMEDOUT => {
-                debug_assert!(timeout.is_some());
-                Err(TimeoutError::Timeout)
-            }
+            E::ETIMEDOUT => Err(TimeoutError::Timeout),
             E::EINTR => Ok(()), // spurious wake
-            _ => panic!("Unexpected _umtx_op() WAIT return code"),
+            _ => unexpected_wait(
+                "UMTX_OP_WAIT_UINT_PRIVATE",
+                Errno(i64::from(bun_sys::last_errno())),
+            ),
         }
     }
 
@@ -454,8 +526,10 @@ mod freebsd_impl {
         match bun_sys::get_errno(rc) {
             E::SUCCESS => {}
             E::EFAULT => {} // it's ok if the ptr doesn't point to valid memory
-            E::EINVAL => panic!("_umtx_op() WAKE returned EINVAL unexpectedly"),
-            _ => panic!("Unexpected _umtx_op() WAKE return code"),
+            _ => unexpected_wake(
+                "UMTX_OP_WAKE_PRIVATE",
+                Errno(i64::from(bun_sys::last_errno())),
+            ),
         }
     }
 }
@@ -484,7 +558,7 @@ mod wasm_impl {
             0 => Ok(()), // ok
             1 => Ok(()), // expected =! loaded
             2 => Err(TimeoutError::Timeout),
-            _ => panic!("Unexpected memory.atomic.wait32() return code"),
+            _ => unexpected_wait("memory.atomic.wait32", result),
         }
     }
 
@@ -546,5 +620,99 @@ impl Deadline {
         let elapsed_ns = u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let until_timeout_ns = timeout_ns.saturating_sub(elapsed_ns);
         wait(ptr, expect, Some(until_timeout_ns))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    fn report<'a>(buf: &'a mut [u8; REPORT_MAX], op: &str, code: i64, effect: &str) -> &'a [u8] {
+        format_report(buf, op, &Errno(code), effect)
+    }
+
+    #[test]
+    fn report_has_the_operation_the_number_and_the_name() {
+        let mut buf = [0u8; REPORT_MAX];
+        let expected = format!(
+            "warn: FUTEX_WAKE returned errno {} (EAGAIN). Bun continues. {WAKE_EFFECT}\n",
+            libc::EAGAIN,
+        );
+        assert_eq!(
+            report(&mut buf, "FUTEX_WAKE", libc::EAGAIN.into(), WAKE_EFFECT),
+            expected.as_bytes(),
+        );
+    }
+
+    #[test]
+    fn report_has_the_number_of_a_code_without_a_name() {
+        let mut buf = [0u8; REPORT_MAX];
+        let expected = format!(
+            "warn: FUTEX_WAIT returned errno 5000 (UNKNOWN). Bun continues. {WAIT_EFFECT}\n"
+        );
+        assert_eq!(
+            report(&mut buf, "FUTEX_WAIT", 5000, WAIT_EFFECT),
+            expected.as_bytes(),
+        );
+    }
+
+    #[test]
+    fn report_of_every_errno_fits() {
+        // The longest operation name a backend passes.
+        const OP: &str = "UMTX_OP_WAIT_UINT_PRIVATE";
+        // Every code with a name, then the longest number a backend passes.
+        for code in (1..=i64::from(u8::MAX)).chain([i64::from(i32::MAX)]) {
+            for effect in [WAKE_EFFECT, WAIT_EFFECT] {
+                let mut buf = [0u8; REPORT_MAX];
+                let line = report(&mut buf, OP, code, effect);
+                assert!(line.ends_with(format!("{effect}\n").as_bytes()), "{code}");
+            }
+        }
+    }
+
+    /// Counts the calls the current thread makes to the allocator.
+    struct CountingAllocator;
+
+    thread_local! {
+        static ALLOCATOR_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    // SAFETY: both methods forward to `System`.
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            ALLOCATOR_CALLS.set(ALLOCATOR_CALLS.get() + 1);
+            // SAFETY: the caller upholds the contract of `GlobalAlloc::alloc`.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            ALLOCATOR_CALLS.set(ALLOCATOR_CALLS.get() + 1);
+            // SAFETY: the caller upholds the contract of `GlobalAlloc::dealloc`.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+    #[test]
+    fn unexpected_code_returns_to_the_caller_and_does_not_allocate() {
+        let before = ALLOCATOR_CALLS.get();
+        // The two helpers report once for each process. A new latch reports each time.
+        for _ in 0..4 {
+            let reported = AtomicBool::new(false);
+            report_once(
+                &reported,
+                "FUTEX_WAKE",
+                &Errno(libc::EAGAIN.into()),
+                WAKE_EFFECT,
+            );
+            unexpected_wake("FUTEX_WAKE", Errno(libc::EAGAIN.into()));
+            let waited = unexpected_wait("FUTEX_WAIT", Errno(libc::ENOSYS.into()));
+            assert_eq!(waited, Ok(()));
+        }
+        assert_eq!(ALLOCATOR_CALLS.get() - before, 0);
     }
 }

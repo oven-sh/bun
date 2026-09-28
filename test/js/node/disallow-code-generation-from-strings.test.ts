@@ -74,6 +74,18 @@ const files = {
         const before = Module.wrapper[0];
         try { Module.wrapper[0] = before + "/* changed */"; return "set"; } finally { try { Module.wrapper[0] = before; } catch {} }
       },
+      // A refused write is not left in the array, so a later write of what is already there is not refused.
+      moduleWrapperAfterARefusedWrite: () => {
+        const wrapper = Module.wrapper;
+        const before = wrapper[0];
+        try { wrapper[0] = before + "/* changed */"; } catch (refusal) {
+          if (wrapper[0] !== before) return "left in the array";
+          try { wrapper[1] = wrapper[1]; } catch { return "a later write of the same value was refused"; }
+          throw refusal;
+        }
+        wrapper[0] = before;
+        return "set";
+      },
       importData: async () => (await import("data:text/javascript,export default 1 + 1")).default,
       importBlob: async () => (await import(blobOf("export default 1 + 1"))).default,
       requireData: () => require("data:text/javascript,module.exports = 1 + 1"),
@@ -192,6 +204,7 @@ const everythingElse = {
   moduleCompile: 2,
   requireExtensionsCompile: 2,
   moduleWrapperOverride: "set",
+  moduleWrapperAfterARefusedWrite: "set",
   importData: 2,
   importBlob: 2,
   requireData: 2,
@@ -387,7 +400,10 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
         stdout: "ignore",
         stderr: "ignore",
       });
-      await opened.promise;
+      await Promise.race([
+        opened.promise,
+        proc.exited.then(code => Promise.reject(new Error(`exited with ${code} before it connected`))),
+      ]);
       expect(connections).toBe(1);
     }
 
@@ -422,5 +438,35 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     // the flag that leaves it out.
     if (isDebug) expect(await typeOfDollarVM()).toBe("object");
     expect([await typeOfDollarVM(flag), await typeOfDollarVM(strict)]).toEqual(["undefined", "undefined"]);
+  });
+
+  // Every file of `bun test` runs at the level, in the one process, in a global object of its own
+  // (--isolate), and in the processes --parallel starts, which are passed the flag.
+  describe.each([
+    ["no flag", [], ["allowed", "allowed"]],
+    ["the flag", [flag], ["EvalError", "allowed"]],
+    ["=strict", [strict], ["EvalError", "EvalError"]],
+  ] as const)("bun test with %s", (_, args, expected) => {
+    test.each([[[]], [["--isolate"]], [["--parallel=2", "--parallel-delay=0"]]])("%j", async mode => {
+      const file = `
+        import { expect, test } from "bun:test";
+        import vm from "node:vm";
+        const attempt = fn => { try { fn(); return "allowed"; } catch (e) { return e.name; } };
+        test("level", () => {
+          expect([attempt(() => eval("1")), attempt(() => new vm.Script("1"))]).toEqual(${JSON.stringify(expected)});
+        });
+      `;
+      using dir = tempDir("disallow-code-generation-bun-test", { "a.test.js": file, "b.test.js": file });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, ...mode],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

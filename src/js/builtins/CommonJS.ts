@@ -329,21 +329,30 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
 type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
   const wrapper = [start, end];
+  // onMutate throws what it refuses (--disallow-code-generation-from-strings=strict), which is then
+  // not left in the array.
+  const mutate = (change: () => void) => {
+    const previousStart = wrapper[0];
+    const previousEnd = wrapper[1];
+    change();
+    try {
+      onMutate(wrapper[0], wrapper[1]);
+    } catch (error) {
+      wrapper[0] = previousStart;
+      wrapper[1] = previousEnd;
+      throw error;
+    }
+    return true;
+  };
   return new Proxy(wrapper, {
     set(_target, prop, value, receiver) {
-      Reflect.set(wrapper, prop, value, receiver);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return mutate(() => Reflect.set(wrapper, prop, value, receiver));
     },
     defineProperty(_target, prop, descriptor) {
-      Reflect.defineProperty(wrapper, prop, descriptor);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return mutate(() => Reflect.defineProperty(wrapper, prop, descriptor));
     },
     deleteProperty(_target, prop) {
-      Reflect.deleteProperty(wrapper, prop);
-      onMutate(wrapper[0], wrapper[1]);
-      return true;
+      return mutate(() => Reflect.deleteProperty(wrapper, prop));
     },
   });
 }

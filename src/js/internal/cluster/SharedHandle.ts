@@ -47,6 +47,12 @@ export default class SharedHandle {
     return this.workers.has(worker.id);
   }
 
+  // The descriptor that remove() closes: the number a worker named, or the socket that clusterRawBind made.
+  get fd() {
+    const handle = this.handle;
+    return handle ? handle.fd : -1;
+  }
+
   remove(worker) {
     const workers = this.workers;
     if (!workers.has(worker.id)) return false;

@@ -1071,8 +1071,11 @@ if (cluster.isPrimary) {
 
 // Runs as the primary and as its workers. SCENARIO is { policy, cases: [{ fd, port, steps }] }. The test made one
 // socket for each case, and the primary has it as descriptor `fd`. A step is one of:
-//   { worker, kind, fd }   the worker calls listen({ fd }) or bind({ fd }) on a new server or socket
-//   { connect: true }      the primary connects a client to the socket of the case
+//   { worker, kind, fd }          the worker calls listen({ fd }) or bind({ fd }) on a new server or socket
+//   { worker, kind, fd, twice }   one server calls listen({ fd }) two times before the first answer
+//   { worker, kind, port: 0 }     the worker listens on a port, so the primary makes a socket (`fd: "created"`)
+//   { primary: kind }             the primary binds a socket of its own to the descriptor
+//   { connect: true }             the primary connects a client to the socket of the case
 const fdQueryFixture = `
 const cluster = require("node:cluster");
 const fs = require("node:fs");
@@ -1089,6 +1092,22 @@ function stateOf(fd) {
   } catch (error) {
     return error.code;
   }
+}
+
+function socketsOfPrimary() {
+  const fds = [];
+  for (let fd = 3; fd < 256; fd++) {
+    if (stateOf(fd) === "open" && fs.fstatSync(fd).isSocket()) fds.push(fd);
+  }
+  return fds;
+}
+
+function bindInPrimary(kind, fd) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = require("node:dgram").createSocket(kind);
+  socket.once("error", reject);
+  socket.bind({ fd }, () => resolve(socket));
+  return promise;
 }
 
 // Takes each free number up to the descriptor. If the primary closed the descriptor too early, a sentinel has its
@@ -1138,20 +1157,37 @@ async function primary() {
 
   for (const { fd, port, steps } of scenario.cases) {
     const answers = [];
+    const own = [];
+    // The descriptor that the case is about: the one of the test, or the socket that the primary made.
+    let held = fd;
     try {
       for (const step of steps) {
-        if (step.connect) answers.push({ client: await connectTo(port) });
-        else answers.push({ result: await tell(step.worker, step), fd: stateOf(fd) });
+        if (step.connect) {
+          answers.push({ client: await connectTo(port) });
+        } else if (step.primary) {
+          own.push(await bindInPrimary(step.primary, fd));
+          answers.push({ primary: "listening", fd: stateOf(fd) });
+        } else if (step.port === 0) {
+          const before = socketsOfPrimary();
+          answers.push({ result: await tell(step.worker, step) });
+          const created = socketsOfPrimary().filter(n => !before.includes(n));
+          if (created.length !== 1) throw new Error("expected one new socket in the primary, found [" + created + "]");
+          held = created[0];
+        } else {
+          const result = await tell(step.worker, { ...step, fd: step.fd === "created" ? held : step.fd });
+          answers.push({ result, fd: stateOf(held) });
+        }
       }
-      const sentinels = openSentinels(fd);
+      const sentinels = openSentinels(held);
       await closeAll();
       const closed = sentinels.map(stateOf).find(state => state !== "open");
-      console.log(JSON.stringify({ answers, left: { fd: stateOf(fd), sentinels: closed ?? "open" } }));
+      console.log(JSON.stringify({ answers, left: { fd: stateOf(held), sentinels: closed ?? "open" } }));
     } catch (error) {
       process.exitCode = 1;
       console.log(JSON.stringify({ answers, error: error.message }));
       await closeAll();
     }
+    for (const socket of own) socket.close();
   }
 
   cases = false;
@@ -1198,7 +1234,11 @@ function worker() {
       done("listening");
     };
     if (step.kind === "udp4" || step.kind === "udp6") target.bind({ fd: step.fd }, listening);
-    else target.listen({ fd: step.fd }, listening);
+    else if (step.port === 0) target.listen(0, "127.0.0.1", listening);
+    else {
+      if (step.twice) target.listen({ fd: step.fd });
+      target.listen({ fd: step.fd }, listening);
+    }
   });
 }
 
@@ -1212,7 +1252,11 @@ if (cluster.isPrimary) {
 }
 `;
 
-type FdQueryStep = { worker: number; kind: string; fd: number } | { connect: true };
+type FdQueryStep =
+  | { worker: number; kind: string; fd: number | "created"; twice?: true }
+  | { worker: number; kind: string; port: 0 }
+  | { primary: string }
+  | { connect: true };
 type FdQueryCase = {
   name: string;
   socket: "tcp" | "udp" | "unix dgram";
@@ -1224,14 +1268,14 @@ type FdQueryCase = {
 };
 
 const served = { result: "listening", fd: "open" };
-const refused = (code: "EINVAL", syscall: "bind" | "open") => ({
-  result: { code, syscall, errno: -22 },
+const refused = (code: "EEXIST" | "EINVAL", syscall: "bind" | "open") => ({
+  result: { code, syscall, errno: code === "EEXIST" ? -17 : -22 },
   fd: "open",
 });
-const ask = (kind: string, fd: number): FdQueryStep => ({ worker: 0, kind, fd });
+const ask = (kind: string, fd: number | "created", worker = 0): FdQueryStep => ({ worker, kind, fd });
 const twoAsks = (first: string, second: string) => (fd: number) => [ask(first, fd), ask(second, fd)];
 
-// Every answer here is the answer of node v26.3.0 for the same fixture.
+// Each answer is the answer of node v26.3.0 for the same fixture. A row with another answer says what node does.
 const fdQueryCases: Record<"SCHED_NONE" | "SCHED_RR", FdQueryCase[]> = {
   SCHED_NONE: [
     {
@@ -1271,6 +1315,50 @@ const fdQueryCases: Record<"SCHED_NONE" | "SCHED_RR", FdQueryCase[]> = {
       answers: [refused("EINVAL", "open")],
       left: { fd: "open", sentinels: "open" },
     },
+    {
+      // node: the worker dies on ERR_INTERNAL_ASSERTION at the second answer (nodejs/node#64869).
+      name: "net, net, then net in a second worker",
+      socket: "tcp",
+      steps: fd => [ask("net", fd), ask("net", fd), { connect: true }, ask("net", fd, 1)],
+      answers: [served, refused("EEXIST", "bind"), { client: "served" }, served],
+    },
+    {
+      // node: the worker dies on ERR_INTERNAL_ASSERTION at the second answer.
+      name: "udp4, udp4",
+      socket: "udp",
+      steps: twoAsks("udp4", "udp4"),
+      answers: [served, refused("EEXIST", "open")],
+    },
+    {
+      // node: 'listening'. Its primary then closes the descriptor two times.
+      name: "udp4, then udp6 in a second worker",
+      socket: "udp",
+      steps: fd => [ask("udp4", fd), ask("udp6", fd, 1)],
+      answers: [served, refused("EEXIST", "open")],
+    },
+    {
+      // node: 'listening'. Its primary then closes the socket two times.
+      name: "net on a port, then net on the socket that the primary made for it",
+      socket: "tcp",
+      steps: () => [{ worker: 0, kind: "net", port: 0 }, ask("net", "created")],
+      answers: [{ result: "listening" }, refused("EEXIST", "bind")],
+    },
+    {
+      // node: 'listening' under this policy, EEXIST under SCHED_RR. The worker gave the first handle back, so the
+      // holder closed the descriptor, and a sentinel has its number.
+      name: "one net server that listens two times before the first answer",
+      socket: "tcp",
+      steps: fd => [{ ...ask("net", fd), twice: true }],
+      answers: [{ ...refused("EEXIST", "bind"), fd: "EBADF" }],
+      left: { fd: "open", sentinels: "open" },
+    },
+    {
+      name: "a udp4 socket of the primary, then udp4",
+      socket: "udp",
+      steps: fd => [{ primary: "udp4" }, ask("udp4", fd)],
+      answers: [{ primary: "listening", fd: "open" }, refused("EEXIST", "open")],
+      left: { fd: "open", sentinels: "open" },
+    },
   ],
   SCHED_RR: [
     {
@@ -1292,6 +1380,35 @@ const fdQueryCases: Record<"SCHED_NONE" | "SCHED_RR", FdQueryCase[]> = {
       socket: "tcp",
       steps: fd => [ask("net", fd + 0.5), ask("net", fd), { connect: true }],
       answers: [refused("EINVAL", "bind"), served, { client: "served" }],
+    },
+    {
+      // With epoll the second listener of the primary fails, so this row passes without the lookup. Not with kqueue.
+      name: "net, net, then net in a second worker",
+      socket: "tcp",
+      steps: fd => [ask("net", fd), ask("net", fd), { connect: true }, ask("net", fd, 1)],
+      answers: [served, refused("EEXIST", "bind"), { client: "served" }, served],
+    },
+    { name: "tls, tls", socket: "tcp", steps: twoAsks("tls", "tls"), answers: [served, refused("EEXIST", "bind")] },
+    {
+      // node: its primary answers EEXIST, and its worker dies on a TypeError in tls.Server._setServerData(null).
+      name: "net, tls",
+      socket: "tcp",
+      steps: fd => [ask("net", fd), ask("tls", fd), { connect: true }],
+      answers: [served, refused("EEXIST", "bind"), { client: "served" }],
+    },
+    { name: "tls, net", socket: "tcp", steps: twoAsks("tls", "net"), answers: [served, refused("EEXIST", "bind")] },
+    {
+      // The kind comes before the holder. This row passes without the lookup.
+      name: "udp4, then net on the datagram socket",
+      socket: "udp",
+      steps: twoAsks("udp4", "net"),
+      answers: [served, refused("EINVAL", "bind")],
+    },
+    {
+      name: "net on a port, then tls on the socket that the primary made for it",
+      socket: "tcp",
+      steps: () => [{ worker: 0, kind: "net", port: 0 }, ask("tls", "created")],
+      answers: [{ result: "listening" }, refused("EEXIST", "bind")],
     },
   ],
 };
@@ -1326,7 +1443,7 @@ async function runFdQueryCases(policy: "SCHED_NONE" | "SCHED_RR") {
 describe.skipIf(isWindows).each(["SCHED_NONE", "SCHED_RR"] as const)(
   "%s: a worker names a descriptor of the primary",
   policy => {
-    // One primary and one worker run all the cases of a policy.
+    // One primary and two workers run all the cases of a policy.
     let run: Awaited<ReturnType<typeof runFdQueryCases>>;
     beforeAll(async () => {
       run = await runFdQueryCases(policy);

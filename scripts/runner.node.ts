@@ -731,7 +731,7 @@ async function runTests(): Promise<TestResult[]> {
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
-  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // services this shard's tests need (mysql/postgres/redis/…) in the
   // background while getVendorTests below installs vendor deps. Tests reach
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message

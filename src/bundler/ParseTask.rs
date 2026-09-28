@@ -2683,7 +2683,6 @@ pub mod parse_worker {
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
-        let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
             if !is_empty || loader.handles_empty_file() {
                 get_ast(

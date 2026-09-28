@@ -381,7 +381,6 @@ impl Response {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
         self.init_mut().headers.as_deref_mut()
     }
@@ -419,7 +418,6 @@ impl Response {
     /// that may re-enter a `Response` host-fn (which could project a second
     /// `&mut` to the same `body`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_body_value(&self) -> &mut BodyValue {
         // R-2: both `Response.body` and `Body.value` are `JsCell` —
         // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
@@ -582,7 +580,6 @@ impl Response {
         JSValue::js_number(this.init.get().status_code as f64)
     }
 
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_or_create_headers(
         &self,
         global_this: &JSGlobalObject,
@@ -785,8 +782,6 @@ impl Response {
     /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
     /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
     /// JS wrapper.
-    // Safety contract is documented above; callers pass freshly-boxed pointers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }

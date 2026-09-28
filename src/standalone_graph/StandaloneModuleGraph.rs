@@ -1240,7 +1240,11 @@ impl StandaloneModuleGraph {
                             }))
                 });
                 if well_formed {
-                    native_library_set = NativeLibrarySet { members, set_hash };
+                    native_library_set = NativeLibrarySet {
+                        members,
+                        set_hash,
+                        mirror_depth: 0,
+                    };
                 }
             }
         }
@@ -1594,6 +1598,7 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
             })
             .collect(),
         set_hash,
+        mirror_depth: 0,
     }
 }
 

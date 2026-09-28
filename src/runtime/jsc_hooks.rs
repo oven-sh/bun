@@ -4503,12 +4503,12 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// A library's dependencies resolve relative to its on-disk path (`$ORIGIN`,
 /// `@loader_path`, the DLL directory), so the whole embedded set
 /// (`NativeLibrarySet`, recorded at build time) is written once into
-/// `{tmpdir}/.bun-{euid}-{set_hash}/` with the embedded layout, and the
-/// requested file's path inside it is returned. The set hash dedupes across
-/// calls, Worker VMs, and restarts (#29585). The bundler's hoisted
-/// `[name]-[hash].node` resolves to its `--asset` copy (`alias_index`). A file
-/// the record does not list, or a set that cannot be written in full, is
-/// mirrored on its own.
+/// `{tmpdir}/.bun-{euid}-{set_hash}/` with the embedded layout, `mirror_depth`
+/// levels down, and the requested file's path inside it is returned. The set
+/// hash dedupes across calls, Worker VMs, and restarts (#29585). The bundler's
+/// hoisted `[name]-[hash].node` resolves to its `--asset` copy (`alias_index`).
+/// A file the record does not list, or a set that cannot be written in full,
+/// is mirrored on its own.
 pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]) -> Option<usize> {
     if input_path.is_empty() {
         return None;
@@ -4529,6 +4529,7 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
     if member.is_some() {
         let recorded = MirrorSet {
             hash: set.set_hash,
+            depth: set.mirror_depth,
             members: MirrorMembers::Recorded { set, files },
         };
         if let Some(len) = recorded.materialise(&tmpdir, uid, target, out_buf) {
@@ -4540,6 +4541,7 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
             target.display_name(),
             bun_wyhash::hash(target.contents.as_bytes()),
         )]),
+        depth: 0,
         members: MirrorMembers::Single(target),
     };
     single.materialise(&tmpdir, uid, target, out_buf)
@@ -4569,11 +4571,13 @@ impl MirrorMembers<'_> {
 
 struct MirrorSet<'a> {
     hash: u64,
+    /// Levels between the mirror directory and the layout.
+    depth: u32,
     members: MirrorMembers<'a>,
 }
 
 impl MirrorSet<'_> {
-    /// Writes `{tmpdir}/.bun-{uid}-{hash}/{target's relative path}` into `out_buf`
+    /// Writes `{tmpdir}/.bun-{uid}-{hash}/{depth levels}/{target's relative path}` into `out_buf`
     /// (leaving room for a NUL, which `FFI::open` writes at `out_buf[len]`) and
     /// returns the length once every member of the set is on disk there.
     fn materialise(
@@ -4590,7 +4594,7 @@ impl MirrorSet<'_> {
         )
         .ok()?;
         let mut rel_buf = bun_paths::path_buffer_pool::get();
-        let rel = native_libs::mirror_relative_path(target.name, &mut rel_buf[..])?;
+        let rel = native_libs::mirror_relative_path(target.name, self.depth, &mut rel_buf[..])?;
         let tmpdir_path = Fs::RealFS::tmpdir_path();
         let len =
             bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
@@ -4622,7 +4626,9 @@ impl MirrorSet<'_> {
         };
         let file_is_ours = |file: &bun_standalone_graph::File| -> bool {
             let mut rel_buf = bun_paths::path_buffer_pool::get();
-            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+            let Some(rel) =
+                native_libs::mirror_relative_path(file.name, self.depth, &mut rel_buf[..])
+            else {
                 return false;
             };
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -4648,7 +4654,9 @@ impl MirrorSet<'_> {
         // a rename in the same directory, so a reader never sees a partial file.
         let write_member = |dir: &bun_sys::Dir, file: &bun_standalone_graph::File| -> bool {
             let mut rel_buf = bun_paths::path_buffer_pool::get();
-            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+            let Some(rel) =
+                native_libs::mirror_relative_path(file.name, self.depth, &mut rel_buf[..])
+            else {
                 return false;
             };
             let parent_dir = match bun_paths::dirname(rel) {

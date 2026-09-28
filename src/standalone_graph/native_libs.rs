@@ -32,6 +32,9 @@ pub struct NativeLibrarySet {
     /// the set into, so two executables with the same libraries at the same
     /// paths share one directory and any other difference gets its own.
     pub set_hash: u64,
+    /// How many levels the layout sits below the mirror directory
+    /// ([`mirror_relative_path`]).
+    pub mirror_depth: u32,
 }
 
 impl NativeLibrarySet {
@@ -87,23 +90,19 @@ pub fn is_shared_library_name(name: &[u8]) -> bool {
     true
 }
 
-/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory: the
-/// path relative to the root, with no empty or `.` segment and every `..` segment
-/// rewritten to `_.._` (as `bun build` does for an asset name), so every member
-/// stays inside the directory and sibling relations hold. `None` when nothing is
-/// left of the name, or it does not fit in `buf`.
-pub fn mirror_relative_path<'a>(name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory:
+/// `depth` levels named `_`, then the path relative to the root, with no empty
+/// or `.` segment and every `..` segment rewritten to `_.._` (as `bun build`
+/// does for an asset name), so every member stays inside the directory and
+/// sibling relations hold. `None` when nothing is left of the name, or the path
+/// does not fit in `buf`.
+pub fn mirror_relative_path<'a>(name: &[u8], depth: u32, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let rel = name
         .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
         .or_else(|| name.strip_prefix(BASE_PUBLIC_PATH.as_bytes()))
         .unwrap_or(name);
     let mut len = 0;
-    for segment in strings::split(rel, b"/") {
-        let segment = match segment {
-            b"" | b"." => continue,
-            b".." => b"_.._",
-            other => other,
-        };
+    let mut push = |segment: &[u8]| -> Option<()> {
         let needed = len + usize::from(len > 0) + segment.len();
         if needed >= buf.len() {
             return None;
@@ -114,9 +113,25 @@ pub fn mirror_relative_path<'a>(name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u
         }
         buf[len..len + segment.len()].copy_from_slice(segment);
         len += segment.len();
+        Some(())
+    };
+    for _ in 0..depth {
+        push(MIRROR_LEVEL)?;
     }
-    (len > 0).then(|| &buf[..len])
+    let mut named = false;
+    for segment in strings::split(rel, b"/") {
+        push(match segment {
+            b"" | b"." => continue,
+            b".." => b"_.._",
+            other => other,
+        })?;
+        named = true;
+    }
+    named.then(|| &buf[..len])
 }
+
+/// The name of one level above the layout.
+const MIRROR_LEVEL: &[u8] = b"_";
 
 /// The set hash: each member's relative name and content hash, in file-table
 /// order. The writer and the runtime's single-file fallback both use it, so
@@ -163,9 +178,12 @@ mod tests {
 
     #[test]
     fn mirror_relative_paths() {
-        fn run(name: &[u8]) -> Option<Vec<u8>> {
+        fn run_at(name: &[u8], depth: u32) -> Option<Vec<u8>> {
             let mut buf = [0u8; 256];
-            mirror_relative_path(name, &mut buf).map(<[u8]>::to_vec)
+            mirror_relative_path(name, depth, &mut buf).map(<[u8]>::to_vec)
+        }
+        fn run(name: &[u8]) -> Option<Vec<u8>> {
+            run_at(name, 0)
         }
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes().to_vec();
         assert_eq!(
@@ -179,6 +197,20 @@ mod tests {
         assert_eq!(run(&[&root[..], b"./a//b.so"].concat()).unwrap(), b"a/b.so");
         assert_eq!(run(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()), None);
         assert_eq!(run(b"..").unwrap(), b"_.._");
+
+        assert_eq!(
+            run_at(&[&root[..], b"lib/addon.node"].concat(), 2).unwrap(),
+            b"_/_/lib/addon.node"
+        );
+        assert_eq!(run_at(b"addon.node", 1).unwrap(), b"_/addon.node");
+        assert_eq!(
+            run_at(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), 3),
+            None
+        );
+        // 256 bytes hold 122 levels and the name, not 123.
+        assert_eq!(run_at(b"addon.node", 122).unwrap().len(), 2 * 122 + 10);
+        assert_eq!(run_at(b"addon.node", 123), None);
+        assert_eq!(run_at(b"addon.node", u32::MAX), None);
     }
 
     #[test]

@@ -1621,34 +1621,6 @@ mod draft {
         );
     }
 
-    /// `WTF::SignalHandlers::finalize()` (first `VM` construction) re-registers
-    /// SIGSEGV/SIGBUS with `SA_SIGINFO` only and chains to the previous handler.
-    /// Without `SA_ONSTACK` a guard-page fault (stack overflow) cannot be
-    /// delivered and the process dies with no report. Put the flag back.
-    #[cfg(unix)]
-    #[unsafe(no_mangle)]
-    extern "C" fn CrashHandler__keepSignalHandlersOnAltStack() {
-        for signal in bun_core::CRASH_HANDLER_SIGNALS {
-            let mut current: libc::sigaction = bun_core::ffi::zeroed();
-            // SAFETY: a null `act` only queries; `current` is a valid out-pointer.
-            if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0 {
-                continue;
-            }
-            if current.sa_sigaction == libc::SIG_DFL
-                || current.sa_sigaction == libc::SIG_IGN
-                || current.sa_flags & libc::SA_ONSTACK != 0
-            {
-                continue;
-            }
-            current.sa_flags |= libc::SA_ONSTACK;
-            // SAFETY: `current` is the disposition the kernel just returned,
-            // with one flag added; a null `oldact` is permitted.
-            unsafe {
-                libc::sigaction(signal, &raw const current, core::ptr::null_mut());
-            }
-        }
-    }
-
     #[cfg(unix)]
     static DID_REGISTER_SIGALTSTACK: AtomicBool = AtomicBool::new(false);
     /// 512K alternate signal stack. The kernel writes here during signal delivery;

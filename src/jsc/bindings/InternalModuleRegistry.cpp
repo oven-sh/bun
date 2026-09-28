@@ -91,7 +91,7 @@ static String internalModuleSource(uint32_t id)
     if (!contents) {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().span().data(), file.utf8().span().data());
+            moduleName.utf8().legacyCStringPointer(), file.utf8().legacyCStringPointer());
         CRASH();
     }
     return WTF::String::fromUTF8(contents.value());
@@ -146,7 +146,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     ASSERT(
         result && result.isCell() && dynamicDowncast<JSObject>(result),
         "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().span().data());
+        moduleName.utf8().legacyCStringPointer());
     return result;
 }
 
@@ -278,7 +278,7 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
     UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
     if (!executable)
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source, sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();

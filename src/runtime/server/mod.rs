@@ -268,6 +268,8 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
+    /// The node:http tunnels in `active_connection_count` that are at read EOF and have nothing left to send.
+    pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
@@ -496,6 +498,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
+    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -514,10 +517,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     this.note_connection_opened();
                     return;
                 }
-                -2 => {}
+                3 => {
+                    this.note_tunnel_idle(false);
+                    // With a listener open, the loop ref is the user's to drop (`server.unref()`).
+                    if !this.has_listener() {
+                        // SAFETY: `this` is not used again, and a tunnel write never runs inside `app.close()`.
+                        unsafe { &mut *user_data.cast::<Self>() }.ref_();
+                    }
+                    return;
+                }
+                -3 => this.note_tunnel_idle(true),
+                -4 => {
+                    this.note_tunnel_idle(false);
+                    this.note_connection_closed();
+                }
+                -2 => this.note_connection_closed(),
                 _ => return,
             }
-            this.note_connection_closed() && !this.has_listener() && !this.deinit_running.get()
+            !this.has_loop_holding_connections()
+                && !this.has_listener()
+                && !this.deinit_running.get()
         };
         if drained {
             // SAFETY: no `&Self` outlives the block above; `deinit_running`
@@ -1460,11 +1479,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                 };
 
-                if !node_http_response.is_null() {
+                // A pipelined response stays queued: `raw_response` describes the one ahead of it.
+                let threw_while_queued = !node_http_response.is_null()
+                    // SAFETY: see `nhr` above.
+                    && unsafe { &*node_http_response }.mark_dispatch_threw_if_queued();
+
+                if !node_http_response.is_null() && !threw_while_queued {
                     // SAFETY: see `nhr` above.
                     let nhr = unsafe { &*node_http_response };
                     let nhr_flags = nhr.flags.get();
-                    if !nhr_flags.contains(NhrFlags::UPGRADED) {
+                    if !nhr_flags.contains(NhrFlags::UPGRADED) && !nhr.is_socket_closed_or_closing()
+                    {
                         if let Some(raw) = nhr.raw_response.get() {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
@@ -1485,8 +1510,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // initial 3). Without this the box leaks: the later
                     // `on_abort` socket-close path early-returns once
                     // `REQUEST_HAS_COMPLETED` is set and never balances it.
-                    nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
-                    nhr.on_request_complete();
+                    // An ended response still draining completes from on_drain/on_abort.
+                    if !nhr_flags.contains(NhrFlags::ENDED) {
+                        nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
+                        nhr.on_request_complete();
+                    }
                 }
             }
             HttpResult::Success | HttpResult::Pending => {}
@@ -1506,8 +1534,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // If we ended the response without attaching an ondata handler, we discard the body read stream
                     else if !matches!(http_result, HttpResult::Pending) {
                         let this_value = nhr.get_this_value();
-                        // SAFETY: `vm` is the process-static VirtualMachine.
-                        nhr.maybe_stop_reading_body(unsafe { &mut *vm }, this_value);
+                        nhr.maybe_stop_reading_body(this_value);
                     }
                 }
                 if nhr_flags.contains(NhrFlags::TUNNELED) {
@@ -1581,15 +1608,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .set(self.active_connection_count.get().saturating_add(1));
     }
 
-    /// Returns true when this close drained the last live HTTP connection.
-    pub(crate) fn note_connection_closed(&self) -> bool {
-        let prev = self.active_connection_count.get();
-        if prev == 0 {
-            return false;
-        }
-        let remaining = prev - 1;
-        self.active_connection_count.set(remaining);
-        remaining == 0
+    pub(crate) fn note_connection_closed(&self) {
+        self.active_connection_count
+            .set(self.active_connection_count.get().saturating_sub(1));
+    }
+
+    fn note_tunnel_idle(&self, idle: bool) {
+        let count = self.idle_tunnel_count.get();
+        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
+        debug_assert!(idle || count > 0);
+        self.idle_tunnel_count.set(if idle {
+            count + 1
+        } else {
+            count.saturating_sub(1)
+        });
+    }
+
+    /// An idle tunnel is open but, like a libuv handle at EOF with no write pending, does not hold the loop.
+    fn has_loop_holding_connections(&self) -> bool {
+        self.active_connection_count.get() > self.idle_tunnel_count.get()
     }
 
     fn note_websocket_opened(&self) {
@@ -1614,16 +1651,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.active_sockets_count() > 0
     }
 
-    /// What the `stop()` promise (node:http: the `'close'` event) and the
-    /// loop unref wait for. Bun.serve waits for open HTTP connections too;
-    /// node:http's `server.close()` reports closed without them (Node's own
-    /// `net.Server` waits for every connection — pre-existing divergence),
-    /// so there they only pin the wrapper via [`Self::is_drained`].
+    /// What the `stop()` promise (node:http: 'close') and the loop unref wait for. A connection counts from accept, before its TLS handshake completes.
     pub(crate) fn is_closed(&self) -> bool {
         self.pending_requests.get() == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
-            && (self.config.is_node_http_server || !self.has_active_connections())
+            && !self.has_loop_holding_connections()
     }
 
     /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
@@ -1659,6 +1692,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
+        }
+    }
+
+    pub(crate) fn set_max_headers_count(&mut self, max_headers_count: u32) {
+        if let Some(app) = self.app {
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(app).set_max_headers_count(max_headers_count);
         }
     }
 
@@ -1752,11 +1792,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        if let server_config::Address::Unix(path) = &self.config.address {
-            let bytes = path.as_bytes();
-            if !bytes.is_empty() && bytes[0] != 0 {
-                let _ = bun_sys::unlink(path.as_zstr());
+        match &self.config.address {
+            server_config::Address::Unix(path) => {
+                let bytes = path.as_bytes();
+                if !bytes.is_empty() && bytes[0] != 0 {
+                    let _ = bun_sys::unlink(path.as_zstr());
+                }
             }
+            server_config::Address::Tcp { .. } => {}
         }
 
         if !abrupt {
@@ -2178,6 +2221,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
+            idle_tunnel_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
@@ -2831,20 +2875,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // not `*this`.
         let global = this_ref.global_this();
 
-        if let server_config::Address::Tcp {
-            hostname: Some(hostname),
-            ..
-        } = &this_ref.config.address
-        {
-            let hostname = hostname.as_bytes();
-            if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname)) {
-                let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
-                    global, hostname,
-                ));
-                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                Self::deinit(this);
-                return JSValue::ZERO;
+        match &this_ref.config.address {
+            server_config::Address::Tcp {
+                hostname: Some(hostname),
+                ..
+            } => {
+                let hostname = hostname.as_bytes();
+                if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname))
+                {
+                    let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                        global, hostname,
+                    ));
+                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
             }
+            server_config::Address::Tcp { hostname: None, .. }
+            | server_config::Address::Unix(_) => {}
         }
 
         let app: *mut uws_sys::NewApp<SSL>;

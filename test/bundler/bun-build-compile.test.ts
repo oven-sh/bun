@@ -1,6 +1,18 @@
 import { bytecodeOrderNames } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isPosix,
+  isWindows,
+  tempDir,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -1934,6 +1946,92 @@ server.close();`,
     },
     // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
     60_000,
+  );
+
+  // A position in a stack trace needs to know where the lines of the source start. Finding that out by reading the
+  // source would read what an executable that runs from bytecode has otherwise never read.
+  test.concurrent.each([
+    { bytecode: false, format: "esm", minify: false, utf16: false },
+    { bytecode: true, format: "esm", minify: false, utf16: false },
+    { bytecode: true, format: "cjs", minify: false, utf16: false },
+    { bytecode: true, format: "esm", minify: true, utf16: false },
+    { bytecode: true, format: "esm", minify: false, utf16: true },
+  ] as const)(
+    "the sources of an executable know where their lines start ($format, bytecode: $bytecode, minify: $minify, utf16: $utf16)",
+    async ({ bytecode, format, minify, utf16 }) => {
+      // A legal comment stays in the chunk as written, and a chunk that is not ASCII is stored as UTF-16.
+      const legal = utf16 ? "/*! caf\u00e9\r a\u2028 b\u2029 c */\n" : "/*! a\r b */\n";
+      using dir = tempDir("build-compile-line-starts", {
+        "app.js": `${legal}import { internalModulesLoadedFromBytecode, sourceHasLineStarts } from "bun:internal-for-testing";
+import { toASCII } from "node:punycode";
+import { inOther } from "./other.js";
+function here() {
+  const stack = new Error("x").stack;
+  return /:(\\d+:\\d+)\\)?$/.exec(stack.split("\\n")[1])[1];
+}
+// A short source does without.
+globalThis.padding = "${Buffer.alloc(1024, "p")}";
+const before = [sourceHasLineStarts(here), sourceHasLineStarts(inOther), sourceHasLineStarts(toASCII)];
+const fromBytecode = internalModulesLoadedFromBytecode();
+console.log(JSON.stringify({ before, fromBytecode, positions: [here(), inOther()] }));`,
+        "other.js": `
+
+export function inOther() {
+  const stack = new Error("y").stack;
+  return /:(\\d+:\\d+)\\)?$/.exec(stack.split("\\n")[1])[1];
+}`,
+      });
+      const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+        bytecode,
+        format,
+        minify,
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({
+        cmd: [outfile],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A parse collects the line starts too, so that the code came out of the bytecode is a check of its own.
+      const lines = stderr.split(/\r?\n/).filter(Boolean);
+      expect(lines.filter(line => !line.startsWith("[Disk Cache] "))).toEqual([]);
+      expect(lines.includes("[Disk Cache] Cache hit for sourceCode")).toBe(bytecode);
+      const { before, fromBytecode, positions } = JSON.parse(stdout.trim());
+      expect(fromBytecode > 0).toBe(bytecode);
+      // A module of Bun's own is parsed as a function, which is not all of its source, so it has them only out of
+      // bytecode. A build with assertions parses all of that source too, to check what it knows about the function.
+      expect(before).toEqual([true, true, bytecode || isDebug || isASAN]);
+
+      // The positions, counted in the text the executable holds. A frame is where the call's arguments start.
+      const file = readFileSync(outfile);
+      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+      const offsets = trailer - 32;
+      const base = offsets - Number(file.readBigUInt64LE(offsets));
+      const record = base + file.readUInt32LE(offsets + 8);
+      expect(file.readUInt32LE(offsets + 12), "one module").toBe(52);
+      const contents = { offset: file.readUInt32LE(record + 8), length: file.readUInt32LE(record + 12) };
+      expect(file.readUInt8(record + 48), "Encoding").toBe(utf16 ? 2 : 1);
+      const source = file.toString(
+        utf16 ? "utf16le" : "latin1",
+        base + contents.offset,
+        base + contents.offset + contents.length,
+      );
+      expect(source).toContain(legal.trim());
+      const counted = ["x", "y"].map(message => {
+        const lines = source.slice(0, source.indexOf(`("${message}")`)).split(/\r\n|[\n\r\u2028\u2029]/);
+        return `${lines.length}:${lines.at(-1)!.length + 1}`;
+      });
+      expect(positions).toEqual(counted);
+      expect(exitCode).toBe(0);
+    },
+    // These --compile builds run at the same time, most of them with bytecode: up to 51s each under debug+ASAN.
+    120_000,
   );
 
   test("compile with invalid target fails gracefully", async () => {

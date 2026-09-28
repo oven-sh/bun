@@ -31,6 +31,13 @@ Bun reads the flag at startup. Nothing turns it off afterwards:
 
 A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXEC_ARGV`, as in Node.js. Pass the flag to the process.
 
+### Workers whose code is a string
+
+`new Worker(code, { eval: true })` from `node:worker_threads` takes the Worker's source as a string. So does a `Worker` started from a `data:` or `blob:` URL.
+
+- With the flag and no value, the `Worker` starts, as in Node.js. `eval()` and `new Function()` throw inside it.
+- With `=strict`, the `Worker` constructor throws the `EvalError`. Put the Worker's code in a file and pass the file's path or URL.
+
 ## What each level refuses
 
 | A string becomes code through                                                                         | Flag    | `=strict` |
@@ -73,7 +80,7 @@ error: BUN_INSPECT cannot be used with --disallow-code-generation-from-strings=s
 
 ## Parts of Bun that stop working
 
-Bun's own built-in modules do not use `eval()` or `new Function()`, with one exception:
+One part of Bun calls `new Function()` itself: the development server. Every other row is an API that compiles a string you give it.
 
 | Part of Bun                                                                              | Flag   | `=strict` |
 | ---------------------------------------------------------------------------------------- | ------ | --------- |
@@ -107,11 +114,22 @@ await Bun.build({
 
 `BUN_OPTIONS` can raise the level of a compiled executable. It cannot lower it.
 
-The bundler resolves an `import` of a literal `data:` URL when it builds, so that module is part of the executable. A `data:` URL that the program computes at run time is refused.
+### `data:` URLs written in the source
+
+The bundler resolves a `data:` URL that is written as a literal when it builds. That module is part of the executable, like any file the program imports, so it loads at both levels. A `data:` URL that the program puts together at run time is a string that becomes code, so `=strict` refuses it:
+
+```ts server.ts icon="/icons/typescript.svg"
+await import("data:text/javascript,export default 1"); // bundled at build time: loads
+
+const url = ["data:text/javascript", "export default 1"].join(",");
+await import(url); // made at run time: EvalError
+```
+
+Without `--compile` there is no build step, so `=strict` refuses both.
 
 ## Checking that the flag is on
 
-`process.execArgv` contains the flag, on the main thread and in every `Worker`:
+`process.execArgv` contains the flag:
 
 ```ts server.ts icon="/icons/typescript.svg"
 if (!process.execArgv.includes("--disallow-code-generation-from-strings=strict")) {
@@ -119,12 +137,16 @@ if (!process.execArgv.includes("--disallow-code-generation-from-strings=strict")
 }
 ```
 
-With `=strict`, a `Worker` that you give its own `execArgv` still lists the flag.
+A `Worker` inherits `process.execArgv`, so the same check works inside one. When you give a `Worker` its own `execArgv`:
+
+- With `=strict`, Bun adds the flag to the list the `Worker` sees.
+- With the flag and no value, the `Worker` sees the list you gave it, as in Node.js. The `Worker` still refuses `eval()` and `new Function()`.
 
 ## What the flag does not cover
 
 - **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.
 - **Startup.** The entry point, `--preload`, and `bun -e` are the program. The flag applies to what the program does once it runs.
 - **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
+- **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
 - **Native code.** A native addon can do what native code can do. Use `--no-addons`.
 - **Child processes.** A process that the program spawns has its own flags.

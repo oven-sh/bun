@@ -304,6 +304,15 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.each([[["--help"]], [["run", "--help"]]])("bun %j lists it", async args => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toMatch(
+      /^ +--disallow-code-generation-from-strings=<val>\s+Make eval\(\) and new Function\(\) throw\./m,
+    );
+    expect(exitCode).toBe(0);
+  });
+
   // The flag is the process's. As in Node.js, a Worker cannot be given it.
   test.each([flag, strict])("a Worker's execArgv with %s is ERR_WORKER_INVALID_EXEC_ARGV", async given => {
     using dir = tempDir("disallow-code-generation-worker", {

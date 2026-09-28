@@ -9,21 +9,14 @@
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
- *
- * ## Build modes
- *
- * `cfg.mode` controls what we actually produce:
- *   - "full": everything (default, local dev)
- *   - "archive-link": the same build, with the C/C++ objects archived into libbun-<exe>.a and linked from that
- *     archive; the archive and the dependency libraries are uploaded as artifacts (CI)
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { ar, cc, cxx, link, pch } from "./compile.ts";
+import { cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
@@ -146,8 +139,6 @@ export interface BunOutput {
   codegen: CodegenOutputs;
   /** All compiled .o files. */
   objects: string[];
-  /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
-  uploadStamps?: string[];
 }
 
 /**
@@ -416,29 +407,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
-  // objects — same response file, same archive in archive-link mode. With
-  // cfg.archiveDeps they live in depLibs as .a files instead.
+  // objects, in the same response file. With cfg.archiveDeps they live in
+  // depLibs as .a files instead.
   const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
-
-  // ─── Step 6: archive-link → archive ───
-  // CI archives all .o into libbun-<exe>.a (the exe name so asan/debug
-  // variants are distinguishable), links from it, and uploads it.
-  let archive: string | undefined;
-  const uploadStamps: string[] = [];
-  if (cfg.mode === "archive-link") {
-    n.comment(`─── Archive (${cfg.mode}) ───`);
-    n.blank();
-    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
-    // Dep libs upload as soon as they're built (minutes before the archive),
-    // overlapping the compile; own pool so it doesn't take a compile slot.
-    // Each upload edge depends only on its input, so the archive's starts the
-    // moment the archive exists and overlaps the link.
-    if (cfg.buildkite) {
-      registerBkUploadRules(n, cfg);
-      if (depLibs.length > 0) uploadStamps.push(emitBkUpload(n, cfg, ".dep-libs-uploaded", depLibs));
-      uploadStamps.push(emitBkUpload(n, cfg, ".archive-uploaded", [archive], { gzip: !cfg.windows }));
-    }
-  }
 
   // ─── Step 6: link ───
   n.comment("─── Link ───");
@@ -454,13 +425,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // undefined refs, the rlibs satisfy them (and `main`, via crt1.o) and in
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
-  const shims = emitShims(n, cfg);
-  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
-  const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
+  const shimInputs = emitShims(n, cfg);
+  const depLink = lazyDepObjects(cfg, depObjects);
+  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
+  const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
+    lazyObjects: depLink.lazy,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
@@ -470,42 +443,35 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
+    ...linkObjects,
+    ...depLink.lazy,
+    ...depLibs,
+  ]);
 
-  return { exe, strippedExe, dsym, deps, codegen, objects: allObjects, uploadStamps };
+  return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
 }
 
-function registerBkUploadRules(n: Ninja, cfg: Config): void {
-  n.pool("bk_upload", 1);
-  // Paths are buildDir-relative, which is what names the artifact; `;` is the agent's path delimiter.
-  const win = cfg.host.os === "windows";
-  n.rule("bk_upload", {
-    command: win
-      ? `cmd /c buildkite-agent artifact upload "$paths" && type nul > $out`
-      : `buildkite-agent artifact upload '$paths' && touch $out`,
-    description: "buildkite upload $out",
-    pool: "bk_upload",
-  });
-  if (!win) {
-    n.rule("bk_upload_gz", {
-      command: `gzip -1 -k -f $in && buildkite-agent artifact upload '$paths' && touch $out`,
-      description: "gzip + buildkite upload $out",
-      pool: "bk_upload",
-    });
-  }
-}
-
-function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { gzip = false } = {}): string {
-  const useGz = gzip && cfg.host.os !== "windows";
-  const rel = files.map(p => relative(cfg.buildDir, p));
-  const out = resolve(cfg.buildDir, stamp);
-  n.build({
-    outputs: [out],
-    rule: useGz ? "bk_upload_gz" : "bk_upload",
-    inputs: files,
-    vars: { paths: (useGz ? rel.map(p => `${p}.gz`) : rel).join(";") },
-  });
-  return out;
+/**
+ * Split the link's dependency objects into the ones passed eagerly and the ones
+ * the linker may leave out (LinkOpts.lazyObjects): a dependency is a library,
+ * and only the translation units something references belong in bun.
+ *
+ * On COFF the lazy ones are the assembler-produced objects: their sections are
+ * not COMDATs, so /OPT:REF cannot drop them and one nothing calls (BoringSSL's
+ * AES-GCM-SIV, unused on Windows by design) would ship whole. Compiled objects
+ * stay eager there; /OPT:REF drops their unreferenced COMDATs.
+ *
+ * Elsewhere every dependency object is lazy. `--gc-sections` / `-dead_strip`
+ * would remove the unreferenced code anyway, but only after LTO has seen it:
+ * a call from a file nothing uses (spake25519.cc calling
+ * x25519_ge_frombytes_vartime) counts as a second caller and stops the helper
+ * being inlined into the one that ships.
+ */
+export function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
+  if (!cfg.windows) return { eager: [], lazy: depObjects };
+  const isAssemblerOutput = (obj: string) => /\.(asm|S)\.obj$/i.test(obj);
+  return { eager: depObjects.filter(o => !isAssemblerOutput(o)), lazy: depObjects.filter(isAssemblerOutput) };
 }
 
 /**
@@ -705,21 +671,8 @@ function emitDuplicateSymbolCheck(
   if (stamp === undefined) return [];
   const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
   const q = (p: string) => quote(p, cfg.windows);
-  // While rustc's LLVM is ahead of clang's, libbun_runtime carries bitcode clang's llvm-nm/objdump can't
-  // read — whole bitcode objects under cross-language LTO, and even without it the `__LLVM,__bitcode`
-  // section rustc embeds in compiler_builtins on Mach-O. Use the tools rustup ships for rustc's LLVM
-  // (component llvm-tools, `<sysroot>/lib/rustlib/<host>/bin`); they read clang's older output too. If
-  // they are missing the scan reports every unreadable input and fails, with a hint.
-  const rustBin =
-    cfg.rustLlvmNewer && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined
-      ? join(cfg.rustSysroot, "lib", "rustlib", cfg.rustHostTriple, "bin")
-      : undefined;
-  const rustTool = (name: string, fallback: string): string => {
-    const p = rustBin !== undefined ? join(rustBin, name + cfg.host.exeSuffix) : undefined;
-    return p !== undefined && existsSync(p) ? p : fallback;
-  };
-  const nm = rustTool("llvm-nm", cfg.nm!);
-  const objdump = cfg.windows ? rustTool("llvm-objdump", cfg.objdump!) : undefined;
+  const nm = cfg.nm!;
+  const objdump = cfg.windows ? cfg.objdump! : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
     command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
@@ -890,10 +843,9 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string, 
  *     RT_MANIFEST resource. Embedding it here instead of via the linker's
  *     /MANIFEST:EMBED keeps the link independent of the linker's manifest
  *     tooling: lld-link only handles /MANIFEST:EMBED itself when built with
- *     libxml2 and otherwise shells out to mt.exe — rustc's bundled lld-link
- *     (used for the cross-language-LTO links) has neither, and mt.exe does
- *     not exist on non-Windows hosts. The resource route produces the same
- *     RT_MANIFEST id-1 resource with any linker.
+ *     libxml2 and otherwise shells out to mt.exe, which does not exist on
+ *     non-Windows hosts. The resource route produces the same RT_MANIFEST
+ *     id-1 resource with any linker.
  *
  * This resource section is what rescle's ResourceUpdater modifies when
  * `bun build --compile --windows-title ...` runs. Without it, the copied
@@ -1054,38 +1006,6 @@ export function validateBunConfig(cfg: Config): void {
         `Sharing build/ between worktrees corrupts build.ninja for both — ` +
         `remove the symlink; ccache already shares compiled objects.`,
     );
-  }
-
-  // Cross-language LTO needs an lld at least as new as the LLVM that emitted
-  // the rust bitcode. `resolveConfig()` swaps `cfg.ld` to `cfg.rustLld` when
-  // rustc's LLVM is newer than clang's; if `rustLld` couldn't be discovered
-  // (rustc/rustup missing, pinned toolchain not installed, agent provisioned
-  // without it), the build would proceed with the stale lld and fail at link
-  // time with an opaque `error: ... .rcgu.o: Invalid record`. Fail at
-  // configure time instead with a hint that points at the real problem.
-  // (A skewed native macOS host never gets here: Apple's ld has no lld to
-  // swap, so config.ts turns cross-language LTO off there instead.)
-  if (
-    cfg.crossLangLto &&
-    cfg.rustToolchain !== undefined &&
-    cfg.rustLlvmVersion !== undefined &&
-    cfg.clangVersion !== undefined
-  ) {
-    const rustMajor = Number.parseInt(cfg.rustLlvmVersion.split(".")[0] ?? "", 10);
-    const clangMajor = Number.parseInt(cfg.clangVersion.split(".")[0] ?? "", 10);
-    if (Number.isFinite(rustMajor) && Number.isFinite(clangMajor) && rustMajor > clangMajor) {
-      // `cfg.ld` must be one of rustc's bundled lld flavors. On ELF targets
-      // it's `cfg.rustLld` exactly; on darwin/windows cross targets it's the
-      // ld64.lld / lld-link sibling from the same gcc-ld/ directory.
-      assert(
-        cfg.rustLld !== undefined && (cfg.ld === cfg.rustLld || dirname(cfg.ld) === dirname(cfg.rustLld)),
-        `Cross-language LTO is on and rustc's LLVM (${cfg.rustLlvmVersion}) is newer than clang's ` +
-          `(${cfg.clangVersion}), but rustc's bundled lld wasn't found — the link would fail with ` +
-          `"Invalid record" reading libbun_runtime.a's bitcode. Install the pinned toolchain on this ` +
-          `host (\`rustup toolchain install ${cfg.rustToolchain}\`), upgrade clang/lld to LLVM ` +
-          `${rustMajor}+, or disable LTO with \`--lto=off\`.`,
-      );
-    }
   }
 
   // --local-deps names must match a dep — a typo would otherwise silently

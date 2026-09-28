@@ -10,12 +10,13 @@ import net from "node:net";
 // Server helpers shared by every fault-injection test.
 // ---------------------------------------------------------------------------
 
-/** Start a TCP server on 127.0.0.1 with an ephemeral port. */
+/** Start a TCP server on `host` (127.0.0.1 unless given) with an ephemeral port. */
 export async function listeningServer(
   onSocket: (socket: net.Socket) => void,
+  host = "127.0.0.1",
 ): Promise<{ port: number; server: net.Server }> {
   const server = net.createServer(onSocket);
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => server.listen(0, host, resolve));
   return { port: (server.address() as net.AddressInfo).port, server };
 }
 

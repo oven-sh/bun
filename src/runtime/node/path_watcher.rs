@@ -34,7 +34,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-#[cfg(not(windows))]
 use bun_core::ZBox;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
@@ -191,9 +190,7 @@ pub(crate) struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
-    #[cfg(not(windows))]
     path: ZBox,
-    #[cfg(not(windows))]
     recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
@@ -202,7 +199,6 @@ pub(crate) struct PathWatcher {
     handlers: ArrayHashMap<*mut c_void, Tail>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
-    #[cfg(not(windows))]
     platform: PlatformWatch,
 }
 
@@ -271,7 +267,7 @@ impl PathWatcher {
 
     /// Called from the platform reader thread with `manager.mutex` held.
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
-    #[cfg(not(any(windows, target_os = "freebsd")))]
+    #[cfg(not(target_os = "freebsd"))]
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
@@ -310,7 +306,6 @@ impl PathWatcher {
         }
     }
 
-    #[cfg(not(windows))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
@@ -326,7 +321,6 @@ impl PathWatcher {
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
-    #[cfg(not(windows))]
     fn flush(&self) {
         for &ctx in self.handlers.keys() {
             FSWatcher::on_update_end(Some(ctx));
@@ -355,7 +349,6 @@ impl PathWatcher {
     // `unlock()` and `remove_watch()` (see the SAFETY notes below), so no
     // whole-struct reference may span that window — every access below is
     // scoped to a single statement.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no reference is asserted before
@@ -498,14 +491,11 @@ pub(crate) fn watch(
     // New watcher: own the key and path.
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
-        #[cfg(not(windows))]
         path: ZBox::from_bytes(resolved.as_bytes()),
-        #[cfg(not(windows))]
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
         handlers: ArrayHashMap::default(),
-        #[cfg(not(windows))]
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.

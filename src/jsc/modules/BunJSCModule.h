@@ -53,8 +53,6 @@
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
-#include <JavaScriptCore/ControlFlowProfiler.h>
-
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
@@ -85,14 +83,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
     const char* host = defaultHost;
-    WTF::CString hostCString;
+    WTF::UTF8CString hostCString;
     if (hostValue.isString()) {
 
         auto str = hostValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        hostCString = toCString(str);
+        hostCString = toUTF8CString(str);
         if (!str.isEmpty())
-            host = hostCString.span().data();
+            host = hostCString.legacyCStringPointer();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));
@@ -475,15 +473,15 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
-            auto pathCString = toCString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
+            auto pathCString = toUTF8CString(String(path));
+            if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.span().data();
+            Options::samplingProfilerPath() = pathCString.data();
             samplingProfiler.registerForReportAtExit();
         }
     }
@@ -904,8 +902,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
 }
 
 extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
-    JSC::JSGlobalObject*, const BunString* sourceURL, BasicBlockRange* ranges,
-    size_t len, size_t functionOffset, bool ignoreSourceMap);
+    JSC::JSGlobalObject*, const BunString* sourceURL, bool ignoreSourceMap);
 
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     (JSGlobalObject * globalObject,
@@ -918,41 +915,21 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     RETURN_IF_EXCEPTION(throwScope, {});
     bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
-    auto sourceID = Zig::sourceIDForSourceURL(fileName);
-    if (!sourceID) {
+    BunString fileNameBunString = Bun::toString(fileName);
+    JSValue row = JSValue::decode(ByteRangeMapping__findExecutedLines(globalObject, &fileNameBunString, ignoreSourceMap));
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (row.isNull()) {
         throwException(globalObject, throwScope,
             createError(globalObject, "No source for file"_s));
         return {};
     }
 
-    auto basicBlocks = vm.controlFlowProfiler()->getBasicBlocksForSourceIDWithoutFunctionRange(
-        sourceID, vm);
-
-    if (basicBlocks.isEmpty()) {
+    if (row.isUndefined()) {
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0)));
     }
 
-    size_t functionStartOffset = basicBlocks.size();
-
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
-
-    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
-
-    for (const auto& functionRange : functionRanges) {
-        BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
-        range.m_executionCount = range.m_hasExecuted
-            ? 1
-            : 0; // This is a hack. We don't actually count this.
-        basicBlocks.append(range);
-    }
-
-    BunString fileNameBunString = Bun::toString(fileName);
-    return ByteRangeMapping__findExecutedLines(
-        globalObject, &fileNameBunString, basicBlocks.begin(),
-        basicBlocks.size(), functionStartOffset, ignoreSourceMap);
+    return JSValue::encode(row);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * globalObject, CallFrame* callFrame))

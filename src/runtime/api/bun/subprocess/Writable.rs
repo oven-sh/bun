@@ -2,7 +2,9 @@ use core::ffi::c_void;
 
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdExt};
+#[cfg(not(windows))]
+use bun_sys::FdExt;
+use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
@@ -18,7 +20,7 @@ pub(crate) enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
-    #[cfg_attr(windows, allow(dead_code))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -216,7 +218,7 @@ impl<'a> Writable<'a> {
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
                 }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
+                Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
@@ -304,6 +306,7 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)
@@ -333,6 +336,7 @@ impl<'a> Writable<'a> {
                 subprocess.stdin.set(Writable::Fd(fd));
                 fd.to_js(global_this)
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 subprocess.stdin.set(Writable::Memfd(fd));
                 JSValue::UNDEFINED
@@ -428,6 +432,7 @@ impl<'a> Writable<'a> {
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
             }
@@ -446,6 +451,7 @@ impl<'a> Writable<'a> {
             Writable::Pipe(pipe) => {
                 let _ = pipe.end(None);
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;

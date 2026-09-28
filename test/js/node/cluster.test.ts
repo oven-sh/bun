@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { dlopen } from "bun:ffi";
+import { beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -7,10 +8,12 @@ import {
   isLinux,
   isWindows,
   joinP,
+  libcPathForDlopen,
   tempDir,
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
+import { closeSync } from "node:fs";
 import net from "node:net";
 
 test.concurrent("cloneable and transferable equals", async () => {
@@ -932,21 +935,21 @@ if (cluster.isPrimary) {
   },
 );
 
-test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
-  using dir = tempDir("cluster-dgram-adopt-fail", {
-    "main.ts": `
+test.skipIf(isWindows)(
+  "dgram bind({ fd }) on a stream socket fails EINVAL like node and leaves the primary's server listening",
+  async () => {
+    using dir = tempDir("cluster-dgram-stream-fd", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const dgram = require("node:dgram");
 const net = require("node:net");
 
 if (cluster.isPrimary) {
-  // A stream socket passes the primary's fd check but cannot be adopted as a dgram socket in the worker.
   const tcp = net.createServer().listen(0, "127.0.0.1", () => {
     const { port } = tcp.address();
     const worker = cluster.fork();
     worker.on("message", m => {
-      console.log("worker error code:", m.code);
-      // Refused once both processes closed their copy; a leaked copy in either keeps the socket accepting.
+      console.log("worker error:", JSON.stringify(m));
       const probe = net.connect(port, "127.0.0.1");
       probe.on("connect", () => { console.log("probe: connected"); probe.destroy(); finish(); });
       probe.on("error", err => { console.log("probe:", err.code); finish(); });
@@ -961,26 +964,384 @@ if (cluster.isPrimary) {
   process.on("message", ({ fd }) => {
     const socket = dgram.createSocket("udp4");
     socket.on("listening", () => process.send({ code: "listening" }));
-    socket.on("error", err => process.send({ code: err.code }));
+    socket.on("error", err => process.send({ code: err.code, errno: err.errno, syscall: err.syscall }));
     socket.bind({ fd });
   });
 }
 `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: 'worker error: {"code":"EINVAL","errno":-22,"syscall":"open"}\nprobe: connected',
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A socket of this process that a primary gets as a descriptor. The types of these sockets do not have `fd`.
+async function socketForPrimary(sockets: DisposableStack, kind: "tcp" | "udp" | "unix dgram") {
+  if (kind === "tcp") {
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    sockets.defer(() => listener.stop(true));
+    return listener as typeof listener & { fd: number };
+  }
+  if (kind === "udp") {
+    const udp = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+    sockets.defer(() => udp.close());
+    return udp as typeof udp & { fd: number };
+  }
+  const libc = dlopen(libcPathForDlopen(), { socket: { args: ["int", "int", "int"], returns: "int" } });
+  sockets.defer(() => libc.close());
+  const AF_UNIX = 1;
+  const SOCK_DGRAM = 2;
+  const fd = libc.symbols.socket(AF_UNIX, SOCK_DGRAM, 0);
+  if (fd < 0) throw new Error("socket(AF_UNIX, SOCK_DGRAM, 0) failed");
+  sockets.defer(() => closeSync(fd));
+  return { fd, port: 0 };
+}
+
+test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
+  using dir = tempDir("cluster-dgram-adopt-fail", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const dgram = require("node:dgram");
+const fs = require("node:fs");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("worker error code:", m.code);
+    try {
+      fs.fstatSync(3);
+      console.log("descriptor of the primary: open");
+    } catch (err) {
+      console.log("descriptor of the primary:", err.code);
+    }
+    // Free once both processes closed their copy; a leaked copy in either keeps the port bound.
+    const probe = dgram.createSocket("udp4");
+    probe.on("listening", () => { console.log("probe: listening"); probe.close(finish); });
+    probe.on("error", err => { console.log("probe:", err.code); finish(); });
+    probe.bind(Number(process.env.PORT), "127.0.0.1");
   });
+  function finish() {
+    worker.kill();
+    worker.on("exit", () => process.exit(0));
+  }
+} else {
+  // The primary shares a datagram socket only, and a worker adopts every one. So the handle names a file here.
+  const getServer = cluster._getServer;
+  cluster._getServer = (socket, options, callback) =>
+    getServer(socket, options, (err, handle) => {
+      if (handle) handle.sharedFd = fs.openSync(__filename, "r");
+      callback(err, handle);
+    });
+  const socket = dgram.createSocket("udp4");
+  socket.on("listening", () => process.send({ code: "listening" }));
+  socket.on("error", err => process.send({ code: err.code }));
+  socket.bind({ fd: 3 });
+}
+`,
+  });
+  using sockets = new DisposableStack();
+  const udp = await socketForPrimary(sockets, "udp");
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
+    env: { ...bunEnv, PORT: String(udp.port) },
     cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+    // Descriptor 3 of the primary.
+    stdio: ["ignore", "pipe", "pipe", udp.fd],
   });
+  // The primary has its copy. A copy in this process keeps the port bound.
+  sockets.dispose();
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr }).toEqual({
-    stdout: "worker error code: EINVAL\nprobe: ECONNREFUSED",
+    stdout: "worker error code: ENOTSOCK\ndescriptor of the primary: EBADF\nprobe: listening",
     stderr: "",
   });
   expect(exitCode).toBe(0);
 });
+
+// Runs as the primary and as its workers. SCENARIO is { policy, cases: [{ fd, port, steps }] }. The test made one
+// socket for each case, and the primary has it as descriptor `fd`. A step is one of:
+//   { worker, kind, fd }   the worker calls listen({ fd }) or bind({ fd }) on a new server or socket
+//   { connect: true }      the primary connects a client to the socket of the case
+const fdQueryFixture = `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+
+const scenario = JSON.parse(process.env.SCENARIO);
+cluster.schedulingPolicy = scenario.policy === "SCHED_NONE" ? cluster.SCHED_NONE : cluster.SCHED_RR;
+
+function stateOf(fd) {
+  try {
+    fs.fstatSync(fd);
+    return "open";
+  } catch (error) {
+    return error.code;
+  }
+}
+
+// Takes each free number up to the descriptor. If the primary closed the descriptor too early, a sentinel has its
+// number, and the close by the holder then closes that sentinel.
+function openSentinels(fd) {
+  const sentinels = [];
+  do sentinels.push(fs.openSync(__filename, "r"));
+  while (sentinels.at(-1) < fd);
+  return sentinels;
+}
+
+function connectTo(port) {
+  const { promise, resolve } = Promise.withResolvers();
+  let data = "";
+  const client = net.connect(port, "127.0.0.1", () => client.end("ping"));
+  client.setEncoding("utf8");
+  client.on("data", chunk => (data += chunk));
+  client.on("error", error => resolve(error.code));
+  client.on("close", () => resolve(data));
+  return promise;
+}
+
+async function primary() {
+  const count = 1 + Math.max(...scenario.cases.flatMap(({ steps }) => steps.map(step => step.worker ?? 0)));
+  const workers = [];
+  const pending = [];
+  let cases = true;
+  const start = i => {
+    workers[i] = cluster.fork();
+    workers[i].on("message", message => pending[i].resolve(message.result));
+    // A worker that left fails its case only. The next case has a new worker.
+    workers[i].on("exit", (code, signal) => {
+      if (!cases) return;
+      start(i);
+      pending[i]?.reject(new Error("worker " + i + " left: " + code + " " + signal));
+    });
+  };
+  for (let i = 0; i < count; i++) start(i);
+  const tell = (i, command) => {
+    pending[i] = Promise.withResolvers();
+    workers[i].send(command);
+    return pending[i].promise;
+  };
+  const closeAll = async () => {
+    for (const i of workers.keys()) await tell(i, { close: true });
+  };
+
+  for (const { fd, port, steps } of scenario.cases) {
+    const answers = [];
+    try {
+      for (const step of steps) {
+        if (step.connect) answers.push({ client: await connectTo(port) });
+        else answers.push({ result: await tell(step.worker, step), fd: stateOf(fd) });
+      }
+      const sentinels = openSentinels(fd);
+      await closeAll();
+      const closed = sentinels.map(stateOf).find(state => state !== "open");
+      console.log(JSON.stringify({ answers, left: { fd: stateOf(fd), sentinels: closed ?? "open" } }));
+    } catch (error) {
+      process.exitCode = 1;
+      console.log(JSON.stringify({ answers, error: error.message }));
+      await closeAll();
+    }
+  }
+
+  cases = false;
+  for (const worker of workers) {
+    const { promise, resolve } = Promise.withResolvers();
+    worker.once("exit", resolve);
+    worker.disconnect();
+    await promise;
+  }
+}
+
+function make(kind) {
+  const tlsOptions = () => ({
+    key: fs.readFileSync(path.join(__dirname, "key.pem")),
+    cert: fs.readFileSync(path.join(__dirname, "cert.pem")),
+  });
+  switch (kind) {
+    case "net":
+      return net.createServer(socket => socket.resume().end("served"));
+    case "tls":
+      return require("node:tls").createServer(tlsOptions());
+    default:
+      return require("node:dgram").createSocket(kind);
+  }
+}
+
+function worker() {
+  const live = [];
+  process.on("message", async step => {
+    if (step.close) {
+      for (const target of live.splice(0)) {
+        const { promise, resolve } = Promise.withResolvers();
+        target.close(resolve);
+        await promise;
+      }
+      process.send({ result: "closed" });
+      return;
+    }
+    const target = make(step.kind);
+    const done = result => process.send({ result });
+    target.once("error", error => done({ code: error.code, syscall: error.syscall, errno: error.errno }));
+    const listening = () => {
+      live.push(target);
+      done("listening");
+    };
+    if (step.kind === "udp4" || step.kind === "udp6") target.bind({ fd: step.fd }, listening);
+    else target.listen({ fd: step.fd }, listening);
+  });
+}
+
+if (cluster.isPrimary) {
+  primary().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+} else {
+  worker();
+}
+`;
+
+type FdQueryStep = { worker: number; kind: string; fd: number } | { connect: true };
+type FdQueryCase = {
+  name: string;
+  socket: "tcp" | "udp" | "unix dgram";
+  // `fd` is the descriptor of the case in the primary.
+  steps: (fd: number) => FdQueryStep[];
+  answers: object[];
+  // After the workers closed what they listened on. The holder of the descriptor closed it one time.
+  left?: { fd: string; sentinels: string };
+};
+
+const served = { result: "listening", fd: "open" };
+const refused = (code: "EINVAL", syscall: "bind" | "open") => ({
+  result: { code, syscall, errno: -22 },
+  fd: "open",
+});
+const ask = (kind: string, fd: number): FdQueryStep => ({ worker: 0, kind, fd });
+const twoAsks = (first: string, second: string) => (fd: number) => [ask(first, fd), ask(second, fd)];
+
+// Every answer here is the answer of node v26.3.0 for the same fixture.
+const fdQueryCases: Record<"SCHED_NONE" | "SCHED_RR", FdQueryCase[]> = {
+  SCHED_NONE: [
+    {
+      name: "net, then udp4 on the stream socket",
+      socket: "tcp",
+      steps: fd => [ask("net", fd), ask("udp4", fd), { connect: true }],
+      answers: [served, refused("EINVAL", "open"), { client: "served" }],
+    },
+    {
+      name: "udp4, then net on the datagram socket",
+      socket: "udp",
+      steps: twoAsks("udp4", "net"),
+      answers: [served, refused("EINVAL", "bind")],
+    },
+    {
+      name: "net on a datagram socket, then udp4",
+      socket: "udp",
+      steps: twoAsks("net", "udp4"),
+      answers: [refused("EINVAL", "bind"), served],
+    },
+    {
+      name: "udp4 on a stream socket, then net",
+      socket: "tcp",
+      steps: twoAsks("udp4", "net"),
+      answers: [refused("EINVAL", "open"), served],
+    },
+    {
+      name: "net on the descriptor plus 0.5, then net on the descriptor",
+      socket: "tcp",
+      steps: fd => [ask("net", fd + 0.5), ask("net", fd)],
+      answers: [refused("EINVAL", "bind"), served],
+    },
+    {
+      name: "udp4 on a unix datagram socket",
+      socket: "unix dgram",
+      steps: fd => [ask("udp4", fd)],
+      answers: [refused("EINVAL", "open")],
+      left: { fd: "open", sentinels: "open" },
+    },
+  ],
+  SCHED_RR: [
+    {
+      name: "net, then udp4 on the stream socket",
+      socket: "tcp",
+      steps: fd => [ask("net", fd), ask("udp4", fd), { connect: true }],
+      answers: [served, refused("EINVAL", "open"), { client: "served" }],
+    },
+    {
+      // A TLS server has a shared handle under this policy, so this row reaches the check that a net server skips.
+      name: "tls on a datagram socket, then udp4",
+      socket: "udp",
+      steps: twoAsks("tls", "udp4"),
+      answers: [refused("EINVAL", "bind"), served],
+    },
+  ],
+};
+
+async function runFdQueryCases(policy: "SCHED_NONE" | "SCHED_RR") {
+  using dir = tempDir("cluster-fd-query", {
+    "cert.pem": tlsCerts.cert,
+    "key.pem": tlsCerts.key,
+    "fixture.cjs": fdQueryFixture,
+  });
+  using sockets = new DisposableStack();
+  const cases: { fd: number; port: number; steps: FdQueryStep[] }[] = [];
+  const inherited: number[] = [];
+  for (const { socket, steps } of fdQueryCases[policy]) {
+    const { fd, port } = await socketForPrimary(sockets, socket);
+    inherited.push(fd);
+    // The primary has the sockets as descriptors 3, 4, 5 and so on.
+    cases.push({ fd: 3 + cases.length, port, steps: steps(3 + cases.length) });
+  }
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: { ...bunEnv, SCENARIO: JSON.stringify({ policy, cases }) },
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", ...inherited],
+  });
+  // The primary has its copies. A listener in this process takes the clients of the workers.
+  sockets.dispose();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { lines: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
+
+describe.skipIf(isWindows).each(["SCHED_NONE", "SCHED_RR"] as const)(
+  "%s: a worker names a descriptor of the primary",
+  policy => {
+    // One primary and one worker run all the cases of a policy.
+    let run: Awaited<ReturnType<typeof runFdQueryCases>>;
+    beforeAll(async () => {
+      run = await runFdQueryCases(policy);
+    });
+
+    test("the primary and its workers leave with no error", () => {
+      expect({ lines: run.lines.length, stderr: run.stderr, exitCode: run.exitCode }).toEqual({
+        lines: fdQueryCases[policy].length,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.each(fdQueryCases[policy].map((row, i) => [row.name, row, i] as const))(
+      "%s",
+      (_, { answers, left = { fd: "EBADF", sentinels: "open" } }, i) => {
+        // The primary prints one line for each case. A line is missing when the primary stopped before the case.
+        expect(run.lines[i] === undefined ? undefined : JSON.parse(run.lines[i])).toEqual({ answers, left });
+      },
+    );
+  },
+);
 
 test.skipIf(isWindows)(
   "round-robin: RST-while-queued handle is dropped, not shipped stale",

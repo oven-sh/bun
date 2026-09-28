@@ -2,7 +2,7 @@
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
 // lints would create a dependency cycle. `output`/`Progress`/`Global` here ARE
@@ -1330,13 +1330,18 @@ pub(crate) mod strings_impl {
         debug_assert!(!b.is_empty());
         debug_assert!(!a.is_empty());
 
+        // Miri has no shim for either libc call, and `bun_url`'s unit tests reach this.
+        #[cfg(miri)]
+        {
+            a.eq_ignore_ascii_case(&b[..a.len()])
+        }
         // SAFETY: a.len() <= b.len() here; strncasecmp reads at most a.len() bytes from each.
-        #[cfg(not(windows))]
+        #[cfg(all(not(miri), not(windows)))]
         unsafe {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
         // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
-        #[cfg(windows)]
+        #[cfg(all(not(miri), windows))]
         unsafe {
             unsafe extern "C" {
                 fn _strnicmp(
@@ -2321,14 +2326,6 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub(crate) mod debug_allocator_data {
-    /// Only referenced from `debug_assert!` — dead in release builds.
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn deinit_ok() -> bool {
-        true
-    }
-}
 
 pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,

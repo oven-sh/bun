@@ -33,11 +33,19 @@ public:
     }
 
 public:
+    // What was current when JSC registered the work.
+    struct PendingWork {
+        // Its completion is posted to this loop.
+        BunLoopKind loopKind { BunLoopKind::Regular };
+        // The identifier of the Bun.ModuleGraph context whose script asked for the work, or 0 for
+        // the realm's own: the completion of a stopped one is dropped.
+        uint32_t graphContext { 0 };
+    };
+
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
-    // Value: the loop that was current when JSC registered the work; its completion is posted there.
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsKeepingEventLoopAlive;
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsOther;
+    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;
+    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsOther;
 };
 
 }

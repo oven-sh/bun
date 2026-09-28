@@ -23,25 +23,33 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "fetch/FetchTasklet.rs"]
-pub mod fetch_tasklet;
+pub(crate) mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
-pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::FetchRequestBodySink;
+pub(crate) mod fetch_request_body_sink;
+pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
-pub mod compress_body;
+pub(crate) mod compress_body;
+
+#[path = "fetch/FetchSession.rs"]
+pub(crate) mod fetch_session;
+pub(crate) use self::fetch_session::FetchSession;
+
+/// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
+/// snake-cases `TestingAPIs` as `testing_ap_is`.
+#[path = "fetch/proxy_testing.rs"]
+pub(crate) mod testing_ap_is;
 
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
-use std::io::Write as _;
-
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
+use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -52,7 +60,6 @@ use bun_sys::FdExt as _;
 use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
-use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
@@ -74,19 +81,27 @@ use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
+pub(crate) use self::fetch_tasklet::{
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Intern an `SSLConfig` into the (single, canonical) `bun_http` registry.
-/// DEDUP(D202): the runtime-tier struct and registry were folded into
-/// `bun_http::ssl_config`, so this is now a thin alias — kept to avoid
-/// churning the call site below.
-#[inline]
-fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr {
-    http::ssl_config::global_registry::intern(config)
+/// The `unix` option when it is a non-empty string.
+fn parse_unix(
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<Box<[u8]>>> {
+    if !value.is_string() || value.get_length(global)? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(absolute_unix_socket_path(
+        vm.top_level_dir(),
+        value.to_bun_string(global)?.to_owned_slice(),
+    )))
 }
 
 /// The HTTP thread connects to the `unix` path later and the keep-alive pool
@@ -271,6 +286,15 @@ fn bun_fetch_preconnect(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
+    // A request to an origin the environment proxies never dials it.
+    if VirtualMachine::get()
+        .env_loader()
+        .get_http_proxy_for(&url)
+        .is_some()
+    {
+        reclaim_href!();
+        return Ok(JSValue::UNDEFINED);
+    }
     http::async_http::preconnect(url, true);
     Ok(JSValue::UNDEFINED)
 }
@@ -302,7 +326,16 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
+    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe, None))
+}
+
+/// What `session.fetch` is bound from: `fetch()` with `this` as its session.
+#[bun_jsc::host_fn]
+pub(crate) fn session_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    reject_on_exception(
+        ctx,
+        fetch_impl::<false>(ctx, callframe, Some(callframe.this())),
+    )
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
@@ -352,11 +385,34 @@ enum URLType {
 // fetchImpl — shared implementation
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Nothing was queued yet: cancel a stream body with `reason` and reject with it.
+fn reject_before_send(
+    global_this: &JSGlobalObject,
+    body: &mut HTTPRequestBody,
+    reason: JSValue,
+) -> JsResult<JSValue> {
+    if let HTTPRequestBody::ReadableStream(stream_ref) = &*body {
+        if let Some(stream) = stream_ref.get() {
+            stream.cancel_with_reason(global_this, reason)?;
+        }
+    }
+    body.detach();
+    Ok(JSPromise::rejected_promise(global_this, reason).to_js())
+}
+
 /// Shared implementation of fetch
 fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
     callframe: &CallFrame,
+    // `session.fetch()`: the session, which a `session` in the init does not replace.
+    bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    let context = ctx.bun_vm().context_of_caller(callframe);
+    // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
+    // connection goes out, and the promise stays pending.
+    if context.is_stopped() {
+        return Ok(JSPromise::create(ctx).to_js());
+    }
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -539,7 +595,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "method"
     let mut method = 'extract_method: {
         if let Some(options) = options_object {
-            if let Some(method_) = options.get_truthy(global_this, "method")? {
+            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
                 break 'extract_method method_jsc::from_js(global_this, method_)?;
             }
         }
@@ -549,7 +605,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_init_object {
-            if let Some(method_) = req.get_truthy(global_this, "method")? {
+            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
                 break 'extract_method method_jsc::from_js(global_this, method_)?;
             }
         }
@@ -567,7 +623,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(decompression_value) = obj.get(global_this, "decompress")? {
+                if let Some(decompression_value) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionDecompress)?
+                {
                     if decompression_value.is_boolean() {
                         break 'extract_disable_decompression !decompression_value.as_boolean();
                     } else if decompression_value.is_number() {
@@ -589,7 +647,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(compress_value) = obj.get(global_this, "compress")? {
+                if let Some(compress_value) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionCompress)?
+                {
                     if !compress_value.is_undefined() {
                         compress = compress_body::from_js(global_this, compress_value)?;
                         break 'extract_compress;
@@ -608,7 +668,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(value) = obj.get(global_this, "maxRedirects")? {
+                if let Some(value) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionMaxRedirects)?
+                {
                     if !value.is_undefined_or_null() {
                         if !value.is_number() {
                             return Err(global_this.throw_invalid_arguments(format_args!(
@@ -629,7 +691,35 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // "tls: TLSConfig"
+    // "session: Bun.FetchSession"
+    let session_hold: Option<fetch_session::SessionHold> = 'extract_session: {
+        if let Some(bound) = bound_session {
+            break 'extract_session Some(fetch_session::SessionHold::from_js(global_this, bound)?);
+        }
+        let objects_to_try = [
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
+        ];
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(value) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionSession)?
+                {
+                    if !value.is_undefined_or_null() {
+                        break 'extract_session Some(fetch_session::SessionHold::from_js(
+                            global_this,
+                            value,
+                        )?);
+                    }
+                }
+            }
+        }
+        break 'extract_session None;
+    };
+    let session = session_hold.as_ref();
+
+    // "tls: TLSConfig". A request's `tls` replaces its session's as a whole.
+    let mut request_has_tls = false;
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
             options_object.unwrap_or_default(),
@@ -638,27 +728,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(tls) = obj.get(global_this, "tls")? {
+                if let Some(tls) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionTls)?
+                {
                     if tls.is_object() {
-                        if let Some(reject) = tls.get(ctx, "rejectUnauthorized")? {
-                            if reject.is_boolean() {
-                                reject_unauthorized = reject.as_boolean();
-                            } else if reject.is_number() {
-                                reject_unauthorized = reject.to_int32() != 0;
-                            }
+                        request_has_tls = true;
+                        let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
+                        if let Some(reject) = parsed.reject_unauthorized {
+                            reject_unauthorized = reject;
                         }
-
-                        if let Some(check_server_identity_) = tls.get(ctx, "checkServerIdentity")? {
-                            if check_server_identity_.is_cell()
-                                && check_server_identity_.is_callable()
-                            {
-                                check_server_identity = check_server_identity_;
-                            }
+                        if let Some(callback) = parsed.check_server_identity {
+                            check_server_identity = callback;
                         }
-
-                        if let Some(config) = SSLConfig::from_js(vm, global_this, tls)? {
-                            // Intern via `ssl_config::global_registry` for dedup and pointer equality
-                            break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
+                        if parsed.ssl_config.is_some() {
+                            break 'extract_ssl_config parsed.ssl_config;
                         }
                     }
                 }
@@ -667,6 +750,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_ssl_config ssl_config;
     };
+    // A per-request closure has no identity a pool key could compare.
+    let bypass_pool = !check_server_identity.is_empty();
+    // The session's callbacks stay on the session, which the request keeps alive.
+    let mut session_check_server_identity = false;
+    if let Some(session) = session.filter(|_| !request_has_tls) {
+        ssl_config = session.ssl_config();
+        reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
+        session_check_server_identity = session.check_server_identity().is_some();
+    }
 
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
@@ -677,18 +769,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(socket_path) = obj.get(global_this, "unix")? {
-                    if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path absolute_unix_socket_path(
-                            vm.top_level_dir(),
-                            socket_path.to_bun_string(global_this)?.to_owned_slice(),
-                        );
+                if let Some(socket_path) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionUnix)?
+                {
+                    if let Some(path) = parse_unix(vm, global_this, socket_path)? {
+                        break 'extract_unix_socket_path path;
                     }
                 }
             }
         }
         break 'extract_unix_socket_path unix_socket_path;
     };
+    let request_has_unix = !unix_socket_path.is_empty();
 
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
@@ -698,7 +790,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(protocol_val) = obj.get(global_this, "protocol")? {
+                if let Some(protocol_val) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionProtocol)?
+                {
                     if protocol_val.is_string() {
                         let str = protocol_val.to_js_string_view(global_this)?;
                         if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
@@ -728,7 +822,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(timeout_value) = obj.get(global_this, "timeout")? {
+                if let Some(timeout_value) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionTimeout)?
+                {
                     if timeout_value.is_boolean() {
                         break 'extract_disable_timeout !timeout_value.as_boolean();
                     } else if timeout_value.is_number() {
@@ -782,7 +878,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_redirect_type redirect_type;
     };
 
-    // keepalive: boolean | undefined;
+    // keepalive: boolean | undefined; the session's setting is the default.
+    if session.is_some_and(|c| !c.keep_alive()) {
+        disable_keepalive = true;
+    }
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
             options_object.unwrap_or_default(),
@@ -791,7 +890,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(keepalive_value) = obj.get(global_this, "keepalive")? {
+                if let Some(keepalive_value) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionKeepalive)?
+                {
                     if keepalive_value.is_boolean() {
                         break 'extract_disable_keepalive !keepalive_value.as_boolean();
                     } else if keepalive_value.is_number() {
@@ -813,7 +914,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(verb) = obj.get(global_this, "verbose")? {
+                if let Some(verb) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionVerbose)?
+                {
                     if verb.is_string() {
                         if verb.to_js_string_view(global_this)?.eq_ascii(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
@@ -831,112 +934,70 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_verbose verbose;
     };
 
-    // proxy: string | { url: string, headers?: Headers } | undefined;
+    // proxy: string | URL | { url, headers?, respectNoProxy? } | false | undefined;
     let mut proxy_headers: Option<Headers> = None;
-    // `defer if (proxy_headers) |*hdrs| hdrs.deinit();` → Headers impls Drop.
-    url_proxy_buffer = 'extract_proxy: {
+    let mut proxy_direct = false;
+    let mut proxy_respects_no_proxy = true;
+    {
+        let mut proxy_option: Option<fetch_session::ProxyOption> = None;
         let objects_to_try = [
             options_object.unwrap_or_default(),
             request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
-                    // A URL instance has no `.url` own property, so the `{url, headers}`
-                    // branch below would silently ignore it. Treat it as its href here.
-                    let is_url_instance =
-                        bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
-                    // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
+            if !obj.is_empty() && proxy_option.is_none() {
+                if let Some(proxy_arg) =
+                    obj.get_common_string(global_this, jsc::CommonString::FetchOptionProxy)?
+                {
+                    if let fetch_session::ProxyArg::Policy(policy) =
+                        fetch_session::parse_proxy(global_this, proxy_arg)?
                     {
-                        let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
-                        if href.tag() == BunStringTag::Dead {
-                            let err = ctx.to_type_error(
-                                jsc::ErrorCode::INVALID_ARG_VALUE,
-                                format_args!("fetch() proxy URL is invalid"),
-                            );
-                            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-                        }
-                        let mut buffer: Vec<u8> = Vec::with_capacity(url_proxy_buffer.len());
-                        buffer.extend_from_slice(&url_proxy_buffer);
-                        write!(&mut buffer, "{}", href).expect("write to Vec cannot fail");
-                        let url_len = url.href.len();
-                        url = parse_url_detached!(&buffer[0..url_len]);
-                        if url.is_file() {
-                            url_type = URLType::File;
-                        } else if url.is_blob() {
-                            url_type = URLType::Blob;
-                        }
-
-                        proxy = Some(parse_url_detached!(&buffer[url_len..]));
-                        // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
-                        break 'extract_proxy buffer;
-                    }
-                    // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
-                    // If the proxy object doesn't have a 'url' property, ignore it.
-                    if proxy_arg.is_object() {
-                        // Get the URL from the proxy object
-                        if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {
-                            if !proxy_url_arg.is_undefined_or_null() {
-                                // Deliberately no type gate: `href_from_js` accepts a string
-                                // or a `URL` object and is the sole validator (Dead = invalid).
-                                let href = jsc::URL::href_from_js(proxy_url_arg, global_this)?;
-                                if href.tag() == BunStringTag::Dead {
-                                    let err = ctx.to_type_error(
-                                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                                        format_args!("fetch() proxy URL is invalid"),
-                                    );
-                                    return Ok(
-                                        JSPromise::rejected_promise(global_this, err).to_js()
-                                    );
-                                }
-                                let mut buffer: Vec<u8> =
-                                    Vec::with_capacity(url_proxy_buffer.len());
-                                buffer.extend_from_slice(&url_proxy_buffer);
-                                write!(&mut buffer, "{}", href).expect("write to Vec cannot fail");
-                                let url_len = url.href.len();
-                                url = parse_url_detached!(&buffer[0..url_len]);
-                                if url.is_file() {
-                                    url_type = URLType::File;
-                                } else if url.is_blob() {
-                                    url_type = URLType::Blob;
-                                }
-
-                                proxy = Some(parse_url_detached!(&buffer[url_len..]));
-                                // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
-                                url_proxy_buffer = buffer;
-
-                                // Get the headers from the proxy object (optional)
-                                if let Some(headers_value) =
-                                    proxy_arg.get(global_this, "headers")?
-                                {
-                                    if !headers_value.is_undefined_or_null() {
-                                        if let Some(fetch_hdrs) = FetchHeaders::cast(headers_value)
-                                        {
-                                            // `cast` returns a live JS-owned FetchHeaders*;
-                                            // BackRef invariant holds for this read.
-                                            let fetch_hdrs = bun_ptr::BackRef::from(fetch_hdrs);
-                                            proxy_headers =
-                                                Some(from_fetch_headers(Some(&*fetch_hdrs), None));
-                                        } else if let Some(fetch_hdrs) =
-                                            HeadersRef::create_from_js(ctx, headers_value)?
-                                        {
-                                            proxy_headers =
-                                                Some(from_fetch_headers(Some(&fetch_hdrs), None));
-                                        }
-                                    }
-                                }
-
-                                break 'extract_proxy url_proxy_buffer;
-                            }
-                        }
+                        proxy_option = Some(policy);
                     }
                 }
             }
         }
+        // The request's own `unix` or `proxy` wins over whichever of the two
+        // its session names; they cannot be combined.
+        if let Some(session) = session {
+            if !request_has_unix
+                && !matches!(
+                    proxy_option,
+                    Some(fetch_session::ProxyOption::Explicit { .. })
+                )
+            {
+                unix_socket_path = session.unix().into();
+            }
+        }
+        let proxy_option = match (proxy_option, session.and_then(|c| c.proxy())) {
+            (None, Some(fetch_session::ProxyOption::Explicit { .. })) if request_has_unix => None,
+            (None, Some(from_session)) => Some(from_session.clone()),
+            (own, _) => own,
+        };
+        match proxy_option {
+            None => {}
+            Some(fetch_session::ProxyOption::Direct) => {
+                proxy_direct = true;
+            }
+            Some(fetch_session::ProxyOption::Explicit {
+                href,
+                headers,
+                respect_no_proxy,
+            }) => {
+                let mut buffer: Vec<u8> = Vec::with_capacity(url_proxy_buffer.len() + href.len());
+                buffer.extend_from_slice(&url_proxy_buffer);
+                buffer.extend_from_slice(&href);
+                let url_len = url.href.len();
+                url = parse_url_detached!(&buffer[0..url_len]);
+                proxy = Some(parse_url_detached!(&buffer[url_len..]));
+                url_proxy_buffer = buffer;
+                proxy_headers = headers;
+                proxy_respects_no_proxy = respect_no_proxy;
+            }
+        }
+    }
 
-        break 'extract_proxy url_proxy_buffer;
-    };
+    let pool = session.map(|c| c.pool()).unwrap_or_default();
 
     // signal: AbortSignal | null | undefined;
     // WebIDL `AbortSignal?` member: present iff not undefined. A present `null`
@@ -944,7 +1005,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // non-AbortSignal is a TypeError.
     signal = 'extract_signal: {
         if let Some(options) = options_object {
-            if let Some(signal_) = options.get(global_this, "signal")? {
+            if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
@@ -967,7 +1028,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(options) = request_init_object {
-            if let Some(signal_) = options.get(global_this, "signal")? {
+            if let Some(signal_) = options.fast_get(global_this, jsc::BuiltinName::signal)? {
                 if signal_.is_null() {
                     break 'extract_signal None;
                 }
@@ -1001,7 +1062,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        &ctx.js_thread(context),
+                        body__,
+                    )?);
                 }
             }
         }
@@ -1025,6 +1089,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     .throw());
             }
 
+            body_value.to_blob_if_in_memory();
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream() {
                     if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
@@ -1050,7 +1115,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ));
                     }
                 }
-                let readable = body_value.to_readable_stream(global_this)?;
+                let readable = body_value.to_readable_stream(&global_this.js_thread(context))?;
                 if !readable.is_empty_or_undefined_or_null() {
                     if let BodyValue::Locked(locked) = body_value {
                         if locked.readable.has() {
@@ -1073,7 +1138,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(req) = request_init_object {
             if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        &ctx.js_thread(context),
+                        body__,
+                    )?);
                 }
             }
         }
@@ -1187,6 +1255,60 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // We don't pass along headers, we ignore method, we ignore status code...
     // But it's better than status quo.
     if url_type != URLType::Remote {
+        // https://url.spec.whatwg.org/#file-host: a file: URL names a local file
+        // only when its host is empty or "localhost".
+        if url_type == URLType::File
+            && !url.hostname.is_empty()
+            && !bun_core::strings::eql_case_insensitive_ascii(url.hostname, b"localhost", true)
+        {
+            // On Windows Node reads such a URL as a UNC path.
+            let err = if cfg!(windows) {
+                global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_FILE_URL_HOST,
+                    format_args!(
+                        "File URL host must be \"localhost\" or empty: fetch() does not read UNC paths"
+                    ),
+                )
+            } else {
+                global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_FILE_URL_HOST,
+                    format_args!(
+                        "File URL host must be \"localhost\" or empty on {}",
+                        bun_core::Global::os_name
+                    ),
+                )
+            };
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
+        // As `fileURLToPath` does: an encoded separator would become a real
+        // one below, and walk out of whatever the caller checked `pathname` against.
+        if url_type == URLType::File {
+            let mut encoded_separator = false;
+            let mut rest = url.path;
+            while let Some(percent) = bun_core::strings::index_of_char(rest, b'%') {
+                rest = &rest[percent as usize + 1..];
+                encoded_separator = match rest {
+                    [b'2', b'f' | b'F', ..] => true,
+                    [b'5', b'c' | b'C', ..] => cfg!(windows),
+                    _ => false,
+                };
+                if encoded_separator {
+                    break;
+                }
+            }
+            if encoded_separator {
+                let message = if cfg!(windows) {
+                    "File URL path must not include encoded \\ or / characters"
+                } else {
+                    "File URL path must not include encoded / characters"
+                };
+                let err = global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_FILE_URL_PATH,
+                    format_args!("{message}"),
+                );
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+            }
+        }
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut path_buf2 = bun_paths::path_buffer_pool::get();
         let decoded_len = match PercentEncoding::decode_into(
@@ -1359,13 +1481,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get() {
-                    stream.cancel_with_reason(global_this, reason)?;
-                }
-            }
-            body.detach();
-            return Ok(JSPromise::rejected_promise(global_this, reason).to_js());
+            return reject_before_send(global_this, &mut body, reason);
         }
     }
 
@@ -1374,6 +1490,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
+    }
+
+    // Userinfo in the URL is the request's credentials, like curl and
+    // `node:http`; an explicit Authorization header wins.
+    if !(url.username.is_empty() && url.password.is_empty())
+        && !url.is_s3()
+        && !headers
+            .as_ref()
+            .is_some_and(|h| h.get(b"authorization").is_some())
+    {
+        if let Some(credentials) = http::async_http::basic_authorization(&url) {
+            headers
+                .get_or_insert_default()
+                .append(b"Authorization", &credentials);
+        }
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then
@@ -1385,7 +1516,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
-                    global_this,
+                    &global_this.js_thread(context),
                     body.any_blob().blob(),
                     s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
                 )?,
@@ -1597,7 +1728,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // `defer credentialsWithOptions.deinit()` → Drop.
 
         if let Some(options) = options_object {
-            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
+            if let Some(s3_options) =
+                options.get_common_string(global_this, jsc::CommonString::FetchOptionS3)?
+            {
                 let s3_options: JSValue = s3_options;
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();
@@ -1646,6 +1779,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
                 // SAFETY: see `url_static` SAFETY note above.
                 Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+            } else if proxy_direct {
+                Some(b"")
             } else {
                 None
             };
@@ -1671,7 +1806,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
                 readable_stream.get().unwrap(),
-                global_this,
+                &global_this.js_thread(context),
                 credentials_with_options.options,
                 credentials_with_options.acl,
                 credentials_with_options.storage_class,
@@ -1754,6 +1889,31 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // Decided before anything is queued, so an unusable framing header rejects up front.
+    let mut stream_framing = StreamFraming::default();
+    if matches!(body, HTTPRequestBody::ReadableStream(_))
+        && let Some(request_headers) = &headers
+    {
+        stream_framing = if upgraded_connection {
+            StreamFraming::for_upgrade(request_headers)
+        } else {
+            match StreamFraming::for_body(request_headers) {
+                Ok(framing) => framing,
+                Err(invalid) => {
+                    let err = global_this.to_type_error(
+                        jsc::ErrorCode::HTTP_INVALID_HEADER_VALUE,
+                        format_args!(
+                            "Invalid value \"{}\" for header \"{}\"",
+                            bstr::BStr::new(invalid.value),
+                            invalid.name
+                        ),
+                    );
+                    return reject_before_send(global_this, &mut body, err);
+                }
+            }
+        };
+    }
+
     // Only create this after we have validated all the input.
     // or else we will leak it
     let promise = jsc::JSPromiseStrong::init(global_this);
@@ -1780,8 +1940,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
     let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
-    let proxy_static: Option<ZigURL<'static>> = if has_proxy {
-        Some(ZigURL::parse(&buf[url_len..]))
+    let proxy_static: Option<&'static [u8]> = if has_proxy {
+        Some(&buf[url_len..])
     } else {
         None
     };
@@ -1790,6 +1950,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url: url_static,
         headers: headers.take().unwrap_or_default(),
         body,
+        stream_framing,
         disable_keepalive,
         disable_timeout,
         idle_timeout_seconds,
@@ -1798,7 +1959,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         reject_unauthorized,
         redirect_type,
         verbose,
-        proxy: proxy_static,
+        proxy: match proxy_static {
+            Some(href) => fetch_tasklet::ProxyPolicy::Explicit {
+                href,
+                respect_no_proxy: proxy_respects_no_proxy,
+            },
+            None if proxy_direct => fetch_tasklet::ProxyPolicy::Direct,
+            None => fetch_tasklet::ProxyPolicy::Env,
+        },
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal,
@@ -1813,10 +1981,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             jsc::strong::Optional::create(check_server_identity, global_this)
         },
         unix_socket_path: core::mem::take(&mut unix_socket_path),
+        pool,
+        bypass_pool,
+        fetch_session: session_hold,
+        session_check_server_identity,
     };
 
     let _ = FetchTasklet::queue(
-        global_this,
+        &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

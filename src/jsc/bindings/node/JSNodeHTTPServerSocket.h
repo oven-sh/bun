@@ -54,6 +54,19 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
+    /* The JS Duplex of a tunnel is full: readStop() to readStart(). */
+    unsigned tunnelReadsStopped : 1 = 0;
+    /* queuedTunnelBytes reached one recv buffer, until JS has those bytes. */
+    unsigned tunnelReadsQueuedFull : 1 = 0;
+    /* onData() got the end of the stream. The task that tells JS can still be queued. */
+    unsigned tunnelReadEnded : 1 = 0;
+    /* write() returned false for bytes that went into the uWS buffer, and JS waits for ondrain. streamBuffer does not show them. */
+    unsigned heldWriteAwaitsDrain : 1 = 0;
+    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
+    unsigned peer_ended : 1 = 0;
+    int closeReadError = 0;
+    /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
+    size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
@@ -85,8 +98,8 @@ public:
 
     /* node:http server compat: whether the request currently being received on
      * this connection has exceeded server.headersTimeout / server.requestTimeout
-     * (both in milliseconds; 0 disables the respective check). */
-    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const;
+     * (ms; 0 disables a check). Reports a given message at most once. */
+    bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still
@@ -103,17 +116,35 @@ public:
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
 
-    /* node:http socket.end(): when the in-flight response still has bytes in
-     * uWS's send buffer, a shutdown now would put the FIN ahead of them and
-     * truncate the response. Returns true after handing the close to uWS. */
-    bool shutdownAfterResponseDrains();
+    /* socket.end(): true when uWS will shut down later, after the buffered response. destroySoon also waits for the body parse and closes behind the FIN. */
+    bool shutdownAfterResponseDrains(bool destroySoon);
+
+    /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
+    void closeWhenDrained();
+    /* Closes the connection if uWS counts it as idle (HttpResponse::closeIfIdle). Returns whether it closed it. */
+    bool closeIfIdle();
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the
      * ondata callback as opaque data. With afterBody, the switch is deferred
      * until the request body has been fully parsed (Upgrade requests with a
      * body deliver it through the request first, like Node 26). */
-    void upgradeToTunnelMode(bool afterBody = false);
+    void upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response);
+
+    /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
+    void readStop();
+    void readStart();
+    bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
+    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    void updateTunnelIdle();
+    /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
+    bool hasUnsentResponseBytes() const;
+    /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
+    void flushResponseBytesAhead();
+    /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
+    bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
+    /* The WebSocket that adopted the connection reads from here on. */
+    void releaseTunnelReadsForUpgrade();
 
     /* Trailer fields received after the current request's chunked body, as a
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
@@ -155,10 +186,13 @@ public:
     }
 
     void detach();
+    void reset();
     void syncPeerCertificateVerification();
-    void onClose();
+    void onClose(int readError, bool peerEnded);
     void onDrain();
     void onData(const char* data, int length, bool last);
+    void applyTunnelReads();
+    void didDeliverQueuedTunnelBytes(size_t length);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

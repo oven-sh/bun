@@ -20,7 +20,8 @@ JSC_DEFINE_HOST_FUNCTION(constructConnectionsList, (JSGlobalObject * lexicalGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    Structure* structure = globalObject->m_JSConnectionsListClassStructure.get(globalObject);
+    Structure* structure = structureForNewTarget(lexicalGlobalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSConnectionsListClassStructure);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSSet* allConnections = JSSet::create(vm, lexicalGlobalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, {});

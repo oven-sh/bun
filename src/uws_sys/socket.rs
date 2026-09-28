@@ -21,7 +21,7 @@ use bun_core::{Fd, ZStr};
 use crate::WindowsNamedPipe;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
+    LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
     us_bun_verify_error_t, us_socket_t,
 };
 
@@ -60,14 +60,9 @@ pub enum InternalSocket {
     UpgradedDuplex(*mut UpgradedDuplex),
     #[cfg(windows)]
     Pipe(*mut WindowsNamedPipe),
-    #[cfg(not(windows))]
-    Pipe,
 }
 
-// Variant + pointer-identity equality. The `Pipe` arm intentionally returns
-// `false` even for `(Pipe, Pipe)` on non-Windows (the variant carries no
-// payload there, so identity is meaningless) — debug-asserts that compare
-// sockets rely on this matching the original `InternalSocket.eq` semantics.
+// Variant + pointer-identity equality.
 impl PartialEq for InternalSocket {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
@@ -79,8 +74,6 @@ impl PartialEq for InternalSocket {
             }
             #[cfg(windows)]
             (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
-            #[cfg(not(windows))]
-            (InternalSocket::Pipe, InternalSocket::Pipe) => false,
             _ => false,
         }
     }
@@ -104,7 +97,7 @@ impl InternalSocket {
         #[cfg(windows)]
         return matches!(self, InternalSocket::Pipe(_));
         #[cfg(not(windows))]
-        return matches!(self, InternalSocket::Pipe);
+        return false;
     }
 }
 
@@ -161,8 +154,6 @@ macro_rules! on_socket {
             InternalSocket::UpgradedDuplex(__d) => { let $d = duplex(__d); $dup }
             #[cfg(windows)]
             InternalSocket::Pipe(__p) => { let $p = pipe(__p); $pip }
-            #[cfg(not(windows))]
-            InternalSocket::Pipe => $det,
         }
     };
     // Short form: connecting/detached/pipe-absent collapse to one default.
@@ -301,6 +292,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
     }
 
+    /// What the read side holds right now, without waiting for the loop to
+    /// poll. Transports the loop does not `recv()` report nothing queued.
+    pub fn queued_input(&self) -> QueuedInput {
+        on_socket!(self.socket;
+            connected s => s.queued_input(),
+            duplex _d => QueuedInput::None,
+            pipe _p => QueuedInput::None,
+            else => QueuedInput::None,
+        )
+    }
+
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
         on_socket!(self.socket;
             connected s => s.get_verify_error(),
@@ -398,9 +400,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connected(s) => {
                 sock(s).write_fd(data, Fd::from_native(file_descriptor))
             }
-            // Duplex/pipe fall back to a plain write (the fd is silently
-            // dropped).
-            InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
+            // A duplex falls back to a plain write (the fd is silently dropped).
+            InternalSocket::UpgradedDuplex(_) => self.write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
     }
@@ -458,17 +459,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Direct seconds timeout (no long-timeout split).
-    pub fn timeout(&self, seconds: c_uint) {
-        on_socket!(self.socket;
-            connected s => s.set_timeout(seconds),
-            connecting c => c.timeout(seconds),
-            detached => {},
-            duplex d => d.set_timeout(seconds),
-            pipe p => p.set_timeout(seconds),
-        )
-    }
-
     /// Splits >240s onto the minute-granularity long-timeout wheel.
     pub fn set_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
@@ -489,16 +479,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             detached => {},
             duplex d => d.set_timeout(seconds),
             pipe p => p.set_timeout(seconds),
-        )
-    }
-
-    pub fn set_timeout_minutes(&self, minutes: c_uint) {
-        on_socket!(self.socket;
-            connected s => { s.set_timeout(0); s.set_long_timeout(minutes); },
-            connecting c => { c.timeout(0); c.long_timeout(minutes); },
-            detached => {},
-            duplex d => d.set_timeout(minutes * 60),
-            pipe p => p.set_timeout(minutes * 60),
         )
     }
 
@@ -580,6 +560,28 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── TLS ─────────────────────────────────────────────────────────────────
 
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. Client-only; call it before the handshake is driven.
+    pub fn set_inline_reject(&self) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_inline_reject(),
+            InternalSocket::UpgradedDuplex(d) => duplex(d).set_inline_reject(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).set_inline_reject(),
+            _ => {}
+        }
+    }
+
+    /// The session an SSLWrapper-backed socket got last from the new-session callback, borrowed.
+    pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        match self.socket {
+            InternalSocket::UpgradedDuplex(d) => duplex(d).latest_session(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).latest_session(),
+            _ => core::ptr::null_mut(),
+        }
+    }
+
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
@@ -617,8 +619,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
             #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
-            #[cfg(not(windows))]
-            InternalSocket::Pipe => None,
             InternalSocket::Detached => None,
         }
     }
@@ -775,13 +775,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             0
         };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
-        // leaves them in (`[::1]`), so strip here like the old connectAnon did.
-        let host =
-            if raw_host.len() > 1 && raw_host[0] == b'[' && raw_host[raw_host.len() - 1] == b']' {
-                &raw_host[1..raw_host.len() - 1]
-            } else {
-                raw_host
-            };
+        // leaves them in (`[::1]`).
+        let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
         let heap: Vec<u8>;

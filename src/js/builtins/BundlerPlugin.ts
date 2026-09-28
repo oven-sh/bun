@@ -34,7 +34,14 @@ interface BuildConfigExt extends BuildConfig {
   entryPoints?: string[];
   // plugins is guaranteed to not be null
   plugins: BunPlugin[];
+  experimentalCss?: boolean;
+  experimentalHtml?: boolean;
 }
+interface NapiModule {
+  $napiDlopenHandle?: number;
+}
+type SetupConfig = Omit<BuildConfigExt, "plugins" | "entrypoints"> &
+  Partial<Pick<BuildConfigExt, "plugins" | "entrypoints">>;
 interface PluginBuilderExt extends PluginBuilder {
   resolve: AnyFunction;
   onEnd: AnyFunction;
@@ -56,7 +63,7 @@ export function loadAndResolvePluginsForServe(
   runSetupFn: typeof runSetupFunction,
 ) {
   // Same config as created in HTMLBundle.init
-  let config: BuildConfigExt = {
+  let config: SetupConfig = {
     experimentalCss: true,
     experimentalHtml: true,
     target: "browser",
@@ -157,11 +164,11 @@ export function runOnEndCallbacks(
 export function runSetupFunction(
   this: BundlerPlugin,
   setup: Setup,
-  config: BuildConfigExt,
+  config: SetupConfig,
   promises: Array<Promise<any>> | undefined,
   is_last: boolean,
   isBake: boolean,
-): Promise<Promise<any>[]> | Promise<any>[] | undefined {
+): Promise<Promise<any>[] | undefined> | Promise<any>[] | undefined {
   this.promises = promises;
   var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback][]>();
   var onResolvePlugins = new Map<string, [filter: RegExp, OnResolveCallback][]>();
@@ -170,7 +177,13 @@ export function runSetupFunction(
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
   >();
 
-  function validate(filterObject: PluginConstraints, callback, map, symbol, external) {
+  function validate(
+    filterObject: PluginConstraints,
+    callback: (AnyFunction | object) & NapiModule,
+    map,
+    symbol,
+    external,
+  ) {
     if (!filterObject || !$isObject(filterObject)) {
       throw new TypeError('Expected an object with "filter" RegExp');
     }
@@ -225,27 +238,27 @@ export function runSetupFunction(
     }
   }
 
-  function onLoad(this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
+  function onLoad(this: PluginBuilderExt, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilderExt {
     validate(filterObject, callback, onLoadPlugins, undefined, undefined);
     return this;
   }
 
-  function onResolve(this: PluginBuilder, filterObject: PluginConstraints, callback): PluginBuilder {
+  function onResolve(this: PluginBuilderExt, filterObject: PluginConstraints, callback): PluginBuilderExt {
     validate(filterObject, callback, onResolvePlugins, undefined, undefined);
     return this;
   }
 
   function onBeforeParse(
-    this: PluginBuilder,
+    this: PluginBuilderExt,
     filterObject: PluginConstraints,
-    { napiModule, external, symbol }: { napiModule: unknown; symbol: string; external?: undefined | unknown },
-  ): PluginBuilder {
+    { napiModule, external, symbol }: { napiModule: NapiModule; symbol: string; external?: undefined | unknown },
+  ): PluginBuilderExt {
     validate(filterObject, napiModule, onBeforeParsePlugins, symbol, external);
     return this;
   }
 
   const self = this;
-  function onStart(this: PluginBuilder, callback): PluginBuilder {
+  function onStart(this: PluginBuilderExt, callback): PluginBuilderExt {
     if (isBake) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
@@ -268,7 +281,7 @@ export function runSetupFunction(
     return this;
   }
 
-  function onEnd(this: PluginBuilder, callback: Function): PluginBuilder {
+  function onEnd(this: PluginBuilderExt, callback: Function): PluginBuilderExt {
     if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
 
     if (!self.onEndCallbacks) self.onEndCallbacks = [];
@@ -411,7 +424,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
     for (let [filter, callback] of results) {
       if (filter.test(inputPath)) {
-        var result = callback({
+        var result: ReturnType<OnResolveCallback> = callback({
           path: inputPath,
           importer,
           namespace: inputNamespace,
@@ -509,7 +522,14 @@ export function runOnLoadPlugins(
   const loaderName = $LoaderIdToLabel[defaultLoaderId];
 
   const generateDefer = () => this.generateDeferPromise(internalID);
-  var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
+  var promiseResult: Promise<null> | null | undefined = (async (
+    internalID,
+    path,
+    namespace,
+    isServerSide,
+    defaultLoader,
+    generateDefer,
+  ) => {
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);

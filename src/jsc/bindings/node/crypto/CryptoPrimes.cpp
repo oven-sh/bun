@@ -252,8 +252,6 @@ JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& 
         return result;
     }
 
-    ArrayBufferContents contents;
-
     auto buf = ArrayBuffer::tryCreateUninitialized(prime.byteLength(), 1);
     if (!buf) {
         throwOutOfMemoryError(globalObject, scope);

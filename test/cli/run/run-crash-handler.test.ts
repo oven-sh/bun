@@ -228,8 +228,9 @@ describe.if(isPosix)("native stack overflow is reported", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  // No input overflows the native stack in this place, so a preloaded library
-  // does it, in exit() and quick_exit().
+  // No input overflows the native stack in these two places, so a preloaded
+  // library does it: in exit() and quick_exit(), or when the named thread asks
+  // for its stack bounds, which JSC does on every thread that runs it.
   describe.if(isLinux && !!cc)("with a preloaded library that overflows the stack", () => {
     let shimDir: ReturnType<typeof tempDir> | undefined;
     let preload: typeof env;
@@ -239,7 +240,10 @@ describe.if(isPosix)("native stack overflow is reported", () => {
         "overflow.c": /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <pthread.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 
 static unsigned long recurse(unsigned long depth) {
@@ -270,6 +274,13 @@ void quick_exit(int code) {
   if (getenv("OVERFLOW_AT_EXIT")) overflow();
   ((void (*)(int))dlsym(RTLD_NEXT, "quick_exit"))(code);
   abort();
+}
+
+int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
+  const char *target = getenv("OVERFLOW_ON_THREAD");
+  char name[16] = {0};
+  if (target && prctl(PR_GET_NAME, name) == 0 && strcmp(name, target) == 0) overflow();
+  return ((int (*)(pthread_t, pthread_attr_t *))dlsym(RTLD_NEXT, "pthread_getattr_np"))(thread, attr);
 }
 `,
       });
@@ -315,6 +326,32 @@ void quick_exit(int code) {
       expect(existsSync(path.join(String(dir), "out", "entry.js.jsc"))).toBe(true);
       if (!isASAN) {
         expect(stderr).toContain("panic(main thread): Stack overflow");
+        expect(proc.signalCode).toBe("SIGSEGV");
+      }
+      expect(exitCode).not.toBe(0);
+    });
+
+    // The compile cache generates its bytecode on a thread of its own.
+    test.concurrent("on the compile cache thread", async () => {
+      using dir = tempDir("stack-overflow-compile-cache", {
+        "main.cjs": `console.log("hello");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "main.cjs"],
+        env: {
+          ...preload,
+          NODE_COMPILE_CACHE: path.join(String(dir), "cache"),
+          OVERFLOW_ON_THREAD: "BunCompileCache",
+        },
+        cwd: String(dir),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(expected);
+      expect(stdout).toBe("hello\n");
+      if (!isASAN) {
+        expect(stderr).toContain("panic(BunCompileCache): Stack overflow");
         expect(proc.signalCode).toBe("SIGSEGV");
       }
       expect(exitCode).not.toBe(0);

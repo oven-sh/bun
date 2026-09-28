@@ -1084,7 +1084,7 @@ impl<'a> LinkerContext<'a> {
                 part_offsets.push(total_parts);
                 total_parts = total_parts
                     .checked_add(file_parts.len())
-                    .expect("too many parts");
+                    .ok_or(AllocError)?;
             }
 
             let mut entry_parts_live = Vec::with_capacity(entry_points_len);
@@ -1116,6 +1116,7 @@ impl<'a> LinkerContext<'a> {
                 css_reprs,
                 parts_live_per_entry_point: parts_live_per_entry_point.as_mut(),
                 files_live_for_entry_point,
+                files_marked_for_entry_point: Vec::new(),
                 entry_point_id: 0,
                 worklist: Vec::new(),
             };
@@ -1133,10 +1134,13 @@ impl<'a> LinkerContext<'a> {
                         continue;
                     }
                     ctx.entry_point_id = i;
-                    ctx.files_live_for_entry_point
+                    let files_live = ctx
+                        .files_live_for_entry_point
                         .as_mut()
-                        .expect("per-entry file liveness")
-                        .set_all(false);
+                        .expect("per-entry file liveness");
+                    for source_index in ctx.files_marked_for_entry_point.drain(..) {
+                        files_live.unset(source_index as usize);
+                    }
                     self.mark_file_live_for_tree_shaking::<true>(&mut ctx, entry_point);
                 }
             } else {
@@ -2941,6 +2945,8 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
     pub(crate) parts_live_per_entry_point: Option<&'r mut PerEntryPointPartLiveness>,
     pub(crate) files_live_for_entry_point: Option<DynamicBitSetUnmanaged>,
+    /// The files set in `files_live_for_entry_point`, so the next entry point clears only those.
+    pub(crate) files_marked_for_entry_point: Vec<crate::IndexInt>,
     pub(crate) entry_point_id: usize,
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
@@ -3195,6 +3201,7 @@ impl<'a> LinkerContext<'a> {
                 .as_mut()
                 .expect("per-entry file liveness")
                 .set(source_index as usize);
+            ctx.files_marked_for_entry_point.push(source_index);
         }
         self.graph.files_live.set(source_index as usize);
 

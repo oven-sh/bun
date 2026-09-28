@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -21,6 +21,9 @@ const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
+
+// Compiles the LD_PRELOAD shim of the native stack overflow tests.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
@@ -223,6 +226,99 @@ describe.if(isPosix)("native stack overflow is reported", () => {
       expect(proc.signalCode).toBe("SIGSEGV");
     }
     expect(exitCode).not.toBe(0);
+  });
+
+  // No input overflows the native stack in this place, so a preloaded library
+  // does it, in exit() and quick_exit().
+  describe.if(isLinux && !!cc)("with a preloaded library that overflows the stack", () => {
+    let shimDir: ReturnType<typeof tempDir> | undefined;
+    let preload: typeof env;
+
+    beforeAll(async () => {
+      shimDir = tempDir("stack-overflow-shim", {
+        "overflow.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+
+static unsigned long recurse(unsigned long depth) {
+  volatile char frame[1024];
+  frame[depth % sizeof(frame)] = (char)depth;
+  return recurse(depth + 1) + frame[0];
+}
+
+static void overflow(void) {
+  struct rlimit core = {0, 0};
+  setrlimit(RLIMIT_CORE, &core);
+  /* An unlimited main thread stack (the CI agents) grows until memory runs out. */
+  struct rlimit stack;
+  if (getrlimit(RLIMIT_STACK, &stack) == 0 && stack.rlim_cur > (8 << 20)) {
+    stack.rlim_cur = 8 << 20;
+    setrlimit(RLIMIT_STACK, &stack);
+  }
+  recurse(0);
+}
+
+void exit(int code) {
+  if (getenv("OVERFLOW_AT_EXIT")) overflow();
+  ((void (*)(int))dlsym(RTLD_NEXT, "exit"))(code);
+  abort();
+}
+
+void quick_exit(int code) {
+  if (getenv("OVERFLOW_AT_EXIT")) overflow();
+  ((void (*)(int))dlsym(RTLD_NEXT, "quick_exit"))(code);
+  abort();
+}
+`,
+      });
+      const shim = path.join(String(shimDir), "overflow.so");
+      await using compile = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shim, path.join(String(shimDir), "overflow.c"), "-ldl"],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const [errors, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+      if (exitCode !== 0) throw new Error(`shim compile failed: ${errors}`);
+      preload = { ...env, LD_PRELOAD: [shim, env.LD_PRELOAD].filter(Boolean).join(":") };
+    });
+
+    afterAll(() => {
+      shimDir?.[Symbol.dispose]();
+    });
+
+    // `bun build` creates no global object. With `--bytecode` its first JSC VM
+    // is the one that generates the bytecode.
+    test.concurrent("after `bun build --bytecode` created the first VM", async () => {
+      using dir = tempDir("stack-overflow-bytecode", {
+        "entry.js": `console.log("hello");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--debug-crash-handler-use-trace-string",
+          "--bytecode",
+          "--target=bun",
+          "--outdir=out",
+          "entry.js",
+        ],
+        env: { ...preload, OVERFLOW_AT_EXIT: "1" },
+        cwd: String(dir),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(expected);
+      // The bytecode is on disk, so its VM existed when the process exited.
+      expect(existsSync(path.join(String(dir), "out", "entry.js.jsc"))).toBe(true);
+      if (!isASAN) {
+        expect(stderr).toContain("panic(main thread): Stack overflow");
+        expect(proc.signalCode).toBe("SIGSEGV");
+      }
+      expect(exitCode).not.toBe(0);
+    });
   });
 
   // A fault close to the stack pointer is not always an overflow. An overflow

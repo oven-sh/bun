@@ -3813,6 +3813,152 @@ describe("bundler", () => {
     ],
   });
 
+  // store.js has no side effects, so alone its chunk folds into the one that other.js loads too. Here it starts setup.cjs, so it stays.
+  itBundled("splitting/MinChunkSizeKeepsChunkThatStartsCommonJSImport", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import { store } from "./store.js";
+        import { shared } from "./shared.js";
+        console.log("index", store.name, shared.length);
+        import("./settings.js");
+      `,
+      "/other.js": /* js */ `
+        import { shared } from "./shared.js";
+        console.log("other", shared.length);
+      `,
+      "/settings.js": /* js */ `
+        import { store } from "./store.js";
+        import { shared } from "./shared.js";
+        console.log("settings", store.name, shared.length);
+      `,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/store.js": /* js */ `
+        const read = () => ({ name: globalThis.APP?.name ?? "none" });
+        export const store = /* @__PURE__ */ read();
+      `,
+      "/shared.js": `export const shared = "${Buffer.alloc(20000, "x").toString()}";`,
+    },
+    entryPoints: ["/index.js", "/other.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(5);
+      api.expectFile("/out/other.js").not.toContain(chunkContaining(api, "globalThis.APP ="));
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(index|other)\.js"/);
+    },
+    run: [
+      { file: "/out/index.js", stdout: "setup\nindex app 20000\nsettings app 20000" },
+      { file: "/out/other.js", stdout: "other 20000" },
+    ],
+  });
+
+  // The hashed chunk of app.js imports the chunk of w.cjs to start it. Folded into the chunk of util.js, that import would run util.js first.
+  itBundled("splitting/MinChunkSizeKeepsChunkOfCommonJSImportThatHashedChunkStarts", {
+    files: {
+      "/app.js": /* js */ `
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        import { util } from "./util.js";
+        console.log("app", new Store().name, util.length);
+        import("./route.js");
+      `,
+      "/admin.js": /* js */ `
+        import "./w.cjs";
+        import { util } from "./util.js";
+        console.log("admin", util.length);
+      `,
+      "/third.js": `import { util } from "./util.js"; console.log("third", util.length);`,
+      "/w.cjs": `console.log("w"); globalThis.APP = { name: "app" };`,
+      "/store.js": `console.log("store", globalThis.APP?.name); export class Store { name = "s"; }`,
+      "/util.js": `console.log("util"); export const util = "${Buffer.alloc(20000, "x").toString()}";`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+    },
+    entryPoints: ["/app.js", "/admin.js", "/third.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/" + chunkContaining(api, `console.log("w")`)).not.toContain(`console.log("util")`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin|third)\.js"/);
+    },
+    run: [
+      { file: "/out/app.js", stdout: "w\nstore app\nutil\napp s 20000\nroute s" },
+      { file: "/out/third.js", stdout: "util\nthird 20000" },
+    ],
+  });
+
+  // The hashed chunk of main.js starts lib.cjs, so the require_lib() call of f.js does nothing in the chunk of g.js.
+  itBundled("splitting/MinChunkSizeFoldsImporterOfCommonJSImportThatHashedChunkStarts", {
+    files: {
+      "/main.js": /* js */ `
+        import lib from './lib.cjs'
+        import { store } from './store.js'
+        import { shared } from './shared.js'
+        console.log('main', shared.length + lib.v, store)
+        const routes = { a: () => import('./a.js'), b: () => import('./b.js'), c: () => import('./c.js') }
+        if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+      `,
+      "/a.js": /* js */ `
+        import { f } from './f.js'
+        import { g } from './g.js'
+        import { store } from './store.js'
+        export default () => 'a ' + (f() + g()) + ' ' + store
+      `,
+      "/b.js": /* js */ `
+        import { f } from './f.js'
+        import { g } from './g.js'
+        export default () => 'b ' + (f() + g())
+      `,
+      "/c.js": /* js */ `
+        import { g } from './g.js'
+        export default () => 'c ' + g()
+      `,
+      "/f.js": /* js */ `
+        import lib from './lib.cjs'
+        export const f = () => lib.v
+      `,
+      "/g.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('g evaluated')
+        export const g = () => shared.length
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/store.js": /* js */ `
+        console.log('store evaluated')
+        export const store = 's'
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "c.js", "main.js", "main.js", "main.js"]);
+      api.expectFile("/out/" + chunkContaining(api, "g evaluated")).toContain("var f = ");
+    },
+    run: [
+      { file: "/out/main.js", stdout: "lib evaluated\nstore evaluated\nmain 20001 s" },
+      {
+        file: "/out/main.js",
+        args: ["a"],
+        stdout: "lib evaluated\nstore evaluated\nmain 20001 s\ng evaluated\na 20001 s",
+      },
+    ],
+  });
+
   // Off unless asked for, on every target; `minChunkSize: 0` is the same as
   // leaving it out.
   for (const [name, options, outputs] of [

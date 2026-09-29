@@ -4,7 +4,7 @@ use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
-use crate::linker_context_mod::debug;
+use crate::linker_context_mod::{ParentChunkStart, debug};
 use crate::options::{Loader, Target};
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
 
@@ -251,6 +251,8 @@ enum Pin {
     BesideEntry,
     /// Neither merged nor merged into.
     Entry,
+    /// The parent of a pinned entry point, another chunk, starts a wrapped file of the group. Rule 2 neither merges the group nor merges into it.
+    Started,
 }
 
 /// The files sharing one chunk key (`File.entry_bits`).
@@ -280,7 +282,7 @@ struct Group {
     parent_of_pinned_entry: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
-    /// Every live part of every file is side-effect free.
+    /// Every live part of every file is side-effect free, and the chunk starts no wrapped file.
     pure: bool,
     /// Groups holding files that this group's live parts statically import
     /// or depend on, and (rule 2 only) the groups importing this one.
@@ -288,7 +290,7 @@ struct Group {
     importers: Vec<usize>,
     /// Wrapped modules (source indices) the group's side-effect-free files
     /// `init_x()` / `require_x()` at the top level, and the ones any of its
-    /// unwrapped files do. Sorted.
+    /// unwrapped files or the starts of its chunk do. Sorted.
     needs_init: Vec<u32>,
     provides_init: Vec<u32>,
     /// Position in a topological order of the live groups' static imports
@@ -1527,6 +1529,62 @@ fn files_that_leave_entry_chunk(
     Ok(())
 }
 
+/// The recorded starts that a parent makes: the class of the entry point has a parent, and the file is not in the entry point's chunk. Such a parent runs the file when it loads, and code that loads behind it finds the file started.
+fn starts_of_parents(
+    groups: &mut [Group],
+    group_of_file: &[usize],
+    classes: &ArrayHashMap<&[u8], (AutoBitSet, Vec<usize>)>,
+    entry_points_len: usize,
+    recorded: &[(u32, u32)],
+) -> crate::Result<Option<Box<[ParentChunkStart]>>> {
+    let mut starts: Vec<ParentChunkStart> = Vec::with_capacity(recorded.len());
+    let mut class = AutoBitSet::init_empty(entry_points_len)?;
+    let mut imported: Vec<usize> = Vec::new();
+    for of_entry in recorded.chunk_by(|a, b| a.0 == b.0) {
+        let entry_id = of_entry[0].0;
+        class.set(entry_id as usize);
+        let parent = classes
+            .get(&class.bytes(entry_points_len))
+            .and_then(|(_, members)| {
+                members
+                    .iter()
+                    .copied()
+                    .find(|&member| groups[member].parent_of_pinned_entry)
+            });
+        class.unset(entry_id as usize);
+        let Some(parent) = parent else {
+            continue;
+        };
+        for &(_, wrapped) in of_entry {
+            let home = group_of_file[wrapped as usize];
+            if home == usize::MAX {
+                continue;
+            }
+            let home = resolve(groups, home);
+            if groups[home].pin == Pin::Entry {
+                continue;
+            }
+            // The parent imports the chunk of the file for the call. That chunk and what it imports have to stay what the walk saw.
+            imported.push(home);
+            while let Some(group) = imported.pop() {
+                if group != parent && groups[group].pin == Pin::None {
+                    groups[group].pin = Pin::Started;
+                    imported.extend(groups[group].deps.iter().map(|&dep| resolve(groups, dep)));
+                }
+            }
+            let parent = &mut groups[parent];
+            parent.pure = false;
+            merge_sorted(&mut parent.provides_init, &[wrapped]);
+            starts.push(ParentChunkStart {
+                entry_id,
+                wrapped,
+                parent_file: parent.first_source,
+            });
+        }
+    }
+    Ok((!starts.is_empty()).then(|| starts.into_boxed_slice()))
+}
+
 /// Folds code-splitting chunks into other chunks where that is unobservable,
 /// so fewer modules are loaded at runtime.
 ///
@@ -2091,7 +2149,15 @@ pub(crate) fn merge_small_chunks(
             fold(groups.values_mut(), group_index, entry_chunk);
         }
     }
+    let parent_starts = starts_of_parents(
+        groups.values_mut(),
+        group_of_file,
+        &classes,
+        entry_points_len,
+        &starts_in_parent,
+    )?;
     if !fold_pure {
+        this.starts_in_parent_chunk = parent_starts;
         rekey_files(this, group_of_file, groups.values(), &guard.ranks_once)?;
         debug!(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
@@ -2486,6 +2552,7 @@ pub(crate) fn merge_small_chunks(
         }
         this.inits_already_done = Some(done);
     }
+    this.starts_in_parent_chunk = parent_starts;
 
     rekey_files(this, group_of_file, groups, &guard.ranks_once)?;
     debug!(

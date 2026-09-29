@@ -386,7 +386,10 @@ pub(crate) extern "C" fn us_dispatch_tls_error(s: *mut us_socket_t, error: us_tl
         | SocketKind::UwsHttpTls
         | SocketKind::UwsWs
         | SocketKind::UwsWsTls => {
-            debug_assert!(false, "a TLS error report for a socket that is not a TLS client");
+            debug_assert!(
+                false,
+                "a TLS error report for a socket that is not a TLS client"
+            );
         }
     }
 }

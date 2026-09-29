@@ -327,7 +327,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
-    /// In the padding that follows the flag above.
+    /// Four bytes of the padding between the flag above and `connection`.
     pub(crate) pending_tls_error: Cell<PendingTlsError>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
@@ -382,6 +382,16 @@ impl PendingTlsError {
         }
     }
 }
+
+// `connection` is where it is without `pending_tls_error`: the field takes padding, the socket does not grow.
+const _: () = {
+    let after_flag = core::mem::offset_of!(NewSocket<true>, ref_pollref_on_connect)
+        + core::mem::size_of::<Cell<bool>>();
+    let align = core::mem::align_of::<JsCell<Option<super::listener::UnixOrHost>>>();
+    assert!(
+        core::mem::offset_of!(NewSocket<true>, connection) == after_flag.next_multiple_of(align)
+    );
+};
 
 /// Associated `Socket` handler type.
 pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;

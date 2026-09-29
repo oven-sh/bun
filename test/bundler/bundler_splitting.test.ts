@@ -960,6 +960,97 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nlogger\nsetup function\nindex s\nlazy s" },
   });
+  // index.js keeps the import of ext-setup, which is not bundled. reader.js runs after it, so reader.js stays too.
+  itBundled("splitting/EntryFilesAfterExternalImportStay", {
+    files: {
+      "/index.js": /* js */ `
+        import "ext-setup";
+        import "./reader.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/reader.js": `console.log("reader", globalThis.APP.name);`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+      "/node_modules/ext-setup/package.json": `{ "name": "ext-setup", "version": "1.0.0", "type": "module", "main": "index.js" }`,
+      "/node_modules/ext-setup/index.js": `globalThis.APP = { name: "app" };`,
+    },
+    entryPoints: ["/index.js"],
+    external: ["ext-setup"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`"reader"`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+    },
+    run: { file: "/out/index.js", stdout: "store\nreader app\nindex s\nsettings s" },
+  });
+  // With m.js the hashed chunk would import the chunk of plugin.js, and plugin.js would run ahead of registry.js.
+  itBundled("splitting/EntryFileThatImportsLaterChunkOfOtherEntryStays", {
+    files: {
+      "/app.js": /* js */ `
+        import "./registry.js";
+        import "./m.js";
+        import { Store } from "./store.js";
+        console.log("app", new Store().name);
+        import("./route.js");
+      `,
+      "/admin.js": `import "./plugin.js"; console.log("admin");`,
+      "/registry.js": `console.log("registry"); globalThis.REGISTRY = new Map();`,
+      "/m.js": `import { plugin } from "./plugin.js"; console.log("m", plugin);`,
+      "/plugin.js": `globalThis.REGISTRY.set("plugin", 1); console.log("plugin"); export const plugin = 1;`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/route.js": `import "./registry.js"; import { Store } from "./store.js"; console.log("route", new Store().name);`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/app.js").toContain(`console.log("m"`);
+      api.expectFile("/out/" + chunkContaining(api, `"registry"`)).not.toContain(chunkContaining(api, `"plugin"`));
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+    },
+    run: { file: "/out/app.js", stdout: "registry\nstore\nplugin\nm 1\napp s\nroute s" },
+  });
+  // boot.js and helper.js import each other and boot.js imports plugin.js, so both stay as m.js does above.
+  itBundled("splitting/EntryFilesInImportCycleThatImportsLaterChunkOfOtherEntryStay", {
+    files: {
+      "/app.js": /* js */ `
+        import { boot } from "./boot.js";
+        import { declared } from "./declared.js";
+        console.log("app", boot.length, declared());
+        import("./route.js");
+      `,
+      "/admin.js": `import "./plugin.js"; console.log("admin");`,
+      "/boot.js": /* js */ `
+        import { helper } from "./helper.js";
+        import "./registry.js";
+        import { plugin } from "./plugin.js";
+        export const boot = [plugin, () => helper];
+      `,
+      "/helper.js": `import { boot } from "./boot.js"; export const helper = new Map([["boot", () => boot]]);`,
+      "/registry.js": `console.log("registry"); globalThis.REGISTRY = new Map();`,
+      "/plugin.js": `globalThis.REGISTRY.set("plugin", 1); console.log("plugin"); export const plugin = 1;`,
+      "/declared.js": `export function declared() { return "declared"; }`,
+      "/route.js": `import "./registry.js"; import { declared } from "./declared.js"; console.log("route", declared());`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/app.js").toContain(`"boot"`);
+      api.expectFile("/out/" + chunkContaining(api, `"registry"`)).not.toContain(chunkContaining(api, `"plugin"`));
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+    },
+    run: { file: "/out/app.js", stdout: "registry\nplugin\napp 2 declared\nroute declared" },
+  });
   // setup.cjs runs where `require_setup()` is called. index.js stays in its chunk, so the hashed chunk calls it first.
   const wrappedSetupBeforeShared = (entryTail: string) => ({
     "/index.js": /* js */ `
@@ -1183,6 +1274,37 @@ describe("bundler", () => {
       { file: "/out/admin.js", stdout: "w\nadmin" },
     ],
   });
+  // q.js runs when the chunk of w.cjs loads. The hashed chunk does not import that chunk, so app.js starts w.cjs.
+  itBundled("splitting/CommonJSInChunkThatRunsStartsAfterSharedCode", {
+    files: {
+      "/app.js": /* js */ `
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        import "./q.js";
+        console.log("app", new Store().name);
+        import("./route.js");
+      `,
+      "/admin.js": `import "./w.cjs"; import "./q.js"; console.log("admin");`,
+      "/w.cjs": `console.log("w"); globalThis.APP = { name: "app" };`,
+      "/q.js": `console.log("q", globalThis.STORE);`,
+      "/store.js": /* js */ `
+        console.log("store", globalThis.APP?.name);
+        globalThis.STORE = "ready";
+        export class Store { name = "s"; }
+      `,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/" + chunkContaining(api, `"store"`)).not.toContain("require_w");
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+    },
+    run: { file: "/out/app.js", stdout: "store undefined\nq ready\nw\napp s\nroute s" },
+  });
   itBundled("splitting/CommonJSImportBetweenSharedFilesRunsBetweenThem", {
     files: {
       "/index.js": /* js */ `
@@ -1309,6 +1431,36 @@ describe("bundler", () => {
       noChunkImportsIndex(api);
     },
     run: { file: "/out/index.js", stdout: "helper of index app\nsettings app" },
+  });
+  // app.js starts react itself before it runs anything else, so the hashed chunk adds no call for index.js.
+  itBundled("splitting/CommonJSImportThatSharedCodeStartsFirstAddsNoCall", {
+    files: {
+      "/index.js": /* js */ `
+        import React from "react";
+        import { App } from "./app.js";
+        console.log("index", React.version, App());
+        import("./route.js");
+      `,
+      "/app.js": /* js */ `
+        import React from "react";
+        console.log("app module", React.version);
+        export const App = () => "App:" + React.version;
+      `,
+      "/route.js": `import { App } from "./app.js"; console.log("route", App());`,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `console.log("react body"); module.exports = { version: 18 };`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "route.js"]);
+      const hashed = api.readFile("/out/" + jsFilesIn(api).find(f => f.startsWith("index-"))!);
+      expect(hashed.match(/require_react\(\)/g)).toHaveLength(1);
+      noChunkImportsIndex(api);
+    },
+    run: { file: "/out/index.js", stdout: "react body\napp module 18\nindex 18 App:18\nroute App:18" },
   });
 
   itFolds("splitting/FoldsSharedIntoEntry", {

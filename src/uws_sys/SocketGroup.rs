@@ -37,6 +37,8 @@ pub struct SocketGroup {
     pub timestamp: u8,
     pub long_timestamp: u8,
     pub linked: u8,
+    /// Nonzero while `close_all` runs: the owner closes the sockets, not the loop or the peer.
+    pub closing_all: u8,
 }
 
 #[repr(C)]
@@ -59,7 +61,7 @@ pub struct VTable {
 }
 
 // Must match `struct us_socket_group_t` in libusockets.h.
-// 9 ptrs + u32 + u16 + 3×u8, padded to 8-byte alignment.
+// 9 ptrs + u32 + u16 + 4×u8, padded to 8-byte alignment.
 const _: () = assert!(
     core::mem::size_of::<SocketGroup>() == 9 * core::mem::size_of::<*mut c_void>() + 16,
     "SocketGroup layout drifted from us_socket_group_t"

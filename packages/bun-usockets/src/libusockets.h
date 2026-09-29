@@ -326,6 +326,9 @@ struct us_socket_group_t {
     unsigned char timestamp;
     unsigned char long_timestamp;
     unsigned char linked;
+    /* Set while us_socket_group_close_all_ex runs: on_close can tell the owner's
+     * close of every socket from a close that the loop or the peer started. */
+    unsigned char closing_all;
 };
 
 /* Initialise an embedded group. Does NOT link into the loop — that happens

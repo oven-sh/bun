@@ -12,9 +12,8 @@ setDefaultTimeout(isDebug ? 90_000 : 10_000);
 // is a full one. The main heap keeps the pool, so its lines have the columns (when the machine has
 // more than one core: the pool has one helper per core, less one).
 //
-// The main thread runs one full collection, the worker three. The heaps are told apart by their
-// columns, not by the order they log in: the thread-local bytecode cache VM can log too, and it
-// never has a pool.
+// The main thread runs one full collection before the worker exists, so the first heap in the
+// log is the main heap. The worker runs three. The thread-local bytecode cache VM can log too.
 // The two threads write the log to the same stderr, so one line in many can be cut by the other
 // heap's output. A heap is classified by the majority of its lines.
 const script = `
@@ -34,8 +33,9 @@ const script = `
   }
 `;
 
-// Counts the heaps that logged a collection, by whether they mark with the pool.
-async function countHeaps(env: Record<string, string>, live = 0) {
+// Classifies each heap that logged a collection by whether it marks with the pool: the main heap
+// first, then the others in the order they first logged.
+async function classifyHeaps(env: Record<string, string>, live = 0) {
   using dir = tempDir("worker-gc-marking", { "main.mjs": script });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.mjs"],
@@ -49,39 +49,43 @@ async function countHeaps(env: Record<string, string>, live = 0) {
   expect(exitCode).toBe(0);
 
   // A marking line looks like: "[GC<0x5423d380108>: START M 1232kb => FullCollection, ... v=143kb (C:143 M:0 P1:0 ... P7:0) ..."
+  // Windows prints the heap address in upper case, and may leave out the 0x.
   const heaps = new Map<string, { withPool: number; withoutPool: number }>();
-  for (const match of stderr.matchAll(/\[GC<(0x[0-9a-f]+)>:.*?\(C:\d+ M:\d+([^)]*)\)/g)) {
+  for (const match of stderr.matchAll(/\[GC<((?:0x)?[0-9a-fA-F]+)>:.*?\(C:\d+ M:\d+([^)]*)\)/g)) {
     const [, heap, parallelColumns] = match;
     const counts = heaps.get(heap) ?? { withPool: 0, withoutPool: 0 };
     parallelColumns.includes("P1:") ? counts.withPool++ : counts.withoutPool++;
     heaps.set(heap, counts);
   }
-  let parallel = 0;
-  let serial = 0;
-  for (const { withPool, withoutPool } of heaps.values()) withPool > withoutPool ? parallel++ : serial++;
-  return { parallel, serial };
+  const [main, ...others] = [...heaps.values()].map(({ withPool, withoutPool }) =>
+    withPool > withoutPool ? "pool" : "own thread",
+  );
+  expect(others.length).toBeGreaterThanOrEqual(1);
+  return { main, others };
 }
 
-test("a worker heap marks on its own thread and the main heap keeps the helper pool", async () => {
-  const { parallel, serial } = await countHeaps(bunEnv);
-  expect(serial).toBeGreaterThanOrEqual(1);
+test.concurrent("a worker heap marks on its own thread and the main heap keeps the helper pool", async () => {
+  const { main, others } = await classifyHeaps(bunEnv);
+  expect(others).toEqual(others.map(() => "own thread"));
   if (availableParallelism() > 1) {
-    expect(parallel).toBe(1);
+    expect(main).toBe("pool");
   }
 });
 
-test("a large worker heap marks a full collection with the helper pool", async () => {
+test.concurrent("a large worker heap marks a full collection with the helper pool", async () => {
   // 50k small objects are a few MB live. The threshold is set below that.
-  const { parallel } = await countHeaps(
+  const { main, others } = await classifyHeaps(
     { ...bunEnv, BUN_JSC_largeHeapSizeForSharedMarking: String(1024 * 1024) },
     50_000,
   );
   if (availableParallelism() > 1) {
-    expect(parallel).toBe(2);
+    expect(main).toBe("pool");
+    expect(others).toContain("pool");
   }
 });
 
-test("BUN_JSC_numberOfGCMarkers applies to worker heaps too", async () => {
-  const { parallel } = await countHeaps({ ...bunEnv, BUN_JSC_numberOfGCMarkers: "4" });
-  expect(parallel).toBeGreaterThanOrEqual(2);
+test.concurrent("BUN_JSC_numberOfGCMarkers applies to worker heaps too", async () => {
+  const { main, others } = await classifyHeaps({ ...bunEnv, BUN_JSC_numberOfGCMarkers: "4" });
+  expect(main).toBe("pool");
+  expect(others).toEqual(others.map(() => "pool"));
 });

@@ -3454,8 +3454,8 @@ impl H2FrameParser {
                 .set_context(returned, &global);
         } else if returned.is_number() && self.count_rejected_stream(stream_identifier) {
             // streamStart refused the stream and returned the RST_STREAM code that answers it.
-            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            self.end_stream(unsafe { &mut *stream }, ErrorCode(returned.to_u32()));
+            let mut refused = self.enter_stream_dispatch(stream);
+            self.end_stream(&mut refused, ErrorCode(returned.to_u32()));
         }
         Some(stream)
     }

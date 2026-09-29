@@ -2413,6 +2413,17 @@ export default class {
         expect(await print(rows)).toEqual(expected(rows));
       });
 
+      it("a member of a namespace is not an export of the module", async () => {
+        const member = `var NS;\n((NS) => {\n  NS.A = 1;\n})(NS ||= {});\n`;
+        const rows = [
+          [eliminate(["A"]), `namespace NS { export let A = 1 }`, member, []],
+          [replace({ A: 2 }), `namespace NS { export let A = 1 }`, member, []],
+          [replace({ A: ["N", 2] }), `namespace NS { export const A = 1 }`, member, []],
+          [eliminate(["A"]), `export namespace NS { export let A = 1 } export let A = 2`, `export ${member}`, ["NS"]],
+        ];
+        expect(await print(rows)).toEqual(expected(rows));
+      });
+
       it("replace with a string, after the load of another module", async () => {
         using dir = tempDir("exports-replace-no-initializer", {
           "other.cjs": Array.from({ length: 50 }, (_, i) => `exports.v${i} = () => ["v", ${i}].join("-");`).join("\n"),

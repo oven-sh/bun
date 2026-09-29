@@ -598,8 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none() {
-                // A namespace member with no value prints nothing, and a value would print as `NS.x = value`.
+            } else if IS_POSSIBLY_DECL_TO_REMOVE {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);

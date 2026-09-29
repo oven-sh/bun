@@ -19,8 +19,13 @@ impl Drop for Mapping {
     fn drop(&mut self) {
         let mut disable: libc::stack_t = crate::ffi::zeroed();
         disable.ss_flags = libc::SS_DISABLE;
+        // Darwin's libc rejects a size below MINSIGSTKSZ, also for SS_DISABLE.
+        disable.ss_size = ALT_STACK_SIZE;
         // SAFETY: `disable` is a valid `stack_t`; a null `old_ss` is permitted.
-        unsafe { libc::sigaltstack(&raw const disable, core::ptr::null_mut()) };
+        if unsafe { libc::sigaltstack(&raw const disable, core::ptr::null_mut()) } != 0 {
+            // Still registered: the kernel can write a signal frame to it.
+            return;
+        }
         // SAFETY: `base`/`len` describe the mapping `install_for_current_thread`
         // created, and the kernel no longer uses it as a signal stack.
         unsafe { libc::munmap(self.base, self.len) };

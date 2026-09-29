@@ -138,6 +138,127 @@ it("preload not found should exit with code 1 and not time out", async () => {
 });
 
 it(
+  "does not report handled rejections after hot reload collects the entry promise",
+  async () => {
+    const entry = join(cwd, "entry-promise-gc.js");
+    const revisionFile = join(cwd, "entry-promise-gc-revision.js");
+    // LTO can determine when the stale pointer stops being conservatively rooted.
+    // Repeat enough reloads to reliably force collection and cell reuse in release builds.
+    const totalBoots = 100;
+    writeFileSync(revisionFile, "export const revision = 0;\n");
+    writeFileSync(
+      entry,
+      `import { revision } from "./entry-promise-gc-revision.js";
+
+const state = (globalThis.__entryPromiseGC ??= {
+  boots: 0,
+  caught: new Set(),
+  owners: new Map(),
+  unhandled: [],
+});
+
+if (state.boots === 0) {
+  process.on("unhandledRejection", (reason, promise) => {
+    const failure = {
+      kind: "unhandled",
+      caught: state.caught.has(reason),
+      owned: state.owners.has(promise),
+      sameReason: state.owners.get(promise) === reason,
+    };
+    state.unhandled.push(failure);
+    console.log(JSON.stringify(failure));
+  });
+}
+
+const boot = ++state.boots;
+setTimeout(async () => {
+  state.caught.clear();
+  state.owners.clear();
+  for (let wave = 0; wave < 3; wave++) {
+    Bun.gc(true);
+    const observed = [];
+    for (let i = 0; i < 5000; i++) {
+      const reason = new Error("caught-" + boot + "-" + wave + "-" + i);
+      const promise = Promise.reject(reason);
+      state.owners.set(promise, reason);
+      observed.push(promise.catch(error => state.caught.add(error)));
+    }
+    await Promise.all(observed);
+    await Bun.sleep(1);
+  }
+  console.log(JSON.stringify({ kind: "ready", boot, revision, unhandled: state.unhandled.length }));
+  if (state.unhandled.length > 0 || boot === ${totalBoots}) {
+    setTimeout(() => {
+      console.log(JSON.stringify({ kind: "result", boots: state.boots, unhandled: state.unhandled.length }));
+      process.exit(state.unhandled.length === 0 ? 0 : 70);
+    }, 0);
+  }
+}, 0);
+`,
+    );
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", entry],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    type Message =
+      | { kind: "unhandled"; caught: boolean; owned: boolean; sameReason: boolean }
+      | { kind: "ready"; boot: number; revision: number; unhandled: number }
+      | { kind: "result"; boots: number; unhandled: number };
+    const messages: Message[] = [];
+    const driveReload = (async () => {
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for await (const chunk of runner.stdout) {
+        buffered += decoder.decode(chunk, { stream: true });
+        let newline;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (!line) continue;
+          const message = JSON.parse(line) as Message;
+          messages.push(message);
+          if (message.kind === "ready" && message.boot < totalBoots) {
+            writeFileSync(revisionFile, `export const revision = ${message.boot};\n`);
+          }
+        }
+      }
+      buffered += decoder.decode();
+      if (buffered) messages.push(JSON.parse(buffered) as Message);
+    })();
+
+    const [, stderr, exitCode] = await Promise.all([driveReload, new Response(runner.stderr).text(), runner.exited]);
+    const unhandled = messages.filter(message => message.kind === "unhandled");
+    const ready = messages.filter(message => message.kind === "ready");
+    const result = messages.find(message => message.kind === "result");
+
+    expect({
+      exitCode,
+      stderr,
+      unhandled,
+      readyCount: ready.length,
+      readySequenceIsValid: ready.every(
+        (message, index) => message.boot === index + 1 && message.revision === index && message.unhandled === 0,
+      ),
+      result,
+    }).toEqual({
+      exitCode: 0,
+      stderr: "",
+      unhandled: [],
+      readyCount: totalBoots,
+      readySequenceIsValid: true,
+      result: { kind: "result", boots: totalBoots, unhandled: 0 },
+    });
+  },
+  longTimeout,
+);
+
+it(
   "should hot reload when file is overwritten",
   async () => {
     const root = hotRunnerRoot;

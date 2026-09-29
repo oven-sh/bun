@@ -2175,6 +2175,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .event_loop_ref()
                 .deferred_tasks
                 .unregister_task(core::ptr::NonNull::new(h2a.cast::<c_void>()));
+            bun_opaque::opaque_deref_mut(h2a).cancel_drain();
             // SAFETY: live h2::App handle owned by this server; detaches from `app`.
             unsafe { uws_sys::h2::App::destroy(h2a) };
         }
@@ -2382,7 +2383,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // from rustc's POV. Replaces the `Option<*mut _>` + per-site
         // `unsafe { &*p }` pattern with one safe accessor.
         let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
-            self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
+            self.config.websocket.as_deref().map(bun_ptr::BackRef::new);
 
         for user_route in self.user_routes.iter_mut() {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
@@ -2423,7 +2424,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             path,
                             ud,
                             1, // id 1 means is a user route
-                            ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                            ServerWebSocket::behavior_h1::<Self, SSL>(&websocket.to_behavior()),
                         );
                     }
                 }
@@ -2453,7 +2454,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
-                                ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                                ServerWebSocket::behavior_h1::<Self, SSL>(&websocket.to_behavior()),
                             );
                         }
                     }
@@ -2673,7 +2674,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
-                    ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                    ServerWebSocket::behavior_h1::<Self, SSL>(&websocket.to_behavior()),
                 );
             }
         }
@@ -2804,9 +2805,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return true;
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        let Some(h2) =
-            uws_sys::h2::App::create::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
-        else {
+        let Some(h2) = uws_sys::h2::App::create::<SSL>(
+            bun_opaque::opaque_deref_mut(app),
+            http1,
+            idle_timeout,
+            // Extended CONNECT is a transport capability, not a snapshot of
+            // the routes installed at listen time.  Advertising it for every
+            // Bun.serve HTTP/2 context keeps server.reload() able to add a
+            // WebSocket handler and leaves the same gate reusable by future
+            // protocols such as WebTransport. An unsupported protocol or
+            // route is still dispatched to the application, but the H2 layer
+            // prevents a non-tunnel response from accidentally returning 2xx.
+            true,
+        ) else {
             // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
             let global = unsafe { (*this).global_this() };
             if !global.has_exception() {
@@ -3750,6 +3761,27 @@ pub(crate) type HTTPSServer = NewServer<true, false>;
 pub(crate) type DebugHTTPServer = NewServer<false, true>;
 pub(crate) type DebugHTTPSServer = NewServer<true, true>;
 
+/// One WebSocket Pub/Sub topic tree. HTTP/1 sockets live in the uWS app's
+/// tree; every stream transport owns a separate one, and a publish reaches
+/// each tree that has subscribers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebSocketTree {
+    H1,
+    H2,
+}
+
+impl WebSocketTree {
+    pub(crate) const ALL: [Self; 2] = [Self::H1, Self::H2];
+
+    #[inline]
+    pub(crate) fn of(ws: uws::AnyWebSocket) -> Self {
+        match ws {
+            uws::AnyWebSocket::Ssl(_) | uws::AnyWebSocket::Tcp(_) => Self::H1,
+            uws::AnyWebSocket::H2(_) => Self::H2,
+        }
+    }
+}
+
 // ─── AnyServer ───────────────────────────────────────────────────────────────
 // §Dispatch: the
 // `bun_ptr::impl_tagged_ptr_union!` macro would impl a foreign trait for a
@@ -4056,17 +4088,44 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
-    pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {
-        any_server_dispatch!(self, |s| match s.app {
+    /// Whether any stream transport (Extended CONNECT) keeps its own
+    /// WebSocket topic tree beside the HTTP/1 app's.
+    pub(crate) fn has_stream_websocket_trees(&self) -> bool {
+        any_server_dispatch!(self, |s| s.h2_app.is_some())
+    }
+
+    pub(crate) fn num_subscribers_in(&self, tree: WebSocketTree, topic: &[u8]) -> u32 {
+        any_server_dispatch!(self, |s| match tree {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
-            // Defensive 0
-            // here for the post-stop window; assert in debug to catch misuse.
-            None => {
-                debug_assert!(false, "num_subscribers on server with no app");
-                0
-            }
+            WebSocketTree::H1 => s.app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                .num_subscribers(topic)),
+            WebSocketTree::H2 => s.h2_app.map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                .num_subscribers(topic)),
+        })
+    }
+
+    pub(crate) fn publish_in(
+        &self,
+        tree: WebSocketTree,
+        topic: &[u8],
+        message: &[u8],
+        opcode: uws::Opcode,
+        compress: bool,
+    ) -> uws::SendStatus {
+        any_server_dispatch!(self, |s| match tree {
+            WebSocketTree::H1 => s.app.map_or(uws::SendStatus::Dropped, |app| {
+                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
+            }),
+            WebSocketTree::H2 => s.h2_app.map_or(uws::SendStatus::Dropped, |app| {
+                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress)
+            }),
+        })
+    }
+
+    pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {
+        WebSocketTree::ALL.into_iter().fold(0u32, |total, tree| {
+            total.saturating_add(self.num_subscribers_in(tree, topic))
         })
     }
 
@@ -4077,17 +4136,16 @@ impl AnyServer {
         opcode: uws::Opcode,
         compress: bool,
     ) -> uws::SendStatus {
-        any_server_dispatch!(self, |s| match s.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
-            // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) =>
-                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            // Defensive for the post-stop window; assert in debug to catch misuse.
-            None => {
-                debug_assert!(false, "publish on server with no app");
-                uws::SendStatus::Dropped
-            }
-        })
+        /* Preserve the old single-tree call on HTTP/1-only listeners. */
+        if !self.has_stream_websocket_trees() {
+            return self.publish_in(WebSocketTree::H1, topic, message, opcode, compress);
+        }
+        uws::SendStatus::worst(
+            WebSocketTree::ALL
+                .into_iter()
+                .filter(|tree| self.num_subscribers_in(*tree, topic) != 0)
+                .map(|tree| self.publish_in(tree, topic, message, opcode, compress)),
+        )
     }
 
     pub(crate) fn web_socket_handler(&mut self) -> Option<&mut WebSocketServerHandler> {

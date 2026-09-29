@@ -48,13 +48,15 @@ static inline bool isTokenByte(unsigned char c) {
 /* RFC 9113 §8.3.1 / RFC 9114 §4.3.1 request-target rules shared by the h2
  * and h3 request validators: :method is a token; :path is origin-form (or
  * "*" for OPTIONS) and carries no byte the HTTP/1 request line could not
- * (controls, SP); CONNECT carries no :path; there is an authority, Host
- * doesn't contradict :authority, and :authority has no userinfo. */
-static inline bool validPseudoHeaderTarget(std::string_view method, std::string_view path, std::string_view authority, std::string_view host) {
+ * (controls, SP); classic CONNECT carries no :path, while Extended CONNECT
+ * carries :scheme and :path (RFC 8441 §4); there is an
+ * authority, Host doesn't contradict :authority, and :authority has no
+ * userinfo. */
+static inline bool validPseudoHeaderTarget(std::string_view method, std::string_view path, std::string_view authority, std::string_view host, bool extendedConnect = false) {
     if (method.empty()) return false;
     for (unsigned char c : method) if (!isTokenByte(c)) return false;
     bool isConnect = method == "CONNECT";
-    if (!isConnect) {
+    if (!isConnect || extendedConnect) {
         if (!(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) return false;
         for (unsigned char c : path) if (c <= 0x20) return false;
     }

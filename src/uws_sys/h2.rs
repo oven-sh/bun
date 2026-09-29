@@ -12,6 +12,10 @@ use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
 use bun_ptr::ThisPtr;
 
+#[path = "h2_websocket.rs"]
+mod websocket;
+pub use websocket::{H2Transport, WebSocket, WebSocketBehavior};
+
 pub use crate::h3::Request;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -98,7 +102,7 @@ impl Response {
     pub(crate) fn pause(&mut self) {
         c::uws_h2_res_pause(self)
     }
-    pub(crate) fn resume(&mut self) {
+    pub fn resume(&mut self) {
         c::uws_h2_res_resume(self)
     }
     pub fn timeout(&mut self, seconds: u8) {
@@ -106,6 +110,12 @@ impl Response {
     }
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_h2_res_reset_timeout(self)
+    }
+    pub fn websocket_timeout(&mut self, seconds: u16) {
+        c::uws_h2_res_websocket_timeout(self, seconds)
+    }
+    pub fn websocket_timeout_refresh_on_write(&mut self, enabled: bool) {
+        c::uws_h2_res_websocket_timeout_refresh_on_write(self, enabled)
     }
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_h2_res_get_buffered_amount(self)
@@ -122,19 +132,28 @@ impl Response {
     /// True once the stream is retired (peer reset, connection closed, or
     /// `server.stop(true)` from inside the handler) even if onAborted was not
     /// armed yet; the handle stays valid until the current call unwinds.
-    pub(crate) fn is_closed(&self) -> bool {
+    pub fn is_closed(&self) -> bool {
         c::uws_h2_res_is_closed(self)
     }
     /// END_STREAM on the HEADERS frame, or `content-length: 0`.
     pub fn request_body_ended(&self) -> bool {
         c::uws_h2_res_request_body_ended(self)
     }
+    /// The request used RFC 8441 Extended CONNECT with `:protocol = websocket`.
+    pub fn is_websocket_connect(&self) -> bool {
+        c::uws_h2_res_is_websocket_connect(self)
+    }
+    /// Send the successful 2xx response and switch ordinary response-close
+    /// semantics to a bidirectional stream tunnel.
+    pub fn upgrade_websocket(&mut self) -> bool {
+        c::uws_h2_res_upgrade_websocket(self)
+    }
     pub(crate) fn is_corked(&self) -> bool {
         false
     }
     pub(crate) fn uncork(&mut self) {}
     pub(crate) fn is_connect_request(&self) -> bool {
-        false
+        c::uws_h2_res_is_connect_request(self)
     }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn mark_needs_more(&mut self) {}
@@ -154,7 +173,12 @@ impl Response {
     pub(crate) fn force_close(&mut self) {
         c::uws_h2_res_force_close(self)
     }
-
+    /// Abort this stream intentionally without reporting an internal server
+    /// failure to the peer.
+    #[allow(dead_code)]
+    pub(crate) fn cancel(&mut self) {
+        c::uws_h2_res_cancel(self)
+    }
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
         H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
@@ -175,7 +199,17 @@ impl Response {
         }
         c::uws_h2_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_on_writable(&mut self) {
+    /// Raw callback form for re-entrant protocols whose user data must not be
+    /// materialized as `&mut` across an application callback.
+    #[allow(dead_code)]
+    pub(crate) unsafe fn on_writable_raw(
+        &mut self,
+        handler: unsafe extern "C" fn(*mut Response, u64, *mut c_void) -> bool,
+        ud: *mut c_void,
+    ) {
+        c::uws_h2_res_on_writable(self, Some(handler), ud)
+    }
+    pub fn clear_on_writable(&mut self) {
         c::uws_h2_res_clear_on_writable(self)
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -198,7 +232,16 @@ impl Response {
         }
         c::uws_h2_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_aborted(&mut self) {
+    /// See [`Self::on_writable_raw`].
+    #[allow(dead_code)]
+    pub(crate) unsafe fn on_aborted_raw(
+        &mut self,
+        handler: unsafe extern "C" fn(*mut Response, *mut c_void),
+        ud: *mut c_void,
+    ) {
+        c::uws_h2_res_on_aborted(self, Some(handler), ud)
+    }
+    pub fn clear_aborted(&mut self) {
         c::uws_h2_res_on_aborted(self, None, ptr::null_mut())
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -221,7 +264,15 @@ impl Response {
         }
         c::uws_h2_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_timeout(&mut self) {
+    /// Install a callback whose userdata is managed by the caller.
+    pub unsafe fn on_timeout_raw(
+        &mut self,
+        handler: unsafe extern "C" fn(*mut Response, *mut c_void),
+        ud: *mut c_void,
+    ) {
+        c::uws_h2_res_on_timeout(self, Some(handler), ud)
+    }
+    pub fn clear_timeout(&mut self) {
         c::uws_h2_res_on_timeout(self, None, ptr::null_mut())
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -255,7 +306,16 @@ impl Response {
         }
         c::uws_h2_res_on_data(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_on_data(&mut self) {
+    /// See [`Self::on_writable_raw`].
+    #[allow(dead_code)]
+    pub(crate) unsafe fn on_data_raw(
+        &mut self,
+        handler: unsafe extern "C" fn(*mut Response, *const u8, usize, bool, *mut c_void),
+        ud: *mut c_void,
+    ) {
+        c::uws_h2_res_on_data(self, Some(handler), ud)
+    }
+    pub fn clear_on_data(&mut self) {
         c::uws_h2_res_on_data(self, None, ptr::null_mut())
     }
     pub(crate) fn corked<F: FnOnce()>(&mut self, f: F) {
@@ -267,7 +327,13 @@ impl Response {
             f();
         }
         let mut f = core::mem::ManuallyDrop::new(f);
-        c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
+        unsafe {
+            c::uws_h2_res_cork(
+                ptr::from_mut(self),
+                (&raw mut *f).cast::<c_void>(),
+                handle::<F>,
+            )
+        };
     }
     pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
         // cork is synchronous, so we stack-allocate the (handler, ud) pair and
@@ -282,7 +348,7 @@ impl Response {
             (ctx.0)(ctx.1);
         }
         let mut ctx: Ctx<UD> = (handler, ud);
-        c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
+        unsafe { c::uws_h2_res_cork(ptr::from_mut(self), (&raw mut ctx).cast(), cb::<UD>) }
     }
 }
 
@@ -348,6 +414,7 @@ impl App {
         parent: &mut crate::app::App<SSL>,
         allow_http1: bool,
         idle_timeout_s: u32,
+        enable_connect_protocol: bool,
     ) -> Option<*mut App> {
         // SAFETY: parent is a live TemplatedApp<SSL>; uws owns the returned handle
         let p = unsafe {
@@ -356,6 +423,7 @@ impl App {
                 std::ptr::from_mut(parent).cast::<crate::app::uws_app_t>(),
                 allow_http1,
                 idle_timeout_s,
+                enable_connect_protocol,
             )
         };
         if p.is_null() { None } else { Some(p) }
@@ -381,8 +449,39 @@ impl App {
     pub fn drain(&mut self) -> bool {
         c::uws_h2_app_drain(self)
     }
+
+    pub fn cancel_drain(&mut self) {
+        c::uws_h2_app_cancel_drain(self)
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h2_app_clear_routes(self)
+    }
+    pub fn publish(
+        &mut self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: crate::Opcode,
+        compress: bool,
+    ) -> crate::SendStatus {
+        match unsafe {
+            c::uws_h2_app_publish(
+                self,
+                topic.as_ptr(),
+                topic.len(),
+                message.as_ptr(),
+                message.len(),
+                opcode.0,
+                compress,
+            )
+        } {
+            0 => crate::SendStatus::Backpressure,
+            1 => crate::SendStatus::Success,
+            _ => crate::SendStatus::Dropped,
+        }
+    }
+
+    pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
+        unsafe { c::uws_h2_app_num_subscribers(self, topic.as_ptr(), topic.len()) }
     }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
@@ -513,6 +612,7 @@ mod c {
             parent: *mut crate::app::uws_app_t,
             allow_http1: bool,
             idle_timeout_s: u32,
+            enable_connect_protocol: bool,
         ) -> *mut App;
         pub(super) fn uws_h2_app_destroy(app: *mut App);
         pub(super) fn uws_h2_app_on_schedule_drain(
@@ -521,7 +621,22 @@ mod c {
             user: *mut c_void,
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
+        pub(super) safe fn uws_h2_app_cancel_drain(app: &mut App);
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
+        pub(super) fn uws_h2_app_publish(
+            app: *mut App,
+            topic: *const u8,
+            topic_length: usize,
+            data: *const u8,
+            data_length: usize,
+            opcode: i32,
+            compress: bool,
+        ) -> u32;
+        pub(super) fn uws_h2_app_num_subscribers(
+            app: *mut App,
+            topic: *const u8,
+            topic_length: usize,
+        ) -> u32;
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(
             app: *mut App,
@@ -597,8 +712,12 @@ mod c {
         pub(super) fn uws_h2_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
         pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_force_close(res: &mut Response);
+        pub(super) safe fn uws_h2_res_cancel(res: &mut Response);
         pub(super) safe fn uws_h2_res_is_closed(res: &Response) -> bool;
         pub(super) safe fn uws_h2_res_request_body_ended(res: &Response) -> bool;
+        pub(super) safe fn uws_h2_res_is_connect_request(res: &Response) -> bool;
+        pub(super) safe fn uws_h2_res_is_websocket_connect(res: &Response) -> bool;
+        pub(super) safe fn uws_h2_res_upgrade_websocket(res: &mut Response) -> bool;
         pub(super) fn uws_h2_res_try_end(
             res: *mut Response,
             p: *const u8,
@@ -633,6 +752,16 @@ mod c {
         pub(super) safe fn uws_h2_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h2_res_reset_timeout(res: &mut Response);
         pub(super) safe fn uws_h2_res_timeout(res: &mut Response, seconds: u8);
+        pub(super) safe fn uws_h2_res_websocket_timeout(res: &mut Response, seconds: u16);
+        pub(super) safe fn uws_h2_res_websocket_timeout_config(
+            res: &mut Response,
+            seconds: u16,
+            refresh_on_write: bool,
+        );
+        pub(super) safe fn uws_h2_res_websocket_timeout_refresh_on_write(
+            res: &mut Response,
+            enabled: bool,
+        );
         pub(super) safe fn uws_h2_res_end_sendfile(res: &mut Response, off: u64, close: bool);
         // safe: `&mut Response` is ABI-identical to a non-null `*mut`;
         // `cb`/`ud` are stored opaquely (never dereferenced by the C++ shim
@@ -658,11 +787,11 @@ mod c {
             cb: Option<unsafe extern "C" fn(*mut Response, *const u8, usize, bool, *mut c_void)>,
             ud: *mut c_void,
         );
-        // safe: cork is synchronous — `ud` is passed straight back to `cb`
-        // without being dereferenced by the C++ shim itself, so the call has
-        // no preconditions beyond the live opaque handle.
-        pub(super) safe fn uws_h2_res_cork(
-            res: &mut Response,
+        // Cork is synchronous: `ud` is passed straight back to `cb` without
+        // being dereferenced by C++. Keep the response raw so re-entrant
+        // callbacks are not forced to alias a Rust `&mut Response` at the ABI.
+        pub(super) fn uws_h2_res_cork(
+            res: *mut Response,
             ud: *mut c_void,
             cb: unsafe extern "C" fn(*mut c_void),
         );

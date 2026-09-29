@@ -104,7 +104,7 @@ Bun.serve({
 
 ### Headers
 
-Once the upgrade succeeds, Bun sends a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). To attach additional `headers` to this `Response`, pass them to `server.upgrade()`.
+For HTTP/1.1, a successful upgrade sends `101 Switching Protocols`. For HTTP/2, Bun uses Extended CONNECT and sends a `200` response as defined by [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441). To attach additional response headers, pass them to `server.upgrade()`.
 
 {/* prettier-ignore */}
 ```ts server.ts icon="/icons/typescript.svg"

@@ -1,16 +1,35 @@
 import { hostedGitInfo } from "bun:internal-for-testing";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { invalidGitUrls, validGitUrls } from "./cases";
 
 describe("fromUrl", () => {
-  // The expected objects are what hosted-git-info 9.0.0 returns. The child process is there
-  // because a failed assertion in the parser aborts the process that runs it.
-  it("parses shortcuts with an empty user, project and committish", async () => {
+  // The expected objects are what hosted-git-info 9.0.0 returns.
+  describe("shortcuts with an empty user, project and committish", () => {
+    // An assert-enabled build aborted on these shortcuts. `bun install` runs the same parser in a
+    // child process, so that an abort fails this hook and not the process that runs the tests.
+    beforeAll(async () => {
+      using dir = tempDir("from-url-empty-shortcut", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", overrides: { zz: "github:" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "ignore",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     const empty = { user: null, project: "", committish: null, default: "shortcut" };
     const github = { type: "github", domain: "github.com", ...empty };
     const gitlab = { type: "gitlab", domain: "gitlab.com", ...empty };
-    const expected = [
+
+    it.each([
       ["github:", github],
       ["gitlab:", gitlab],
       ["bitbucket:", { type: "bitbucket", domain: "bitbucket.org", ...empty }],
@@ -24,25 +43,9 @@ describe("fromUrl", () => {
       ["github:@", github],
       ["github:a@", github],
       ["gitlab:.git", gitlab],
-    ] as const;
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `import { hostedGitInfo } from "bun:internal-for-testing";
-         console.log(JSON.stringify(process.argv.slice(1).map(url => [url, hostedGitInfo.fromUrl(url)])));`,
-        ...expected.map(([url]) => url),
-      ],
-      env: bunEnv,
-      stderr: "pipe",
+    ])("parses %s", (url, expected) => {
+      expect(hostedGitInfo.fromUrl(url)).toEqual(expected);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    // A child that aborts prints no result. Its stderr is the failure message.
-    expect(stdout, stderr).not.toBe("");
-    expect(JSON.parse(stdout)).toEqual(expected);
-    expect(exitCode).toBe(0);
   });
 
   describe("valid urls", () => {

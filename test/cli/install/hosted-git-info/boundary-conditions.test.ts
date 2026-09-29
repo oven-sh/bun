@@ -45,18 +45,19 @@ describe("hosted-git-info boundary conditions", () => {
       return { stderr, exitCode };
     }
 
-    // No package has the name "zz", so the override applies to nothing and the install is empty.
-    test.concurrent.each(["github:", "gitlab:", "bitbucket:", "gist:", "sourcehut:"])(
-      "override value %s",
-      async shortcut => {
-        const { stderr, exitCode } = await install({
-          "package.json": JSON.stringify({ name: "app", version: "1.0.0", overrides: { zz: shortcut } }),
-        });
+    // No package has one of these names, so the overrides apply to nothing and the install is empty.
+    test.concurrent("override values of all five providers", async () => {
+      const { stderr, exitCode } = await install({
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          overrides: { a: "github:", b: "gitlab:", c: "bitbucket:", d: "gist:", e: "sourcehut:" },
+        }),
+      });
 
-        expect(stderr).toContain("No packages! Deleted empty lockfile");
-        expect(exitCode).toBe(0);
-      },
-    );
+      expect(stderr).toContain("No packages! Deleted empty lockfile");
+      expect(exitCode).toBe(0);
+    });
 
     test.concurrent("override value github: that bun.lock also has", async () => {
       const { stderr, exitCode } = await install({
@@ -69,7 +70,10 @@ describe("hosted-git-info boundary conditions", () => {
         }),
       });
 
-      expect(stderr).toContain("No packages! Deleted empty lockfile");
+      // bun prints "failed to parse lockfile" and "Ignoring lockfile" when it cannot load bun.lock.
+      expect(stderr.split(/\r?\n/).filter(line => line.includes("lockfile"))).toEqual([
+        "No packages! Deleted empty lockfile",
+      ]);
       expect(exitCode).toBe(0);
     });
 

@@ -42,7 +42,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
     }
 
     // Formatter impls Drop.
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
 
     if not {
         let signature = get_signature("toSatisfy", "<green>expected<r>", true);
@@ -58,7 +58,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
 
     // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
     // received value (matches the toBeGreaterThan.rs pattern).
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
     throw!(
         this,
         global,

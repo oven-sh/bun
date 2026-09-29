@@ -160,7 +160,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
     {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        let mut formatter = bun_jsc::console_object::Formatter::message(global);
         bun_output::scoped_log!(
             IPC,
             "primary: {}",

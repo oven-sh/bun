@@ -1,7 +1,6 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
-use crate::test_runner::expect::make_formatter;
 
 use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
@@ -152,7 +151,7 @@ impl Collection {
     ) -> JsResult<()> {
         let _g = group::begin();
 
-        let _formatter = make_formatter(global_this);
+        let _formatter = bun_jsc::Formatter::matcher_message(global_this);
 
         let prev_scope: NonNull<DescribeScope> = match data {
             RefDataValue::Collection { active_scope } => *active_scope,
@@ -187,7 +186,7 @@ impl Collection {
             this.run_one_completed(global_this, None, data)?;
         }
 
-        let _formatter = make_formatter(global_this);
+        let _formatter = bun_jsc::Formatter::matcher_message(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.

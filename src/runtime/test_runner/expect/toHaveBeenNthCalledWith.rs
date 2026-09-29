@@ -63,7 +63,7 @@ pub(crate) fn to_have_been_nth_called_with(
     }
 
     // handle failure
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
 
     let expected_args_slice = &arguments[1..];
     let expected_args_js_array = JSValue::create_array_from_slice(global, expected_args_slice)?;

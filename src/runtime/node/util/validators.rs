@@ -139,7 +139,7 @@ pub(crate) fn validate_int32(
     // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
     // outside the int52 range are integers; the range check below rejects out-of-range.
     if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::message(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -151,7 +151,7 @@ pub(crate) fn validate_int32(
     }
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::message(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -182,7 +182,7 @@ pub(crate) fn validate_uint32(
     }
     let num = value.as_number();
     if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::message(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -195,7 +195,7 @@ pub(crate) fn validate_uint32(
     let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
     let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        let mut formatter = jsc::ConsoleObject::Formatter::message(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(

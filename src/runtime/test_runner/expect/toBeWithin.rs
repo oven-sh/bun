@@ -58,9 +58,9 @@ impl Expect {
 
         // `to_fmt` takes `&mut Formatter` and the adapter holds the borrow, so three
         // live adapters need three formatters (matches toBeLessThan.rs / toContainEqual.rs).
-        let mut formatter = super::make_formatter(global);
-        let mut formatter2 = super::make_formatter(global);
-        let mut formatter3 = super::make_formatter(global);
+        let mut formatter = bun_jsc::Formatter::matcher_message(global);
+        let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
+        let mut formatter3 = bun_jsc::Formatter::matcher_message(global);
         let start_fmt = start_value.to_fmt(&mut formatter);
         let end_fmt = end_value.to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);

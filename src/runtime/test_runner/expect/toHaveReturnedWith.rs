@@ -60,7 +60,7 @@ pub(crate) fn to_have_returned_with(
     }
 
     // Handle failure
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
 
     let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
@@ -88,8 +88,8 @@ pub(crate) fn to_have_returned_with(
 
         // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
         // the same backing formatter. Use a second formatter for the received value —
-        // `make_formatter` is a trivial struct init with no shared state between values.
-        let mut formatter2 = super::make_formatter(global);
+        // `Formatter::matcher_message` is a trivial struct init with no shared state between values.
+        let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
         return throw!(
             this,
             global,
@@ -102,7 +102,7 @@ pub(crate) fn to_have_returned_with(
 
     // list_formatter holds &mut Formatter via RefCell, so a separate formatter is
     // required for the inline `expected.to_fmt` argument used alongside it in the same format_args!.
-    let mut list_fmt = super::make_formatter(global);
+    let mut list_fmt = bun_jsc::Formatter::matcher_message(global);
 
     if has_errors {
         // Case: Some calls errored

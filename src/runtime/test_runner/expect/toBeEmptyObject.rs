@@ -20,7 +20,7 @@ pub(crate) fn to_be_empty_object(
         return Ok(this_value);
     }
 
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
     // `defer formatter.deinit()` → handled by Drop.
     let received = value.to_fmt(&mut formatter);
 

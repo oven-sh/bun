@@ -468,10 +468,7 @@ fn message_with_type_and_level_(
     }
 
     let mut print_length = len;
-    // Get console depth from CLI options or bunfig, fallback to default.
-    let console_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
+    let console_depth = console_depth();
 
     let mut print_options = FormatOptions {
         enable_colors,
@@ -660,16 +657,7 @@ impl<'a> TablePrinter<'a> {
             properties,
             is_iterable: tabular_data.is_iterable(global_object)?,
             jstype: tabular_data.js_type(),
-            value_formatter: {
-                // `Formatter` has a `Drop` impl, so struct-update
-                // from a temporary is rejected (E0509).
-                let mut f = Formatter::new(global_object);
-                f.single_line = true;
-                f.max_depth = 5;
-                f.can_throw_stack_overflow = true;
-                f.stack_check = StackCheck::init();
-                f
-            },
+            value_formatter: Formatter::table_cell(global_object),
             values_col_width: None,
             values_col_idx: usize::MAX,
         })
@@ -1321,6 +1309,13 @@ impl FormatOptions {
 // format2
 // ───────────────────────────────────────────────────────────────────────────
 
+/// `--console-depth` or bunfig's `console.depth`.
+fn console_depth() -> u16 {
+    bun_options_types::context::try_get()
+        .and_then(|ctx| ctx.runtime_options.console_depth)
+        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH)
+}
+
 pub fn format2(
     level: MessageLevel,
     global: &JSGlobalObject,
@@ -1334,18 +1329,7 @@ pub fn format2(
     }
 
     if len == 1 {
-        // initialized later in this function.
-        // `Formatter` has a `Drop` impl, so struct-update from a
-        // temporary is rejected (E0509). Construct via `new()` then mutate.
-        let mut fmt = Formatter::new(global);
-        fmt.ordered_properties = options.ordered_properties;
-        fmt.quote_strings = options.quote_strings;
-        fmt.max_depth = options.max_depth;
-        fmt.single_line = options.single_line;
-        fmt.indent = u32::from(options.default_indent);
-        fmt.stack_check = StackCheck::init();
-        fmt.can_throw_stack_overflow = true;
-        fmt.error_display_level = options.error_display_level;
+        let mut fmt = Formatter::console(global, &options);
         let tag = formatter::Tag::get(vals[0], global)?;
         if fmt.write_indent(writer).is_err() {
             return Ok(());
@@ -1398,17 +1382,8 @@ pub fn format2(
     let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
 
     let mut this_value: JSValue = vals[0];
-    // see E0509 note above.
-    let mut fmt = Formatter::new(global);
+    let mut fmt = Formatter::console(global, &options);
     fmt.remaining_values = bun_ptr::RawSlice::new(&vals[1..]);
-    fmt.ordered_properties = options.ordered_properties;
-    fmt.quote_strings = options.quote_strings;
-    fmt.max_depth = options.max_depth;
-    fmt.single_line = options.single_line;
-    fmt.indent = u32::from(options.default_indent);
-    fmt.stack_check = StackCheck::init();
-    fmt.can_throw_stack_overflow = true;
-    fmt.error_display_level = options.error_display_level;
     let mut tag: formatter::TagResult;
 
     if fmt.write_indent(writer).is_err() {
@@ -1536,27 +1511,6 @@ pub mod formatter {
         }
     }
 
-    /// RAII: `map.remove(value)` on drop iff `*armed`. Holds
-    /// raw pointers so the body can freely take `&mut self`; smaller than the
-    /// equivalent `scopeguard::defer!` closure under ASAN stack redzones.
-    pub(super) struct VisitedRemove {
-        map: *mut visited::Map,
-        armed: *const bool,
-        value: JSValue,
-    }
-    impl Drop for VisitedRemove {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: `map`/`armed` were taken via `addr_of!` on locals that
-            // outlive this guard; no other borrow is live at drop.
-            unsafe {
-                if *self.armed {
-                    let _ = (*self.map).remove(&self.value);
-                }
-            }
-        }
-    }
-
     /// Restore a field to `prev` at scope exit without holding a live borrow
     /// on `self` for the body of the scope. The guard reads at scope-exit
     /// time and never aliases: it captures a raw `*mut` to the field and
@@ -1578,6 +1532,13 @@ pub mod formatter {
             }
         };
     }
+
+    mod guard;
+    mod jest;
+
+    pub(crate) use guard::Entered;
+    use guard::{CountingWriter, Leave, SharedReferenceBudget};
+    pub use guard::{Mark, Style};
 
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
@@ -1615,11 +1576,18 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        pub(crate) style: Style,
+        shared_reference_budget: SharedReferenceBudget,
+        /// Repeat visits on the path. The outermost one counts its output.
+        repeat_depth: u32,
+        repeat_bytes: Option<std::rc::Rc<Cell<usize>>>,
+        abbreviated: bool,
     }
 
     impl<'a> Formatter<'a> {
-        /// Field-default constructor.
-        pub fn new(global_this: &'a JSGlobalObject) -> Self {
+        /// Private: every caller states what it prints for through one of the
+        /// constructors below, and none can end up without a stack bound.
+        fn new(global_this: &'a JSGlobalObject) -> Self {
             Self {
                 global_this,
                 remaining_values: bun_ptr::RawSlice::EMPTY,
@@ -1639,14 +1607,84 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
-                // check always passes; callers that want a real bound
-                // overwrite with `StackCheck::init()` explicitly.
-                stack_check: StackCheck::default(),
+                stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                style: Style::Console,
+                shared_reference_budget: SharedReferenceBudget::DISPLAY,
+                repeat_depth: 0,
+                repeat_bytes: None,
+                abbreviated: false,
             }
+        }
+
+        /// `console.*` and `Bun.inspect`.
+        pub fn console(global_this: &'a JSGlobalObject, options: &FormatOptions) -> Self {
+            let mut this = Self::new(global_this);
+            this.ordered_properties = options.ordered_properties;
+            this.quote_strings = options.quote_strings;
+            this.max_depth = options.max_depth;
+            this.single_line = options.single_line;
+            this.indent = u32::from(options.default_indent);
+            this.can_throw_stack_overflow = true;
+            this.error_display_level = options.error_display_level;
+            this
+        }
+
+        /// One cell of `console.table`.
+        pub(crate) fn table_cell(global_this: &'a JSGlobalObject) -> Self {
+            let mut this = Self::new(global_this);
+            this.single_line = true;
+            this.max_depth = 5;
+            this.can_throw_stack_overflow = true;
+            this
+        }
+
+        /// A value Bun reports on its own: an uncaught exception, an unhandled
+        /// rejection, `reportError()`. It prints at the depth
+        /// `console.error(value)` prints at. The `cause` and `errors` walks
+        /// keep their own cap.
+        pub fn error_handler(global_this: &'a JSGlobalObject) -> Self {
+            let mut this = Self::new(global_this);
+            this.outer_max_depth = Some(this.max_depth);
+            this.max_depth = console_depth();
+            this
+        }
+
+        /// A value quoted inside the text of an error or a diagnostic.
+        pub fn message(global_this: &'a JSGlobalObject) -> Self {
+            Self::new(global_this)
+        }
+
+        /// A value quoted inside an `expect()` failure message.
+        pub fn matcher_message(global_this: &'a JSGlobalObject) -> Self {
+            let mut this = Self::new(global_this);
+            this.quote_strings = true;
+            this
+        }
+
+        fn jest(global_this: &'a JSGlobalObject) -> Self {
+            let mut this = Self::new(global_this);
+            this.style = Style::Jest;
+            this.quote_strings = true;
+            this.max_depth = u16::MAX;
+            this.disable_inspect_custom = true;
+            this
+        }
+
+        /// One side of an assertion diff. A value too deep to print leaves a
+        /// truncated side, so the assertion is still reported.
+        pub fn diff(global_this: &'a JSGlobalObject) -> Self {
+            Self::jest(global_this)
+        }
+
+        /// A stored snapshot, which can be neither truncated nor abbreviated.
+        pub fn snapshot(global_this: &'a JSGlobalObject) -> Self {
+            let mut this = Self::jest(global_this);
+            this.can_throw_stack_overflow = true;
+            this.shared_reference_budget = SharedReferenceBudget::SNAPSHOT;
+            this
         }
 
         /// `Formatter` has a `Drop` impl and owns `map`/`map_node`,
@@ -1682,6 +1720,11 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                style: self.style,
+                shared_reference_budget: self.shared_reference_budget,
+                repeat_depth: 0,
+                repeat_bytes: None,
+                abbreviated: false,
             }
         }
 
@@ -1789,20 +1832,20 @@ pub mod formatter {
         }
     }
 
-    /// For detecting circular references.
+    /// For detecting circular and shared references.
     pub mod visited {
         use super::*;
 
-        /// Newtype over `HashMap<JSValue, ()>` so we can implement
+        /// Newtype over `HashMap<JSValue, Mark>` so we can implement
         /// `ObjectPoolType` (orphan rules forbid impl on the foreign
         /// `bun_collections::HashMap`). `Deref`/`DerefMut` keep all
         /// `self.map.*` call sites unchanged.
         #[derive(Default)]
         #[repr(transparent)]
-        pub struct Map(bun_collections::HashMap<JSValue, ()>);
+        pub struct Map(bun_collections::HashMap<JSValue, Mark>);
 
         impl core::ops::Deref for Map {
-            type Target = bun_collections::HashMap<JSValue, ()>;
+            type Target = bun_collections::HashMap<JSValue, Mark>;
             #[inline]
             fn deref(&self) -> &Self::Target {
                 &self.0
@@ -1900,20 +1943,6 @@ pub mod formatter {
                     | Tag::Boolean
                     | Tag::Symbol
                     | Tag::BigInt
-            )
-        }
-
-        pub(crate) fn can_have_circular_references(self) -> bool {
-            matches!(
-                self,
-                Tag::Function
-                    | Tag::Array
-                    | Tag::Object
-                    | Tag::Map
-                    | Tag::Set
-                    | Tag::Error
-                    | Tag::Class
-                    | Tag::Event
             )
         }
     }
@@ -2813,11 +2842,7 @@ pub mod formatter {
                         .write_indent(this.writer)
                         .expect("unreachable");
                 }
-                let mut opts = TagOptions::HIDE_GLOBAL;
-                if this.formatter.disable_inspect_custom {
-                    opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-                }
-                let Ok(key_tag) = Tag::get_advanced(key, global_object, opts) else {
+                let Ok(key_tag) = this.formatter.tag_of(key) else {
                     return;
                 };
 
@@ -2828,7 +2853,7 @@ pub mod formatter {
                     this.formatter.global_this,
                 );
                 this.writer.write_all(b": ").expect("unreachable");
-                let Ok(value_tag) = Tag::get_advanced(value, global_object, opts) else {
+                let Ok(value_tag) = this.formatter.tag_of(value) else {
                     return;
                 };
                 let _ = this.formatter.format::<C>(
@@ -2844,11 +2869,7 @@ pub mod formatter {
                         .write_indent(this.writer)
                         .expect("unreachable");
                 }
-                let mut opts = TagOptions::HIDE_GLOBAL;
-                if this.formatter.disable_inspect_custom {
-                    opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-                }
-                let Ok(tag) = Tag::get_advanced(next_value, global_object, opts) else {
+                let Ok(tag) = this.formatter.tag_of(next_value) else {
                     return;
                 };
                 let _ = this.formatter.format::<C>(
@@ -2879,7 +2900,7 @@ pub mod formatter {
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
         pub(crate) extern "C" fn for_each(
             _: *mut jsc::VM,
-            global_object: &JSGlobalObject,
+            _: &JSGlobalObject,
             ctx: *mut c_void,
             next_value: JSValue,
         ) {
@@ -2901,11 +2922,7 @@ pub mod formatter {
             } else {
                 let _ = this.formatter.write_indent(this.writer);
             }
-            let mut opts = TagOptions::HIDE_GLOBAL;
-            if this.formatter.disable_inspect_custom {
-                opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-            }
-            let Ok(key_tag) = Tag::get_advanced(next_value, global_object, opts) else {
+            let Ok(key_tag) = this.formatter.tag_of(next_value) else {
                 return;
             };
             let _ = this.formatter.format::<C>(
@@ -3078,17 +3095,12 @@ pub mod formatter {
                 return None;
             }
 
-            let disable_inspect_custom = ctx.formatter.disable_inspect_custom;
             let single_line = ctx.formatter.single_line;
             let always_newline_scope = ctx.formatter.always_newline_scope;
             let quote_keys = ctx.formatter.quote_keys;
             let indent = ctx.formatter.indent;
 
-            let mut opts = TagOptions::HIDE_GLOBAL;
-            if disable_inspect_custom {
-                opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-            }
-            let tag = Tag::get_advanced(value, global_this, opts).ok()?;
+            let tag = ctx.formatter.tag_of(value).ok()?;
             if tag.cell.is_hidden() {
                 return None;
             }
@@ -3210,64 +3222,8 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
 
     impl<'a> Formatter<'a> {
-        /// Circular-reference / stack-overflow / visited-map prelude for
-        /// `print_as`. Outlined so its locals (the pool node, the
-        /// `get_or_put` result, the `[Circular]` write path) live in a leaf
-        /// frame that is popped before the recursive descent into
-        /// `print_object`/`print_array` — under ASAN debug those locals each
-        /// carry a 32-byte redzone, and the 512-deep `Bun.inspect` test
-        /// cannot afford them in the per-level `print_as` frame.
-        ///
-        /// Returns `Ok(true)` to continue into the tag dispatch.
-        #[inline(never)]
-        fn print_as_prelude<const C: bool>(
-            &mut self,
-            writer_: &mut dyn bun_io::Write,
-            value: JSValue,
-            can_circ: bool,
-            remove_before_recurse: &mut bool,
-        ) -> JsResult<bool> {
-            if self.failed {
-                return Ok(false);
-            }
-            if self.global_this.has_exception() {
-                return Err(jsc::JsError::Thrown);
-            }
-            if !can_circ {
-                return Ok(true);
-            }
-
-            if !self.stack_check.is_safe_to_recurse() {
-                self.failed = true;
-                if self.can_throw_stack_overflow {
-                    return Err(self.global_this.throw_stack_overflow());
-                }
-                return Ok(false);
-            }
-
-            if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
-                self.map_node = Some(node);
-            }
-
-            let entry = self.map.get_or_put(value).expect("unreachable");
-            if entry.found_existing {
-                if writer_
-                    .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
-                    .is_err()
-                {
-                    self.failed = true;
-                }
-                return Ok(false);
-            }
-            *remove_before_recurse = true;
-            Ok(true)
-        }
-
+        /// Prints a value the caller reached from another one. The only way
+        /// into the printers.
         #[inline(never)]
         pub(crate) fn print_as<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
@@ -3276,27 +3232,50 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            // If we call `return self.print_as(...)` then we can get a spurious
-            // `[Circular]` due to the value already being present in the map.
-            let mut remove_before_recurse = false;
-
-            if !self.print_as_prelude::<ENABLE_ANSI_COLORS>(
-                writer_,
-                value,
-                format.can_have_circular_references(),
-                &mut remove_before_recurse,
-            )? {
+            let Some(entered) = self.enter::<ENABLE_ANSI_COLORS>(format, writer_, value)? else {
                 return Ok(());
-            }
-
-            // The body mutates both `self` and `remove_before_recurse`, so
-            // capture raw pointers and read the *current* `remove_before_recurse`
-            // at scope-exit time.
-            let _visited = VisitedRemove {
-                map: &raw mut self.map,
-                armed: &raw const remove_before_recurse,
-                value,
             };
+            let _leave = Leave::new(self, &entered, value);
+            if entered.opens_repeat() {
+                return self.dispatch_counted::<ENABLE_ANSI_COLORS>(
+                    &entered, format, writer_, value, js_type,
+                );
+            }
+            self.dispatch::<ENABLE_ANSI_COLORS>(&entered, format, writer_, value, js_type)
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn dispatch_counted<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            entered: &Entered,
+            format: Tag,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            let mut counting = CountingWriter {
+                inner: writer_,
+                written: self.repeat_counter(),
+            };
+            self.dispatch::<ENABLE_ANSI_COLORS>(entered, format, &mut counting, value, js_type)
+        }
+
+        /// Prints a value that already passed `enter`, possibly under a tag
+        /// other than the one it entered with. Inlined so a level of nesting
+        /// costs no extra frame.
+        #[inline(always)]
+        pub(crate) fn dispatch<const ENABLE_ANSI_COLORS: bool>(
+            &mut self,
+            entered: &Entered,
+            format: Tag,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            if self.style == Style::Jest {
+                return self.dispatch_jest(entered, format, writer_, value, js_type);
+            }
 
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small enough to recurse 512 levels under
@@ -3305,17 +3284,19 @@ pub mod formatter {
                 Tag::StringPossiblyFormatted => {
                     self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value)
                 }
-                Tag::String => self.print_string::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                Tag::String => {
+                    self.print_string::<ENABLE_ANSI_COLORS>(entered, writer_, value, js_type)
+                }
                 Tag::Integer => self.print_integer::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::BigInt => self.print_bigint::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Double => self.print_double::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Undefined => self.print_undefined::<ENABLE_ANSI_COLORS>(writer_),
                 Tag::Null => self.print_null::<ENABLE_ANSI_COLORS>(writer_),
                 Tag::CustomFormattedObject => {
-                    self.print_custom_formatted_object::<ENABLE_ANSI_COLORS>(writer_)
+                    self.print_custom_formatted_object::<ENABLE_ANSI_COLORS>(entered, writer_)
                 }
                 Tag::Symbol => self.print_symbol::<ENABLE_ANSI_COLORS>(writer_, value),
-                Tag::Error => self.print_error::<ENABLE_ANSI_COLORS>(writer_, value),
+                Tag::Error => self.print_error::<ENABLE_ANSI_COLORS>(entered, writer_, value),
                 Tag::Class => self.print_class::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Function => self.print_function::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::GetterSetter => {
@@ -3324,43 +3305,42 @@ pub mod formatter {
                 Tag::CustomGetterSetter => {
                     self.print_getter_setter::<ENABLE_ANSI_COLORS, true>(writer_, value)
                 }
-                Tag::Array => self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
-                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(
-                    writer_,
-                    value,
-                    js_type,
-                    &mut remove_before_recurse,
-                ),
+                Tag::Array => {
+                    self.print_array::<ENABLE_ANSI_COLORS>(entered, writer_, value, js_type)
+                }
+                Tag::Private => {
+                    self.print_private::<ENABLE_ANSI_COLORS>(entered, writer_, value, js_type)
+                }
                 Tag::NativeCode => self.print_native_code(writer_, value),
                 Tag::Promise => self.print_promise::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Boolean => self.print_boolean::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::GlobalObject => self.print_global_object::<ENABLE_ANSI_COLORS>(writer_),
-                Tag::Map => self.print_map_like::<ENABLE_ANSI_COLORS, false>(writer_, value),
+                Tag::Map => self.print_map::<ENABLE_ANSI_COLORS>(entered, writer_, value),
                 Tag::MapIterator => self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(
+                    entered,
                     writer_,
                     value,
                     "MapIterator",
                 ),
                 Tag::SetIterator => self.print_map_iterator_like::<ENABLE_ANSI_COLORS>(
+                    entered,
                     writer_,
                     value,
                     "SetIterator",
                 ),
-                Tag::Set => self.print_set::<ENABLE_ANSI_COLORS>(writer_, value),
-                Tag::ToJSON => self.print_to_json::<ENABLE_ANSI_COLORS>(writer_, value),
+                Tag::Set => self.print_set::<ENABLE_ANSI_COLORS>(entered, writer_, value),
+                Tag::ToJSON => self.print_to_json::<ENABLE_ANSI_COLORS>(entered, writer_, value),
                 Tag::JSON => self.print_json::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
-                Tag::Event => self.print_event::<ENABLE_ANSI_COLORS>(
-                    writer_,
-                    value,
-                    &mut remove_before_recurse,
-                ),
-                Tag::JSX => self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value),
-                Tag::Object => self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                Tag::Event => self.print_event::<ENABLE_ANSI_COLORS>(entered, writer_, value),
+                Tag::JSX => self.print_jsx::<ENABLE_ANSI_COLORS>(entered, writer_, value),
+                Tag::Object => {
+                    self.print_object::<ENABLE_ANSI_COLORS>(entered, writer_, value, js_type)
+                }
                 Tag::TypedArray => {
                     self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)
                 }
                 Tag::RevokedProxy => self.print_revoked_proxy::<ENABLE_ANSI_COLORS>(writer_),
-                Tag::Proxy => self.print_proxy::<ENABLE_ANSI_COLORS>(writer_, value),
+                Tag::Proxy => self.print_proxy::<ENABLE_ANSI_COLORS>(entered, writer_, value),
             }
         }
     }
@@ -3376,12 +3356,31 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
 
     impl<'a> Formatter<'a> {
-        fn tag_opts(&self) -> TagOptions {
-            let mut opts = TagOptions::HIDE_GLOBAL;
+        pub(crate) fn tag_opts(&self) -> TagOptions {
+            let mut opts = match self.style {
+                Style::Console => TagOptions::HIDE_GLOBAL,
+                Style::Jest => TagOptions::empty(),
+            };
             if self.disable_inspect_custom {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             opts
+        }
+
+        /// Classifies a value nested in the one being printed.
+        pub(crate) fn tag_of(&self, value: JSValue) -> JsResult<TagResult> {
+            Tag::get_advanced(value, self.global_this, self.tag_opts())
+        }
+
+        /// Classifies a value that stands in for the one being printed (a
+        /// Proxy target, the result of `toJSON`), so the global object prints
+        /// in full as it does at the top level.
+        fn tag_of_stand_in(&self, value: JSValue) -> JsResult<TagResult> {
+            Tag::get_advanced(
+                value,
+                self.global_this,
+                self.tag_opts() - TagOptions::HIDE_GLOBAL,
+            )
         }
 
         #[inline(never)]
@@ -3495,6 +3494,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_proxy<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -3505,7 +3505,7 @@ pub mod formatter {
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
             self.format::<C>(
-                Tag::get(target, self.global_this)?,
+                self.tag_of_stand_in(target)?,
                 writer_,
                 target,
                 self.global_this,
@@ -3527,6 +3527,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_string<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
@@ -3558,7 +3559,7 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    self.dispatch::<C>(entered, Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
                     if C {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
                     }
@@ -3587,7 +3588,7 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    self.dispatch::<C>(entered, Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -3777,6 +3778,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_custom_formatted_object<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
             // Call custom inspect function. Will return the error if there is
@@ -3804,11 +3806,15 @@ pub mod formatter {
                 // A custom inspector that returns its own `this` would recurse
                 // forever; re-tag without the custom hook so it falls through to
                 // default formatting (mirrors util.inspect's `ret !== context`).
-                let tag = if result == self.custom_formatted_object.this {
-                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
-                } else {
-                    Tag::get(result, self.global_this)?
-                };
+                if result == self.custom_formatted_object.this {
+                    let tag = Tag::get_advanced(
+                        result,
+                        self.global_this,
+                        TagOptions::DISABLE_INSPECT_CUSTOM,
+                    )?;
+                    return self.dispatch::<C>(entered, tag.tag.tag(), writer_, result, tag.cell);
+                }
+                let tag = self.tag_of_stand_in(result)?;
                 self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
@@ -3852,32 +3858,23 @@ pub mod formatter {
         #[inline(never)]
         fn print_error<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            // Temporarily remove from the visited map to allow
-            // printErrorlikeObject to process it. The circular reference
-            // check is already done in print_as, so we know it's safe.
-            let was_in_map = if self.map_node.is_some() {
-                self.map.remove(&value).is_some()
-            } else {
-                false
-            };
-            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-            scopeguard::defer! {
-                // SAFETY: `self.map` outlives this guard; no other borrow is
-                // live at the drop point.
-                unsafe {
-                    if was_in_map {
-                        let _ = (*map_restore_ptr).insert(value, ());
-                    }
-                }
-            }
-
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
-            vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            vm.print_entered_errorlike_object(
+                Some(entered),
+                value,
+                None,
+                None,
+                self,
+                adapter.interface(),
+                C,
+                false,
+            );
             Ok(())
         }
 
@@ -4160,6 +4157,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_to_json<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -4168,7 +4166,7 @@ pub mod formatter {
                 let prev_quote_keys = self.quote_keys;
                 self.quote_keys = true;
                 let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                let tag = Tag::get(result, self.global_this)?;
+                let tag = self.tag_of_stand_in(result)?;
                 return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
@@ -4233,6 +4231,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_array<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
@@ -4512,10 +4511,10 @@ pub mod formatter {
         #[inline(never)]
         fn print_private<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
-            remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
             // LAYERING: this needs to downcast over
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
@@ -4552,31 +4551,18 @@ pub mod formatter {
                     jsc::JSType::Cell,
                 );
             } else if js_type != jsc::JSType::DOMWrapper {
-                if *remove_before_recurse {
-                    *remove_before_recurse = false;
-                    let _ = self.map.remove(&value);
-                }
-
                 if value.is_callable() {
-                    *remove_before_recurse = true;
-                    return self.print_as::<C>(Tag::Function, writer_, value, js_type);
+                    return self.dispatch::<C>(entered, Tag::Function, writer_, value, js_type);
                 }
-
-                *remove_before_recurse = true;
-                return self.print_as::<C>(Tag::Object, writer_, value, js_type);
+                return self.dispatch::<C>(entered, Tag::Object, writer_, value, js_type);
             }
-            if *remove_before_recurse {
-                *remove_before_recurse = false;
-                let _ = self.map.remove(&value);
-            }
-
-            *remove_before_recurse = true;
-            self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event)
+            self.dispatch::<C>(entered, Tag::Object, writer_, value, jsc::JSType::Event)
         }
 
         #[inline(never)]
-        fn print_map_like<const C: bool, const _UNUSED: bool>(
+        fn print_map<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -4659,6 +4645,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_map_iterator_like<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             label: &'static str,
@@ -4726,6 +4713,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_set<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -4805,12 +4793,27 @@ pub mod formatter {
             Ok(())
         }
 
+        fn end_event_field<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            jest: &'static [u8],
+        ) {
+            if self.style == Style::Jest {
+                let _ = writer_.write_all(jest);
+                return;
+            }
+            self.print_comma::<C>(writer_).expect("unreachable");
+            if !self.single_line {
+                let _ = writer_.write_all(b"\n");
+            }
+        }
+
         #[inline(never)]
         fn print_event<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
             macro_rules! pf {
                 ($s:literal) => {
@@ -4836,12 +4839,13 @@ pub mod formatter {
             {
                 evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                 _ => {
-                    if *remove_before_recurse {
-                        let _ = self.map.remove(&value);
-                    }
-                    // We must potentially remove it again.
-                    *remove_before_recurse = true;
-                    return self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event);
+                    return self.dispatch::<C>(
+                        entered,
+                        Tag::Object,
+                        writer_,
+                        value,
+                        jsc::JSType::Event,
+                    );
                 }
             };
 
@@ -4912,15 +4916,12 @@ pub mod formatter {
                             pf!("<r>")
                         );
                         let tag =
-                            Tag::get_advanced(message_value, self.global_this, self.tag_opts())?;
+                            self.tag_of(message_value)?;
                         self.format::<C>(tag, writer_, message_value, self.global_this)?;
                         if self.failed {
                             return Ok(());
                         }
-                        self.print_comma::<C>(writer_).expect("unreachable");
-                        if !self.single_line {
-                            let _ = writer_.write_all(b"\n");
-                        }
+                        self.end_event_field::<C>(writer_, b", \n");
                     }
                 }
 
@@ -4939,15 +4940,12 @@ pub mod formatter {
                         let data: JSValue = value
                             .fast_get(self.global_this, jsc::BuiltinName::Data)?
                             .unwrap_or(JSValue::UNDEFINED);
-                        let tag = Tag::get_advanced(data, self.global_this, self.tag_opts())?;
+                        let tag = self.tag_of(data)?;
                         self.format::<C>(tag, writer_, data, self.global_this)?;
                         if self.failed {
                             return Ok(());
                         }
-                        self.print_comma::<C>(writer_).expect("unreachable");
-                        if !self.single_line {
-                            let _ = writer_.write_all(b"\n");
-                        }
+                        self.end_event_field::<C>(writer_, b", \n");
                     }
                     EventType::ErrorEvent => {
                         if let Some(error_value) =
@@ -4964,15 +4962,12 @@ pub mod formatter {
                                 pf!("<r>")
                             );
                             let tag =
-                                Tag::get_advanced(error_value, self.global_this, self.tag_opts())?;
+                                self.tag_of(error_value)?;
                             self.format::<C>(tag, writer_, error_value, self.global_this)?;
                             if self.failed {
                                 return Ok(());
                             }
-                            self.print_comma::<C>(writer_).expect("unreachable");
-                            if !self.single_line {
-                                let _ = writer_.write_all(b"\n");
-                            }
+                            self.end_event_field::<C>(writer_, b"\n");
                         }
                     }
                     _ => unreachable!(),
@@ -4992,6 +4987,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_jsx<const C: bool>(
             &mut self,
+            _entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -5071,7 +5067,7 @@ pub mod formatter {
                         self.failed = true;
                     }
                     self.format::<C>(
-                        Tag::get_advanced(key_value, self.global_this, self.tag_opts())?,
+                        self.tag_of(key_value)?,
                         writer_,
                         key_value,
                         self.global_this,
@@ -5182,7 +5178,7 @@ pub mod formatter {
                     }
 
                     if let Some(children) = children_prop {
-                        let tag = Tag::get(children, self.global_this)?;
+                        let tag = Tag::get_advanced(children, self.global_this, tag_opts)?;
 
                         let print_children =
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
@@ -5225,7 +5221,7 @@ pub mod formatter {
                                                 self.failed = true;
                                             }
                                             self.format::<C>(
-                                                Tag::get(children, self.global_this)?,
+                                                self.tag_of(children)?,
                                                 writer_,
                                                 children,
                                                 self.global_this,
@@ -5269,11 +5265,7 @@ pub mod formatter {
                                                     self.failed = true;
                                                 }
                                                 self.format::<C>(
-                                                    Tag::get_advanced(
-                                                        child,
-                                                        self.global_this,
-                                                        self.tag_opts(),
-                                                    )?,
+                                                    self.tag_of(child)?,
                                                     writer_,
                                                     child,
                                                     self.global_this,
@@ -5331,6 +5323,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_object<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
@@ -5406,7 +5399,7 @@ pub mod formatter {
                 return Ok(());
             }
 
-            self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
+            self.print_object_tail::<C>(entered, writer_, value, js_type, iter_i, iter_always_newline)
         }
 
         #[inline(never)]
@@ -5462,6 +5455,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_object_tail<const C: bool>(
             &mut self,
+            entered: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
@@ -5470,9 +5464,9 @@ pub mod formatter {
         ) -> JsResult<()> {
             if iter_i == 0 {
                 if value.is_class(self.global_this) {
-                    self.print_as::<C>(Tag::Class, writer_, value, js_type)?;
+                    self.dispatch::<C>(entered, Tag::Class, writer_, value, js_type)?;
                 } else if value.is_callable() {
-                    self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
+                    self.dispatch::<C>(entered, Tag::Function, writer_, value, js_type)?;
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");
@@ -5671,11 +5665,11 @@ pub mod formatter {
             value: JSValue,
             writer: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            self.stack_check.update();
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
-            let result = Tag::get(value, global)
+            let result = self
+                .tag_of_stand_in(value)
                 .and_then(|tag| self.format::<ENABLE_ANSI_COLORS>(tag, writer, value, global));
             self.remaining_values = bun_ptr::RawSlice::EMPTY;
             result
@@ -5889,14 +5883,13 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     Output::flush();
 
     // print the arguments
-    // `Formatter` has a `Drop` impl, so struct-update from a
-    // temporary is rejected (E0509). Construct via `new()` then mutate.
-    let mut fmt = Formatter::new(global);
-    fmt.max_depth = bun_options_types::context::try_get()
-        .and_then(|ctx| ctx.runtime_options.console_depth)
-        .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    fmt.stack_check = StackCheck::init();
-    fmt.can_throw_stack_overflow = true;
+    let mut fmt = Formatter::console(
+        global,
+        &FormatOptions {
+            max_depth: console_depth(),
+            ..Default::default()
+        },
+    );
     let console = vm_console(global);
     // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
     // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the

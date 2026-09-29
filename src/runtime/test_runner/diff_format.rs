@@ -2,10 +2,9 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{Formatter, JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
-use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
 /// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
@@ -23,30 +22,10 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
-        let fmt_options = FormatOptions {
-            enable_colors: false,
-            add_newline: false,
-            flush: false,
-            quote_strings: true,
-        };
         let mut received_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
-            MessageLevel::Debug,
-            global_this,
-            core::slice::from_ref(&received),
-            1,
-            &mut received_buf,
-            fmt_options,
-        )?;
+        Formatter::diff(global_this).format_value::<false>(received, &mut received_buf)?;
         let mut expected_buf: Vec<u8> = Vec::new();
-        JestPrettyFormat::format(
-            MessageLevel::Debug,
-            global_this,
-            core::slice::from_ref(&expected),
-            1,
-            &mut expected_buf,
-            fmt_options,
-        )?;
+        Formatter::diff(global_this).format_value::<false>(expected, &mut expected_buf)?;
         Ok(DiffFormatter {
             received_string: Cow::Owned(trim_one_newline(received_buf)),
             expected_string: Cow::Owned(trim_one_newline(expected_buf)),

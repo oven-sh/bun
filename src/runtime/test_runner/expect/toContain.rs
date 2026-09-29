@@ -110,8 +110,8 @@ impl Expect {
         // handle failure
         // Each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper,
         // so a second Formatter (cheap struct init, no shared state) satisfies borrowck.
-        let mut formatter = super::make_formatter(global);
-        let mut formatter2 = super::make_formatter(global);
+        let mut formatter = bun_jsc::Formatter::matcher_message(global);
+        let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
         if not {
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return throw!(

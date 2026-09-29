@@ -86,8 +86,8 @@ pub(crate) fn to_be_one_of(
     // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters
     // cannot alias the same backing formatter. Use a second formatter for the
     // second value (matches toBe.rs).
-    let mut formatter = super::make_formatter(global_this);
-    let mut formatter2 = super::make_formatter(global_this);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global_this);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global_this);
     if not {
         let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
         return throw!(

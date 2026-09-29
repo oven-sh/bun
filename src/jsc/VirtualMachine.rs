@@ -12,6 +12,7 @@ use bun_io as Async;
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
+use crate::console_object::formatter::Entered;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
@@ -5495,7 +5496,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
     ) {
-        let mut formatter = crate::console_object::Formatter::new(self.global());
+        let mut formatter = crate::console_object::Formatter::error_handler(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -5881,6 +5882,50 @@ impl VirtualMachine {
         &mut self,
         value: JSValue,
         exception: Option<&Exception>,
+        exception_list: Option<&mut ExceptionList>,
+        formatter: &mut crate::console_object::Formatter,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        allow_side_effects: bool,
+    ) {
+        if !is_error_instance(value) {
+            // The formatter guards any other value under its own tag.
+            return self.print_entered_errorlike_object(
+                None,
+                value,
+                exception,
+                exception_list,
+                formatter,
+                writer,
+                allow_ansi_color,
+                allow_side_effects,
+            );
+        }
+        formatter.with_error_entered(
+            writer,
+            value,
+            allow_ansi_color,
+            |formatter, entered, writer| {
+                self.print_entered_errorlike_object(
+                    Some(entered),
+                    value,
+                    exception,
+                    exception_list,
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+            },
+        );
+    }
+
+    /// `entered` is `None` only for a value that is not an `Error`.
+    pub(crate) fn print_entered_errorlike_object(
+        &mut self,
+        entered: Option<&Entered>,
+        value: JSValue,
+        exception: Option<&Exception>,
         mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
@@ -5908,6 +5953,7 @@ impl VirtualMachine {
                 formatter.depth.saturating_add(1) > formatter.error_chain_max_depth();
             if members_past_cap {
                 self.print_error_from_maybe_private_data(
+                    entered,
                     value,
                     exception_list.as_deref_mut(),
                     formatter,
@@ -5952,6 +5998,10 @@ impl VirtualMachine {
                 // SAFETY: `ctx.writer` borrows the caller's stack local,
                 // live across the synchronous `for_each` call.
                 let writer = unsafe { &mut *ctx.writer };
+                if formatter.is_on_path(next_value) {
+                    // The property dump of the error that holds it says so.
+                    return;
+                }
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
                 if formatter.depth > formatter.error_chain_max_depth()
@@ -6002,6 +6052,7 @@ impl VirtualMachine {
         }
 
         let was_internal = self.print_error_from_maybe_private_data(
+            entered,
             value,
             exception_list.as_deref_mut(),
             formatter,
@@ -6032,6 +6083,7 @@ impl VirtualMachine {
 
     fn print_error_from_maybe_private_data(
         &mut self,
+        entered: Option<&Entered>,
         value: JSValue,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
@@ -6094,6 +6146,7 @@ impl VirtualMachine {
         }
 
         if let Err(err) = self.print_error_instance_js(
+            entered,
             value,
             exception_list,
             formatter,
@@ -6619,7 +6672,7 @@ impl VirtualMachine {
         allow_side_effects: bool,
         allow_ansi_color: bool,
     ) -> crate::CrateResult<()> {
-        let mut default_formatter = crate::console_object::Formatter::new(self.global());
+        let mut default_formatter = crate::console_object::Formatter::error_handler(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_body(
             zig_exception,
@@ -6637,6 +6690,7 @@ impl VirtualMachine {
     /// [`Self::print_error_instance_body`].
     fn print_error_instance_js(
         &mut self,
+        entered: Option<&Entered>,
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
@@ -6644,6 +6698,27 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
+        if entered.is_none() && is_error_instance(error_instance) {
+            return formatter
+                .with_error_entered(
+                    writer,
+                    error_instance,
+                    allow_ansi_color,
+                    |formatter, entered, writer| {
+                        self.print_error_instance_js(
+                            Some(entered),
+                            error_instance,
+                            exception_list,
+                            formatter,
+                            writer,
+                            allow_ansi_color,
+                            allow_side_effects,
+                        )
+                    },
+                )
+                .unwrap_or(Ok(()));
+        }
+
         // Note: stack-safety guard for the Error recursion path.
         // `print_error_instance_body` dispatches on runtime bools, so it
         // carries the union of all
@@ -6670,10 +6745,7 @@ impl VirtualMachine {
             .stack_check
             .is_safe_to_recurse_with_extra(extra_headroom)
         {
-            formatter.failed = true;
-            if formatter.can_throw_stack_overflow {
-                let _ = self.global().throw_stack_overflow();
-            }
+            let _ = formatter.stack_overflow();
             return Ok(());
         }
 
@@ -6735,7 +6807,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{Tag, TagPayload};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7212,23 +7284,6 @@ impl VirtualMachine {
 
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
-            // Circular-ref guard for cause chains.
-            if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
-                formatter.map_node = Some(node);
-            }
-
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
-            }
-
             writer.write_all(b"\n")?;
             let prev_depth = formatter.depth;
             formatter.depth = formatter.depth.saturating_add(1);
@@ -7237,6 +7292,7 @@ impl VirtualMachine {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
             } else {
                 self.print_error_instance_js(
+                    None,
                     err,
                     exception_list.as_deref_mut(),
                     formatter,
@@ -7246,7 +7302,6 @@ impl VirtualMachine {
                 )
             };
             formatter.depth = prev_depth;
-            let _ = formatter.map.remove(&err);
             result?;
         }
 
@@ -7705,4 +7760,8 @@ impl Drop for ContextScope<'_> {
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }
     }
+}
+
+fn is_error_instance(value: JSValue) -> bool {
+    value.is_cell() && value.js_type() == crate::JSType::ErrorInstance
 }

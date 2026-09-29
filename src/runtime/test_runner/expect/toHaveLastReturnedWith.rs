@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
@@ -56,7 +55,7 @@ pub(crate) fn to_have_last_returned_with(
     }
 
     // Handle failure
-    let mut formatter = Formatter::new(global_this).with_quote_strings(true);
+    let mut formatter = Formatter::matcher_message(global_this);
 
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
@@ -101,8 +100,8 @@ pub(crate) fn to_have_last_returned_with(
 
     // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
     // the same backing formatter. Use a second formatter for the received value —
-    // `make_formatter` is a trivial struct init with no shared state between values.
-    let mut formatter2 = super::make_formatter(global_this);
+    // `Formatter::matcher_message` is a trivial struct init with no shared state between values.
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global_this);
     throw!(
         this,
         global_this,

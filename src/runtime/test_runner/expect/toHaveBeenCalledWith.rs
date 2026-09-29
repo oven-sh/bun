@@ -58,7 +58,7 @@ pub(crate) fn to_have_been_called_with(
     }
 
     // handle failure
-    let mut formatter = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
 
     let expected_args_js_array = JSValue::create_array_from_slice(global, arguments)?;
     expected_args_js_array.ensure_still_alive();
@@ -95,7 +95,7 @@ pub(crate) fn to_have_been_called_with(
     // If there are multiple calls, list them all to help debugging.
     // The AllCallsWithArgsFormatter holds an exclusive borrow of the formatter, so
     // we allocate a second ConsoleObject formatter for the list.
-    let mut list_fmt = super::make_formatter(global);
+    let mut list_fmt = bun_jsc::Formatter::matcher_message(global);
     let list_formatter = mock::AllCallsWithArgsFormatter {
         global_this: global,
         calls,

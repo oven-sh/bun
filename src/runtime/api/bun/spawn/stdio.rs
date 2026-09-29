@@ -450,7 +450,7 @@ impl Stdio {
             }
 
             if file_fd >= i32::MAX as _ {
-                let mut formatter = jsc::console_object::Formatter::new(cx.global());
+                let mut formatter = jsc::console_object::Formatter::message(cx.global());
                 // `defer formatter.deinit()` — handled by Drop.
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a valid integer, received: {}",

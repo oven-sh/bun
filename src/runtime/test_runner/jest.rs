@@ -727,7 +727,7 @@ pub(crate) fn format_label(
                         let owned_slice = value.to_utf8(global_this)?;
                         list.extend_from_slice(owned_slice.slice());
                     } else {
-                        let mut formatter = crate::test_runner::expect::make_formatter(global_this);
+                        let mut formatter = bun_jsc::Formatter::matcher_message(global_this);
                         // formatter cleanup handled by Drop.
                         formatter.format_value::<false>(value, &mut list)?;
                     }
@@ -803,7 +803,7 @@ pub(crate) fn format_label(
                     args_idx += 1;
                 }
                 b'p' => {
-                    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
+                    let mut formatter = bun_jsc::Formatter::matcher_message(global_this);
                     formatter.format_value::<false>(current_arg, &mut list)?;
                     idx += 1;
                     args_idx += 1;

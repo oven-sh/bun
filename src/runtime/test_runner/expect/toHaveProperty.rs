@@ -67,8 +67,8 @@ pub(crate) fn to_have_property(
     // handle failure
     // Each `to_fmt` takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
     // toInclude.rs / toStartWith.rs).
-    let mut formatter = super::make_formatter(global);
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
     // `defer formatter.deinit()` — handled by Drop.
     if not {
         if let Some(expected_property_value) = expected_property {

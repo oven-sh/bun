@@ -90,10 +90,10 @@ pub(crate) fn to_equal_ignoring_whitespace(
 
     // handle failure
     // `to_fmt` returns a `ZigFormatter<'a, 'b>` that mutably borrows the
-    // backing formatter. Use a second formatter for the received value — `make_formatter` is
+    // backing formatter. Use a second formatter for the received value — `Formatter::matcher_message` is
     // cheap (no alloc) and this matches sibling matchers (toContainEqual, toBeCloseTo).
-    let mut formatter = super::make_formatter(global);
-    let mut formatter2 = super::make_formatter(global);
+    let mut formatter = bun_jsc::Formatter::matcher_message(global);
+    let mut formatter2 = bun_jsc::Formatter::matcher_message(global);
     // `defer formatter.deinit()` deleted — Drop handles it.
     let expected_fmt = expected.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);

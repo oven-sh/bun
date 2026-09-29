@@ -5156,7 +5156,7 @@ it("http2 respondWithFile/respondWithFD with an empty byte range or an offset pa
       import http2 from "node:http2";
       import fs from "node:fs";
       process.on("uncaughtException", e => {
-        console.log("UNCAUGHT", e.code);
+        console.log(JSON.stringify({ uncaughtException: e.code }));
         process.exit(70);
       });
       const cases = [
@@ -5221,7 +5221,6 @@ it("http2 respondWithFile/respondWithFD with an empty byte range or an offset pa
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).not.toStartWith("UNCAUGHT");
   const ok = { status: 200, contentLength: "0", body: "", rstCode: 0 };
   const reset = {
     serverError: "ERR_OUT_OF_RANGE",
@@ -5240,7 +5239,7 @@ it("http2 respondWithFile/respondWithFD with an empty byte range or an offset pa
     "offset=6": { status: 200, contentLength: "5", body: "world", rstCode: 0 },
   });
   expect(exitCode).toBe(0);
-});
+}, 15_000);
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

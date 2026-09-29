@@ -1,0 +1,125 @@
+cells: 112, changed: 6
+same    | bun.lock | root | install (in sync) | short
+same    | bun.lock | root | install (in sync) | some-other-package
+same    | bun.lock | root | add kept@^1.0.0 | short
+same    | bun.lock | root | add kept@^1.0.0 | some-other-package
+same    | bun.lock | root | add extra | short
+same    | bun.lock | root | add extra | some-other-package
+same    | bun.lock | root | update | short
+same    | bun.lock | root | update | some-other-package
+same    | bun.lock | workspace | install (in sync) | short
+same    | bun.lock | workspace | install (in sync) | some-other-package
+same    | bun.lock | workspace | add kept@^1.0.0 | short
+same    | bun.lock | workspace | add kept@^1.0.0 | some-other-package
+same    | bun.lock | workspace | add extra | short
+same    | bun.lock | workspace | add extra | some-other-package
+same    | bun.lock | workspace | update | short
+same    | bun.lock | workspace | update | some-other-package
+same    | bun.lock | transitive | install (in sync) | short
+same    | bun.lock | transitive | install (in sync) | some-other-package
+same    | bun.lock | transitive | add kept@^1.0.0 | short
+same    | bun.lock | transitive | add kept@^1.0.0 | some-other-package
+same    | bun.lock | transitive | add extra | short
+same    | bun.lock | transitive | add extra | some-other-package
+same    | bun.lock | transitive | update | short
+same    | bun.lock | transitive | update | some-other-package
+same    | bun.lock | scoped-override | install (in sync) | short
+same    | bun.lock | scoped-override | install (in sync) | some-other-package
+same    | bun.lock | scoped-override | add kept@^1.0.0 | short
+same    | bun.lock | scoped-override | add kept@^1.0.0 | some-other-package
+same    | bun.lock | scoped-override | add extra | short
+same    | bun.lock | scoped-override | add extra | some-other-package
+same    | bun.lock | scoped-override | update | short
+same    | bun.lock | scoped-override | update | some-other-package
+same    | bun.lockb | root | install (in sync) | short
+same    | bun.lockb | root | install (in sync) | some-other-package
+same    | bun.lockb | root | add kept@^1.0.0 | short
+same    | bun.lockb | root | add kept@^1.0.0 | some-other-package
+same    | bun.lockb | root | add extra | short
+same    | bun.lockb | root | add extra | some-other-package
+same    | bun.lockb | root | update | short
+same    | bun.lockb | root | update | some-other-package
+same    | bun.lockb | workspace | install (in sync) | short
+same    | bun.lockb | workspace | install (in sync) | some-other-package
+same    | bun.lockb | workspace | add kept@^1.0.0 | short
+same    | bun.lockb | workspace | add kept@^1.0.0 | some-other-package
+same    | bun.lockb | workspace | add extra | short
+same    | bun.lockb | workspace | add extra | some-other-package
+same    | bun.lockb | workspace | update | short
+same    | bun.lockb | workspace | update | some-other-package
+same    | bun.lockb | transitive | install (in sync) | short
+same    | bun.lockb | transitive | install (in sync) | some-other-package
+same    | bun.lockb | transitive | add kept@^1.0.0 | short
+same    | bun.lockb | transitive | add kept@^1.0.0 | some-other-package
+same    | bun.lockb | transitive | add extra | short
+same    | bun.lockb | transitive | add extra | some-other-package
+same    | bun.lockb | transitive | update | short
+same    | bun.lockb | transitive | update | some-other-package
+same    | bun.lockb | scoped-override | install (in sync) | short
+same    | bun.lockb | scoped-override | install (in sync) | some-other-package
+CHANGED | bun.lockb | scoped-override | add kept@^1.0.0 | short
+   base: {"exit":0,"requests":["/short"],"rows":{"kept":"short@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/kept"],"rows":{"kept":"kept@1.0.0","parent":"parent@1.0.0","parent/kept":"short@1.0.0"},"errors":[]}
+CHANGED | bun.lockb | scoped-override | add kept@^1.0.0 | some-other-package
+   base: {"exit":0,"requests":["/some-other-package"],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/kept"],"rows":{"kept":"kept@1.0.0","parent":"parent@1.0.0","parent/kept":"some-other-package@1.0.0"},"errors":[]}
+CHANGED | bun.lockb | scoped-override | add extra | short
+   base: {"exit":0,"requests":["/extra","/short"],"rows":{"extra":"extra@1.0.0","kept":"short@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/extra","/kept"],"rows":{"extra":"extra@1.0.0","kept":"kept@1.0.0","parent":"parent@1.0.0","parent/kept":"short@1.0.0"},"errors":[]}
+CHANGED | bun.lockb | scoped-override | add extra | some-other-package
+   base: {"exit":0,"requests":["/extra","/some-other-package"],"rows":{"extra":"extra@1.0.0","kept":"some-other-package@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/extra","/kept"],"rows":{"extra":"extra@1.0.0","kept":"kept@1.0.0","parent":"parent@1.0.0","parent/kept":"some-other-package@1.0.0"},"errors":[]}
+same    | bun.lockb | scoped-override | update | short
+same    | bun.lockb | scoped-override | update | some-other-package
+same    | package-lock.json | root | install (in sync) | short
+same    | package-lock.json | root | install (in sync) | some-other-package
+same    | package-lock.json | root | add kept@^1.0.0 | short
+same    | package-lock.json | root | add kept@^1.0.0 | some-other-package
+same    | package-lock.json | root | add extra | short
+same    | package-lock.json | root | add extra | some-other-package
+same    | package-lock.json | root | update | short
+same    | package-lock.json | root | update | some-other-package
+same    | package-lock.json | workspace | install (in sync) | short
+same    | package-lock.json | workspace | install (in sync) | some-other-package
+same    | package-lock.json | workspace | add kept@^1.0.0 | short
+same    | package-lock.json | workspace | add kept@^1.0.0 | some-other-package
+same    | package-lock.json | workspace | add extra | short
+same    | package-lock.json | workspace | add extra | some-other-package
+same    | package-lock.json | workspace | update | short
+same    | package-lock.json | workspace | update | some-other-package
+same    | package-lock.json | transitive | install (in sync) | short
+same    | package-lock.json | transitive | install (in sync) | some-other-package
+same    | package-lock.json | transitive | add kept@^1.0.0 | short
+same    | package-lock.json | transitive | add kept@^1.0.0 | some-other-package
+same    | package-lock.json | transitive | add extra | short
+same    | package-lock.json | transitive | add extra | some-other-package
+same    | package-lock.json | transitive | update | short
+same    | package-lock.json | transitive | update | some-other-package
+same    | yarn.lock | root | install (in sync) | short
+same    | yarn.lock | root | install (in sync) | some-other-package
+same    | yarn.lock | root | add kept@^1.0.0 | short
+same    | yarn.lock | root | add kept@^1.0.0 | some-other-package
+same    | yarn.lock | root | add extra | short
+same    | yarn.lock | root | add extra | some-other-package
+same    | yarn.lock | root | update | short
+same    | yarn.lock | root | update | some-other-package
+same    | yarn.lock | workspace | install (in sync) | short
+same    | yarn.lock | workspace | install (in sync) | some-other-package
+same    | yarn.lock | workspace | add kept@^1.0.0 | short
+same    | yarn.lock | workspace | add kept@^1.0.0 | some-other-package
+same    | yarn.lock | workspace | add extra | short
+same    | yarn.lock | workspace | add extra | some-other-package
+same    | yarn.lock | workspace | update | short
+same    | yarn.lock | workspace | update | some-other-package
+same    | yarn.lock | transitive | install (in sync) | short
+same    | yarn.lock | transitive | install (in sync) | some-other-package
+same    | yarn.lock | transitive | add kept@^1.0.0 | short
+CHANGED | yarn.lock | transitive | add kept@^1.0.0 | some-other-package
+   base: {"exit":1,"requests":["/alias-some-other-p","/has-alias-some-other-package","/some-other-package"],"rows":{},"errors":["error: GET <registry>/alias-some-other-p - 404"]}
+   pr:   {"exit":0,"requests":["/has-alias-some-other-package","/some-other-package"],"rows":{"has-alias-some-other-package":"has-alias-some-other-package@1.0.0","kept":"some-other-package@1.0.0","has-alias-some-other-package/kept":"some-other-package@1.0.0"},"errors":[]}
+same    | yarn.lock | transitive | add extra | short
+CHANGED | yarn.lock | transitive | add extra | some-other-package
+   base: {"exit":1,"requests":["/alias-some-other-p","/extra","/has-alias-some-other-package","/some-other-package"],"rows":{},"errors":["error: GET <registry>/alias-some-other-p - 404","error: kept@^1.0.0 failed to resolve"]}
+   pr:   {"exit":0,"requests":["/extra","/has-alias-some-other-package","/some-other-package"],"rows":{"extra":"extra@1.0.0","has-alias-some-other-package":"has-alias-some-other-package@1.0.0","kept":"some-other-package@1.0.0","has-alias-some-other-package/kept":"some-other-package@1.0.0"},"errors":[]}
+same    | yarn.lock | transitive | update | short
+same    | yarn.lock | transitive | update | some-other-package

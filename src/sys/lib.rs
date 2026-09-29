@@ -93,6 +93,9 @@ pub mod copy_file;
 // Directory-entry kind — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
 
+#[cfg(unix)]
+pub mod dirent;
+
 // `bun.DirIterator`.
 //
 // A readdir-style directory iterator. Notable behaviors:
@@ -146,9 +149,11 @@ pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64)
 }
 
 pub mod dir_iterator {
-    use super::{EntryKind, Fd, Result};
     #[cfg(not(target_os = "macos"))]
-    use super::{Error, Tag};
+    use super::Error;
+    #[cfg(unix)]
+    use super::dirent;
+    use super::{EntryKind, Fd, Result, Tag};
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
@@ -202,9 +207,8 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline]
         fn borrow(s: &[u8]) -> Name {
-            // SAFETY: `s` is a slice into a kernel-written dirent record; the
-            // byte at `s.as_ptr().add(s.len())` is the in-record NUL terminator
-            // and lies within the same `reclen`-sized allocation.
+            // SAFETY: `s` is the name of a `dirent::Entry`: the byte at
+            // `s.as_ptr().add(s.len())` is its NUL, inside the same record.
             debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
             Name {
                 ptr: core::ptr::NonNull::from(s).cast(),
@@ -253,7 +257,7 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline]
         pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
+            // SAFETY: `ptr[len] == 0` (`dirent::parse` checked it); see
             // `borrow()` debug_assert.
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
         }
@@ -314,6 +318,23 @@ pub mod dir_iterator {
         }
     }
 
+    /// The record at `index` of the `end_index` bytes that the last refill reported.
+    #[cfg(unix)]
+    #[inline]
+    fn record_at(
+        buf: &AlignedBuf,
+        index: usize,
+        end_index: usize,
+        syscall: Tag,
+    ) -> Result<dirent::Record<'_>> {
+        if end_index > BUF_SIZE {
+            return Err(dirent::malformed(syscall));
+        }
+        // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
+        let filled = unsafe { buf.filled(end_index) };
+        dirent::parse::<dirent::Native>(filled, index).ok_or_else(|| dirent::malformed(syscall))
+    }
+
     // ── Linux / Android ──────────────────────────────────────────────────
     // Same `getdents64(2)` walk for both — Android is the same kernel, and
     // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
@@ -354,32 +375,13 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
-                //                         u8 d_type; char d_name[]; }
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; `base < end_index` and
-                // each record fits entirely in `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let d_type = buf[base + 18];
-                self.index = base + reclen;
-
-                // d_name is NUL-terminated within the record. Use a SIMD-vectorized
-                // scan for the terminator; a scalar
-                // byte loop here showed up in startup profiles on large directories.
-                let name_field = &buf[base + 19..base + reclen];
-                let nul = bun_core::strings::index_of_char_usize(name_field, 0)
-                    .unwrap_or(name_field.len());
-                let name = &name_field[..nul];
-
-                // skip . and .. entries
-                if name == b"." || name == b".." {
-                    continue;
-                }
+                let record = record_at(&self.buf, self.index, self.end_index, Tag::getdents64)?;
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
+                    name: Name::borrow(entry.name),
+                    kind: kind_from_dt(entry.d_type),
                 }));
             }
         }
@@ -451,33 +453,14 @@ pub mod dir_iterator {
                     let flag = u32::from_ne_bytes(flag);
                     self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
                 }
-                // Darwin `struct dirent` (64-bit ino):
-                //   u64 d_ino; u64 d_seekoff; u16 d_reclen; u16 d_namlen;
-                //   u8 d_type; char d_name[];
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; each record fits in
-                // `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let d_ino = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let namlen = u16::from_ne_bytes([buf[base + 18], buf[base + 19]]) as usize;
-                let d_type = buf[base + 20];
-                self.index = base + reclen;
-
-                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
-                let name = &buf[base + 21..base + 21 + namlen];
-
-                if name == b"." || name == b".." || d_ino == 0 {
-                    continue;
-                }
+                let record =
+                    record_at(&self.buf, self.index, self.end_index, Tag::getdirentries64)?;
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
+                    name: Name::borrow(entry.name),
+                    kind: kind_from_dt(entry.d_type),
                 }));
             }
         }
@@ -523,33 +506,13 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // FreeBSD 12+ `struct dirent` (ino64):
-                //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
-                //   u16 d_namlen; u16 pad1; char d_name[];
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; each record fits in
-                // `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let fileno = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let d_type = buf[base + 18];
-                let namlen = u16::from_ne_bytes([buf[base + 20], buf[base + 21]]) as usize;
-                self.index = base + reclen;
-
-                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
-                let name = &buf[base + 24..base + 24 + namlen];
-
-                if name == b"." || name == b".." || fileno == 0 {
-                    continue;
-                }
+                let record = record_at(&self.buf, self.index, self.end_index, Tag::getdents64)?;
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
+                    name: Name::borrow(entry.name),
+                    kind: kind_from_dt(entry.d_type),
                 }));
             }
         }

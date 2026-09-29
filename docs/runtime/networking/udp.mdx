@@ -51,6 +51,10 @@ const client = await Bun.udpSocket({});
 client.send("Hello!", server.port, "127.0.0.1");
 ```
 
+Bun reads at most 32 datagrams from a socket in one iteration of the event loop, as Node.js does. The operating system holds the rest in the receive buffer of the socket, and Bun reads them in the next iterations. Timers and other sockets keep running when a peer sends without pause.
+
+When the receive buffer is full, the operating system drops new datagrams and does not tell Bun. To keep up with a fast sender, keep the `data` callback short and move long work to a [`Worker`](/runtime/workers).
+
 ### Connections
 
 UDP has no concept of a connection, but many UDP exchanges (especially as a client) involve only one peer.

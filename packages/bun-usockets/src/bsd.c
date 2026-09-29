@@ -148,7 +148,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
     if (max_packets > LIBUS_UDP_RECV_COUNT) max_packets = LIBUS_UDP_RECV_COUNT;
 #if defined(_WIN32)
-    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+    for (int i = 0; i < max_packets; i++) {
         while (1) {
             socklen_t addr_len = sizeof(struct sockaddr_storage);
             ssize_t ret = recvfrom(fd, recvbuf->buf + (size_t) i * LIBUS_UDP_MAX_SIZE,
@@ -169,7 +169,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
             break;
         }
     }
-    return LIBUS_UDP_RECV_COUNT;
+    return max_packets;
 #elif defined(__APPLE__)
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {

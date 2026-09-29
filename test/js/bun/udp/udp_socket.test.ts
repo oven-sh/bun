@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
   isIPv6,
@@ -14,6 +15,8 @@ import {
 import { closeSync, openSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
+
+const recvBudgetFixture = path.join(import.meta.dir, "udp-recv-budget-fixture.ts");
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(
@@ -673,6 +676,28 @@ describe("udpSocket()", () => {
     expect(exitCode).toBe(0);
   });
 
+  // One readable event hands over at most 32 datagrams, the count libuv uses,
+  // and the rest waits in the kernel for the next iteration of the event loop.
+  // Without a bound a peer that keeps the queue non-empty keeps the loop inside
+  // that one event, and no timer, immediate or other socket runs. Each scenario
+  // of the fixture queues its backlog before the loop polls and reports the
+  // datagrams of every iteration.
+  describe.concurrent("a readable event hands over at most 32 datagrams", () => {
+    test("of a backlog of 100", async () => {
+      const result = await bunRun([recvBudgetFixture, "backlog"]);
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toMatchObject({ finished: true, total: 100, max: 32 });
+    });
+
+    // The first batch of the event is short, so the last one has to ask for
+    // what is left of the 32 and not for a full batch.
+    test("when the data handler queues more on its own socket", async () => {
+      const result = await bunRun([recvBudgetFixture, "refill"]);
+      expect(result).toSpawn();
+      expect(JSON.parse(result.stdout)).toMatchObject({ finished: true, total: 107, max: 32 });
+    });
+  });
+
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can
   // connect or disconnect the socket; sendMany must snapshot the connection
@@ -803,27 +828,6 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
     server.close();
   }
 });
-
-// The recv dispatch used to loop until EAGAIN, so a peer sending at or above
-// our drain rate kept the kernel queue non-empty and starved the entire event
-// loop (no timers, no other sockets). It is now bounded per dispatch like
-// libuv (32 datagrams); leftover data redelivers on the next tick.
-test("sustained inbound flood must not starve the event loop", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "udp-flood-starvation-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const stderr = rawStderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderr).toBe("");
-  expect(stdout).toMatch(/interval fired \d+ times during 2s of flood/);
-  expect(exitCode).toBe(0);
-}, 30_000);
 
 test("udpSocket({ hostname }) does not leak the hostname", async () => {
   const code = /* js */ `

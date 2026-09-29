@@ -310,3 +310,48 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// The endpoint's socket is a UDP socket of the loop like any other: one readable
+// event hands over at most 32 packets, and the rest waits for the next
+// iteration. Without a bound a transfer holds the loop for as long as the
+// packets of the peer keep the socket non-empty. The fixture receives the body
+// and stalls once, so that an iteration starts with a backlog.
+describe("a readable event of the endpoint's socket", () => {
+  test("hands over at most 32 packets", async () => {
+    const port = Promise.withResolvers<number>();
+    let report = Promise.withResolvers<{ max: number; stalled: boolean; packets: number }>();
+    await using receiver = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "quic-recv-budget-fixture.ts")],
+      env: bunEnv,
+      stderr: "pipe",
+      ipc(message: { port: number } | { max: number; stalled: boolean; packets: number }) {
+        if ("port" in message) port.resolve(message.port);
+        else report.resolve(message);
+      },
+    });
+    const died = receiver.exited.then(async code => {
+      throw new Error(`fixture exited with code ${code} before reporting:\n${await receiver.stderr.text()}`);
+    });
+    died.catch(() => {});
+
+    const client = await connect(`127.0.0.1:${await Promise.race([port.promise, died])}`, {
+      alpn: "quic-test",
+      verifyPeer: "manual",
+    });
+    client.closed.catch(() => {});
+    await client.opened;
+
+    // A body whose backlog never got to 32 packets says nothing about the
+    // bound, so it is sent again.
+    let run = { max: 0, stalled: false, packets: 0 };
+    for (let attempt = 0; attempt < 5 && run.max < 32; attempt++) {
+      report = Promise.withResolvers();
+      const stream = await client.createBidirectionalStream({ body: Buffer.alloc(1024 * 1024, "busy") });
+      stream.closed.catch(() => {});
+      run = await Promise.race([report.promise, died]);
+    }
+    client.destroy();
+
+    expect(run).toMatchObject({ stalled: true, max: 32 });
+  }, 30_000);
+});

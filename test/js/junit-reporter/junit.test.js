@@ -749,6 +749,32 @@ describe("junit reporter", () => {
     expect(await file(realPath).text()).toContain("</testsuites>");
     expect(exitCode).toBe(0);
   });
+
+  // The temp file name does not grow with the report name, so a name near NAME_MAX (255) still works.
+  it.skipIf(isWindows)("writes a report whose file name is close to NAME_MAX", async () => {
+    await using tmpDir = tempDir("junit-long-name", {
+      "package.json": "{}",
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        test("passes", () => {
+          expect(1).toBe(1);
+        });
+      `,
+    });
+    const junitPath = join(tmpDir, Buffer.alloc(247, "a").toString() + ".xml");
+
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("Failed to write JUnit report to");
+    expect(await file(junitPath).text()).toContain("</testsuites>");
+    expect(exitCode).toBe(0);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

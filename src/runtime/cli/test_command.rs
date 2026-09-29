@@ -920,8 +920,10 @@ impl JunitReporter {
 
         let mut rand = [0u8; 8];
         bun_boringssl_sys::rand_bytes(&mut rand);
-        let mut tmp: Vec<u8> = path.to_vec();
-        let _ = write!(&mut tmp, ".{}.tmp", bun_core::fmt::hex_lower(&rand));
+        // Same directory as `path`, with a short name of its own.
+        let dir_prefix = &path[..path.len() - bun_paths::basename(path).len()];
+        let mut tmp: Vec<u8> = dir_prefix.to_vec();
+        let _ = write!(&mut tmp, ".junit-{}.tmp", bun_core::fmt::hex_lower(&rand));
         let tmp = bun_core::ZBox::from_vec(tmp);
         // `make_open` creates a missing parent directory, as jest-junit does.
         // `O_EXCL`: the temp name is ours alone; nothing already there is opened.

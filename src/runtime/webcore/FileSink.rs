@@ -426,8 +426,9 @@ impl FileSink {
                 FileSink::run_pending(this);
             }
 
-            if resumes {
-                FileSink::resume_source(this);
+            if resumes && (*this).source_pending_pull.replace(false) {
+                let mut src = *(*this).source.get();
+                src.ready(None, None);
             }
 
             // `end()`'s Pending flush branch leaves the writer running; finish the
@@ -489,24 +490,6 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
-        // SAFETY: caller contract, forwarded.
-        unsafe { FileSink::resume_source(this) };
-    }
-
-    /// The microtask checkpoint a writer callback owes while a stream is piped in: the pump
-    /// and the pipe's promise run JS that no frame waits on when the event loop made the call.
-    fn completion_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
-        self.pipe.get().cell()?;
-        Some(self.event_loop().entered())
-    }
-
-    /// Resume the source that a backpressured write parked.
-    ///
-    /// # Safety
-    /// `this` must be the canonical live `*mut FileSink` (see
-    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). The source can end the
-    /// sink: it may be freed on return unless the caller holds a ref.
-    unsafe fn resume_source(this: *mut FileSink) {
         // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
         unsafe {
             if (*this).source_pending_pull.replace(false) {
@@ -514,6 +497,12 @@ impl FileSink {
                 src.ready(None, None);
             }
         }
+    }
+
+    /// Microtask checkpoint owed for the JS a writer callback enters while a stream is piped in.
+    fn completion_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
+        self.pipe.get().cell()?;
+        Some(self.event_loop().entered())
     }
 
     /// This sink opened its file itself, for the script that is running: if that is a
@@ -980,7 +969,10 @@ impl FileSink {
                         (*this).update_ref(false);
                         (*this).run_pending_later();
                         // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
-                        FileSink::resume_source(this);
+                        if (*this).source_pending_pull.replace(false) {
+                            let mut src = *(*this).source.get();
+                            src.ready(None, None);
+                        }
                     }
                 }
                 _ => {

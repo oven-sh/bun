@@ -786,8 +786,14 @@ mod c {
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
         pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
-        pub(super) safe fn uws_h3_req_get_routed_url(req: &mut Request, out: &mut *const u8) -> usize;
-        pub(super) safe fn uws_h3_req_get_raw_query(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) safe fn uws_h3_req_get_routed_url(
+            req: &mut Request,
+            out: &mut *const u8,
+        ) -> usize;
+        pub(super) safe fn uws_h3_req_get_raw_query(
+            req: &mut Request,
+            out: &mut *const u8,
+        ) -> usize;
         pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
         pub(super) fn uws_h3_req_get_header(
             req: *mut Request,

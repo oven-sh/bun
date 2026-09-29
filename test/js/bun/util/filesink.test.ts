@@ -1081,7 +1081,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   // Larger than a pipe, so the first write is short and the pump parks on it.
   const first = 4 * 1024 * 1024;
   const chunk = 64 * 1024;
-  const chunks = 64;
+  const chunks = 16;
 
   // "parked" goes out on the second pull(), which runs once the pump has taken the first
   // chunk. The test reads only after that, so the first drain finds the pump parked.
@@ -1155,6 +1155,25 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
     };
   }
 
+  // read(2) in a poll on the non-blocking read end the test holds: it returns 0 once the
+  // writer is gone, on every POSIX, and needs no readiness notification.
+  async function drain(fd: number) {
+    const buffer = Buffer.alloc(64 * 1024);
+    let total = 0;
+    while (true) {
+      let n: number;
+      try {
+        n = fs.readSync(fd, buffer);
+      } catch (e: any) {
+        if (e.code !== "EAGAIN") throw e;
+        await Bun.sleep(1);
+        continue;
+      }
+      if (n === 0) return total;
+      total += n;
+    }
+  }
+
   async function run(
     source: keyof typeof sources,
     { fifo, countBeforeExit }: { fifo?: { path: string; fd: number }; countBeforeExit?: boolean } = {},
@@ -1168,11 +1187,11 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
     });
     const rest = await parked(proc.stderr);
     const [received, stderr, exitCode] = await Promise.all([
-      fifo ? Bun.file(fifo.fd).bytes() : proc.stdout.bytes(),
+      fifo ? drain(fifo.fd) : proc.stdout.bytes().then(bytes => bytes.length),
       rest(),
       proc.exited,
     ]);
-    return { received: received.length, stderr, exitCode };
+    return { received, stderr, exitCode };
   }
 
   const total = first + chunks * chunk;

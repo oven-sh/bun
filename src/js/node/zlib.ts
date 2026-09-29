@@ -702,7 +702,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
+function createConvenienceMethod(ctor, sync, methodName, prepareOpts?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -715,30 +715,40 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
         callback = opts;
         opts = {};
       }
-      // For zstd compression, we need to set pledgedSrcSize to the buffer size
-      // so that the content size is included in the frame header
-      if (isZstd) {
-        // Calculate buffer size
-        let bufferSize;
-        if (typeof buffer === "string") {
-          bufferSize = Buffer.byteLength(buffer);
-        } else if (isArrayBufferView(buffer)) {
-          bufferSize = buffer.byteLength;
-        } else if (isAnyArrayBuffer(buffer)) {
-          bufferSize = buffer.byteLength;
-        } else {
-          bufferSize = 0;
-        }
-        // Set pledgedSrcSize if not already set
-        if (!opts?.pledgedSrcSize && bufferSize > 0) {
-          opts = { ...opts, pledgedSrcSize: bufferSize };
-        }
+      if (prepareOpts !== undefined) {
+        opts = prepareOpts(buffer, opts);
       }
       return zlibBuffer(new ctor(opts), buffer, callback);
     };
     ObjectDefineProperty(fn, "name", { value: methodName });
     return fn;
   }
+}
+
+// zstdCompress() writes the input and ends the frame in separate calls, so
+// unlike zstdCompressSync() zstd cannot infer the input size: the frame header
+// gets no content size, and zstd sizes its tables for an unbounded stream.
+// Pledge the size, which is known up front.
+function withPledgedSrcSize(buffer, opts) {
+  if (opts?.pledgedSrcSize !== undefined) {
+    return opts;
+  }
+  let pledgedSrcSize;
+  if (typeof buffer === "string") {
+    // The stream encodes strings with defaultEncoding, so only a UTF-8 length
+    // is known to match what gets written.
+    const encoding = opts?.defaultEncoding;
+    if (encoding != null && encoding !== "utf8" && encoding !== "utf-8") {
+      return opts;
+    }
+    pledgedSrcSize = Buffer.byteLength(buffer);
+  } else if (isArrayBufferView(buffer) || isAnyArrayBuffer(buffer)) {
+    pledgedSrcSize = buffer.byteLength;
+  } else {
+    // Leave invalid input to the existing validation.
+    return opts;
+  }
+  return { __proto__: null, ...opts, pledgedSrcSize };
 }
 
 const kMaxBrotliParam = 9;
@@ -916,7 +926,7 @@ const zlib = {
   brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
   brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
   brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
-  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
+  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", withPledgedSrcSize),
   zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
   zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
   zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),

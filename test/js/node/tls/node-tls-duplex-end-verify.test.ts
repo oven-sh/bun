@@ -586,7 +586,9 @@ test("a bad record behind the client's Finished does not make a server accept an
 // The loop does not read every socket of a burst in the same turn. Here the last flight of each client, its data and
 // its FIN wait at a server socket that called end(), before the loop reads that socket.
 test("in a burst, every server socket that end()ed reads the last flight and the data of its client", async () => {
-  const connections = 16;
+  // Bun's loop reads 5 handshaking TLS sockets per turn (MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in
+  // packages/bun-usockets/src/loop.c): three turns read 5 sockets each, and a fourth reads the last one.
+  const connections = 3 * 5 + 1;
   const payload = Buffer.alloc(4096, "x");
   const seen = { secureConnection: 0, bytes: 0 };
   const accepted = [];

@@ -45,9 +45,11 @@ class ReadableFromWeb extends Readable {
   #reader;
   #closed;
   #stream;
+  // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
+  #responseBody;
 
   constructor(options, stream) {
-    const { objectMode, highWaterMark, encoding, signal } = options;
+    const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
     super({
       objectMode,
       highWaterMark,
@@ -57,6 +59,12 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#responseBody = responseBody;
+  }
+
+  // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
+  #takenByResponse(stream) {
+    return this.#responseBody && stream.locked;
   }
 
   #handleDone(reader) {
@@ -81,11 +89,17 @@ class ReadableFromWeb extends Readable {
   // source to "closed" before the consumer can abort, and cancel() on a closed
   // stream is a spec no-op, so the source's cancel hook would never run.
   _read() {
-    $debug("ReadableFromWeb _read()", this.__id);
+    $debug("ReadableFromWeb _read()");
     if (this.#closed) return;
     var reader = this.#reader;
     var stream = this.#stream;
     if (stream) {
+      if (this.#takenByResponse(stream)) {
+        this.#stream = undefined;
+        this.#closed = true;
+        this.push(null);
+        return;
+      }
       reader = this.#reader = stream.getReader();
       this.#stream = undefined;
     }
@@ -119,12 +133,14 @@ class ReadableFromWeb extends Readable {
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
-        PromisePrototypeThen.$call(
-          stream.cancel(error),
-          () => callback(error),
-          cancelError => callback(error ?? cancelError),
-        );
-        return;
+        if (!this.#takenByResponse(stream)) {
+          PromisePrototypeThen.$call(
+            stream.cancel(error),
+            () => callback(error),
+            cancelError => callback(error ?? cancelError),
+          );
+          return;
+        }
       }
     }
     try {
@@ -138,7 +154,7 @@ class ReadableFromWeb extends Readable {
 const encoder = new TextEncoder();
 
 // Collect all negative (error) ZLIB codes and Z_NEED_DICT
-const ZLIB_FAILURES: Set<string> = new SafeSet([
+const ZLIB_FAILURES: Set<string | undefined> = new SafeSet([
   ...ArrayPrototypeFilter.$call(
     ArrayPrototypeMap.$call(ObjectEntries(constants_zlib), ({ 0: code, 1: value }) => (value < 0 ? code : null)),
     Boolean,
@@ -450,6 +466,14 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
 
 const kErrorSentinelAttached = Symbol("kErrorSentinelAttached");
 
+interface StreamReadableUnderlyingSource {
+  __proto__?: null;
+  type: "bytes" | undefined;
+  start(c: ReadableStreamDefaultController | ReadableByteStreamController): void;
+  cancel(reason: unknown): void;
+  pull?(): void;
+}
+
 function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObject) {
   // Not using the internal/streams/utils isReadableNodeStream utility
   // here because it will return false if streamReadable is a Duplex
@@ -469,7 +493,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   let wasCanceled = false;
   let strategy;
 
-  const underlyingSource = {
+  const underlyingSource: StreamReadableUnderlyingSource = {
     __proto__: null,
     type: isBYOB ? "bytes" : undefined,
     start(c) {
@@ -544,7 +568,18 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   return readableStream;
 }
 
-function newStreamReadableFromReadableStream(readableStream, options: Record<string, unknown> = kEmptyObject) {
+interface StreamReadableFromReadableStreamOptions {
+  highWaterMark?: number;
+  encoding?: string;
+  objectMode?: boolean;
+  signal?: AbortSignal;
+  responseBody?: boolean;
+}
+
+function newStreamReadableFromReadableStream(
+  readableStream,
+  options: StreamReadableFromReadableStreamOptions = kEmptyObject,
+) {
   if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
   }
@@ -555,6 +590,9 @@ function newStreamReadableFromReadableStream(readableStream, options: Record<str
   if (encoding !== undefined && !Buffer.isEncoding(encoding))
     throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
   validateBoolean(objectMode, "options.objectMode");
+
+  // Node acquires the reader at this point, so a locked stream throws here too.
+  if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
 
   const nativeStream = tryTransferToNativeReadable(readableStream, options);
 

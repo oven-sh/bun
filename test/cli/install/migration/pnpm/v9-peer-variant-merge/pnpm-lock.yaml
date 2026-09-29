@@ -1,0 +1,43 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      has-peer:
+        specifier: file:vendor/has-peer
+        version: file:vendor/has-peer
+
+  packages/with:
+    dependencies:
+      has-peer:
+        specifier: file:../../vendor/has-peer
+        version: file:vendor/has-peer(peer@file:vendor/peer)
+      peer:
+        specifier: file:../../vendor/peer
+        version: file:vendor/peer
+
+packages:
+
+  has-peer@file:vendor/has-peer:
+    resolution: {directory: vendor/has-peer, type: directory}
+    version: 1.0.0
+    peerDependencies:
+      peer: '*'
+
+  peer@file:vendor/peer:
+    resolution: {directory: vendor/peer, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  has-peer@file:vendor/has-peer: {}
+
+  has-peer@file:vendor/has-peer(peer@file:vendor/peer):
+    dependencies:
+      peer: file:vendor/peer
+
+  peer@file:vendor/peer: {}

@@ -29,7 +29,7 @@ declare module "*.json5" {
 }
 
 declare module "*.xml" {
-  var contents: any;
+  var contents: import("bun").XML.Document;
   export = contents;
 }
 

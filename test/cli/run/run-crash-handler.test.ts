@@ -398,6 +398,75 @@ int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
   });
 });
 
+// JSC turns an out-of-bounds WebAssembly access into a RuntimeError in its
+// SIGSEGV/SIGBUS handler. On a thread that has an alternate signal stack, that
+// handler runs on it.
+describe("an out-of-bounds WebAssembly access throws", () => {
+  const fixture = `
+    // (module (memory 1) (func (export "load") (param i32) (result i32) local.get 0 i32.load))
+    const bytes = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+      0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x08, 0x01, 0x04, 0x6c, 0x6f, 0x61,
+      0x64, 0x00, 0x00, 0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x28, 0x02, 0x00, 0x0b,
+    ]);
+    function run() {
+      const { load } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+      let thrown = 0;
+      for (let i = 0; i < ${isDebug || isASAN ? 300 : 20000}; i++) {
+        try {
+          load(0x7ffffff0);
+        } catch (e) {
+          if (e instanceof WebAssembly.RuntimeError) thrown++;
+        }
+      }
+      return thrown;
+    }
+    if (!Bun.isMainThread) {
+      postMessage(run());
+    } else if (process.argv[2] === "worker") {
+      const worker = new Worker(import.meta.url);
+      worker.onmessage = e => {
+        console.log(JSON.stringify([run(), e.data]));
+        worker.terminate();
+      };
+    } else {
+      console.log(JSON.stringify([run()]));
+    }
+  `;
+  const all = isDebug || isASAN ? 300 : 20000;
+
+  test.concurrent("on the main thread and in a Worker", async () => {
+    using dir = tempDir("wasm-out-of-bounds", { "fault.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fault.js", "worker"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([all, all]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The profiler holds a lock that the handler waits for, while it suspends the thread.
+  test.concurrent("while the sampling profiler suspends the thread", async () => {
+    using dir = tempDir("wasm-out-of-bounds", { "fault.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval=250", "fault.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([all]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
 describe.if(isPosix)("cwd deleted before startup", () => {
   test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {

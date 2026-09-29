@@ -160,7 +160,7 @@ public:
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
     // ValueTooLong: the combined value would pass String::MaxLength, and the stored value stays as it is.
-    enum class AddResult : uint8_t {
+    enum class [[nodiscard]] AddResult : uint8_t {
         Stored,
         ValueTooLong,
     };

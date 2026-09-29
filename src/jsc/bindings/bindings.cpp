@@ -2497,6 +2497,12 @@ typedef struct PicoHTTPHeaders {
     size_t len;
 } PicoHTTPHeaders;
 
+// A wire producer has no way to report ValueTooLong, which needs a header size limit of 2 GiB or more. It aborts there, as the join did before.
+static ALWAYS_INLINE void crashIfValueTooLong(HTTPHeaderMap::AddResult result)
+{
+    RELEASE_ASSERT(result == HTTPHeaderMap::AddResult::Stored);
+}
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
@@ -2529,12 +2535,12 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             // the value must also be cloned
             // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
             if (WebCore::findHTTPHeaderName(nameView, name)) {
-                map.add(name, value);
+                crashIfValueTooLong(map.add(name, value));
             } else {
                 // the case where we do not need to clone the name
                 // when the header name is already present in the list
                 // we don't have that information here, so map.addUncommonHeaderCloneName exists
-                map.addUncommonHeaderCloneName(nameView, value);
+                crashIfValueTooLong(map.addUncommonHeaderCloneName(nameView, value));
             }
         }
 
@@ -2560,9 +2566,9 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         HTTPHeaderName name;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
-            map.add(name, WTF::move(value));
+            crashIfValueTooLong(map.add(name, WTF::move(value)));
         } else {
-            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            crashIfValueTooLong(map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value)));
         }
     }
     headers->setInternalHeaders(WTF::move(map));
@@ -2584,9 +2590,9 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
 
         HTTPHeaderName hn;
         if (WebCore::findHTTPHeaderName(nameView, hn)) {
-            map.add(hn, WTF::move(value));
+            crashIfValueTooLong(map.add(hn, WTF::move(value)));
         } else {
-            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            crashIfValueTooLong(map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value)));
         }
     });
     headers->setInternalHeaders(WTF::move(map));

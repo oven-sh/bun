@@ -4,7 +4,7 @@
 
 import { udpSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { isLinux, isWindows } from "harness";
 
 describe("udpSocket() receive flags", () => {
   test("data callback receives flags object with truncated=false for normal packets", async () => {
@@ -55,7 +55,7 @@ describe("udpSocket() receive flags", () => {
 
       const sender = await udpSocket({
         socket: {
-          error(err: Error & { code?: string }) {
+          error(_socket, err: Error & { code?: string }) {
             resolveErr(err);
           },
         },
@@ -93,4 +93,43 @@ describe("udpSocket() receive flags", () => {
       }
     },
   );
+
+  // A connected socket gets the ICMP error on Linux and macOS. Linux reads it
+  // from the error queue. macOS gets it from the receive that fails.
+  test.skipIf(isWindows)("a connected socket reports ECONNREFUSED as error(socket, error) and stays open", async () => {
+    const closed = await udpSocket({ hostname: "127.0.0.1" });
+    const closedPort = closed.port;
+    closed.close();
+
+    const { promise, resolve } = Promise.withResolvers<{ argc: number; socket: unknown; code: unknown }>();
+    const sender = await udpSocket({
+      connect: { hostname: "127.0.0.1", port: closedPort },
+      socket: {
+        error(...args: unknown[]) {
+          resolve({ argc: args.length, socket: args[0], code: (args[1] as { code?: unknown } | undefined)?.code });
+        },
+      },
+    });
+
+    // A send can throw the pending ECONNREFUSED before a receive reports it.
+    const send = () => {
+      try {
+        sender.send("x");
+      } catch {}
+    };
+    const resend = setInterval(send, 10);
+    try {
+      send();
+      const { argc, socket, code } = await promise;
+      expect({ argc, socketIsSender: socket === sender, code, closed: sender.closed }).toEqual({
+        argc: 2,
+        socketIsSender: true,
+        code: "ECONNREFUSED",
+        closed: false,
+      });
+    } finally {
+      clearInterval(resend);
+      sender.close();
+    }
+  });
 });

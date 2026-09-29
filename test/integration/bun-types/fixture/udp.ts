@@ -56,3 +56,73 @@ expectType(connectedSocket.setMulticastTTL(1)).is<number>();
 expectType(connectedSocket.setMulticastLoopback(false)).is<boolean>();
 
 connectedSocket.close();
+
+const socketWithHandlers = await Bun.udpSocket({
+  port: 0,
+  socket: {
+    data(socket, data, port, address, flags) {
+      expectType(socket).is<Bun.udp.Socket<"buffer">>();
+      expectType(data).is<Buffer>();
+      expectType(port).is<number>();
+      expectType(address).is<string>();
+      expectType(flags).is<Bun.udp.ReceiveFlags>();
+    },
+    drain(socket) {
+      expectType(socket).is<Bun.udp.Socket<"buffer">>();
+    },
+    error(socket, error) {
+      expectType(socket).is<Bun.udp.Socket<"buffer">>();
+      expectType(error).is<Error>();
+    },
+  },
+});
+
+expectType(socketWithHandlers).is<Bun.udp.Socket<"buffer">>();
+
+const connectedSocketHandlers: Bun.udp.ConnectedSocketHandler<"buffer"> = {
+  data(socket, data, port, address, flags) {
+    expectType(socket).is<Bun.udp.ConnectedSocket<"buffer">>();
+    expectType(data).is<Buffer>();
+    expectType(port).is<number>();
+    expectType(address).is<string>();
+    expectType(flags).is<Bun.udp.ReceiveFlags>();
+  },
+  drain(socket) {
+    expectType(socket).is<Bun.udp.ConnectedSocket<"buffer">>();
+  },
+  error(socket, error) {
+    expectType(socket).is<Bun.udp.ConnectedSocket<"buffer">>();
+    expectType(error).is<Error>();
+  },
+};
+
+const connectedSocketWithHandlers = await Bun.udpSocket({
+  port: 0,
+  connect: {
+    hostname: "127.0.0.1",
+    port: 41234,
+  },
+  socket: connectedSocketHandlers,
+});
+
+expectType(connectedSocketWithHandlers).is<Bun.udp.ConnectedSocket<"buffer">>();
+
+// The example in docs/runtime/networking/udp.mdx: handlers written inline on a connected socket.
+await Bun.udpSocket({
+  connect: {
+    hostname: "127.0.0.1",
+    port: 41234,
+  },
+  socket: {
+    error(socket, error: Bun.SystemError) {
+      expectType(error.code).is<string | undefined>();
+      // @ts-expect-error `socket` has the type of an unconnected socket here: https://github.com/oven-sh/bun/issues/44272
+      socket.send("Hello");
+    },
+  },
+});
+
+const errorFirstHandlers: Bun.udp.SocketHandler<"buffer"> = {
+  // @ts-expect-error The socket is the first argument. The error is the second.
+  error(error: Error) {},
+};

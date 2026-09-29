@@ -129,6 +129,49 @@ const socket = await Bun.udpSocket({
 });
 ```
 
+### Handle errors
+
+Bun calls the `error` socket handler with the socket and the error when the `data` or `drain` handler throws. The socket stays open.
+
+```ts
+const server = await Bun.udpSocket({
+  socket: {
+    data(socket, buf, port, addr) {
+      throw new Error("invalid packet");
+    },
+    error(socket, error) {
+      console.log(error.message); // "invalid packet"
+      console.log(socket.closed); // false
+    },
+  },
+});
+
+const client = await Bun.udpSocket({});
+client.send("Hello!", server.port, "127.0.0.1");
+```
+
+If the socket has no `error` handler, Bun reports the thrown value as an uncaught exception.
+
+Bun does not wait for a promise that `data` or `drain` returns. If the promise rejects, Bun reports an unhandled rejection and does not call `error`.
+
+On Linux and macOS, Bun also calls `error` when a receive fails. For example, a send from a connected socket to a port with no listener makes the next receive fail with `ECONNREFUSED`:
+
+```ts
+const socket = await Bun.udpSocket({
+  connect: {
+    port: 41234, // no listener on this port
+    hostname: "127.0.0.1",
+  },
+  socket: {
+    error(socket, error: Bun.SystemError) {
+      console.log(error.code); // "ECONNREFUSED"
+    },
+  },
+});
+
+socket.send("Hello");
+```
+
 ### Socket options
 
 UDP sockets support setting various socket options:

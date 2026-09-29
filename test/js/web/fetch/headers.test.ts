@@ -541,10 +541,11 @@ describe("Headers", () => {
               socket.end(`HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n${fields}\r\n`);
             });
           });
-          const { promise: listening, resolve } = Promise.withResolvers<void>();
+          const { promise: listening, resolve, reject } = Promise.withResolvers<void>();
+          server.on("error", reject);
           server.listen(0, "127.0.0.1", () => resolve());
-          await listening;
           try {
+            await listening;
             const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
             expect(report(response.headers)).toEqual(expected);
           } finally {
@@ -556,9 +557,9 @@ describe("Headers", () => {
       // A String holds at most 2 ** 31 - 1 characters. The join compares the
       // lengths before it copies, so the child needs memory for the one string
       // of 2 ** 30 characters and for nothing else. It is a child process
-      // because this join aborted. The timeout is for a debug build, which
-      // takes 4 s for each call to check 1 GiB of value for invalid characters.
-      test.skipIf(totalmem() < 8 * 1024 ** 3)(
+      // because this join aborted. A debug build takes 4 s for each call to
+      // check 1 GiB of value for invalid characters, so it does not run this.
+      test.skipIf(isDebug || totalmem() < 8 * 1024 ** 3)(
         "a join past the string length limit throws a RangeError",
         async () => {
           await using proc = Bun.spawn({
@@ -587,7 +588,6 @@ describe("Headers", () => {
           expect(JSON.parse(stdout || "{}")).toEqual({ thrown: "RangeError: Out of memory", length: 2 ** 30 });
           expect(exitCode).toBe(0);
         },
-        60_000,
       );
 
       // Also without a clock. Each name has a builder of its own, so names that

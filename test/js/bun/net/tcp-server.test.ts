@@ -461,15 +461,16 @@ describe("one readiness event of a listener does not empty a long queue", () => 
       return listening;
     },
     // 'connection' is the accept of a tls.Server too. 'secureConnection' is the handshake.
-    "node:tls": arrived =>
-      nodeServer(
-        tls
-          .createServer(cert)
-          .on("tlsClientError", () => {})
-          .on("connection", socket => (socket.on("error", () => {}), arrived())),
-        undefined,
-        handshakeStart,
-      ),
+    "node:tls": arrived => {
+      const sockets: net.Socket[] = [];
+      const server = tls.createServer(cert).on("tlsClientError", () => {});
+      server.on("connection", socket => {
+        socket.on("error", () => {});
+        sockets.push(socket);
+        arrived();
+      });
+      return nodeServer(server, undefined, handshakeStart, sockets);
+    },
   };
 
   // Starts a listener and puts `count` connections into its queue. Nothing accepts them before

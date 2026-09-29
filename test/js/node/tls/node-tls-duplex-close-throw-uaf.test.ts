@@ -118,97 +118,103 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     `);
   });
 
-  test.each(["the duplex closes", "the socket is destroyed"])(
-    "when duplex.end() throws after close and %s before StartTLS",
-    async how => {
-      // No SSL wrapper exists yet, so the queued .StartTLS task carries the
-      // close out: TLSSocket.onClose frees the Handlers, then duplex.end()
-      // throws into onError. Only a duplex that is still open gets that
-      // end(), so destroy() leaves this one open.
-      await run(
-        `
+  // Serial: a debug subprocess needs about 2 s of CPU. Four at once reach the
+  // default test timeout on a loaded machine.
+  test.serial("when duplex.end() throws after a close that comes before StartTLS", async () => {
+    // No SSL wrapper exists yet, so the queued .StartTLS task carries the
+    // close out: TLSSocket.onClose frees the Handlers, then duplex.end()
+    // throws into onError. Only a duplex that is still open gets that
+    // end(), so destroy() leaves these open. One process runs both closes:
+    // each socket has its own Handlers.
+    await run(
+      `
       const tls = require("node:tls");
       const { Duplex } = require("node:stream");
 
-      const duplex = new Duplex({
-        read() {},
-        write(chunk, enc, cb) { cb(); },
-        final(cb) { cb(); },
-      });
-      let ends = 0;
-      duplex.end = function () {
-        ends++;
-        throw new Error("end() throws during close");
-      };
-      duplex.destroy = function () {
-        return this;
-      };
+      function closeBeforeStartTLS(how) {
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, enc, cb) { cb(); },
+          final(cb) { cb(); },
+        });
+        let ends = 0;
+        duplex.end = function () {
+          ends++;
+          throw new Error("end() throws during close");
+        };
+        duplex.destroy = function () {
+          return this;
+        };
 
-      const sock = tls.connect({
-        socket: duplex,
-        rejectUnauthorized: false,
-      });
-      sock.on("error", () => {});
-      sock.on("close", () => {});
+        const sock = tls.connect({
+          socket: duplex,
+          rejectUnauthorized: false,
+        });
+        sock.on("error", () => {});
+        sock.on("close", () => {});
 
-      if (${JSON.stringify(how)} === "the duplex closes") duplex.emit("close");
-      else sock.destroy();
+        if (how === "the duplex closes") duplex.emit("close");
+        else sock.destroy();
+        return () => how + ", end() calls: " + ends;
+      }
+
+      const reports = [closeBeforeStartTLS("the duplex closes"), closeBeforeStartTLS("the socket is destroyed")];
 
       setImmediate(() => {
         setImmediate(() => {
-          console.log("end() calls: " + ends);
+          for (const report of reports) console.log(report());
           console.log("ok");
           process.exit(0);
         });
       });
     `,
-        "end() calls: 1\nok",
-      );
-    },
-  );
+      "the duplex closes, end() calls: 1\nthe socket is destroyed, end() calls: 1\nok",
+    );
+  });
 
-  // The transport's EOF reaches the TLS socket when the transport ends, which
-  // can be before the queued .StartTLS task has run. 'readable' is emitted
-  // from inside that dispatch and 'end' one tick after it.
-  test.each(["readable", "end"])(
-    "when the '%s' listener destroys the socket and throws before StartTLS",
-    async event => {
-      await run(
-        `
+  test.serial("when an EOF listener destroys the socket and throws before StartTLS", async () => {
+    // The transport's EOF reaches the TLS socket when the transport ends,
+    // which can be before the queued .StartTLS task has run. 'readable' is
+    // emitted from inside that dispatch and 'end' one tick after it.
+    await run(
+      `
       const tls = require("node:tls");
       const { Duplex } = require("node:stream");
 
-      const duplex = new Duplex({
-        read() {},
-        write(chunk, enc, cb) { cb(); },
-        final(cb) { cb(); },
-      });
+      const seen = [];
+      for (const event of ["readable", "end"]) {
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, enc, cb) { cb(); },
+          final(cb) { cb(); },
+        });
 
-      const sock = tls.connect({
-        socket: duplex,
-        rejectUnauthorized: false,
-      });
-      sock.on("error", () => {});
-      sock.on("close", () => {});
-      sock.once(${JSON.stringify(event)}, () => {
-        console.log("eof");
-        sock.destroy();
-        throw new Error("listener throws");
-      });
+        const sock = tls.connect({
+          socket: duplex,
+          rejectUnauthorized: false,
+        });
+        sock.on("error", () => {});
+        sock.on("close", () => {});
+        sock.once(event, () => {
+          seen.push("eof in '" + event + "'");
+          sock.destroy();
+          throw new Error("listener throws");
+        });
+
+        duplex.push(null);
+        duplex.end();
+      }
       process.on("uncaughtException", () => {});
 
-      duplex.push(null);
-      duplex.end();
-
       setImmediate(() => {
         setImmediate(() => {
+          for (const line of seen.sort()) console.log(line);
           console.log("ok");
           process.exit(0);
         });
       });
     `,
-        "eof\nok",
-      );
-    },
-  );
+      "eof in 'end'\neof in 'readable'\nok",
+    );
+  });
 });

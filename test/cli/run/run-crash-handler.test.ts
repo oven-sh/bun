@@ -227,6 +227,54 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   expect(span).toBeLessThan(2n ** 31n);
 });
 
+/**
+ * Decodes the frames of the trace string in a crash report into the image of
+ * each one: `"bun"` for bun's own executable, the file name of any other
+ * loaded module, or `null` for an address in no module (JIT code). The layout
+ * is `encode_trace_string` in src/crash_handler/lib.rs.
+ */
+function traceStringFrameImages(stderr: string): (string | null)[] {
+  // Platform, command and format-version characters, then the 7-character sha.
+  const match = /\/\d+\.\d+\.\d+[^/\s]*\/([a-zA-Z][a-zA-Z_][12][0-9a-f]{7}\S*)/.exec(stderr);
+  if (!match) throw new Error(`no trace string in crash output:\n${stderr}`);
+  const body = match[1];
+  const VLQ_DIGITS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let pos = 3 + 7;
+  function readVlq(): number {
+    let magnitude = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = VLQ_DIGITS.indexOf(body[pos++]);
+      if (digit < 0) throw new Error(`malformed trace string: ${body}`);
+      magnitude += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) break;
+    }
+    return magnitude % 2 ? -(magnitude - 1) / 2 : magnitude / 2;
+  }
+  // Two VLQs of feature bits.
+  readVlq();
+  readVlq();
+  const images: (string | null)[] = [];
+  for (;;) {
+    if (body[pos] === "_") {
+      pos++;
+      images.push(null);
+      continue;
+    }
+    const value = readVlq();
+    // A zero VLQ ends the frames.
+    if (value === 0) return images;
+    if (value !== 1) {
+      images.push("bun");
+      continue;
+    }
+    // VLQ(1), the length of the module name, the name, the address.
+    const length = readVlq();
+    images.push(body.slice(pos, pos + length));
+    pos += length;
+    readVlq();
+  }
+}
+
 // The Windows crash handler is a Vectored Exception Handler, which sees every
 // first-chance exception process-wide before frame-based SEH does. Third-party
 // DLLs injected into the process (AV/EDR agents such as BeyondTrust's
@@ -291,18 +339,17 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
     expect(exitCode).not.toBe(0);
   });
 
-  // Validate WebKit's registerJITUnwindInfo against the actual unwinder:
-  // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a JIT pool PC.
-  // This is the smoke test for the hand-encoded UNWIND_INFO / .xdata bytes.
-  // LLInt PCs are not covered here: LLInt lives in image .text and Windows
-  // only consults static .pdata for in-module PCs, where JSC emits one record
-  // over the LLInt code.
-  test("RtlLookupFunctionEntry resolves JSC JIT pool PCs", async () => {
+  // Validate WebKit's hand-encoded unwind info against the actual unwinder:
+  // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a JIT pool PC
+  // (registerJITUnwindInfo) and for the LLInt range. LLInt lives in image
+  // .text, where Windows consults only the static .pdata, so JSC emits one
+  // record there over jsc_llint_begin..jsc_llint_end.
+  test("RtlLookupFunctionEntry resolves JSC JIT pool and LLInt PCs", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const { dlopen, FFIType, ptr } = require("bun:ffi");
+        `const { dlopen, FFIType, ptr, read } = require("bun:ffi");
          const { symbols } = dlopen("ntdll.dll", {
            RtlLookupFunctionEntry: {
              args: [FFIType.u64, FFIType.pointer, FFIType.pointer],
@@ -310,12 +357,26 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
            },
          });
          const { jscInternals } = require("bun:internal-for-testing");
-         const pool = jscInternals.startOfFixedExecutableMemoryPool();
          const imageBase = new BigUint64Array(1);
-         const jitEntry = symbols.RtlLookupFunctionEntry(pool + 0x100n, ptr(imageBase), null);
+         const lookup = pc => {
+           imageBase[0] = 0n;
+           const entry = symbols.RtlLookupFunctionEntry(pc, ptr(imageBase), null);
+           // RUNTIME_FUNCTION starts with BeginAddress (an RVA) on x64 and ARM64 alike.
+           return entry === null ? null : { entry, begin: imageBase[0] + BigInt(read.u32(entry, 0)) };
+         };
+         const pool = jscInternals.startOfFixedExecutableMemoryPool();
+         const { begin, end } = jscInternals.llintCodeRange();
+         const first = lookup(begin);
+         const last = lookup(end - 4n);
+         const past = lookup(end);
          console.log(JSON.stringify({
-           pool: pool.toString(16),
-           jitEntry: jitEntry === null ? "null" : "ok",
+           jitEntry: lookup(pool + 0x100n) !== null,
+           llintSize: Number(end - begin),
+           firstResolves: first !== null,
+           lastResolves: last !== null,
+           oneEntry: first !== null && last !== null && first.entry === last.entry,
+           entryBeginsAtRangeStart: first !== null && first.begin === begin,
+           endIsExclusive: past === null || first === null || past.entry !== first.entry,
          }));`,
       ],
       env: noReportEnv,
@@ -325,7 +386,17 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
 
     expect(stderr).toBe("");
     const out = JSON.parse(stdout.trim());
-    expect(out.jitEntry).toBe("ok");
+    // The interpreter is a few hundred KB of code; a tiny range would mean the
+    // labels no longer bracket it and the assertions below prove nothing.
+    expect(out.llintSize).toBeGreaterThan(100 * 1024);
+    expect(out).toMatchObject({
+      jitEntry: true,
+      firstResolves: true,
+      lastResolves: true,
+      oneEntry: true,
+      entryBeginsAtRangeStart: true,
+      endIsExclusive: true,
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -383,6 +454,43 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
 
     expect(stdout).toBe("");
     expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // A host function called from interpreted JS sits above a JIT-pool thunk,
+  // then the LLInt frames, then vmEntryToJavaScript and the native code that
+  // entered JS. The crash handler walks them with RtlVirtualUnwind
+  // (capture_from_context in src/bun_core/debug.rs), so the unwind codes of
+  // the LLInt record decide whether the trace gets below the JS frames.
+  // Without the record the trace ends at the first interpreter frame.
+  test("crash trace continues below interpreted JS frames", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { crash_handler } = require("bun:internal-for-testing");
+         function innermost() { crash_handler.segfault(); }
+         function middle() { innermost(); }
+         function outermost() { middle(); }
+         outermost();`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+    const images = traceStringFrameImages(stderr);
+    expect(images[0]).toBe("bun");
+    // The thunk that called the host function is JIT-pool code, in no module.
+    const thunk = images.lastIndexOf(null);
+    expect(thunk).toBeGreaterThan(0);
+    // Interpreter return addresses for innermost, middle, outermost and the
+    // module body, then vmEntryToJavaScript, then at least the native code
+    // that called it.
+    const below = images.slice(thunk + 1);
+    expect(below.filter(image => image === "bun").length).toBeGreaterThanOrEqual(4 + 1 + 1);
     expect(exitCode).not.toBe(0);
   });
 });

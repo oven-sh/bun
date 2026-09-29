@@ -11,6 +11,7 @@ import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { pipeline, Writable } from "node:stream";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -396,6 +397,87 @@ for (const expectation of ["100-continue", "something-else"]) {
     });
   });
 }
+
+// The stream destroyer destroys the request and keeps its connection, so the parser still completes the message.
+describe("req.complete of a request that the stream destroyer destroyed", () => {
+  const consumers: [name: string, consume: (req: http.IncomingMessage) => Promise<unknown>][] = [
+    [
+      "a for await loop that breaks",
+      async req => {
+        for await (const _ of req) break;
+      },
+    ],
+    [
+      "a pipeline() that fails",
+      req => {
+        const { promise, resolve } = Promise.withResolvers<unknown>();
+        const refuses = new Writable({ write: (_chunk, _encoding, callback) => callback(new Error("refused")) });
+        pipeline(req, refuses, resolve);
+        return promise;
+      },
+    ],
+  ];
+  const bodies: [framing: string, headers: string, start: string, rest: string][] = [
+    ["Content-Length", "Content-Length: 10\r\n", "hello", "world"],
+    ["chunked", "Transfer-Encoding: chunked\r\n", "5\r\nhello\r\n", "5\r\nworld\r\n0\r\n\r\n"],
+  ];
+
+  for (const [name, consume] of consumers) {
+    for (const [framing, headers, start, rest] of bodies) {
+      test(`is true once the ${framing} body ends, after ${name}`, async () => {
+        const seen: Seen = {};
+        let first: http.IncomingMessage | undefined;
+        const { promise: failed, reject } = Promise.withResolvers<never>();
+        const server = http.createServer(async (req, res) => {
+          if (req.url === "/second") {
+            // The parser is past the body of the first request here.
+            seen.afterBody = first!.complete;
+            res.end("second");
+            return;
+          }
+          first = req;
+          await consume(req);
+          seen.destroyed = req.destroyed;
+          res.end("first");
+        });
+        await withServer(server, async port => {
+          const socket = send(port, `POST /first HTTP/1.1\r\nHost: x\r\n${headers}\r\n${start}`, reject);
+          let received = "";
+          socket.on("data", chunk => (received += chunk));
+          while (!received.endsWith("first")) await Promise.race([once(socket, "data"), failed]);
+          seen.atResponse = first!.complete;
+          socket.write(rest + "GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+          while (!received.endsWith("second")) await Promise.race([once(socket, "data"), failed]);
+        });
+        assert.deepStrictEqual(seen, { destroyed: true, atResponse: false, afterBody: true });
+      });
+    }
+
+    test(`stays false when the client goes away before the body ends, after ${name}`, async () => {
+      let first: http.IncomingMessage | undefined;
+      const { promise: failed, reject } = Promise.withResolvers<never>();
+      const { promise: connectionClosed, resolve: onConnectionClose } = Promise.withResolvers<void>();
+      const server = http.createServer(async (req, res) => {
+        first = req;
+        await consume(req);
+        res.end("first");
+      });
+      server.on("connection", connection => connection.on("close", () => onConnectionClose()));
+      await withServer(server, async port => {
+        const socket = send(port, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello", reject);
+        let received = "";
+        socket.on("data", chunk => (received += chunk));
+        while (!received.endsWith("first")) await Promise.race([once(socket, "data"), failed]);
+        socket.destroy();
+        await connectionClosed;
+      });
+      assert.deepStrictEqual(
+        { destroyed: first!.destroyed, complete: first!.complete },
+        { destroyed: true, complete: false },
+      );
+    });
+  }
+});
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {

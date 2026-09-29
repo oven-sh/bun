@@ -15,6 +15,7 @@ const {
   noBodySymbol,
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
+  NodeHTTPResponseAbortEvent,
   emitEOFIncomingMessage,
   onDataIncomingMessage,
   kAbortController,
@@ -350,6 +351,12 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 };
 
+// The connection outlives this request, so the rest of its body still arrives. Like Node's
+// parserOnMessageComplete, the last chunk completes the message.
+function onDataDestroyedIncomingMessage(this: IncomingMessage, _chunk, isLast, event) {
+  if (isLast && event === NodeHTTPResponseAbortEvent.none) this.complete = true;
+}
+
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
@@ -368,7 +375,12 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     // connection must outlive the request so the response can still reply
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
-    handle.onabort = handle.ondata = undefined;
+    if (shouldEmitAborted && !this.socket && !this.complete) {
+      handle.ondata = onDataDestroyedIncomingMessage.bind(this);
+      handle.onabort = undefined;
+    } else {
+      handle.onabort = handle.ondata = undefined;
+    }
     if (!handle.finished && shouldEmitAborted && this.socket) {
       handle.abort();
     }

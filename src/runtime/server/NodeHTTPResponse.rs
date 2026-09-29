@@ -635,11 +635,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        // The sec-websocket-* headers were already copied into
-        // raw_response.upgrade(); the underlying HttpParser::fallback buffer is
-        // freed when uWS adopts the socket above, so set_on_aborted_handler
-        // (which would call preserve_web_socket_headers_if_needed) must not run
-        // post-upgrade — it would read freed header views.
+        // The request's header views end with its dispatch: this context must not read them later.
         self.upgrade_context.with_mut(|c| c.reset());
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.
@@ -1367,6 +1363,11 @@ impl NodeHTTPResponse {
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onReadParsed", no_catch)]
     pub(crate) fn on_read_parsed(&self) {
+        // Same test as notify_when_read_parsed: a TLS close that waits for spilled bytes leaves the socket open.
+        let flags = self.flags.get();
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return;
+        }
         let armed = self.armed_this_value.get();
         let this_value = if armed.is_empty() {
             self.get_this_value()

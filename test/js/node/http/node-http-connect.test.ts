@@ -35,15 +35,26 @@ function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, ad
   return promise;
 }
 
-// Writes a request head in two parts that reach the server's parser in two reads. A partial
-// head emits nothing on the server, so a whole request on a second connection is the barrier:
-// the server has read `first` by the time it has answered and closed that connection.
-async function writeInTwoReads(client: net.Socket, address: AddressInfo, first: string, second: string) {
-  client.write(first);
-  const barrier = net.connect(address.port, address.address);
+// A partial head emits nothing on the server, so a whole request on a second connection is the
+// barrier: the server has read what was written before by the time it has answered and closed
+// that connection.
+async function untilTheServerHasRead(connect: () => net.Socket) {
+  const barrier = connect();
   barrier.resume();
   barrier.end("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
   await once(barrier, "close");
+}
+
+// Writes a request head in two parts that reach the server's parser in two reads.
+async function writeInTwoReads(
+  client: net.Socket,
+  address: AddressInfo,
+  first: string,
+  second: string,
+  connect = (): net.Socket => net.connect(address.port, address.address),
+) {
+  client.write(first);
+  await untilTheServerHasRead(connect);
   client.write(second);
 }
 
@@ -1749,8 +1760,9 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
        server.on("connect", (req, socket) => {
          socket.on("end", () => endCount++);
          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
-         server.emit("connection", socket);
+         // In this order: close() destroys a connection that has received nothing (nodejs/node 417aacbc365).
          server.close();
+         server.emit("connection", socket);
        });
        server.listen(0, () => {
          http.request({ port: server.address().port, method: "CONNECT" }).end();
@@ -1910,6 +1922,177 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   } finally {
     client.destroy();
   }
+});
+
+// A listener with nothing to send ends its side in the listener. It still reads: an http.Server
+// socket has allowHalfOpen. Every expectation below is Node v26.3.0's.
+describe("a tunnel behind a request head that took more than one read", () => {
+  const exchanges = {
+    connect: {
+      request: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+      reply: "HTTP/1.1 200 Connection Established\r\n\r\n",
+    },
+    upgrade: {
+      request: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+      reply: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+    },
+  };
+  // More than the parser keeps of a head that is not complete (maxHeaderSize, 16 KiB, and some slack).
+  const big = Buffer.alloc(64 * 1024, "abcdefghijklmnopqrstuvwxyz").toString();
+  const summary = (bytes: Buffer | string) => ({
+    length: bytes.length,
+    sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+  });
+
+  type Respond = (socket: Duplex, reply: string) => void;
+  const endAtOnce: Respond = (socket, reply) => {
+    socket.write(reply);
+    socket.end();
+  };
+
+  // `withHead` is in the same write as the end of the head, and `later` is a write of its own.
+  // Returns what the listener got: `head`, then every 'data' chunk up to 'end'.
+  async function readTunnel({
+    proto = "http",
+    event,
+    withHead,
+    later,
+    respond = endAtOnce,
+    endsInTheListener = true,
+    behindAnotherRequest = false,
+    reads = 2,
+  }: {
+    proto?: "http" | "https";
+    event: "connect" | "upgrade";
+    withHead: string;
+    later: string;
+    respond?: Respond;
+    endsInTheListener?: boolean;
+    behindAnotherRequest?: boolean;
+    reads?: 2 | 3;
+  }) {
+    const { request, reply } = exchanges[event];
+    const listener = (req: http.IncomingMessage, res: http.ServerResponse) => void res.end("first");
+    const server =
+      proto === "https"
+        ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, listener)
+        : http.createServer(listener);
+    const received: Buffer[] = [];
+    const ended = Promise.withResolvers<void>();
+    server.on(event, (req, socket: Duplex, head: Buffer) => {
+      received.push(head);
+      socket.on("data", chunk => received.push(chunk));
+      socket.on("end", () => ended.resolve());
+      socket.on("error", ended.reject);
+      respond(socket, reply);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const address = server.address() as AddressInfo;
+    const connect = (options = {}): net.Socket =>
+      proto === "https"
+        ? tls.connect({ port: address.port, host: address.address, rejectUnauthorized: false, ...options })
+        : net.connect({ port: address.port, host: address.address, ...options });
+
+    const client = connect({ allowHalfOpen: true });
+    try {
+      await once(client, proto === "https" ? "secureConnect" : "connect");
+      client.on("error", () => {});
+      let fromServer = "";
+      const answered = Promise.withResolvers<void>();
+      const replied = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        fromServer += chunk.toString("latin1");
+        if (fromServer.endsWith("first")) answered.resolve();
+        if (fromServer.endsWith(reply)) replied.resolve();
+      });
+      const serverEnded = once(client, "end");
+      if (behindAnotherRequest) {
+        // The response to the GET leaves after the server has parsed this whole read.
+        client.write("GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n" + request.slice(0, 30));
+        await answered.promise;
+        client.write(request.slice(30) + withHead);
+      } else if (reads === 3) {
+        await writeInTwoReads(client, address, request.slice(0, 20), request.slice(20, 40), connect);
+        await untilTheServerHasRead(connect);
+        client.write(request.slice(40) + withHead);
+      } else {
+        await writeInTwoReads(client, address, request.slice(0, 30), request.slice(30) + withHead, connect);
+      }
+      // The listener has run. Its FIN leaves the tunnel half-open.
+      await (endsInTheListener ? serverEnded : replied.promise);
+      client.end(later);
+      await ended.promise;
+      return Buffer.concat(received);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  describe.each(["http", "https"] as const)("%s, socket.end() in the listener", proto => {
+    test.each(["connect", "upgrade"] as const)("'%s': a later read arrives as it was sent", async event => {
+      const received = await readTunnel({ proto, event, withHead: "FIRST-", later: "SECOND" });
+      expect(received.toString("latin1")).toBe("FIRST-SECOND");
+    });
+
+    test.each(["connect", "upgrade"] as const)("'%s': 64 KiB in the read that completes the head", async event => {
+      const received = await readTunnel({ proto, event, withHead: big, later: "SECOND" });
+      expect(summary(received)).toEqual(summary(big + "SECOND"));
+    });
+  });
+
+  describe.each([
+    ["socket.end(reply) in the listener", (socket, reply) => void socket.end(reply)],
+    [
+      "socket.end() from process.nextTick",
+      (socket, reply) => {
+        socket.write(reply);
+        process.nextTick(() => socket.end());
+      },
+    ],
+    [
+      "socket.end() from queueMicrotask",
+      (socket, reply) => {
+        socket.write(reply);
+        queueMicrotask(() => socket.end());
+      },
+    ],
+  ] as [string, Respond][])("%s", (_, respond) => {
+    test.each(["connect", "upgrade"] as const)("'%s'", async event => {
+      const received = await readTunnel({ event, respond, withHead: big, later: "SECOND" });
+      expect(summary(received)).toEqual(summary(big + "SECOND"));
+    });
+  });
+
+  // The parser keeps what it has of the head between the reads.
+  test.each(["connect", "upgrade"] as const)("'%s', head in three reads, socket.end() in the listener", async event => {
+    const received = await readTunnel({ event, reads: 3, withHead: big, later: "SECOND" });
+    expect(summary(received)).toEqual(summary(big + "SECOND"));
+  });
+
+  test.each(["connect", "upgrade"] as const)(
+    "'%s' behind another request on the same connection, socket.end() in the listener",
+    async event => {
+      const received = await readTunnel({ event, behindAnotherRequest: true, withHead: big, later: "SECOND" });
+      expect(summary(received)).toEqual(summary(big + "SECOND"));
+    },
+  );
+
+  // The same bytes reach a listener that keeps its side open until the client has ended.
+  test.each(["connect", "upgrade"] as const)("'%s': socket.end() after the client has ended", async event => {
+    const received = await readTunnel({
+      event,
+      respond: (socket, reply) => {
+        socket.write(reply);
+        socket.on("end", () => socket.end());
+      },
+      endsInTheListener: false,
+      withHead: big,
+      later: "SECOND",
+    });
+    expect(summary(received)).toEqual(summary(big + "SECOND"));
+  });
 });
 
 test("a tunnel write that waits for a drain settles its callbacks when the client goes away", async () => {

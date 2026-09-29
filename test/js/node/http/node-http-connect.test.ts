@@ -1913,6 +1913,90 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   }
 });
 
+// The listener ended the tunnel and never reads it, so the full buffer stopped the reads and the
+// peer's FIN stays unread. In Node.js a handle that does not read and has nothing to send is not
+// active. Every expectation is Node v26.3.0's.
+describe.each(["http", "https"])("%s: a tunnel that its listener ended and that stopped reading", proto => {
+  const fixture = /* js */ `
+    const { PROTO, READ_LATER, CERT, KEY } = process.env;
+    const requests = {
+      upgrade: "GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: Upgrade\\r\\nUpgrade: raw\\r\\n\\r\\n",
+      connect: "CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n",
+    };
+    const results = {};
+    const clients = {};
+    let open = 2;
+    const server = PROTO === "https" ? require("node:https").createServer({ cert: CERT, key: KEY }) : require("node:http").createServer();
+    for (const event of ["upgrade", "connect"]) {
+      const result = (results[event] = { events: [], received: 0 });
+      server.on(event, (req, socket) => {
+        result.events.push(event);
+        socket.on("error", () => {});
+        socket.on("end", () => result.events.push("end"));
+        socket.on("close", () => result.events.push("close"));
+        socket.end("HTTP/1.1 400 Bad Request\\r\\n\\r\\n");
+        (function untilReadsStop() {
+          if (socket.readableLength < socket.readableHighWaterMark) return setImmediate(untilReadsStop);
+          clients[event].once("close", () => {
+            if (--open === 0) server.close(() => (results.server = "close"));
+            if (READ_LATER) setImmediate(() => socket.on("data", chunk => (result.received += chunk.length)));
+          });
+          clients[event].end();
+        })();
+      });
+    }
+    server.listen(0, "127.0.0.1", () => {
+      for (const event of ["upgrade", "connect"]) {
+        const to = { port: server.address().port, host: "127.0.0.1", allowHalfOpen: true, rejectUnauthorized: false };
+        const client = (clients[event] = PROTO === "https" ? require("node:tls").connect(to) : require("node:net").connect(to));
+        client.on("error", () => {});
+        client.once(PROTO === "https" ? "secureConnect" : "connect", () => client.write(requests[event]));
+        // The server's FIN: the listener has run.
+        client.once("end", () => client.write(Buffer.alloc(2 * 65536, "x")));
+        client.resume();
+      }
+    });
+    process.on("exit", () => console.log(JSON.stringify(results)));
+  `;
+
+  async function run(readLater: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, PROTO: proto, READ_LATER: readLater ? "1" : "", CERT: tlsCert.cert, KEY: tlsCert.key },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("does not keep the process alive after server.close()", async () => {
+    // The sockets are still open, so neither they nor the server emit 'close'.
+    expect(await run(false)).toEqual({
+      stdout: {
+        upgrade: { events: ["upgrade"], received: 0 },
+        connect: { events: ["connect"], received: 0 },
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("keeps the process alive again from a later read, up to 'close'", async () => {
+    expect(await run(true)).toEqual({
+      stdout: {
+        upgrade: { events: ["upgrade", "end", "close"], received: 2 * 65536 },
+        connect: { events: ["connect", "end", "close"], received: 2 * 65536 },
+        server: "close",
+      },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 test("a tunnel write that waits for a drain settles its callbacks when the client goes away", async () => {
   const events: string[] = [];
   const wrote = Promise.withResolvers<void>();

@@ -201,6 +201,9 @@ void JSNodeHTTPServerSocket::readStop()
     }
     tunnelReadsStopped = true;
     applyTunnelReads();
+    if (ended) {
+        updateTunnelIdle();
+    }
 }
 
 void JSNodeHTTPServerSocket::readStart()
@@ -208,8 +211,13 @@ void JSNodeHTTPServerSocket::readStart()
     if (!isTunnel(this)) {
         return;
     }
+    const bool wasAtRest = ended && tunnelReadsStopped && !tunnelReadEnded;
     tunnelReadsStopped = false;
     applyTunnelReads();
+    // us_socket_resume() closes a socket whose poll it cannot arm again.
+    if (wasAtRest && !isClosed()) {
+        setTunnelIdle(false);
+    }
 }
 
 void JSNodeHTTPServerSocket::didDeliverQueuedTunnelBytes(size_t length)
@@ -839,16 +847,25 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
+void JSNodeHTTPServerSocket::setTunnelIdle(bool idle)
+{
+    if (is_ssl) {
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle);
+    } else {
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle);
+    }
+}
+
 void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
-    if (!tunnelReadEnded || upgraded || isClosed()) {
+    if (!noTunnelReadCanCome() || upgraded || isClosed()) {
         return;
     }
     const bool sent = streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        setTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        setTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
     }
 }
 

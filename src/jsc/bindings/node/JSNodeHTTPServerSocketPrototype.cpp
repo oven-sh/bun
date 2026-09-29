@@ -326,6 +326,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
         if (thisObject->socket && cycleReads) {
             us_socket_resume(thisObject->socket);
         }
+        thisObject->updateTunnelIdle();
         return result;
     }
     return JSValue::encode(JSC::jsUndefined());

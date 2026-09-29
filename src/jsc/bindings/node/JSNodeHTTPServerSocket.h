@@ -135,8 +135,11 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* At read EOF, or JavaScript ended the write side and the full Duplex stopped the reads: only _read() starts them again. */
+    bool noTunnelReadCanCome() const { return tunnelReadEnded || (ended && tunnelReadsStopped); }
+    /* Tells uWS whether this tunnel is idle: no read can come and nothing is left to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
+    void setTunnelIdle(bool idle);
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */

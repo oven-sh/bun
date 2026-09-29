@@ -1498,6 +1498,16 @@ describe("concurrent terminals on one Image", () => {
 const bareWebp = Buffer.from(
   await new Bun.Image(makePng(32, 32, () => [9, 9, 9, 255])).webp({ lossless: true }).bytes(),
 );
+// A lossy picture whose chunk, taken for a VP8X chunk, would flag a profile:
+// its first byte is 0x20 or 0x30. One quality in eight gives such a picture.
+const flagLikeWebp = await (async () => {
+  const src = makePng(32, 32, (x, y) => [x * 8, y * 8, 40, 255]);
+  for (let quality = 1; quality <= 100; quality++) {
+    const file = Buffer.from(await new Bun.Image(src).webp({ quality }).bytes());
+    if (file.toString("latin1", 12, 16) === "VP8 " && (file[20] & 0xef) === 0x20) return file;
+  }
+  throw new Error("no quality gives a picture that starts with 0x20 or 0x30");
+})();
 // A lossy picture with transparency: the encoder writes VP8X + ALPH + "VP8 ".
 const lossyAlphaWebp = Buffer.from(
   await new Bun.Image(makePng(32, 32, (x, y) => [x * 8, y * 8, 40, 100 + ((x * 7 + y * 3) % 100)]))
@@ -1559,6 +1569,11 @@ describe("WebP container walk", () => {
 
   const cases: [name: string, file: Uint8Array, want: number | "none" | "rejects"][] = [
     ["no container", bare, "none"],
+    [
+      "a picture with no VP8X chunk, then ICCP",
+      riff([flagLikeWebp.subarray(12), chunk("ICCP", profile(512)), image]),
+      "none",
+    ],
     ["ICCP right after VP8X", riff([vp8x(ICCP), chunk("ICCP", profile(512)), image]), 512],
     ["ICCP after the picture", riff([vp8x(ICCP), image, chunk("ICCP", profile(512))]), 512],
     ["ICCP of an odd length", riff([vp8x(ICCP), chunk("ICCP", profile(383)), image]), 383],
@@ -1717,7 +1732,7 @@ describe("WebP container walk", () => {
     ],
     [
       "a frame chunk shorter than its 16 bytes",
-      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, chunk("ANMF", profile(12))]),
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, chunk("ANMF", Buffer.alloc(12))]),
       "none",
     ],
     [

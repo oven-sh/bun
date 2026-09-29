@@ -314,7 +314,7 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
 
     // The demuxer's rules (demux.c `IsValidExtendedFormat`): what it refused has no profile.
     let mut profile: Option<&[u8]> = None;
-    let mut seen_picture = false;
+    let mut seen_image = false;
     let mut seen_anim = false;
     while !rest.is_empty() {
         let ((tag, payload), mut after) = split_chunk(rest)?;
@@ -353,17 +353,16 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
             }
             // The one picture: `VP8L`, or `VP8 ` with its alpha plane before it.
             b"ALPH" | b"VP8 " | b"VP8L" => {
-                if seen_picture || seen_anim {
+                if seen_image || seen_anim {
                     return None;
                 }
                 let frame = split_frame(rest)?;
-                frame.picture?;
                 // An alpha plane after the picture is an error only when the container flags alpha.
                 if frame.alpha_after && flags & ALPHA_FLAG != 0 {
                     return None;
                 }
                 after = frame.after;
-                seen_picture = true;
+                seen_image = true;
             }
             // The first one is the profile, whatever follows it.
             b"ICCP" if profile.is_none() => profile = Some(payload),
@@ -371,7 +370,7 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
         }
         rest = after;
     }
-    if !seen_picture {
+    if !seen_image {
         return None;
     }
     profile.filter(|p| !p.is_empty())

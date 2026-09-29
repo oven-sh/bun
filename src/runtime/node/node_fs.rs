@@ -5192,33 +5192,38 @@ impl NodeFS {
             let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
+
+            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+            if args.mode.is_force_clone() {
+                if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
+                    sys::linux::ioctl_ficlone(dest_fd, src_fd),
+                    sys::Tag::ioctl_ficlone,
+                    dest,
+                ) {
+                    Self::close_copy_dest(dest, dest_fd, &stat_, 0, false);
+                    return err;
+                }
+                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
+                dest_fd.close();
+                return Ok(());
+            }
+
+            // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
+            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
+                let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
+                if rc == 0 {
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
+                    dest_fd.close();
+                    return Ok(());
+                }
+                // If this fails for any reason, we say it's disabled
+                // We don't want to add the system call overhead of running this function on a lot of files that don't support it
+                sys::copy_file::disable_ioctl_ficlone();
+            }
+
             let mut wrote: u64 = 0;
 
             let result: Maybe<ret::CopyFile> = 'copy: {
-                // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
-                if args.mode.is_force_clone() {
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        sys::linux::ioctl_ficlone(dest_fd, src_fd),
-                        sys::Tag::ioctl_ficlone,
-                        dest,
-                    ) {
-                        break 'copy err;
-                    }
-                    // FICLONE reflinks up to the source EOF but never shrinks dest.
-                    wrote = size as u64;
-                    break 'copy Ok(());
-                }
-
-                // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-                if sys::copy_file::can_use_ioctl_ficlone() {
-                    if sys::linux::ioctl_ficlone(dest_fd, src_fd) == 0 {
-                        wrote = size as u64;
-                        break 'copy Ok(());
-                    }
-                    // Any failure disables FICLONE process-wide to save the syscall where it can't work.
-                    sys::copy_file::disable_ioctl_ficlone();
-                }
-
                 if !sys::copy_file::can_use_copy_file_range_syscall() {
                     break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
                         src, dest, src_fd, dest_fd, size, &mut wrote,
@@ -8630,18 +8635,20 @@ impl NodeFS {
             let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
+
+            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
+                let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
+                if rc == 0 {
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
+                    dest_fd.close();
+                    return Ok(());
+                }
+                sys::copy_file::disable_ioctl_ficlone();
+            }
+
             let mut wrote: u64 = 0;
 
             let result: Maybe<ret::CopyFile> = 'copy: {
-                if sys::copy_file::can_use_ioctl_ficlone() {
-                    if sys::linux::ioctl_ficlone(dest_fd, src_fd) == 0 {
-                        // FICLONE reflinks up to the source EOF but never shrinks dest.
-                        wrote = size as u64;
-                        break 'copy Ok(());
-                    }
-                    sys::copy_file::disable_ioctl_ficlone();
-                }
-
                 if !sys::copy_file::can_use_copy_file_range_syscall() {
                     break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
                         src, dest, src_fd, dest_fd, size, &mut wrote,

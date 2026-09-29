@@ -294,8 +294,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     ///
     /// We need to declare this `response_ref` upfront
     pub(crate) response_ref: Ref,
-    /// The namespace ref for `bun:app`. Only hot reloading attaches it to
-    /// `response_ref` as a namespace alias.
+    /// The namespace ref for `bun:app`. Only hot reloading attaches it to `response_ref`.
     pub(crate) bun_app_namespace_ref: Ref,
 
     /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.

@@ -895,7 +895,9 @@ console.log(addon.hello());
 
 If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` file directly, or it won't bundle correctly.
 
-An addon that links a shared library next to it (through `$ORIGIN` or `@loader_path`) works when that library is embedded too. Pass the directory with `--asset` (see below). At runtime, Bun writes every embedded shared library into one temporary directory that keeps the embedded layout, so the addon finds its dependencies where it expects them.
+An addon that links a shared library next to it (through `$ORIGIN` or `@loader_path`) works when that library is embedded too. Pass the directory with `--asset` (see below). The first time the executable loads the addon, Bun writes it and the embedded libraries it links into one directory under the temporary directory (`TMPDIR`), with the embedded layout, so the addon finds its dependencies where it expects them. That directory belongs to the user who runs the executable and nobody else can write in it. Later starts reuse it.
+
+A file that the addon opens by itself at run time is not written there. Neither is a symlink: embed the file the link points to.
 
 ```bash terminal icon="terminal"
 bun build --compile ./index.ts --asset ./lib --outfile myapp

@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -422,6 +422,7 @@ const cc = isWindows ? null : (Bun.which("clang") ?? Bun.which("cc") ?? Bun.whic
 describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep their layout", () => {
   const soExt = isMacOS ? "dylib" : "so";
   const FOO_C = "int foo(void) { return 42; }\n";
+  const DECOY_C = "int foo(void) { return 1337; }\n";
   // N-API addon with no headers: the symbols resolve from the bun executable at dlopen time.
   const ADDON_C = /* c */ `
     typedef struct napi_env__* napi_env; typedef struct napi_value__* napi_value;
@@ -441,14 +442,16 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
     if (code !== 0) throw new Error(`cc failed (exit ${code})\n${stdout}\n${stderr}`);
   }
 
-  // lib/libfoo.<so>, then `out` in lib/ that links it and looks for it next to itself.
-  async function buildLibs(dir: string, sources: Record<string, string>) {
+  // lib/libfoo.<so>, then `out` in lib/ that links it and searches `rpaths`
+  // (default: next to itself) for it, in that order.
+  async function buildLibs(dir: string, sources: Record<string, string>, rpaths?: string[]) {
+    const origin = isMacOS ? "@loader_path" : "$ORIGIN";
     const foo = isMacOS
       ? ["-dynamiclib", "foo.c", "-o", `lib/libfoo.dylib`, "-install_name", "@rpath/libfoo.dylib"]
       : ["-shared", "-fPIC", "foo.c", "-o", "lib/libfoo.so"];
     await run_cc(dir, foo);
     for (const [out, src] of Object.entries(sources)) {
-      const link = ["-Llib", "-lfoo", "-Wl,-rpath," + (isMacOS ? "@loader_path" : "$ORIGIN")];
+      const link = ["-Llib", "-lfoo", ...(rpaths ?? [origin]).map(r => "-Wl,-rpath," + r)];
       const args = isMacOS
         ? [out.endsWith(".node") ? "-bundle" : "-dynamiclib", src, "-o", out, "-undefined", "dynamic_lookup", ...link]
         : ["-shared", "-fPIC", src, "-o", out, ...link];
@@ -530,6 +533,86 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
       expect(readdirSync(extractDir)).toHaveLength(1);
     },
     TIMEOUT,
+  );
+
+  // A search path that climbs out of the embedded tree used to land in the
+  // shared temp directory, where any local user can create an entry. The build
+  // records the climb and the runtime nests the mirror that deep, so the
+  // lookup ends inside the 0700 directory the user owns.
+  test(
+    "a search path that climbs out of the embedded tree stays inside Bun's own directory",
+    async () => {
+      const origin = isMacOS ? "@loader_path" : "$ORIGIN";
+      using dir = tempDir("bunfs-addon-climb", {
+        "foo.c": FOO_C,
+        "decoy.c": DECOY_C,
+        "addon.c": ADDON_C,
+        "lib/.keep": "",
+        "index.ts": `console.log(require("./lib/addon.node").answer);`,
+      });
+      // The first entry climbs two levels and looks in `lib` there, which is
+      // the extraction directory itself when the mirror is not nested.
+      await buildLibs(String(dir), { "lib/addon.node": "addon.c" }, [`${origin}/../../lib`, origin]);
+      await compile(String(dir), ["--asset", "lib"]);
+
+      using extractRoot = tempDir("bunfs-addon-climb-extract", {});
+      const extractDir = String(extractRoot);
+      const decoy = isMacOS
+        ? ["-dynamiclib", "decoy.c", "-o", join(extractDir, "lib", "libfoo.dylib"), "-install_name", "@rpath/libfoo.dylib"]
+        : ["-shared", "-fPIC", "decoy.c", "-o", join(extractDir, "lib", "libfoo.so"), "-Wl,-soname,libfoo.so"];
+      mkdirSync(join(extractDir, "lib"), { recursive: true });
+      await run_cc(String(dir), decoy);
+
+      const result = await runIsolated(String(dir), extractDir);
+      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      // 1337 is the library beside the extraction directory.
+      expect(result.stdout.trim()).toBe("42");
+      expect(result.code).toBe(0);
+
+      // The mirror sits one directory deeper than the embedded root, so the
+      // climb ends in the `.bun-` directory instead of the extraction one.
+      const addon = extracted(extractDir, "/lib/addon.node")[0];
+      expect(addon).toMatch(/^\.bun-[^/]+\/[^/]+\/lib\/addon\.node$/);
+      expect(extracted(extractDir, "libfoo." + soExt).filter(f => f.startsWith(".bun-"))).toHaveLength(1);
+    },
+    // Four `cc` runs and a `--compile` of its own, on top of the block's load.
+    2 * TIMEOUT,
+  );
+
+  // One `dlopen` writes the library it asked for and the embedded libraries
+  // that one needs. An unrelated embedded library is never written.
+  test(
+    "an unrelated embedded library is not written",
+    async () => {
+      using dir = tempDir("bunfs-addon-closure", {
+        "foo.c": FOO_C,
+        "unused.c": "int unused(void) { return 7; }\n",
+        "addon.c": ADDON_C,
+        "lib/.keep": "",
+        "other/.keep": "",
+        "index.ts": `console.log(require("./lib/addon.node").answer);`,
+      });
+      await buildLibs(String(dir), { "lib/addon.node": "addon.c" });
+      await run_cc(
+        String(dir),
+        isMacOS
+          ? ["-dynamiclib", "unused.c", "-o", `other/libunused.dylib`]
+          : ["-shared", "-fPIC", "unused.c", "-o", "other/libunused.so"],
+      );
+      await compile(String(dir), ["--asset", "lib", "--asset", "other"]);
+
+      using extractRoot = tempDir("bunfs-addon-closure-extract", {});
+      const extractDir = String(extractRoot);
+      const result = await runIsolated(String(dir), extractDir);
+      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(result.stdout.trim()).toBe("42");
+      expect(result.code).toBe(0);
+
+      expect(extracted(extractDir, ".node")).toHaveLength(1);
+      expect(extracted(extractDir, "libfoo." + soExt)).toHaveLength(1);
+      expect(extracted(extractDir, "libunused." + soExt)).toHaveLength(0);
+    },
+    2 * TIMEOUT,
   );
 
   test(

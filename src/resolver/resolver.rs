@@ -4131,6 +4131,58 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
+    /// Rebuild the part of an absolute path below `preserve_prefix` using the
+    /// spelling retained for each directory entry. Unlike `realpath`, this
+    /// keeps the caller's prefix and route through symbolic links.
+    pub fn resolve_path_with_entry_spelling(
+        &mut self,
+        path: &[u8],
+        preserve_prefix: &[u8],
+    ) -> Option<Box<[u8]>> {
+        let root_len = if cfg!(windows) {
+            ::bun_paths::resolve_path::windows_filesystem_root(path).len()
+        } else {
+            1
+        };
+        if root_len == 0
+            || root_len > path.len()
+            || !::bun_paths::resolve_path::Platform::AUTO.is_absolute(path)
+        {
+            return None;
+        }
+
+        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+        let separator = if cfg!(windows) { b'\\' } else { b'/' };
+        let common_prefix =
+            ::bun_paths::resolve_path::longest_common_path(&[path, preserve_prefix]);
+        let mut resolved = path[..root_len.max(common_prefix.len()).min(path.len())].to_vec();
+
+        for component in path[resolved.len()..].split(|byte| separators.contains(byte)) {
+            if component.is_empty() {
+                continue;
+            }
+            if component == b"." || component == b".." {
+                return None;
+            }
+
+            let actual_component = {
+                let dir_info = self.read_dir_info(&resolved).ok().flatten()?;
+                let entry = dir_info.get_entry(self.generation, component)?;
+                entry.entry().base().to_vec()
+            };
+
+            if !resolved
+                .last()
+                .is_some_and(|last| separators.contains(last))
+            {
+                resolved.push(separator);
+            }
+            resolved.extend_from_slice(&actual_component);
+        }
+
+        Some(resolved.into_boxed_slice())
+    }
+
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
     }

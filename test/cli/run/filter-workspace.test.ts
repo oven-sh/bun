@@ -283,32 +283,39 @@ describe("bun", () => {
     });
   });
 
-  const expectMixedCaseWorkspacePaths = (workspaces: string[], expectUpper = true) => {
+  const expectMixedCaseWorkspacePaths = (
+    workspaces: string[],
+    expectUpper = true,
+    pathFilters?: readonly [string, string],
+  ) => {
     using dir = tempDir("filter-workspace-case", {
-      packages: {
-        UpperPkg: {
-          "package.json": JSON.stringify({
-            name: "upper-pkg",
-            scripts: { hi: "echo hello-from-upper" },
-          }),
+      WorkspaceRoot: {
+        packages: {
+          UpperPkg: {
+            "package.json": JSON.stringify({
+              name: "upper-pkg",
+              scripts: { hi: "echo hello-from-upper" },
+            }),
+          },
+          lowerpkg: {
+            "package.json": JSON.stringify({
+              name: "lower-pkg",
+              scripts: { hi: "echo hello-from-lower" },
+            }),
+          },
         },
-        lowerpkg: {
-          "package.json": JSON.stringify({
-            name: "lower-pkg",
-            scripts: { hi: "echo hello-from-lower" },
-          }),
-        },
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces,
+        }),
       },
-      "package.json": JSON.stringify({
-        name: "root",
-        private: true,
-        workspaces,
-      }),
     });
 
-    const run = (filter: string, stderrContains?: string) => {
+    const workspaceDir = join(String(dir), "WorkspaceRoot");
+    const run = (filter: string, stderrContains?: string, cwd = workspaceDir) => {
       const { exitCode, stdout, stderr } = spawnSync({
-        cwd: dir,
+        cwd,
         cmd: [bunExe(), "run", "--filter", filter, "hi"],
         env: bunEnv,
         stdout: "pipe",
@@ -333,6 +340,20 @@ describe("bun", () => {
       upper: expectUpper ? { exitCode: 0, upper: 1, lower: 0 } : { exitCode: 1, upper: 0, lower: 0 },
       all: expectUpper ? { exitCode: 0, upper: 1, lower: 1 } : { exitCode: 0, upper: 0, lower: 1 },
     });
+
+    if (pathFilters) {
+      const differentlyCasedRoot = join(String(dir), "workspaceroot");
+      expect(run(pathFilters[0], undefined, differentlyCasedRoot)).toEqual({
+        exitCode: 0,
+        upper: 1,
+        lower: 0,
+      });
+      expect(run(pathFilters[1], "No workspace packages matched the filter", differentlyCasedRoot)).toEqual({
+        exitCode: 1,
+        upper: 0,
+        lower: 0,
+      });
+    }
   };
 
   // https://github.com/oven-sh/bun/issues/36004
@@ -341,7 +362,10 @@ describe("bun", () => {
   });
 
   test.skipIf(!isWindows)("exact workspace paths use case-insensitive lookup on Windows", () => {
-    expectMixedCaseWorkspacePaths(["packages/upperpkg", "packages/lowerpkg"]);
+    expectMixedCaseWorkspacePaths(["packages/upperpkg", "packages/lowerpkg"], true, [
+      "./packages/UpperPkg",
+      "./packages/upperpkg",
+    ]);
     expectMixedCaseWorkspacePaths(["./packages/upperpkg", "./packages/lowerpkg"]);
     expectMixedCaseWorkspacePaths([String.raw`packages\upperpkg`, String.raw`packages\lowerpkg`]);
   });

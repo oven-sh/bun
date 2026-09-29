@@ -177,7 +177,7 @@ pub(crate) fn select_packages(
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
-    while let Some(package_json_path) = iter.next()? {
+    while let Some(package_json_path) = iter.next(resolver)? {
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
@@ -364,7 +364,10 @@ impl<'a> PackageFilterIterator<'a> {
             })
     }
 
-    fn resolve_literal_pattern(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
+    fn resolve_literal_pattern(
+        &mut self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+    ) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         let pattern: &[u8] = &self.patterns[self.pattern_idx];
         let mut spill = Vec::new();
         let path =
@@ -374,7 +377,14 @@ impl<'a> PackageFilterIterator<'a> {
         match stat_result {
             Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => {
                 self.pattern_idx += 1;
-                Ok(Some(Box::<[u8]>::from(path.as_bytes())))
+                let path = if cfg!(windows) {
+                    resolver
+                        .resolve_path_with_entry_spelling(path.as_bytes(), self.root_dir)
+                        .unwrap_or_else(|| Box::<[u8]>::from(path.as_bytes()))
+                } else {
+                    Box::<[u8]>::from(path.as_bytes())
+                };
+                Ok(Some(path))
             }
             Ok(_) => {
                 self.pattern_idx += 1;
@@ -418,7 +428,10 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
-    fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
+    fn next(
+        &mut self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+    ) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
             let Some(active) = &mut self.active else {
                 if self.pattern_idx >= self.patterns.len() {
@@ -426,7 +439,7 @@ impl<'a> PackageFilterIterator<'a> {
                 }
                 let pattern: &[u8] = &self.patterns[self.pattern_idx];
                 if Self::can_resolve_pattern_directly(pattern) {
-                    match self.resolve_literal_pattern() {
+                    match self.resolve_literal_pattern(resolver) {
                         Ok(Some(path)) => return Ok(Some(path)),
                         Ok(None) => continue,
                         Err(_) => {

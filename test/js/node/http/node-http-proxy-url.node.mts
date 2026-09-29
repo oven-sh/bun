@@ -239,6 +239,38 @@ function eventsOf(req: http.ClientRequest) {
   return promise;
 }
 
+// Counts the turns of the process.nextTick queue, from the failure callback of agent.createConnection() on.
+function countTurns(agent: Agent) {
+  const turns = { count: -1 };
+  const createConnection = agent.createConnection;
+  agent.createConnection = function (this: Agent, options: any, callback: any) {
+    return createConnection.call(this, options, (err: Error | null, socket: Duplex) => {
+      if (err && turns.count === -1) {
+        turns.count = 0;
+        const next = () => {
+          if (++turns.count < 8) process.nextTick(next);
+        };
+        // Queued before the callback runs. What the callback queues runs on turn 1.
+        process.nextTick(next);
+      }
+      callback(err, socket);
+    });
+  };
+  return turns;
+}
+
+// On which turn the request emits 'error' and 'close'.
+function turnsOf(req: http.ClientRequest, turns: { count: number }) {
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  req.on("error", () => events.push(`error @${turns.count}`));
+  req.on("close", () => {
+    events.push(`close @${turns.count}`);
+    resolve(events);
+  });
+  return promise;
+}
+
 describe(
   "https request through a proxy that ends the connection before the TLS handshake is done",
   { skip: typeof setGlobalProxyFromEnv !== "function" },
@@ -299,8 +331,14 @@ describe(
         if (defaults) tls.setDefaultCACertificates([...defaults, cert]);
         const proxy = createProxy();
         const agent = proxiedAgent(`${scheme}://127.0.0.1:${await listenOnRandomPort(proxy)}`);
+        const turns = countTurns(agent);
         try {
-          assert.deepStrictEqual(await eventsOf(https.get({ ...target, agent })), [disconnected, "close"]);
+          const req = https.get({ ...target, agent });
+          const ticks = turnsOf(req, turns);
+          assert.deepStrictEqual(
+            { events: await eventsOf(req), turns: await ticks },
+            { events: [disconnected, "close"], turns: ["error @1", "close @1"] },
+          );
           assert.strictEqual((agent as any).totalSocketCount, 0);
         } finally {
           agent.destroy();
@@ -407,6 +445,7 @@ describe(
         socket.on("error", () => upstream.destroy());
       });
       const agent = proxiedAgent(`http://127.0.0.1:${await listenOnRandomPort(proxy)}`, { maxSockets: 1 });
+      const turns = countTurns(agent);
       try {
         const options = { host: "127.0.0.1", port: serverPort, path: "/", agent, rejectUnauthorized: false };
         const first = https.get(options);
@@ -415,13 +454,19 @@ describe(
 
         const second = https.get(options);
         const secondEvents = eventsOf(second);
+        const secondTurns = turnsOf(second, turns);
         assert.strictEqual(Object.values(agent.requests).flat().length, 1);
 
         // The socket of the first request closes after its response. Only then the agent opens one for the second.
         answer.resolve();
         assert.deepStrictEqual(
-          { first: await firstEvents, second: await secondEvents, connects },
-          { first: ["socket", "response 200", "close"], second: [disconnected, "close"], connects: 2 },
+          { first: await firstEvents, second: await secondEvents, turns: await secondTurns, connects },
+          {
+            first: ["socket", "response 200", "close"],
+            second: [disconnected, "close"],
+            turns: ["error @1", "close @1"],
+            connects: 2,
+          },
         );
       } finally {
         answer.resolve();
@@ -463,6 +508,25 @@ describe(
         },
       };
     }
+
+    test("a request gets 'error' at once and 'close' on the next turn", async () => {
+      const proxy = await holdingProxy("HTTP/1.1 407 Proxy Authentication Required");
+      const agent = proxiedAgent(proxy.url);
+      const turns = countTurns(agent);
+      try {
+        const req = https.get({ ...target, path: "/", agent });
+        const ticks = turnsOf(req, turns);
+        const message = `Failed to establish tunnel to example.invalid:443 via ${proxy.url}: HTTP/1.1 407 Proxy Authentication Required`;
+        assert.deepStrictEqual(
+          { events: await eventsOf(req), turns: await ticks },
+          { events: [{ code: "ERR_PROXY_TUNNEL", message }, "close"], turns: ["error @0", "close @1"] },
+        );
+        if (closesTheConnection) await proxy.closed;
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    });
 
     test("createConnection() gives its caller the socket", async () => {
       const proxy = await holdingProxy("HTTP/1.1 407 Proxy Authentication Required");
@@ -543,7 +607,7 @@ describe(
   },
 );
 
-describe("Agent#createConnection() that calls back with an error and a second argument", () => {
+describe("Agent: socket creation that calls back with an error and a second argument", () => {
   const failed = [{ code: "ERR_TEST_NO_CONNECTION", message: "no connection" }, "close"];
 
   // The request reports the error and leaves the second argument alone.
@@ -597,7 +661,8 @@ describe("Agent#createConnection() that calls back with an error and a second ar
     }
   });
 
-  test("a TLS socket that the server ended during the handshake", async () => {
+  // Resolves to a TLS socket that reported ECONNRESET, and counts the destroy() calls on it from then on.
+  async function endedDuringTheHandshake() {
     const server = net.createServer(socket => {
       socket.on("error", () => {});
       socket.once("data", () => socket.end());
@@ -605,11 +670,62 @@ describe("Agent#createConnection() that calls back with an error and a second ar
     const socket = tls.connect({ host: "127.0.0.1", port: await listenOnRandomPort(server) });
     try {
       const [err] = await once(socket, "error");
+      assert.strictEqual(err.code, "ECONNRESET");
+    } finally {
+      server.close();
+    }
+    const calls = { destroy: 0 };
+    const destroy = socket.destroy;
+    socket.destroy = function (this: tls.TLSSocket, ...args: any[]) {
+      calls.destroy++;
+      return destroy.apply(this, args as []);
+    };
+    return { socket, calls };
+  }
+
+  test("a TLS socket that the server ended during the handshake", async () => {
+    const { socket, calls } = await endedDuringTheHandshake();
+    assert.deepStrictEqual({ events: await eventsWith(socket), calls }, { events: failed, calls: { destroy: 0 } });
+  });
+
+  test("createSocket() that calls back with an error and a socket, for a request that waited", async () => {
+    const answer = Promise.withResolvers<void>();
+    // "close", so that the second request cannot take the socket of the first.
+    const server = createServer(async (_req, res) => {
+      await answer.promise;
+      res.setHeader("connection", "close");
+      res.end("ok");
+    });
+    const { socket, calls } = await endedDuringTheHandshake();
+    let created = 0;
+    class FailsTheSecond extends Agent {
+      createSocket(req: any, options: any, callback: any) {
+        if (++created === 1) return (Agent.prototype as any).createSocket.call(this, req, options, callback);
+        const err = Object.assign(new Error("no connection"), { code: "ERR_TEST_NO_CONNECTION" });
+        process.nextTick(callback, err, socket);
+      }
+    }
+    const agent = new FailsTheSecond({ maxSockets: 1 });
+    try {
+      const options = { host: "127.0.0.1", port: await listenOnRandomPort(server), path: "/", agent };
+      const first = httpRequest(options);
+      const firstEvents = eventsOf(first);
+      first.end();
+      await once(first, "socket");
+
+      const second = httpRequest(options);
+      const secondEvents = eventsOf(second);
+      second.end();
+      assert.strictEqual(Object.values((agent as any).requests).flat().length, 1);
+
+      answer.resolve();
       assert.deepStrictEqual(
-        { code: err.code, events: await eventsWith(socket) },
-        { code: "ECONNRESET", events: failed },
+        { first: await firstEvents, second: await secondEvents, created, calls },
+        { first: ["socket", "response 200", "close"], second: failed, created: 2, calls: { destroy: 0 } },
       );
     } finally {
+      answer.resolve();
+      agent.destroy();
       server.close();
     }
   });

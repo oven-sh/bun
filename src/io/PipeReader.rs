@@ -208,6 +208,8 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
+        const READ_FAILED              = 1 << 11;
     }
 }
 
@@ -584,6 +586,8 @@ impl BufferedReader {
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
+        // The shell starts a reader again for a listener that came after an error.
+        self.flags.remove(ReaderFlags::READ_FAILED);
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(ReaderFlags::IS_DONE);
@@ -685,7 +689,10 @@ impl BufferedReader {
     }
 
     fn begin_read(&self) -> Option<(Fd, FileType, BufferedReaderVTable)> {
-        if self.flags.contains(ReaderFlags::IS_PAUSED) {
+        if self
+            .flags
+            .intersects(ReaderFlags::IS_PAUSED | ReaderFlags::READ_FAILED)
+        {
             return None;
         }
         Some((self.get_fd(), self.get_file_type(), self.vtable))
@@ -723,7 +730,10 @@ impl BufferedReader {
                 }
             }
             sys::Result::Err(err) if err.is_retry() => ReadOnce::Stop(Stop::WouldBlock),
-            sys::Result::Err(err) => ReadOnce::Stop(Stop::Error(err)),
+            sys::Result::Err(err) => {
+                self.flags.insert(ReaderFlags::READ_FAILED);
+                ReadOnce::Stop(Stop::Error(err))
+            }
         }
     }
 

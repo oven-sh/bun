@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, getEventLoopStats, socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
@@ -4069,30 +4069,45 @@ Reo=
       }
     });
 
-    // The loop reads 5 handshaking TLS sockets per iteration and switches the
-    // reads of the others off until a later iteration. Here the peer's last
-    // flight, its data and its FIN reach every socket in the same iteration.
+    // The loop reads BUDGET handshaking TLS sockets per iteration. The others
+    // wait in a queue with their reads off, and BUDGET of them leave the queue
+    // per iteration. Here the peer's last flight, its data and the end of the
+    // connection reach every socket in one iteration.
     describe("in a burst of connections", () => {
-      const CONNECTIONS = 16;
+      // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
+      const BUDGET = 5;
+      // Three iterations read BUDGET sockets each, and a fourth reads the last one.
+      const CONNECTIONS = 3 * BUDGET + 1;
       const PAYLOAD = Buffer.alloc(4096, "x");
       type Fail = (error: unknown) => void;
-      type Observed = { events: string[]; bytes: number; closed: PromiseWithResolvers<void>; fail: Fail };
-      const observed = (fail: Fail): Observed => ({
+      type Observed = {
+        events: string[];
+        bytes: number;
+        closedIn: number;
+        closed: PromiseWithResolvers<void>;
+        fail: Fail;
+        onHandshake?: () => void;
+      };
+      const observed = (fail: Fail, onHandshake?: () => void): Observed => ({
         events: [],
         bytes: 0,
+        closedIn: -1,
         closed: Promise.withResolvers<void>(),
         fail,
+        onHandshake,
       });
       const handlers = {
         handshake(socket: Socket<Observed>, success: boolean) {
           socket.data.events.push(`handshake success=${success}`);
+          socket.data.onHandshake?.();
         },
         data(socket: Socket<Observed>, data: Buffer) {
           if (socket.data.bytes === 0) socket.data.events.push("data");
           socket.data.bytes += data.length;
         },
-        close(socket: Socket<Observed>) {
-          socket.data.events.push("close");
+        close(socket: Socket<Observed>, error?: Error) {
+          socket.data.events.push(error ? `close ${(error as NodeJS.ErrnoException).code}` : "close");
+          socket.data.closedIn = getEventLoopStats().iteration;
           socket.data.closed.resolve();
         },
         error(socket: Socket<Observed>, error: Error) {
@@ -4100,16 +4115,24 @@ Reo=
         },
       };
       const allClosed = (sockets: Socket<Observed>[]) => Promise.all(sockets.map(socket => socket.data.closed.promise));
-      // How many sockets saw each order of callbacks.
+      // How many sockets saw each order of callbacks, and how many closed in
+      // each loop iteration from the first close on. A burst that the queue
+      // did not hold closes in fewer iterations.
       function tally(sockets: Socket<Observed>[]) {
-        const counts: Record<string, number> = {};
+        const outcomes: Record<string, number> = {};
+        const first = Math.min(...sockets.map(socket => socket.data.closedIn));
+        const closesPerIteration: number[] = [];
         for (const { data } of sockets) {
           const outcome = `${data.events.join(", ")}, ${data.bytes} bytes`;
-          counts[outcome] = (counts[outcome] ?? 0) + 1;
+          outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+          closesPerIteration[data.closedIn - first] = (closesPerIteration[data.closedIn - first] ?? 0) + 1;
         }
-        return counts;
+        return { outcomes, closesPerIteration: Array.from(closesPerIteration, count => count ?? 0) };
       }
-      const everyByte = { [`handshake success=true, data, close, ${PAYLOAD.length} bytes`]: CONNECTIONS };
+      const everyByte = {
+        outcomes: { [`handshake success=true, data, close, ${PAYLOAD.length} bytes`]: CONNECTIONS },
+        closesPerIteration: [BUDGET, BUDGET, BUDGET, 1],
+      };
 
       // step() rejects when a socket of the test reports a failure.
       function failures() {
@@ -4122,24 +4145,57 @@ Reo=
         };
       }
 
-      // A TCP relay between the TLS peers. The flights of a handshake take
-      // turns, and the ClientHello is flight 1. The relay holds flight
-      // `holdFrom` and all that its sender sends after it. release() delivers
-      // that, with a FIN, to every connection in one tick.
-      async function holdingRelay(serverPort: number, holdFrom: number, fail: Fail) {
+      // A connection that the peer answers: what the relay wrote before it is
+      // in the receive buffers of the sockets by the time it resolves.
+      async function roundTrip() {
+        const server = net.createServer(socket => socket.end("x"));
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+        await once(socket, "data");
+        socket.destroy();
+        server.close();
+      }
+
+      type Transport = "TCP" | "unix";
+      // "FIN" ends the stream. "close" also closes the connection, which is
+      // the hangup of a unix socket that did not shut down. "nothing" leaves
+      // the connection open for reset().
+      type Ending = "FIN" | "close" | "nothing";
+
+      function listenOptions(transport: Transport, dir: string, name: string) {
+        return transport === "unix" ? { path: join(dir, name) } : { port: 0, host: "127.0.0.1" };
+      }
+      function addressOf(server: net.Server) {
+        const address = server.address();
+        return typeof address === "string" ? { path: address } : { port: address!.port, host: "127.0.0.1" };
+      }
+      function bunAddress(address: { path: string } | { port: number; host: string }) {
+        return "path" in address ? { unix: address.path } : { hostname: address.host, port: address.port };
+      }
+
+      // A relay between the TLS peers. The flights of a handshake take turns,
+      // and the ClientHello is flight 1. The relay holds flight `holdFrom` and
+      // all that its sender sends after it. deliver() writes that to every
+      // connection in one tick.
+      async function holdingRelay(
+        server: { path: string } | { port: number; host: string },
+        listen: { path: string } | { port: number; host: string },
+        holdFrom: number,
+        fail: Fail,
+      ) {
         const sockets: net.Socket[] = [];
-        const deliveries: (() => void)[] = [];
+        const receivers: { socket: net.Socket; held: Buffer[] }[] = [];
         const allHeld = Promise.withResolvers<void>();
         const allShutDown = Promise.withResolvers<void>();
         let heldFins = 0;
         let shutDownFins = 0;
         const relay = net.createServer({ allowHalfOpen: true }, fromClient => {
-          const toServer = net.connect({ port: serverPort, host: "127.0.0.1", allowHalfOpen: true });
+          const toServer = net.connect({ ...server, allowHalfOpen: true });
           sockets.push(fromClient, toServer);
           // The client sends the odd flights.
           const [sender, receiver] = holdFrom % 2 ? [fromClient, toServer] : [toServer, fromClient];
           const held: Buffer[] = [];
-          deliveries.push(() => receiver.end(Buffer.concat(held)));
+          receivers.push({ socket: receiver, held });
           let flight = 0;
           let lastSender: net.Socket | undefined;
           for (const [from, to] of [
@@ -4158,13 +4214,26 @@ Reo=
           sender.on("end", () => ++heldFins === CONNECTIONS && allHeld.resolve());
           receiver.on("end", () => ++shutDownFins === CONNECTIONS && allShutDown.resolve());
         });
-        await once(relay.listen(0, "127.0.0.1"), "listening");
+        await once(relay.listen(listen), "listening");
         return {
-          port: (relay.address() as net.AddressInfo).port,
+          address: addressOf(relay),
           allHeld: allHeld.promise,
           allShutDown: allShutDown.promise,
-          release() {
-            for (const deliver of deliveries) deliver();
+          async deliver(ending: Ending) {
+            await Promise.all(
+              receivers.map(({ socket, held }) => {
+                const written = Promise.withResolvers<void>();
+                const bytes = Buffer.concat(held);
+                if (ending === "nothing") socket.write(bytes, () => written.resolve());
+                else socket.end(bytes, () => written.resolve());
+                if (ending === "close") written.promise.then(() => socket.destroy());
+                return written.promise;
+              }),
+            );
+            await roundTrip();
+          },
+          reset() {
+            for (const { socket } of receivers) socket.resetAndDestroy();
           },
           close() {
             for (const socket of sockets) socket.destroy();
@@ -4173,92 +4242,144 @@ Reo=
         };
       }
 
-      // With no shutdown() the sockets read all of it on epoll before this change too.
-      for (const shutDown of [true, false]) {
-        const state = shutDown ? "shut down" : "did not shut down";
-
-        it(`every client that ${state} reads the last flight and the data of its server`, async () => {
-          const { fail, step } = failures();
-          const server = tlsCreateServer({ key: SERVER_KEY, cert: SERVER_CRT, maxVersion: "TLSv1.2" }, socket => {
-            socket.on("error", fail);
-            socket.end(PAYLOAD);
-          });
-          server.on("tlsClientError", fail);
-          await once(server.listen(0, "127.0.0.1"), "listening");
-          // Flight 4 of TLS 1.2 is the server's Finished.
-          const relay = await holdingRelay((server.address() as net.AddressInfo).port, 4, fail);
-          const clients: Socket<Observed>[] = [];
-          try {
+      // The sockets of the test: clients of a node:tls server, or the accepted
+      // sockets of a Bun.listen server with node:tls clients. The relay holds
+      // the last flight of their peer. Flight 4 of TLS 1.2 is the server's
+      // Finished. Flight 3 of TLS 1.3 is the client's Finished.
+      async function burst(role: "client" | "accepted", transport: Transport, fail: Fail, onHandshake?: () => void) {
+        const dir = tempDir("tls-burst", {});
+        const sockets: Socket<Observed>[] = [];
+        const cleanup: (() => void)[] = [];
+        let relay: Awaited<ReturnType<typeof holdingRelay>>;
+        try {
+          if (role === "client") {
+            const server = tlsCreateServer({ key: SERVER_KEY, cert: SERVER_CRT, maxVersion: "TLSv1.2" }, socket => {
+              socket.on("error", fail);
+              socket.end(PAYLOAD);
+            });
+            cleanup.push(() => server.close());
+            server.on("tlsClientError", fail);
+            await once(server.listen(listenOptions(transport, String(dir), "s.sock")), "listening");
+            relay = await holdingRelay(addressOf(server), listenOptions(transport, String(dir), "r.sock"), 4, fail);
+            cleanup.push(relay.close);
+            cleanup.push(() => sockets.forEach(socket => socket.terminate()));
             for (let i = 0; i < CONNECTIONS; i++) {
-              clients.push(
+              sockets.push(
                 await Bun.connect({
-                  hostname: "127.0.0.1",
-                  port: relay.port,
+                  ...bunAddress(relay.address),
                   tls: { ca: CA_CRT, serverName: "localhost" },
-                  data: observed(fail),
+                  data: observed(fail, onHandshake),
                   socket: { open() {}, ...handlers },
                 }),
               );
             }
-            await step(relay.allHeld);
-            if (shutDown) {
-              for (const client of clients) client.shutdown();
-              await step(relay.allShutDown);
-            }
-            relay.release();
-            await step(allClosed(clients));
-            expect(tally(clients)).toEqual(everyByte);
-          } finally {
-            for (const client of clients) client.terminate();
-            relay.close();
-            server.close();
-          }
-        });
-
-        it(`every accepted socket that ${state} reads the last flight and the data of its client`, async () => {
-          const { fail, step } = failures();
-          const accepted: Socket<Observed>[] = [];
-          using server = Bun.listen<Observed>({
-            hostname: "127.0.0.1",
-            port: 0,
-            tls: { key: SERVER_KEY, cert: SERVER_CRT },
-            socket: {
-              open(socket) {
-                socket.data = observed(fail);
-                accepted.push(socket);
+          } else {
+            const server = Bun.listen<Observed>({
+              ...bunAddress(listenOptions(transport, String(dir), "s.sock") as { path: string }),
+              tls: { key: SERVER_KEY, cert: SERVER_CRT },
+              socket: {
+                open(socket) {
+                  socket.data = observed(fail, onHandshake);
+                  sockets.push(socket);
+                },
+                ...handlers,
               },
-              ...handlers,
-            },
-          });
-          // Flight 3 of TLS 1.3 is the client's Finished.
-          const relay = await holdingRelay(server.port, 3, fail);
-          const clients: ReturnType<typeof tlsConnect>[] = [];
-          try {
+            });
+            cleanup.push(() => server.stop(true));
+            const address =
+              transport === "unix" ? { path: join(String(dir), "s.sock") } : { port: server.port, host: "127.0.0.1" };
+            relay = await holdingRelay(address, listenOptions(transport, String(dir), "r.sock"), 3, fail);
+            cleanup.push(relay.close);
             for (let i = 0; i < CONNECTIONS; i++) {
               const client = tlsConnect({
-                port: relay.port,
-                host: "127.0.0.1",
+                ...relay.address,
                 ca: CA_CRT,
                 servername: "localhost",
                 minVersion: "TLSv1.3",
               });
+              cleanup.push(() => client.destroy());
               client.on("error", fail);
               client.on("secureConnect", () => client.end(PAYLOAD));
-              clients.push(client);
             }
-            await step(relay.allHeld);
-            if (shutDown) {
-              for (const socket of accepted) socket.shutdown();
-              await step(relay.allShutDown);
-            }
-            relay.release();
-            await step(allClosed(accepted));
-            expect(tally(accepted)).toEqual(everyByte);
-          } finally {
-            for (const client of clients) client.destroy();
-            relay.close();
           }
-        });
+        } catch (error) {
+          for (const undo of cleanup.reverse()) undo();
+          dir[Symbol.dispose]();
+          throw error;
+        }
+        return {
+          sockets,
+          relay,
+          [Symbol.dispose]() {
+            for (const undo of cleanup.reverse()) undo();
+            dir[Symbol.dispose]();
+          },
+        };
+      }
+
+      // The sockets stop reading, the relay delivers, and the sockets read
+      // again in one tick: every socket is readable in the same iteration.
+      async function deliverToAll(
+        { sockets, relay }: Awaited<ReturnType<typeof burst>>,
+        shutDown: boolean,
+        ending: Ending,
+        step: ReturnType<typeof failures>["step"],
+      ) {
+        await step(relay.allHeld);
+        for (const socket of sockets) {
+          if (shutDown) socket.shutdown();
+          socket.pause();
+        }
+        if (shutDown) await step(relay.allShutDown);
+        await step(relay.deliver(ending));
+        for (const socket of sockets) socket.resume();
+      }
+
+      for (const role of ["client", "accepted"] as const) {
+        const subject = role === "client" ? "client" : "accepted socket";
+        const peer = role === "client" ? "server" : "client";
+
+        // On TCP the kernel reports no hangup for a socket that did not shut
+        // down: these two cases pass on epoll without the fix.
+        for (const transport of ["TCP", "unix"] as const) {
+          for (const shutDown of [true, false]) {
+            const state = shutDown ? "shut down" : "did not shut down";
+            // A unix socket path is a named pipe on Windows, which has no queue.
+            it.skipIf(transport === "unix" && isWindows)(
+              `every ${transport} ${subject} that ${state} reads the last flight and the data of its ${peer}`,
+              async () => {
+                const { fail, step } = failures();
+                using connections = await burst(role, transport, fail);
+                await deliverToAll(connections, shutDown, shutDown ? "FIN" : "close", step);
+                await step(allClosed(connections.sockets));
+                expect(tally(connections.sockets)).toEqual(everyByte);
+              },
+            );
+          }
+        }
+
+        // The reset reaches sockets that wait in the queue. A socket that the
+        // loop holds back must still get its close. Which of the sockets read
+        // what their peer sent before the reset is not pinned here.
+        for (const shutDown of [true, false]) {
+          const state = shutDown ? "shut down" : "did not shut down";
+          it(`every ${subject} that ${state} closes when its ${peer} resets the connection`, async () => {
+            const { fail, step } = failures();
+            let reset: (() => void) | undefined;
+            // The first socket that completes its handshake is read in the
+            // iteration that puts the others in the queue.
+            using connections = await burst(role, "TCP", fail, () => {
+              reset?.();
+              reset = undefined;
+            });
+            reset = connections.relay.reset;
+            await deliverToAll(connections, shutDown, "nothing", step);
+            await step(allClosed(connections.sockets));
+            const closeCalls = (socket: Socket<Observed>) =>
+              socket.data.events.filter(event => event.startsWith("close")).length;
+            expect(connections.sockets.map(closeCalls)).toEqual(Array.from({ length: CONNECTIONS }, () => 1));
+          });
+        }
       }
     });
   });

@@ -1946,10 +1946,15 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     // A promise, not a value sampled when the GOAWAY arrives: like node, the session reports its
     // error once its socket has closed, which is after the GOAWAY has reached the peer.
     const sessionError = Promise.withResolvers<string>();
+    sessionError.promise.catch(() => {}); // the tests that expect no session error never read it
     const state = { handlers: 0, sessionErrorCode: sessionError.promise };
     const server = http2.createServer(options);
     server.on("sessionError", (e: any) => sessionError.resolve(e.code));
-    server.on("session", s => s.on("error", () => {}));
+    server.on("session", s => {
+      s.on("error", () => {});
+      // 'error' comes before 'close', so this only settles the promise when there was no error.
+      s.on("close", () => sessionError.reject(new Error("the session closed without a 'sessionError'")));
+    });
     server.on("stream", (stream: any, headers: any) => {
       state.handlers++;
       stream.on("error", () => {});

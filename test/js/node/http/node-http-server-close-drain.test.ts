@@ -613,6 +613,58 @@ test("closeIdleConnections() after close() reaps an idle connection, not one tha
   }
 });
 
+// A connection whose response has ended is idle while its handler is still on
+// the stack. How many reads its request head took makes no difference.
+test.each([
+  ["one read", "GET /sweep HTTP/1.1\r\nHost: x\r\n\r\n", ""],
+  ["two reads", "GET /sweep HTTP/1.1\r\nHo", "st: x\r\n\r\n"],
+])(
+  "closeIdleConnections() from process.nextTick in the handler closes a connection whose request head took %s",
+  async (_name, first, rest) => {
+    const server = createServer((req, res) => {
+      res.end(req.url);
+      if (req.url === "/sweep") process.nextTick(() => server.closeIdleConnections());
+    });
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      socket.on("error", () => {});
+      let response = "";
+      const swept = Promise.withResolvers<void>();
+      const kept = Promise.withResolvers<string>();
+      socket.on("data", chunk => {
+        response += chunk;
+        if (response.endsWith("/sweep")) swept.resolve();
+        if (response.endsWith("/second")) kept.resolve("kept");
+      });
+      const closed = once(socket, "close").then(() => "closed");
+
+      socket.write(first);
+      if (rest) {
+        // One round trip on another connection: the server has read the partial head by then.
+        const barrier = connect(port, "127.0.0.1");
+        barrier.resume();
+        barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(barrier, "close");
+        socket.write(rest);
+      }
+      await swept.promise;
+      // A connection that is still open answers this.
+      socket.write("GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+      expect(await Promise.race([closed, kept.promise])).toBe("closed");
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+);
+
 // The bytes of the first response still drain when one read brings the next
 // request. That request waits behind the unsent bytes, so the connection is
 // not idle, also when the same read completed the body of the first request.

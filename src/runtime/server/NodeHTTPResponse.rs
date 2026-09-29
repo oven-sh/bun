@@ -636,10 +636,10 @@ impl NodeHTTPResponse {
         }
 
         // The sec-websocket-* headers were already copied into
-        // raw_response.upgrade(); the underlying HttpParser::fallback buffer is
-        // freed when uWS adopts the socket above, so set_on_aborted_handler
-        // (which would call preserve_web_socket_headers_if_needed) must not run
-        // post-upgrade — it would read freed header views.
+        // raw_response.upgrade(). The request is a stack object of the uWS parse
+        // frame that dispatched it, and its header views end with that dispatch,
+        // so set_on_aborted_handler (which would call
+        // preserve_web_socket_headers_if_needed) must not run post-upgrade.
         self.upgrade_context.with_mut(|c| c.reset());
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.

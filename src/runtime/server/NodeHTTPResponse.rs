@@ -21,15 +21,7 @@ use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
-/// The uWS response of the socket that a node:http response answers on.
-///
-/// The server socket (JSNodeHTTPServerSocket) owns the connection. It grants it to one
-/// response at a time (`Flags::CURRENT`), and takes it back when it replaces that
-/// response, when the socket closes, or when a WebSocket adopts the socket.
-///
-/// The handle is private to this module, so each use says what it is for:
-/// `writer()` sends bytes or changes the state of the response in flight,
-/// `reader()` reads the connection's state or controls the reads of the request.
+/// The uWS response of the socket. JSNodeHTTPServerSocket grants it to one response at a time and takes it back.
 mod connection {
     use super::Flags;
     use bun_uws as uws;
@@ -44,7 +36,7 @@ mod connection {
             Self(Cell::new(Some(raw_response)))
         }
 
-        /// Only for the connection's current response.
+        /// To send bytes or change the state of the response in flight. Only for the current response.
         #[inline]
         pub(super) fn writer(&self, flags: Flags) -> Option<uws::AnyResponse> {
             if flags.contains(Flags::CURRENT) {
@@ -54,7 +46,7 @@ mod connection {
             }
         }
 
-        /// Also for a queued pipelined response: its request arrives on the connection.
+        /// To read the connection's state or control the reads of the request. Also for a queued response.
         #[inline]
         pub(super) fn reader(&self) -> Option<uws::AnyResponse> {
             self.0.get()
@@ -1476,11 +1468,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::CURRENT));
     }
 
-    /// The server socket gives the connection to another response, or a WebSocket adopted the
-    /// socket. This response keeps nothing of the connection: not the handle, not a handler on
-    /// the socket, not the refs that wait for the end of the response. To JS it reads as closed.
-    /// `js_this` is this response's wrapper: `get_this_value()` answers for the socket's current one.
-    /// `adopted`: the socket is a WebSocket now, so this touches nothing of it.
+    /// `js_this` is this response's wrapper. `adopted`: a WebSocket has the socket, so nothing of it is touched.
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_takeBackConnection", no_catch)]
     #[inline]
     pub(crate) fn take_back_connection(&self, js_this: JSValue, adopted: bool) {
@@ -1517,6 +1505,7 @@ impl NodeHTTPResponse {
             raw_response.clear_handlers_of(self.as_ctx_ptr());
         }
         self.connection.release();
+        // No close reaches it from here on, so it reads as closed now.
         self.update_flags(|f| {
             f.remove(Flags::CURRENT);
             f.insert(Flags::SOCKET_CLOSED);

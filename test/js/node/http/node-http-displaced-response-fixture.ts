@@ -3,7 +3,8 @@
 // responses about a close, so the displaced response used to keep a pointer to the freed socket.
 //
 // usage: <suite> <tcp|tls> [trigger]
-// Prints one JSON line per scenario. The process has to exit by itself.
+// Prints one JSON line per scenario. The process has to exit by itself. When a response still
+// holds its refs, no exit comes, so the process exits with code 1 then.
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -78,6 +79,14 @@ function attempt(use: () => void) {
   }
 }
 
+// Flags::IS_REQUEST_PENDING of NodeHTTPResponse.rs: the response holds its refs, which keep the process alive.
+let held = false;
+function isPending(handle: any) {
+  const pending = (handle.flags & 32) !== 0;
+  held ||= pending;
+  return pending;
+}
+
 // Response 1 is displaced by response 2, the client leaves, then response 1 is used.
 async function displaced(trigger: string, use: string, secondRequest: "same read" | "later read") {
   const first = Promise.withResolvers<{ req: http.IncomingMessage; res: http.ServerResponse; handle: any }>();
@@ -121,7 +130,9 @@ async function displaced(trigger: string, use: string, secondRequest: "same read
   await turn();
   server.close();
   server.closeAllConnections();
-  return { trigger, use, secondRequest, displacedBeforeClose, result };
+  // "nothing" stays without a call on the response.
+  if (use === "nothing") return { trigger, use, secondRequest, displacedBeforeClose, result };
+  return { trigger, use, secondRequest, displacedBeforeClose, result, pending: isPending(handle) };
 }
 
 // A response that finished, replaced by the next keep-alive request. After the close its native
@@ -200,6 +211,7 @@ async function connected(trigger: string) {
   await turn();
 
   const late = attempt(() => responses[0].end("first-body"));
+  const pending = isPending(handleOf(responses[0]));
   // The connection did not queue response 1, so it does not give it the connection again.
   const socketHandle = handleOf(responses[1].socket!);
   const regranted = socketHandle.startPipelinedResponse(handleOf(responses[0]), false, false);
@@ -219,7 +231,7 @@ async function connected(trigger: string) {
     .split("\r\n\r\n")
     .slice(1)
     .map(part => part.split("HTTP/1.1")[0]);
-  return { trigger, late, regranted, thirdQueued, bodies: received_bodies, errors };
+  return { trigger, late, pending, regranted, thirdQueued, bodies: received_bodies, errors };
 }
 
 // A response that native code completed because its dispatch settled, and that did not end in
@@ -261,7 +273,7 @@ async function completedButPending() {
   await closed;
   server.close();
   server.closeAllConnections();
-  return { completed, secondBody: received.includes("second-body") };
+  return { completed, secondBody: received.includes("second-body"), pending: isPending(handle) };
 }
 
 // Request 1 upgrades to a WebSocket while response 2 is queued behind it. The socket of the
@@ -300,8 +312,10 @@ async function adopted(use: string) {
   ws.on("error", () => {});
   await switched.promise;
 
+  const handle = handleOf(res);
   const result = attempt(() => uses[use](req, res));
   await turn();
+  const pending = isPending(handle);
   // A use that destroys the socket of the request closes the WebSocket with it.
   const open = ws.readyState === ws.OPEN;
   if (open) {
@@ -315,7 +329,7 @@ async function adopted(use: string) {
   wss.close();
   server.close();
   server.closeAllConnections();
-  return { use, queued, switched: received.startsWith("HTTP/1.1 101 "), open, result };
+  return { use, queued, switched: received.startsWith("HTTP/1.1 101 "), open, result, pending };
 }
 
 // Response 2 waits in the queue behind response 1. Its native handle is called directly: the
@@ -363,6 +377,7 @@ async function queued(call: string) {
 async function draining() {
   const size = 8 * 1024 * 1024;
   const second = Promise.withResolvers<http.ServerResponse>();
+  let firstHandle: any;
   const server = createServer((req, res) => {
     req.on("error", () => {});
     res.on("error", () => {});
@@ -370,6 +385,7 @@ async function draining() {
       second.resolve(res);
       return;
     }
+    firstHandle = handleOf(res);
     res.write(Buffer.alloc(size, "a"));
     res.detachSocket(req.socket);
   });
@@ -388,7 +404,9 @@ async function draining() {
   const res = await second.promise;
   await turn();
   const displaced = res.socket !== null;
-  // Nothing in JS holds response 1 now.
+  const pending = isPending(firstHandle);
+  // Nothing in JS holds response 1 from here on.
+  firstHandle = undefined;
   Bun.gc(true);
   await turn();
   Bun.gc(true);
@@ -401,47 +419,52 @@ async function draining() {
   await closed;
   server.close();
   server.closeAllConnections();
-  return { displaced, receivedAtLeastTheWrite: received >= size };
+  return { displaced, pending, receivedAtLeastTheWrite: received >= size };
 }
 
-const results: unknown[] = [];
+// The scenarios of a suite have a server and a connection each, so they run side by side.
+const all = <T>(items: T[], scenario: (item: T) => Promise<object>) => Promise.all(items.map(scenario));
+let results: object[] = [];
 if (suite === "displaced") {
-  for (const secondRequest of ["same read", "later read"] as const) {
-    for (const use of Object.keys(uses)) {
-      results.push(await displaced(triggerName, use, secondRequest));
-    }
-  }
+  results = await all(
+    (["same read", "later read"] as const).flatMap(secondRequest =>
+      Object.keys(uses).map(use => ({ use, secondRequest })),
+    ),
+    ({ use, secondRequest }) => displaced(triggerName, use, secondRequest),
+  );
 } else if (suite === "finished") {
-  for (const call of [
-    "resume",
-    "pause",
-    "pauseReads",
-    "notifyWhenReadParsed",
-    "flushHeaders",
-    "end",
-    "write",
-    "abort",
-    "writeContinue",
-    "bufferedAmount",
-    "cork",
-  ]) {
-    results.push(await finished(call));
-  }
+  results = await all(
+    [
+      "resume",
+      "pause",
+      "pauseReads",
+      "notifyWhenReadParsed",
+      "flushHeaders",
+      "end",
+      "write",
+      "abort",
+      "writeContinue",
+      "bufferedAmount",
+      "cork",
+    ],
+    finished,
+  );
 } else if (suite === "connected") {
+  // One after the other: each one listens for the uncaught exceptions of the process.
   for (const trigger of Object.keys(triggers)) {
     results.push(await connected(trigger));
   }
 } else if (suite === "completed-but-pending") {
   results.push(await completedButPending());
 } else if (suite === "adopted") {
-  for (const use of Object.keys(uses)) {
-    results.push(await adopted(use));
-  }
+  results = await all(Object.keys(uses), adopted);
 } else if (suite === "queued") {
-  for (const call of ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"]) {
-    results.push(await queued(call));
-  }
+  results = await all(
+    ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"],
+    queued,
+  );
 } else if (suite === "draining") {
   results.push(await draining());
 }
 for (const result of results) console.log(JSON.stringify(result));
+if (held) process.exit(1);

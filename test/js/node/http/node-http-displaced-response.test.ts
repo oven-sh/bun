@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
 import { join } from "path";
 
 // A connection has one current response. The server socket gives the connection to the next
@@ -9,12 +9,13 @@ import { join } from "path";
 // lost the connection no longer hears about a close, so it must not keep a pointer to the
 // socket. It used to: the next call on it read the freed socket.
 //
-// Each fixture run is one process that goes through its scenarios in order and prints a line
-// for each. The unfixed build stops at the first one (ASAN: heap-use-after-free or
-// heap-buffer-overflow), or never exits.
+// Each fixture run is one process that runs the scenarios of a suite and prints a line for
+// each. The unfixed build stops with a sanitizer report (heap-use-after-free or
+// heap-buffer-overflow), or reports a response that still holds its refs.
 const fixture = join(import.meta.dir, "node-http-displaced-response-fixture.ts");
-// A debug or ASAN build needs several seconds to load node:http and to run 22 scenarios.
-const timeout = isASAN || isDebug ? 90_000 : undefined;
+// CI has its own time for each test. A local debug or ASAN build needs 4 s to start one fixture
+// and load node:http, and about 40 s when all of them start together, so the default 5 s cannot hold.
+const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
 
 async function run(...args: string[]) {
   await using proc = Bun.spawn({
@@ -53,7 +54,15 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async trigger => {
       expect(await run("displaced", transport, trigger)).toEqual({
         results: ["same read", "later read"].flatMap(secondRequest =>
-          uses.map(use => ({ trigger, use, secondRequest, displacedBeforeClose: true, result: "returned" })),
+          uses.map(use => ({
+            trigger,
+            use,
+            secondRequest,
+            displacedBeforeClose: true,
+            result: "returned",
+            // "nothing" makes no call on the response, so it does not read its state.
+            ...(use === "nothing" ? {} : { pending: false }),
+          })),
         ),
         stderr: "",
         exitCode: 0,
@@ -97,6 +106,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
         results: triggers.map(trigger => ({
           trigger,
           late: "returned",
+          pending: false,
           regranted: false,
           thirdQueued: true,
           bodies: ["second-body", "third-body"],
@@ -114,7 +124,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     "a response that native code completed does not keep the process alive after it is replaced",
     async () => {
       expect(await run("completed-but-pending", transport)).toEqual({
-        results: [{ completed: true, secondBody: true }],
+        results: [{ completed: true, secondBody: true, pending: false }],
         stderr: "",
         exitCode: 0,
         signalCode: null,
@@ -148,7 +158,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     "the write that it left in the socket buffer goes out, and its drain handler is gone",
     async () => {
       expect(await run("draining", transport)).toEqual({
-        results: [{ displaced: true, receivedAtLeastTheWrite: true }],
+        results: [{ displaced: true, pending: false, receivedAtLeastTheWrite: true }],
         stderr: "",
         exitCode: 0,
         signalCode: null,
@@ -157,8 +167,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     timeout,
   );
 
-  // Not on TLS: its socket is bigger, so the unfixed build reads inside the block of the WebSocket and nothing shows.
-  test.skipIf(transport === "tls")(
+  test(
     "a queued response can be used after a WebSocket adopted the connection",
     async () => {
       expect(await run("adopted", transport)).toEqual({
@@ -169,6 +178,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
           // req.destroy() destroys the socket of the request, which the WebSocket has.
           open: use !== "req.destroy",
           result: "returned",
+          pending: false,
         })),
         stderr: "",
         exitCode: 0,

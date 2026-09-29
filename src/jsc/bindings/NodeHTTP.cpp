@@ -302,11 +302,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
-    // HTTP/1.1 pipelining: this request arrived while an earlier response on
-    // the connection is still in flight. It is queued on the server socket
-    // (and in JS) instead of becoming the connection's current response.
+    // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
     const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
-    // A queued response gets the connection when its turn comes (startPipelinedResponse).
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
     bool hasBody = false;

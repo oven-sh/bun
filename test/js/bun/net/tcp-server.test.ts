@@ -1,7 +1,7 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { getEventLoopStats } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tls as cert } from "harness";
+import { bunEnv, bunExe, tls as cert, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";

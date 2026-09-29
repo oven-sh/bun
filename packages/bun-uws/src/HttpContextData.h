@@ -80,6 +80,10 @@ private:
 
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
+    /* Set by onHttp() for any pattern other than the catch-all, on any of the
+     * routers. Tells the parser whether to scan the request-target for the
+     * router (HttpRouter::hasPathSensitiveRoute is the per-router gate). */
+    bool hasPathSensitiveRoute = false;
     void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
@@ -105,6 +109,7 @@ private:
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;
+        this->hasPathSensitiveRoute = false;
         /* Not filterHandlers: filters are per-context open/close hooks, not
          * routes. server.reload() never re-registers them, so wiping them here
          * leaves Bun's active_connection_count (and node:http's 'connection'

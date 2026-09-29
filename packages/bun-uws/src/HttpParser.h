@@ -1215,7 +1215,7 @@ struct HttpResponseData;
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, bool scanTargetForRouting, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -1418,10 +1418,18 @@ struct HttpResponseData;
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
-            /* Parse query, and note whether the path needs the URL parser before routing */
-            RequestTargetScan targetScan = scanRequestTarget(req->headers->value);
-            req->querySeparator = targetScan.querySeparator;
-            req->targetMayNormalize = targetScan.pathMayNormalize;
+            /* Parse query. A router with a route other than the catch-all also
+             * needs to know whether the path can differ from the URL parser's
+             * pathname (see scanRequestTarget); the catch-all matches any path. */
+            if (scanTargetForRouting) {
+                RequestTargetScan targetScan = scanRequestTarget(req->headers->value);
+                req->querySeparator = targetScan.querySeparator;
+                req->targetMayNormalize = targetScan.pathMayNormalize;
+            } else {
+                const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
+                req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+                req->targetMayNormalize = false;
+            }
 
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
@@ -1593,7 +1601,7 @@ public:
      * head, or WHOLE_READ when the request declared a body: the body is not parsed
      * and is not the caller's. The handler may have destroyed this parser. */
     template <bool IsNodeHttp>
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, bool scanTargetForRouting, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
@@ -1677,7 +1685,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, scanTargetForRouting, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 /* The count is in fallback bytes, and the first `had` of them came from
@@ -1771,7 +1779,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, scanTargetForRouting, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             /* A body or a fallback head ahead of this request moved data forward. */

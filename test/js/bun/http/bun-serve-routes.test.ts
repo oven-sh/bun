@@ -1204,3 +1204,29 @@ describe("route matching on the path that request.url reports", () => {
     expect(status).toBe(200);
   });
 });
+
+describe("route matching on the resolved path follows reload()", () => {
+  async function rawGet(port: number, target: string): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));
+    const response = await promise;
+    return response.slice(response.indexOf("\r\n\r\n") + 4);
+  }
+
+  test("a server that gains routes resolves the path, one that loses them matches everything", async () => {
+    const fetch = (req: Request) => new Response("fetch " + new URL(req.url).pathname);
+    using server = Bun.serve({ port: 0, fetch });
+    expect(await rawGet(server.port, "/x/../admin")).toBe("fetch /admin");
+
+    server.reload({ fetch, routes: { "/admin": () => new Response("admin") } });
+    expect(await rawGet(server.port, "/x/../admin")).toBe("admin");
+
+    server.reload({ fetch, routes: {} });
+    expect(await rawGet(server.port, "/x/../admin")).toBe("fetch /admin");
+  });
+});

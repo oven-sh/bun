@@ -6792,6 +6792,9 @@ declare module "bun" {
      * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
      * Calls the `shutdown(2)` syscall internally.
      *
+     * While `end(data)` has data in its queue, `shutdown()` sends no FIN packet. The pending
+     * `end()` sends the queued data first, then closes the socket.
+     *
      * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
      * @example
      * ```ts
@@ -6821,6 +6824,9 @@ declare module "bun" {
      * Allow Bun's process to exit even if this socket is still open
      *
      * After the socket has closed, this function does nothing.
+     *
+     * While `end(data)` has data in its queue, the socket keeps the process alive and `unref()`
+     * does nothing. The process can exit after Bun sends the queued data and closes the socket.
      */
     unref(): void;
 

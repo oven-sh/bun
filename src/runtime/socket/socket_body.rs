@@ -1120,13 +1120,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             && self.buffered_data_for_node_net.get().len() > 0
     }
 
-    /// The process stays alive until a pending `end()` tail is sent or the socket closes.
-    fn hold_loop_for_end_tail(&self) {
-        if self.has_pending_end_tail() {
-            self.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
-        }
-    }
-
     /// True when this socket still points at `handlers` — false once a
     /// re-entrant reconnect or `upgradeTLS` repointed it.
     #[inline]
@@ -1435,8 +1428,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
-            self.buffered_data_for_node_net
-                .with_mut(|b| b.clear_and_free());
             // Allow the JS wrapper to be GC'd now that the socket is idle.
             // Do this before touching `handlers`: for the last server-side
             // connection on a stopped listener, `mark_inactive` releases the
@@ -1783,7 +1774,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             if this.is_usockets_backed() && this.buffered_data_for_node_net.get().len() > 0 {
                 // `on_writable` sends the queued tail, then ends the socket.
                 this.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
-                this.hold_loop_for_end_tail();
                 return Ok(());
             }
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -1824,8 +1814,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
         if self.can_end_after_flush() {
             self.mark_inactive();
-        } else {
-            self.hold_loop_for_end_tail();
         }
     }
 
@@ -2233,6 +2221,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
         let write_errno = this.write_errno.replace(0);
+        this.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -3426,8 +3416,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let sent = usize::try_from(wrote).expect("int cast");
                     if sent == total {
                         let _ = this.internal_flush();
-                    } else {
-                        this.hold_loop_for_end_tail();
+                    } else if this.has_pending_end_tail() {
+                        // The process stays alive until the tail is sent or the socket closes.
+                        this.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
                     }
                     let accepted = if queues_tail { total } else { sent };
                     JSValue::js_number(accepted as f64)

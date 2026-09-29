@@ -190,7 +190,7 @@ socket.reload({
 
 `socket.write()` does not buffer data. It returns the number of bytes that the socket accepted. When that number is less than the length of the data, send the rest from the `drain` handler.
 
-`socket.end(data)` accepts the whole chunk. Bun queues the part that the socket did not accept. Bun sends the queued part when the socket is writable again, then closes the socket.
+`socket.end(data)` accepts the whole chunk. Bun queues the part that the socket did not accept. Bun sends the queued part when the socket is writable again, then closes the socket. Until then the socket keeps the process alive, also after `socket.unref()`, and `socket.shutdown()` sends no FIN packet.
 
 Performance-sensitive code should buffer writes itself. For example, this:
 

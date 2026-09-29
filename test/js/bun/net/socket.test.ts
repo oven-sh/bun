@@ -1,6 +1,7 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, getEventLoopStats, socketFaultInjection } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
@@ -6294,8 +6295,9 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
   expect(exitCode).toBe(0);
 });
 
-describe("a pending end(data) tail", () => {
-  const N = 16 * 1024 * 1024;
+describe.concurrent.each(["tcp", "tls"] as const)("%s: a pending end(data) tail", transport => {
+  const N = 8 * 1024 * 1024;
+  const serverTLS = transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined;
 
   it("is sent before the FIN of a shutdown() that follows end(data)", async () => {
     const payload = randomFillSync(Buffer.allocUnsafe(N));
@@ -6305,12 +6307,14 @@ describe("a pending end(data) tail", () => {
     using server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
+      tls: serverTLS,
       socket: {
         data(_, chunk) {
           if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
           got += chunk.byteLength;
         },
         close: () => received.resolve(),
+        error() {},
       },
     });
     const closed = Promise.withResolvers<void>();
@@ -6318,6 +6322,7 @@ describe("a pending end(data) tail", () => {
     await Bun.connect({
       hostname: "127.0.0.1",
       port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
       socket: {
         open(s) {
           endReturned = s.end(payload);
@@ -6325,6 +6330,7 @@ describe("a pending end(data) tail", () => {
         },
         data() {},
         close: () => closed.resolve(),
+        error() {},
       },
     });
     await Promise.all([received.promise, closed.promise]);
@@ -6339,23 +6345,25 @@ describe("a pending end(data) tail", () => {
       using server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
+        tls: serverTLS,
         socket: {
           data(_, chunk) {
             got += chunk.byteLength;
           },
           close: () => received.resolve(got),
+          error() {},
         },
       });
       const src = /* js */ `
-        const N = ${N};
         const unrefFirst = ${JSON.stringify(order.startsWith("unref"))};
         Bun.connect({
           hostname: "127.0.0.1",
           port: ${server.port},
+          tls: ${transport === "tls" ? `{ ca: ${JSON.stringify(tls.cert)} }` : "undefined"},
           socket: {
             open(s) {
               if (unrefFirst) s.unref();
-              console.log("end " + s.end(Buffer.alloc(N, 120)));
+              console.log("end " + s.end(Buffer.alloc(${N}, 120)));
               if (!unrefFirst) s.unref();
             },
             data() {},
@@ -6377,36 +6385,36 @@ describe("a pending end(data) tail", () => {
       expect(exitCode).toBe(0);
     },
   );
+});
 
-  it("is freed when the socket closes with the tail unsent", async () => {
-    const sawFin = Promise.withResolvers<Socket>();
-    const closed = Promise.withResolvers<void>();
-    using server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        data(s) {
-          s.end(Buffer.alloc(N, 120));
-        },
-        end: s => sawFin.resolve(s),
-        close: () => closed.resolve(),
-        error() {},
+it("a pending end(data) tail is freed when the socket closes with the tail unsent", async () => {
+  const N = 16 * 1024 * 1024;
+  const sawFin = Promise.withResolvers<Socket>();
+  const closed = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(s) {
+        s.end(Buffer.alloc(N, 120));
       },
-    });
-    // The peer sends its request and its FIN, and never reads.
-    const peer = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
-    peer.on("error", () => {});
-    peer.pause();
-    peer.on("connect", () => peer.end("request\n"));
-    const socket = await sawFin.promise;
-    const held = estimateShallowMemoryUsageOf(socket);
-    peer.destroy();
-    await closed.promise;
-    await new Promise<void>(resolve => setImmediate(resolve));
-    const afterClose = estimateShallowMemoryUsageOf(socket);
-    expect({ heldTail: held > 4 * 1024 * 1024, afterClose: afterClose < 64 * 1024 }).toEqual({
-      heldTail: true,
-      afterClose: true,
-    });
+      end: s => sawFin.resolve(s),
+      close: () => closed.resolve(),
+      error() {},
+    },
+  });
+  // The peer sends its request and its FIN, and never reads.
+  const peer = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+  peer.on("error", () => {});
+  peer.pause();
+  peer.on("connect", () => peer.end("request\n"));
+  const socket = await sawFin.promise;
+  const held = estimateShallowMemoryUsageOf(socket);
+  peer.destroy();
+  await closed.promise;
+  const afterClose = estimateShallowMemoryUsageOf(socket);
+  expect({ heldTail: held > 4 * 1024 * 1024, afterClose: afterClose < 64 * 1024 }).toEqual({
+    heldTail: true,
+    afterClose: true,
   });
 });

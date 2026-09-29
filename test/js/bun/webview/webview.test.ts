@@ -93,26 +93,26 @@ console.log(JSON.stringify({
 }));
 `;
 const readFirst = `globalThis.WebView = Bun.WebView;`;
-const usesCommonJS = `require("node:os");`;
 
 test.concurrent.each([
-  // `bun crash.js` runs a crash file as an ES module (strict mode), or as CommonJS (sloppy mode)
-  // when the program uses a CommonJS feature.
-  { name: "ES module, write first", source: fuzzilliProgram, strict: [true] },
-  { name: "ES module, read first", source: readFirst + fuzzilliProgram, strict: [true] },
-  { name: "CommonJS, write first", source: fuzzilliProgram + usesCommonJS, strict: [false] },
-  { name: "CommonJS, read first", source: readFirst + fuzzilliProgram + usesCommonJS, strict: [false] },
+  // `bun crash.js` runs a crash file as an ES module (strict mode) or as CommonJS (sloppy mode).
+  // The extension picks the kind here, so that a package.json above the temp directory cannot.
+  { name: "ES module, write first", file: "crash.mjs", source: fuzzilliProgram, strict: [true] },
+  { name: "ES module, read first", file: "crash.mjs", source: readFirst + fuzzilliProgram, strict: [true] },
+  { name: "CommonJS, write first", file: "crash.cjs", source: fuzzilliProgram, strict: [false] },
+  { name: "CommonJS, read first", file: "crash.cjs", source: readFirst + fuzzilliProgram, strict: [false] },
   // The REPRL loop (src/js/eval/fuzzilli-reprl.ts) runs every program with indirect eval (sloppy
   // mode) in one global.
   {
     name: "indirect eval, two programs in one global",
+    file: "reprl.cjs",
     source: `for (let i = 0; i < 2; i++) (0, eval)(${JSON.stringify(fuzzilliProgram)});`,
     strict: [false, false],
   },
-])("the Fuzzilli prefix disables Bun.WebView: $name", async ({ source, strict }) => {
-  using dir = tempDir("webview-fuzzilli-prefix", { "crash.js": source });
+])("the Fuzzilli prefix disables Bun.WebView: $name", async ({ file, source, strict }) => {
+  using dir = tempDir("webview-fuzzilli-prefix", { [file]: source });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "crash.js"],
+    cmd: [bunExe(), file],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",

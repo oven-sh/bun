@@ -4672,6 +4672,28 @@ it("a paused socket does not wake the event loop for every segment its peer send
   expect(await child.exited).toBe(0);
 });
 
+// After a read that fills its 512 KiB buffer, usockets reads the socket again inside the same
+// readable event. With at most two polls ready that had no bound, so a peer that kept the
+// buffer full kept the loop in one event, and no timer, immediate or other socket ran until
+// that peer slowed down. The fixture is one connection that refills itself from its own data
+// handler, alone in a child so nothing else is ready on its loop, and it counts the full reads
+// of each loop iteration. Windows reads at most twice per event (the #else arm in loop.c).
+it.skipIf(isWindows)(
+  "one readable event reads a socket at most 32 full times",
+  async () => {
+    const child = await bunRun(fileURLToPath(new URL("./socket-read-ceiling-fixture.ts", import.meta.url)));
+    expect(child).toSpawn();
+    const result = JSON.parse(child.stdout);
+    expect(result.intact).toBe(true);
+    expect(result.longestRun).toBeLessThanOrEqual(32);
+    // Where the kernel grants the receive buffer the fixture asks for (Linux 6.18 and later by
+    // default), every read is full from the first one, so the ceiling must have ended events.
+    // Elsewhere the run of full reads depends on receive autotuning and may not build up.
+    if (result.bufferGranted) expect(result.reason).toBe("capped");
+  },
+  30_000,
+);
+
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
 // regardless of interest; kqueue keeps a read knote registered while reads are off, see
 // epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects

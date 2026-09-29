@@ -771,6 +771,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
+                        #define MAX_FULL_READS_PER_READABLE_EVENT 32
                         /* Hangup or error flagged on this event (kqueue rides EV_EOF on
                          * the final data's readable event): no further readable events
                          * are coming, so drain the kernel buffer now no matter how
@@ -795,12 +796,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         ) {
                             repeat_recv_count++;
 
-                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                            /* End the event after 32 full reads in a row (11 when more than 2 polls are
+                             * ready) so a peer that keeps the buffer full cannot hold the loop: the
+                             * level-triggered poll reports this fd again. libuv's uv__read stops at the
+                             * same count of 64 KiB reads (2 MiB); these are 512 KiB (16 MiB).
+                             * https://github.com/libuv/libuv/blob/v1.52.0/src/unix/stream.c#L1033-L1036 */
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
-                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                            if (repeat_recv_count < MAX_FULL_READS_PER_READABLE_EVENT &&
+                                !(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
                                 continue;
                             }
                         }
+                        #undef MAX_FULL_READS_PER_READABLE_EVENT
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #else
                         /* Windows eof-drain, same as the POSIX branch above:

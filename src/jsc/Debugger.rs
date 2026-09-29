@@ -699,6 +699,53 @@ pub fn did_run_while_paused() {
     }
 }
 
+// HOST_EXPORT(Debugger__writeNodeInspectorLine, c)
+pub fn write_node_inspector_line(line: &BunString) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = line;
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        let bytes = line.to_owned_slice();
+        let written = match bun_sys::write(bun_core::Fd::stderr(), &bytes) {
+            Ok(written) => written,
+            Err(err) if err.is_retry() => 0,
+            Err(_) => return true,
+        };
+        if written == bytes.len() {
+            return true;
+        }
+        // fd 2 is full and a wait runs no event loop, so a thread writes the rest when the reader has made room.
+        std::thread::Builder::new()
+            .name("InspectorLine".to_owned())
+            .spawn(move || write_when_stderr_has_room(&bytes[written..]))
+            .is_ok()
+    }
+}
+
+#[cfg(not(windows))]
+fn write_when_stderr_has_room(mut rest: &[u8]) {
+    use bun_sys::posix::{POLL_OUT, PollFd, poll};
+    let fd = bun_core::Fd::stderr();
+    while !rest.is_empty() {
+        let mut fds = [PollFd {
+            fd: fd.native(),
+            events: POLL_OUT,
+            revents: 0,
+        }];
+        if poll(&mut fds, -1).is_err() {
+            return;
+        }
+        match bun_sys::write(fd, rest) {
+            Ok(written) => rest = &rest[written..],
+            Err(err) if err.is_retry() => {}
+            Err(_) => return,
+        }
+    }
+}
+
 /// The debugger thread reported that `Bun.serve` failed (e.g. EADDRINUSE) —
 /// undo `create()`'s `poll_ref.ref_()` so the process can exit. Without this
 /// the ref leaks and the event loop never drains.

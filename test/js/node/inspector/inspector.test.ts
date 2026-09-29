@@ -1309,10 +1309,10 @@ finish();
 );
 
 // fd 2 is full when open() writes the listening line: the test does not read
-// the pipe while its own event loop is blocked. The line then goes to the
-// queue of process.stderr, after the output that is already there. On Windows
-// a write to a full pipe blocks, so fd 2 is never full at the call.
-test.skipIf(isWindows)("inspector.open() keeps the listening line when fd 2 is full", async () => {
+// the pipe while its own event loop is blocked. The line arrives when the
+// test reads, while the program waits. On Windows a write to a full pipe
+// blocks, so fd 2 is never full at the call.
+test.skipIf(isWindows)("the listening line arrives in the wait when fd 2 was full at the call", async () => {
   using dir = tempDir("inspector-listening-line", {
     "fixture.mjs": `
 import inspector from "node:inspector";
@@ -1321,10 +1321,8 @@ process.stderr.write(Buffer.alloc(1024 * 1024, "e").toString() + "\\n");
 inspector.open(0, "127.0.0.1");
 writeFileSync("url", inspector.url() + "\\n");
 inspector.waitForDebugger();
-process.stderr.write("AFTER_THE_CALL\\n", () => {
-  inspector.close();
-  process.exit(0);
-});
+inspector.close();
+process.exit(0);
 `,
   });
   await using proc = Bun.spawn({
@@ -1344,6 +1342,16 @@ process.stderr.write("AFTER_THE_CALL\\n", () => {
   }
   url = url.trim();
 
+  const line = `Debugger listening on ${url}\n`;
+  const reader = proc.stderr.getReader();
+  const decoder = new TextDecoder();
+  let end = "";
+  while (!end.includes(line)) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`stderr closed before the listening line: ${end}`);
+    end = (end + decoder.decode(value, { stream: true })).slice(-2 * line.length);
+  }
+
   const ws = new WebSocket(url);
   const opened = Promise.withResolvers<void>();
   ws.onopen = () => opened.resolve();
@@ -1351,10 +1359,9 @@ process.stderr.write("AFTER_THE_CALL\\n", () => {
   await opened.promise;
   ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  while (!(await reader.read()).done);
+  expect({ exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   ws.close();
-  expect(stderr.replace(/^e+\n/, "")).toBe(`Debugger listening on ${url}\nAFTER_THE_CALL\n`);
-  expect(exitCode).toBe(0);
 });
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {

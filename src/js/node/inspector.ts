@@ -36,6 +36,7 @@ const waitForNodeInspectorConnection = $newCppFunction(
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
+const writeNodeInspectorLine = $newCppFunction("BunDebugger.cpp", "jsFunction_writeNodeInspectorLine", 1);
 
 let activeInspectorUrl: string | undefined;
 
@@ -96,24 +97,15 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
-  writeListeningLine(resolvedUrl);
+  const listening = `Debugger listening on ${resolvedUrl}\n`;
+  // process.stderr queues behind a full pipe, and a wait that follows does not flush that queue.
+  if (!writeNodeInspectorLine(listening)) process.stderr.write(listening);
 
   if (wait) {
     waitForNodeInspectorConnection();
   }
 
   return disposable;
-}
-
-// Not process.stderr: it queues behind a full pipe, and a wait that follows does not flush its queue.
-function writeListeningLine(url: string) {
-  const line = Buffer.from(`Debugger listening on ${url}\n`);
-  let written = 0;
-  try {
-    written = require("internal/fs/binding").writeSync(2, line);
-  } catch {}
-  // fd 2 is full, so the rest goes to the queue of process.stderr. Node loses the line here.
-  if (written < line.length) process.stderr.write(line.subarray(written));
 }
 
 function close() {

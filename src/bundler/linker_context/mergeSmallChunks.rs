@@ -2280,13 +2280,32 @@ pub(crate) fn merge_small_chunks(
         let Some(target_platform) = groups.values()[target_index].target else {
             continue;
         };
-        if class.count() == 1 && pin_entry_chunk(class.find_first_set().expect("one bit set")) {
+        let pinned_entry = class
+            .find_first_set()
+            .filter(|&entry_id| class.count() == 1 && pin_entry_chunk(entry_id));
+        if pinned_entry.is_some() {
             groups.values_mut()[target_index].parent_of_pinned_entry = true;
+        }
+        // `files_that_leave_entry_chunk` took the files of every member for files of the parent. A member that stays out is a chunk of its own, which the parent would import for a start and which can run something. The entry point keeps its files then, and the parent starts nothing.
+        let keeps_files = pinned_entry.is_some_and(|entry_id| {
+            starts_in_parent
+                .iter()
+                .any(|&(of_entry, _)| of_entry as usize == entry_id)
+                && members.iter().any(|&member| {
+                    let group = &groups.values()[member];
+                    member != target_index
+                        && group.pin == Pin::None
+                        && (group.target != Some(target_platform) || group.loads_entry_of(class))
+                })
+        });
+        if keeps_files {
+            starts_in_parent.retain(|&(of_entry, _)| !class.is_set(of_entry as usize));
         }
         for &member in members {
             let group = &groups.values()[member];
             if member == target_index
                 || group.pin == Pin::Entry
+                || (keeps_files && group.pin == Pin::BesideEntry)
                 || group.target != Some(target_platform)
             {
                 continue;

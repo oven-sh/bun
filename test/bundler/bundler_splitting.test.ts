@@ -1458,6 +1458,120 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "helper of index app\nsettings app" },
   });
+  // own.js can load index.js again with require(), so it stays in the chunk of index.js.
+  // The hashed chunk starts nothing then: w.cjs would run ahead of own.js.
+  itBundled("splitting/EntryFileThatCannotMoveKeepsCommonJSImportBehindIt", {
+    files: {
+      "/index.js": /* js */ `
+        import "./own.js";
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/own.js": /* js */ `
+        console.log("own", typeof globalThis.W);
+        globalThis.again = () => require("./index.js");
+        export {};
+      `,
+      "/w.cjs": `console.log("w"); globalThis.W = 1;`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/settings.js": /* js */ `
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        console.log("settings", new Store().name);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`console.log("own"`);
+      api.expectFile("/out/" + chunkContaining(api, `console.log("store")`)).not.toMatch(/^require_w\(\);$/m);
+    },
+    run: { file: "/out/index.js", stdout: "store\nown undefined\nw\nindex s\nsettings s" },
+  });
+  // store.js can load index.js again with require(), so its chunk takes no fold and the class of index.js has no parent.
+  // No chunk starts w.cjs.
+  itBundled("splitting/CommonJSImportStaysWhereNoChunkTakesTheFold", {
+    files: {
+      "/index.js": /* js */ `
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/w.cjs": `console.log("w"); globalThis.W = 1;`,
+      "/store.js": /* js */ `
+        console.log("store", typeof globalThis.W);
+        export class Store { name = "s"; }
+        globalThis.again = () => require("./index.js");
+      `,
+      "/settings.js": /* js */ `
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        console.log("settings", new Store().name);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/" + chunkContaining(api, `console.log("store"`)).not.toMatch(/^require_w\(\);$/m);
+    },
+    run: { file: "/out/index.js", stdout: "store undefined\nw\nindex s\nsettings s" },
+  });
+  // helper.js can load cmd.js again with require(), so the chunk of helper.js and setup.cjs stays out of the hashed chunk.
+  // The hashed chunk does not import that chunk, so cmd.js starts setup.cjs.
+  itBundled("splitting/CommonJSInChunkThatStaysOutOfFoldStartsAfterSharedCode", {
+    files: {
+      "/main.js": /* js */ `
+        console.log("main");
+        const cmd = await import("./cmd.js");
+        console.log("main got", cmd.name);
+      `,
+      "/cmd.js": /* js */ `
+        import "./setup.cjs";
+        import { Store } from "./store.js";
+        import { helper } from "./helper.js";
+        console.log("cmd", new Store().name, helper);
+        export const name = "cmd";
+        import("./settings.js");
+        import("./other.js");
+      `,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/store.js": /* js */ `
+        console.log("store", globalThis.APP?.name);
+        globalThis.STORE = { ready: true };
+        export class Store { name = "s"; }
+      `,
+      "/helper.js": /* js */ `
+        console.log("helper", globalThis.STORE.ready);
+        globalThis.reload = () => require("./cmd.js").name;
+        export const helper = "h";
+      `,
+      "/settings.js": /* js */ `
+        import "./setup.cjs";
+        import { helper } from "./helper.js";
+        globalThis.SETTINGS = helper;
+      `,
+      "/other.js": `import { Store } from "./store.js"; globalThis.OTHER = new Store().name;`,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const helper = chunkContaining(api, `console.log("helper"`);
+      api.expectFile("/out/" + chunkContaining(api, `console.log("store"`)).not.toContain(helper);
+    },
+    run: { file: "/out/main.js", stdout: "main\nstore undefined\nhelper true\nsetup\ncmd s h\nmain got cmd" },
+  });
   // app.js starts react itself before it runs anything else, so the hashed chunk adds no call for index.js.
   itBundled("splitting/CommonJSImportThatSharedCodeStartsFirstAddsNoCall", {
     files: {

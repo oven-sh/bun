@@ -1129,6 +1129,7 @@ describe("route matching on the path that request.url reports", () => {
         "/admin": () => Response.json({ route: "/admin" }),
         "/static": new Response("static"),
         "/.well-known/:name": req => Response.json({ route: "/.well-known/:name", params: req.params }),
+        "/url/:file": req => new Response(req.url),
       },
       fetch: req => Response.json({ route: "fetch", pathname: new URL(req.url).pathname }),
     });
@@ -1191,6 +1192,29 @@ describe("route matching on the path that request.url reports", () => {
     const { status, body } = await rawGet("/.well-known/acme");
     expect(JSON.parse(body)).toEqual({ route: "/.well-known/:name", params: { name: "acme" } });
     expect(status).toBe(200);
+  });
+
+  test("request.url keeps the fragment and the query of the raw target", async () => {
+    const { status, body } = await rawGet("/admin/../public/b/../a.txt?x=1#frag");
+    expect(JSON.parse(body)).toEqual({
+      route: "/public/:file",
+      params: { file: "a.txt" },
+      pathname: "/public/a.txt",
+      search: "?x=1",
+    });
+    expect(status).toBe(200);
+  });
+
+  test("a request with no Host header gets the resolved path as request.url", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write("GET /x/../url/a.txt?q=1 HTTP/1.0\r\n\r\n"));
+    const response = await promise;
+    expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/url/a.txt?q=1");
   });
 
   test("a path with no special byte still routes the raw bytes", async () => {

@@ -756,6 +756,7 @@ struct Http2Context {
             Http2Response *res = r->getUserData().httpResponse;
             req->setYield(false);
             req->setParameters(r->getParameters());
+            req->setRoutedUrl(r->getRoutedUrl());
             handler(res, req);
             return !req->getYield();
         }, method == "*" ? router.LOW_PRIORITY : router.MEDIUM_PRIORITY);

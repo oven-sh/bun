@@ -175,6 +175,10 @@ for (const secure of [true, false]) {
       expect(fragment.status).toBe(200);
       expect(fragment.headers["x-route"]).toBe("api");
       expect(fragment.body.toString()).toBe("id=42");
+
+      // request.url is built from the path the router matched.
+      const url = await request(session, { ":path": "/api/../headers?x=1#f", ":authority": "example.test:9" });
+      expect(JSON.parse(url.body.toString()).url).toBe(`${secure ? "https" : "http"}://example.test:9/headers?x=1#f`);
     });
 
     test("request url and headers reach the handler; :authority becomes host", async () => {

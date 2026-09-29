@@ -204,6 +204,8 @@ struct HttpResponseData;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
+        /* See getRoutedUrl(). */
+        std::string_view routedUrl;
 
     public:
         /* Any data pipelined after the HTTP headers (before response).
@@ -565,6 +567,27 @@ struct HttpResponseData;
         void setParameters(std::pair<int, std::string_view *> parameters)
         {
             currentParameters = parameters;
+        }
+
+        void setRoutedUrl(std::string_view url)
+        {
+            routedUrl = url;
+        }
+
+        /* The path the router matched, without the query: the raw path, or the
+         * URL parser's pathname when the two can differ (getTargetMayNormalize).
+         * Empty before a route handler runs. The rest of the target is
+         * getRawQuery(). */
+        std::string_view getRoutedUrl()
+        {
+            return routedUrl;
+        }
+
+        /* Everything after the path: the query, and a fragment if the
+         * request-target carries one. Empty when there is neither. */
+        std::string_view getRawQuery()
+        {
+            return headers->value.substr(querySeparator);
         }
 
         std::string_view getParameter(unsigned short index) {
@@ -1420,10 +1443,11 @@ struct HttpResponseData;
 
             /* Parse query. A router with a route other than the catch-all also
              * needs to know whether the path can differ from the URL parser's
-             * pathname (see scanRequestTarget); the catch-all matches any path. */
+             * pathname (see scanRequestTarget), and then the path ends at a '#'
+             * too; the catch-all matches any path. */
             if (scanTargetForRouting) {
                 RequestTargetScan targetScan = scanRequestTarget(req->headers->value);
-                req->querySeparator = targetScan.querySeparator;
+                req->querySeparator = targetScan.pathEnd;
                 req->targetMayNormalize = targetScan.pathMayNormalize;
             } else {
                 const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());

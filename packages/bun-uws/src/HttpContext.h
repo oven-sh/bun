@@ -1201,6 +1201,7 @@ public:
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
+            user.httpRequest->setRoutedUrl(r->getRoutedUrl());
 
             if (!httpContextData->flags.usingCustomExpectHandler) {
                 /* Middleware? Automatically respond to expectations */

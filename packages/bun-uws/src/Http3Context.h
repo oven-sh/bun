@@ -91,6 +91,7 @@ struct Http3Context {
             Http3Response *res = router->getUserData().httpResponse;
             req->setYield(false);
             req->setParameters(router->getParameters());
+            req->setRoutedUrl(router->getRoutedUrl());
             handler(res, req);
             return !req->getYield();
         }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);

@@ -71,10 +71,11 @@ static inline bool validPseudoHeaderTarget(std::string_view method, std::string_
 }
 
 struct RequestTargetScan {
-    /* Index of the first '?', or the target's length when it has none. */
-    unsigned int querySeparator;
-    /* The path before the query has a byte that can change how the URL parser
-     * splits it into segments. */
+    /* Index of the first '?' or '#', or the target's length when it has
+     * neither. The path is everything before it. */
+    unsigned int pathEnd;
+    /* The path has a byte that can change how the URL parser splits it into
+     * segments. */
     bool pathMayNormalize;
 };
 
@@ -87,7 +88,7 @@ struct RequestTargetBlock {
 #else
     static constexpr unsigned BITS_PER_BYTE = 1;
 #endif
-    uint64_t query, slash, dotOrPercent, hashOrBackslash;
+    uint64_t queryOrHash, slash, dotOrPercent, backslash;
 
     static RequestTargetBlock load(const char *p) {
 #if defined(__SSE2__)
@@ -95,30 +96,30 @@ struct RequestTargetBlock {
         auto eq = [&](char c) { return _mm_cmpeq_epi8(v, _mm_set1_epi8(c)); };
         auto mask = [](__m128i m) { return (uint64_t) (unsigned) _mm_movemask_epi8(m); };
         return {
-            mask(eq('?')),
+            mask(_mm_or_si128(eq('?'), eq('#'))),
             mask(eq('/')),
             mask(_mm_or_si128(eq('.'), eq('%'))),
-            mask(_mm_or_si128(eq('#'), eq('\\'))),
+            mask(eq('\\')),
         };
 #elif defined(__ARM_NEON)
         uint8x16_t v = vld1q_u8((const uint8_t *) p);
         auto eq = [&](char c) { return vceqq_u8(v, vdupq_n_u8((uint8_t) c)); };
         auto mask = [](uint8x16_t m) { return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0); };
         return {
-            mask(eq('?')),
+            mask(vorrq_u8(eq('?'), eq('#'))),
             mask(eq('/')),
             mask(vorrq_u8(eq('.'), eq('%'))),
-            mask(vorrq_u8(eq('#'), eq('\\'))),
+            mask(eq('\\')),
         };
 #else
         RequestTargetBlock b = {};
         for (unsigned i = 0; i < 16; i++) {
             uint64_t bit = 1ULL << i;
             switch (p[i]) {
-            case '?': b.query |= bit; break;
+            case '?': case '#': b.queryOrHash |= bit; break;
             case '/': b.slash |= bit; break;
             case '.': case '%': b.dotOrPercent |= bit; break;
-            case '#': case '\\': b.hashOrBackslash |= bit; break;
+            case '\\': b.backslash |= bit; break;
             default: break;
             }
         }
@@ -127,10 +128,10 @@ struct RequestTargetBlock {
     }
 };
 
-/* One pass over a request-target. The query separator is what every request
- * needs. pathMayNormalize is the router's reason to ask the URL parser for the
- * pathname instead of matching the raw bytes: it is set for a '#' (ends the
- * path), a '\\' (the parser reads it as '/'), or a segment that starts with
+/* One pass over a request-target. The path ends at the first '?' or '#', as
+ * it does for the URL parser. pathMayNormalize is the router's reason to ask
+ * the URL parser for the pathname instead of matching the raw bytes: it is
+ * set for a '\\' (the parser reads it as '/') or a segment that starts with
  * '.' or '%' ("." / ".." / "%2e" / "%2e%2e" collapse). Any other byte keeps
  * its segment. The parser may percent-encode it, but the segment boundaries,
  * and so the matched route, stay the same. */
@@ -177,13 +178,13 @@ static inline RequestTargetScan scanRequestTarget(std::string_view target) {
             }
             b = RequestTargetBlock::load(copy);
         }
-        uint64_t blockMarks = (b.hashOrBackslash | (((b.slash << BITS) | previousSlash) & b.dotOrPercent)) & valid;
-        uint64_t query = b.query & valid;
-        if (query) {
-            /* Only the bytes before the first '?' are path. */
-            uint64_t firstQuery = query & (0 - query);
-            marks |= blockMarks & (firstQuery - 1);
-            return {(unsigned int) (i + __builtin_ctzll(query) / BITS), marks != 0};
+        uint64_t blockMarks = (b.backslash | (((b.slash << BITS) | previousSlash) & b.dotOrPercent)) & valid;
+        uint64_t end = b.queryOrHash & valid;
+        if (end) {
+            /* Only the bytes before the first '?' or '#' are path. */
+            uint64_t first = end & (0 - end);
+            marks |= blockMarks & (first - 1);
+            return {(unsigned int) (i + __builtin_ctzll(end) / BITS), marks != 0};
         }
         marks |= blockMarks;
         previousSlash = b.slash >> (15 * BITS);

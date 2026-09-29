@@ -716,16 +716,26 @@ describe("Bun.serve() directory routes", () => {
       fetch: () => new Response("fallback", { status: 404 }),
     });
 
-    // `..`, `.`, empty segments, and encoded `/` are rejected outright so the
-    // served path matches what uWS routed on (route-precedence parity).
-    for (const p of [
-      "/static/a/b/c/d/e/f/g/h/../../../../../../../../a/b/c/d/e/f/g/h/target.txt",
-      "/static/a/b/c/d/e/f/g/h/../../../../../../../../../secret.txt",
-      "/static////////ok.txt",
-      "/static/./ok.txt",
-      "/static/a/../ok.txt",
-      "/static/a%2Fb%2Fok.txt",
+    // `.` and `..` segments are resolved by the URL parser before the route
+    // is matched, so the served path is the path uWS routed on. A path that
+    // resolves outside the prefix never reaches the directory route.
+    for (const [p, body] of [
+      ["/static/a/b/c/d/e/f/g/h/../../../../../../../../a/b/c/d/e/f/g/h/target.txt", "deep"],
+      ["/static/./ok.txt", "ok"],
+      ["/static/a/../ok.txt", "ok"],
+      ["/static/ok.txt#fragment", "ok"],
     ]) {
+      const r = await raw(p);
+      expect(r.body).toBe(body);
+      expect(r.status).toBe(200);
+    }
+    const escaped = await raw("/static/a/b/c/d/e/f/g/h/../../../../../../../../../secret.txt");
+    expect(escaped.body).toBe("fallback");
+    expect(escaped.status).toBe(404);
+
+    // Empty segments and encoded `/` are rejected outright so the served path
+    // matches what uWS routed on (route-precedence parity).
+    for (const p of ["/static////////ok.txt", "/static/a%2Fb%2Fok.txt"]) {
       const r = await raw(p);
       expect(r.body).not.toContain("SECRET");
       expect(r.status).toBe(404);

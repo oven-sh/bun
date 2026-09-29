@@ -32,6 +32,20 @@ impl AnyRequest {
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).url(),
         }
     }
+    /// The path the router matched, without the query. See [`Request::routed_url`].
+    pub fn routed_url(&self) -> &[u8] {
+        match self {
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).routed_url(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).routed_url(),
+        }
+    }
+    /// Everything from the `?` on, or empty.
+    pub fn raw_query(&self) -> &[u8] {
+        match self {
+            Self::H1(r) => bun_opaque::opaque_deref_mut(*r).raw_query(),
+            Self::H3(r) => bun_opaque::opaque_deref_mut(*r).raw_query(),
+        }
+    }
     pub fn set_yield(&mut self, y: bool) {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
@@ -54,6 +68,24 @@ impl Request {
         let len = c::uws_req_get_url(self, &mut ptr);
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
         // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
+        unsafe { bun_core::ffi::slice(ptr, len) }
+    }
+    /// The path the router matched, without the query: the raw path, or the
+    /// URL parser's pathname when the two can differ (a `..`, `%2e`, `\` or
+    /// `#` in the target). Empty before a route handler runs.
+    pub fn routed_url(&self) -> &[u8] {
+        let mut ptr: *const u8 = core::ptr::null();
+        let len = c::uws_req_get_routed_url(self, &mut ptr);
+        // SAFETY: ptr/len describe a slice the request (or its router) owns for the
+        // duration of the dispatch; ffi::slice tolerates the (null, 0) shape.
+        unsafe { bun_core::ffi::slice(ptr, len) }
+    }
+    /// Everything from the `?` on, or empty.
+    pub fn raw_query(&self) -> &[u8] {
+        let mut ptr: *const u8 = core::ptr::null();
+        let len = c::uws_req_get_raw_query(self, &mut ptr);
+        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
+        // ffi::slice tolerates the (null, 0) shape.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
     pub fn method(&self) -> &[u8] {
@@ -102,6 +134,8 @@ mod c {
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through-ptr precondition, so `safe fn`.
         pub(super) safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
+        pub(super) safe fn uws_req_get_routed_url(res: &Request, dest: &mut *const u8) -> usize;
+        pub(super) safe fn uws_req_get_raw_query(res: &Request, dest: &mut *const u8) -> usize;
         pub(super) safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
         pub(super) fn uws_req_get_header(
             res: *const Request,

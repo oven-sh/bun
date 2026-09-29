@@ -774,8 +774,9 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
-            if !req_url.is_empty() && req_url[0] == b'/' {
+            let (req_path, req_query) = Self::routed_target(req);
+            let req_url_len = req_path.len() + req_query.len();
+            if !req_path.is_empty() && req_path[0] == b'/' {
                 if let Some(host) = req
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
@@ -784,10 +785,10 @@ impl Request {
                     // formatted byte-count is just `host.len()`. Avoid the `core::fmt::write`
                     // vtable dispatch that `bun_fmt::count(format_args!(...))` incurs — this
                     // runs once per request via JSC extra-memory accounting.
-                    return self.get_protocol().len() + host.len() + req_url.len();
+                    return self.get_protocol().len() + host.len() + req_url_len;
                 }
             }
-            return req_url.len();
+            return req_url_len;
         }
 
         0
@@ -858,6 +859,19 @@ impl Request {
             })
     }
 
+    /// The `(path, query)` that `request.url` is built from. The path is the
+    /// one the router matched: the raw path, or the URL parser's pathname when
+    /// the target held a `..`, `%2e`, `\` or `#`. So the route that ran and
+    /// `request.url` describe the same path. Before a route handler runs
+    /// the router has matched nothing, and the raw target is used as is.
+    fn routed_target(req: &bun_uws::Request) -> (Cow<'_, [u8]>, &[u8]) {
+        let routed = req.routed_url();
+        if !routed.is_empty() {
+            return (Cow::Borrowed(routed), req.raw_query());
+        }
+        (Self::request_target_path(req.url()), b"")
+    }
+
     pub(crate) fn ensure_url(&self) -> Result<(), AllocError> {
         if !self.url.get().is_empty() {
             return Ok(());
@@ -866,8 +880,9 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
-            if !req_url.is_empty() && req_url[0] == b'/' {
+            let (req_path, req_query) = Self::routed_target(req);
+            let req_url_len = req_path.len() + req_query.len();
+            if !req_path.is_empty() && req_path[0] == b'/' {
                 if let Some(host) = req
                     .header(b"host")
                     .filter(|host| Self::is_valid_host_header(host))
@@ -877,7 +892,7 @@ impl Request {
                     // through `core::fmt::write` (which is not monomorphized and shows up in
                     // per-request profiles).
                     let protocol = self.get_protocol();
-                    let url_bytelength = protocol.len() + host.len() + req_url.len();
+                    let url_bytelength = protocol.len() + host.len() + req_url_len;
 
                     debug_assert!(self.size_of_url() == url_bytelength);
 
@@ -885,12 +900,10 @@ impl Request {
                         let mut buffer = [0u8; 128];
                         let url = {
                             let mut at = 0;
-                            buffer[at..at + protocol.len()].copy_from_slice(protocol);
-                            at += protocol.len();
-                            buffer[at..at + host.len()].copy_from_slice(host);
-                            at += host.len();
-                            buffer[at..at + req_url.len()].copy_from_slice(&req_url);
-                            at += req_url.len();
+                            for part in [protocol, host, &req_path, req_query] {
+                                buffer[at..at + part.len()].copy_from_slice(part);
+                                at += part.len();
+                            }
                             &buffer[..at]
                         };
 
@@ -911,22 +924,26 @@ impl Request {
                         return Ok(());
                     }
 
-                    if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
+                    if strings::is_all_ascii(host)
+                        && strings::is_all_ascii(&req_path)
+                        && strings::is_all_ascii(req_query)
+                    {
                         let (new_url, bytes) =
                             BunString::create_uninitialized_latin1(url_bytelength);
                         self.url.set(new_url);
                         // exact space was counted above
-                        let (a, rest) = bytes.split_at_mut(protocol.len());
-                        let (b, c) = rest.split_at_mut(host.len());
-                        a.copy_from_slice(protocol);
-                        b.copy_from_slice(host);
-                        c.copy_from_slice(&req_url);
+                        let mut at = 0;
+                        for part in [protocol, host, &req_path, req_query] {
+                            bytes[at..at + part.len()].copy_from_slice(part);
+                            at += part.len();
+                        }
                     } else {
                         // slow path
                         let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
                         temp_url.extend_from_slice(protocol);
                         temp_url.extend_from_slice(host);
-                        temp_url.extend_from_slice(&req_url);
+                        temp_url.extend_from_slice(&req_path);
+                        temp_url.extend_from_slice(req_query);
                         // `defer bun.default_allocator.free(temp_url)` → Vec drops at scope end
                         self.url.set(BunString::clone_utf8(&temp_url));
                     }
@@ -941,8 +958,15 @@ impl Request {
                 }
             }
 
-            debug_assert!(self.size_of_url() == req_url.len());
-            self.url.set(BunString::clone_utf8(&req_url));
+            debug_assert!(self.size_of_url() == req_url_len);
+            if req_query.is_empty() {
+                self.url.set(BunString::clone_utf8(&req_path));
+            } else {
+                let mut temp_url: Vec<u8> = Vec::with_capacity(req_url_len);
+                temp_url.extend_from_slice(&req_path);
+                temp_url.extend_from_slice(req_query);
+                self.url.set(BunString::clone_utf8(&temp_url));
+            }
         }
         Ok(())
     }

@@ -61,6 +61,8 @@ private:
      * when the transport flagged the target (scanRequestTarget) and a route
      * other than the catch-all exists. Parameters of that request point into it. */
     std::string normalizedUrl = {};
+    /* The path the current match runs on: the raw path, or normalizedUrl. */
+    std::string_view routedUrl = {};
     /* Set by add() for any pattern other than the catch-all. A router that
      * holds only the catch-all matches every path as is, so it never asks the parser. */
     bool hasPathSensitiveRoute = false;
@@ -260,6 +262,12 @@ public:
         return {routeParameters.paramsTop, routeParameters.params};
     }
 
+    /* The path the current match ran on, without the query. Valid, like the
+     * parameters, until the next route() call. */
+    std::string_view getRoutedUrl() const {
+        return routedUrl;
+    }
+
     UserDataType &getUserData() {
         return userData;
     }
@@ -279,6 +287,8 @@ public:
                 url = normalizedUrl;
             }
         }
+
+        routedUrl = url;
 
         /* Reset url parsing cache */
         setUrl(url);

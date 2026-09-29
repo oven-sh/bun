@@ -30,10 +30,10 @@ struct Http3Request {
             } else if (name == ":path") {
                 fullUrl = value;
                 RequestTargetScan scan = scanRequestTarget(value);
-                url = value.substr(0, scan.querySeparator);
+                url = value.substr(0, scan.pathEnd);
                 /* Keep the leading '?' — getDecodedQueryValue expects it and
                  * unconditionally drops the first byte. */
-                query = value.substr(scan.querySeparator);
+                query = value.substr(scan.pathEnd);
                 targetMayNormalize = scan.pathMayNormalize;
             } else if (name == ":authority") {
                 authority = value;
@@ -99,6 +99,10 @@ struct Http3Request {
     }
 
     void setParameters(std::pair<int, std::string_view *> p) { params = p; }
+    void setRoutedUrl(std::string_view u) { routedUrl = u; }
+    /* See HttpRequest::getRoutedUrl() and getRawQuery(). */
+    std::string_view getRoutedUrl() { return routedUrl; }
+    std::string_view getRawQuery() { return query; }
     std::string_view getParameter(unsigned short index) {
         /* HttpRouter::getParameters() returns {paramsTop, params} where
          * paramsTop is the INDEX of the last param (-1 when empty). */
@@ -116,7 +120,7 @@ private:
 
     const us_quic_header_t *headers;
     unsigned int headerCount;
-    std::string_view method, url, fullUrl, query, authority;
+    std::string_view method, url, fullUrl, query, authority, routedUrl;
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];
     bool yield = false;

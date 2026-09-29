@@ -122,8 +122,12 @@ impl DirectoryRoute {
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
+        // The path the router matched: the raw path, or the URL parser's
+        // pathname when the target held a dot segment, a `\` or a `#`. Either
+        // way it is the path the `/prefix/*` match ran on, so the served file
+        // cannot differ from the routed path.
         let Some((rel_len, had_trailing_slash)) =
-            resolve_subpath(req.url(), &this.url_prefix, &mut path_buf.0[..])
+            resolve_subpath(req.routed_url(), &this.url_prefix, &mut path_buf.0[..])
         else {
             bun_output::scoped_log!(DirectoryRoute, "reject {}", bstr::BStr::new(req.url()));
             write_miss(&mut req, resp);
@@ -135,7 +139,7 @@ impl DirectoryRoute {
             Some(Subpath::File(f, s, idx)) => (f, s, idx),
             Some(Subpath::RedirectSlash) => {
                 let mut loc = bun_paths::path_buffer_pool::get();
-                let n = build_slash_redirect(req.url(), &mut loc.0[..]);
+                let n = build_slash_redirect(req.routed_url(), req.raw_query(), &mut loc.0[..]);
                 if n == 0 {
                     write_miss(&mut req, resp);
                     return;
@@ -407,12 +411,11 @@ fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
     resp.end(b"", resp.should_close_connection());
 }
 
-/// `Location: {path}/{?query}` into `out`. `resolve_subpath` has already
+/// `Location: {path}/{query}` into `out`. `resolve_subpath` has already
 /// validated `path`: it starts with `url_prefix` (which starts with `/`) and
 /// its first segment is non-empty, so the result cannot be a `//...`
-/// protocol-relative URL (CVE-2024-43799).
-fn build_slash_redirect(url: &[u8], out: &mut [u8]) -> usize {
-    let (path, query) = path_and_query(url);
+/// protocol-relative URL (CVE-2024-43799). `query` includes its leading `?`.
+fn build_slash_redirect(path: &[u8], query: &[u8], out: &mut [u8]) -> usize {
     debug_assert!(path.first() == Some(&b'/') && path.get(1) != Some(&b'/'));
     if path.len() >= out.len() {
         return 0;
@@ -502,10 +505,11 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         return None;
     }
 
-    // uWS routed on the raw URL split on literal `/` with no decode and no
-    // normalization. Any transformation we apply that uWS did not creates a
-    // path uWS never matched, which can bypass a more-specific overlapping
-    // route. So reject every such transformation: `%XX` whose decoded byte is
+    // uWS routed on this path split on literal `/` with no decode. (A target
+    // with a dot segment, `\` or `#` was routed on the URL parser's pathname,
+    // and that is the path we were given.) Any transformation we apply that
+    // uWS did not creates a path uWS never matched, which can bypass a
+    // more-specific overlapping route. So reject every such transformation: `%XX` whose decoded byte is
     // a `pchar` (would let `%61dmin` reach `admin/`); encoded `%2F`; and any
     // non-canonical segment (empty / `.` / `..`). Route segments can only
     // consist of `pchar`s on the wire, so rejecting encoded `pchar`s leaves
@@ -679,18 +683,16 @@ mod tests {
     #[test]
     fn slash_redirect_location() {
         let mut out = [0u8; 256];
-        let n = build_slash_redirect(b"/static/sub", &mut out);
+        let n = build_slash_redirect(b"/static/sub", b"", &mut out);
         assert_eq!(&out[..n], b"/static/sub/");
-        let n = build_slash_redirect(b"/static/sub?v=1&x=2", &mut out);
+        let n = build_slash_redirect(b"/static/sub", b"?v=1&x=2", &mut out);
         assert_eq!(&out[..n], b"/static/sub/?v=1&x=2");
-        let n = build_slash_redirect(b"http://h/static/sub?v=1", &mut out);
-        assert_eq!(&out[..n], b"/static/sub/?v=1");
         // Path alone does not fit: bail rather than panic.
         let mut small = [0u8; 8];
-        assert_eq!(build_slash_redirect(b"/static/sub", &mut small), 0);
+        assert_eq!(build_slash_redirect(b"/static/sub", b"", &mut small), 0);
         // Query truncated to fit.
         let mut small = [0u8; 14];
-        let n = build_slash_redirect(b"/static/sub?verylongquery", &mut small);
+        let n = build_slash_redirect(b"/static/sub", b"?verylongquery", &mut small);
         assert_eq!(&small[..n], b"/static/sub/?v");
     }
 }

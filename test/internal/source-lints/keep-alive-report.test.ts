@@ -15,19 +15,20 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // builtin. These are `reportError()` itself, the macro runner, and the handlers of Bun.serve
 // websockets, Bun.listen, Bun.connect, Bun.udpSocket, Bun.spawn ipc and Bun.WebView.
 //
-// This is a ratchet: `keep-alive-report.inventory.json` counts those call sites per file. A new one
-// fails the test, because it is a decision that a throw there does not end the process. Removing one
-// requires lowering its count (the test tells you). A builtin of a `node:` module has no such case:
-// node ends the process, so use `reportUncaughtException` from internal/shared.
+// This is a ratchet: `keep-alive-report.inventory.json` counts the lines per file that name one of
+// them, as a call or as a value. A new one fails the test, because it is a decision that a throw
+// there does not end the process. Removing one requires lowering its count (the test tells you). A
+// builtin of a `node:` module has no such case: node ends the process, so use
+// `reportUncaughtException` from internal/shared.
 // Regenerate with `bun test/internal/source-lints/keep-alive-report.test.ts --update` (run as a script).
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/keep-alive-report.inventory.json";
 
 const RUST =
-  /\b(?:uncaught_exception_keep_alive|unhandled_rejection_keep_alive|run_callback_keep_alive|report_error_or_terminate_keep_alive)\s*\(/;
-const CXX = /\bBun__reportError\s*\(/;
-const JS = /(?<![.\w$])reportError\s*\(/;
+  /\b(?:uncaught_exception_keep_alive|unhandled_rejection_keep_alive|run_callback_keep_alive|report_error_or_terminate_keep_alive)\b/;
+const CXX = /\bBun__reportError\b/;
+const JS = /(?<![\w$])reportError\b/;
 
 type Inventory = Record<string, number>;
 const found: Inventory = {};
@@ -55,8 +56,6 @@ for (const abs of sources.cxx.filter(p => p.endsWith(".cpp"))) {
   await scan(abs, CXX, line => /^\s*extern\b/.test(line));
 }
 for (const abs of sources.js) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  if (!source.startsWith("src/js/node/") && !source.startsWith("src/js/internal/")) continue;
   await scan(abs, JS, () => false);
 }
 

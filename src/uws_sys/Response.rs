@@ -199,6 +199,11 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
     }
 
+    /// Removes the handlers that were attached with `user_data`. See `HttpResponse::clearHandlersOf`.
+    pub(crate) fn clear_handlers_of(&mut self, user_data: *mut c_void) {
+        c::uws_res_clear_handlers_of(Self::ssl_flag(), self.as_raw(), user_data)
+    }
+
     pub(crate) fn pause(&mut self) {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
@@ -921,6 +926,15 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
+    /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
+    pub fn clear_handlers_of<U>(self, user_data: *mut U) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).clear_handlers_of(user_data.cast()),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).clear_handlers_of(user_data.cast()),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
     /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
     pub fn close_after_message_if_parsing(self) -> bool {
         match self {
@@ -1226,6 +1240,11 @@ pub mod c {
             ssl: i32,
             res: &mut uws_res,
         ) -> bool;
+        pub(crate) safe fn uws_res_clear_handlers_of(
+            ssl: i32,
+            res: &mut uws_res,
+            user_data: *mut c_void,
+        );
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,

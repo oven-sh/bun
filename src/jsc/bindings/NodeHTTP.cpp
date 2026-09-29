@@ -279,7 +279,7 @@ extern "C" void NodeHTTP_setUsingCustomExpectHandler(bool is_ssl, void* uws_app,
     }
 }
 
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
+extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, bool isCurrent, void** nodeHttpResponsePtr);
 
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
@@ -305,8 +305,16 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     WTF::Vector<uint8_t, 1024> flatHeaders;
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
+    auto* httpResponseData = response->getHttpResponseData();
+    // HTTP/1.1 pipelining: this request arrived while an earlier response on
+    // the connection is still in flight. It is queued on the server socket
+    // (and in JS) instead of becoming the connection's current response.
+    const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
+    // A queued response gets the connection when its turn comes (startPipelinedResponse).
+    const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
+
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
+    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, isCurrent, nodeHttpResponsePtr)));
     if (!flatHeaders.isEmpty()) {
         NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
     }
@@ -314,11 +322,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(nodeHTTPResponseObject);
     args.append(jsBoolean(hasBody));
 
-    auto* httpResponseData = response->getHttpResponseData();
-    // HTTP/1.1 pipelining: this request arrived while an earlier response on
-    // the connection is still in flight. It is queued on the server socket
-    // (and in JS) instead of becoming the connection's current response.
-    const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
     auto* currentSocketDataPtr = reinterpret_cast<JSC::JSCell*>(httpResponseData->socketData);
 
     if (currentSocketDataPtr) {

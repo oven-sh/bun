@@ -16,6 +16,7 @@
 #include <bun-uws/src/App.h>
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
@@ -630,7 +631,7 @@ extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
 }
 
 template<bool SSL>
-static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose)
+static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose)
 {
     /* node:http compat connections always carry the derived ext block. */
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
@@ -656,7 +657,6 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
         onNodeHttpReadsResumable<SSL>(socket);
     }
-    return true;
 }
 
 bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose)
@@ -665,21 +665,25 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
         return false;
     }
 
+    bool wasQueued;
     {
         Locker locker { m_pipelinedResponsesLock };
-        m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
+        wasQueued = m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
+    }
+    // Only a response that this connection queued can get it.
+    if (!wasQueued || response->m_ctx == nullptr) {
+        return false;
     }
 
-    bool ok;
+    // Before the state reset: the response in flight leaves its last bytes in the buffer and its handler slots empty.
+    setCurrentResponse(vm, response);
     if (is_ssl) {
-        ok = startPipelinedResponseImpl<true>(socket, isAncient, connectionClose);
+        startPipelinedResponseImpl<true>(socket, isAncient, connectionClose);
     } else {
-        ok = startPipelinedResponseImpl<false>(socket, isAncient, connectionClose);
+        startPipelinedResponseImpl<false>(socket, isAncient, connectionClose);
     }
-    if (ok) {
-        setCurrentResponse(vm, response);
-    }
-    return ok;
+    Bun__NodeHTTPResponse_grantConnection(response->m_ctx);
+    return true;
 }
 
 void JSNodeHTTPServerSocket::stopHTTPParsing()

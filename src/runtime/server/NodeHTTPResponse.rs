@@ -23,10 +23,15 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 
 /// The uWS response of the socket that a node:http response answers on.
 ///
+/// The server socket (JSNodeHTTPServerSocket) owns the connection. It grants it to one
+/// response at a time (`Flags::CURRENT`), and takes it back when it replaces that
+/// response, when the socket closes, or when a WebSocket adopts the socket.
+///
 /// The handle is private to this module, so each use says what it is for:
 /// `writer()` sends bytes or changes the state of the response in flight,
 /// `reader()` reads the connection's state or controls the reads of the request.
 mod connection {
+    use super::Flags;
     use bun_uws as uws;
     use core::cell::Cell;
 
@@ -39,22 +44,32 @@ mod connection {
             Self(Cell::new(Some(raw_response)))
         }
 
+        /// Only for the connection's current response.
         #[inline]
-        pub(super) fn writer(&self) -> Option<uws::AnyResponse> {
-            self.0.get()
+        pub(super) fn writer(&self, flags: Flags) -> Option<uws::AnyResponse> {
+            if flags.contains(Flags::CURRENT) {
+                self.0.get()
+            } else {
+                None
+            }
         }
 
+        /// Also for a queued pipelined response: its request arrives on the connection.
         #[inline]
         pub(super) fn reader(&self) -> Option<uws::AnyResponse> {
             self.0.get()
         }
 
-        /// A WebSocket adopts the socket.
-        pub(super) fn take_for_upgrade(&self) -> Option<uws::AnyResponse> {
-            self.0.take()
+        /// A WebSocket adopts the socket. Only the current response can hand it over.
+        pub(super) fn take_for_upgrade(&self, flags: Flags) -> Option<uws::AnyResponse> {
+            if flags.contains(Flags::CURRENT) {
+                self.0.take()
+            } else {
+                None
+            }
         }
 
-        /// The socket closed.
+        /// The socket closed, or the server socket took the connection back.
         pub(super) fn release(&self) {
             self.0.set(None);
         }
@@ -122,6 +137,8 @@ bitflags! {
         const REQUEST_HAS_COMPLETED               = 1 << 1;
         const ENDED                               = 1 << 2;
         const UPGRADED                            = 1 << 3;
+        /// The server socket granted the connection to this response. A queued pipelined response waits for it.
+        const CURRENT                             = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
@@ -473,7 +490,7 @@ impl NodeHTTPResponse {
 
     #[inline]
     pub(crate) fn writer(&self) -> Option<uws::AnyResponse> {
-        self.connection.writer()
+        self.connection.writer(self.flags.get())
     }
 
     #[inline]
@@ -610,7 +627,7 @@ impl NodeHTTPResponse {
         sec_websocket_extensions: &[u8],
     ) -> bool {
         let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() {
+        if upgrade_ctx.is_null() || self.writer().is_none() {
             return false;
         }
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
@@ -668,7 +685,7 @@ impl NodeHTTPResponse {
 
         let armed_reader = self.armed_this_value.get();
         let mut ended_unfinished_body = false;
-        if let Some(raw_response) = self.connection.take_for_upgrade() {
+        if let Some(raw_response) = self.connection.take_for_upgrade(self.flags.get()) {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
             ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
             // Unref the poll_ref since the socket is now upgraded to WebSocket
@@ -1448,6 +1465,56 @@ impl NodeHTTPResponse {
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
     pub(crate) fn set_closed(&self) {
         self.mark_socket_closed();
+    }
+
+    /// The server socket makes this queued response the connection's current response.
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_grantConnection", no_catch)]
+    pub(crate) fn grant_connection(&self) {
+        if self.reader().is_none() {
+            return;
+        }
+        self.update_flags(|f| f.insert(Flags::CURRENT));
+    }
+
+    /// The server socket gives the connection to another response. No close reaches this one
+    /// any more, so it keeps nothing of the connection: not the handle, not a handler on the
+    /// socket, not the refs that wait for the end of the response. To JS it reads as closed.
+    /// `js_this` is this response's wrapper: `get_this_value()` answers for the socket's current one.
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_takeBackConnection", no_catch)]
+    pub(crate) fn take_back_connection(&self, js_this: JSValue) {
+        scoped_log!(NodeHTTPResponse, "takeBackConnection");
+        let flags = self.flags.get();
+        if !flags.contains(Flags::IS_REQUEST_PENDING) {
+            // Finished: `mark_request_as_done()` left nothing of it on the connection.
+            self.connection.release();
+            self.update_flags(|f| f.remove(Flags::CURRENT));
+            return;
+        }
+
+        let _guard = self.ref_guard();
+        let global_object = self.server.global_this();
+        // The bytes that a write() already counted go out before the next response.
+        let pinned = self.pending_pinned_write.get();
+        if pinned.is_some() {
+            if let Some(raw_response) = self.writer() {
+                raw_response.spill_body(pinned.remaining());
+            }
+            self.clear_pending_pinned_write(global_object, js_this);
+        }
+        if let Some(raw_response) = self.reader() {
+            raw_response.clear_handlers_of(self.as_ctx_ptr());
+        }
+        self.connection.release();
+        self.update_flags(|f| {
+            f.remove(Flags::CURRENT);
+            f.insert(Flags::SOCKET_CLOSED);
+        });
+        self.leave_pending(BodyReadState::Aborted);
+        if flags.contains(Flags::ENDED) {
+            self.on_request_complete();
+        } else {
+            self.mark_request_as_done_if_necessary();
+        }
     }
 
     /// Flag-only: the pending-request release happens deterministically in
@@ -2638,6 +2705,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     is_ssl: i32,
     response_ptr: *mut c_void,
     upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
+    is_current: bool,
     node_response_ptr: *mut *mut NodeHTTPResponse,
 ) -> JSValue {
     // SAFETY: all pointers are provided by C++ NodeHTTPServer and are live for the call.
@@ -2689,7 +2757,11 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         } else {
             BodyReadState::None
         }),
-        flags: Cell::new(Flags::default()),
+        flags: Cell::new(if is_current {
+            Flags::default() | Flags::CURRENT
+        } else {
+            Flags::default()
+        }),
         poll_ref: JsCell::new(jsc::Ref::default()),
         body_read_ref: JsCell::new(jsc::Ref::default()),
         promise: JsCell::new(StrongOptional::empty()),

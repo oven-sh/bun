@@ -28,6 +28,8 @@ struct us_socket_stream_buffer_t {
 };
 
 struct us_socket_t;
+
+void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue);
 }
 
 namespace uWS {
@@ -111,7 +113,14 @@ public:
     bool startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose);
     /* The response that answers on this connection now. A close reaches it and the queued ones. */
     WebCore::JSNodeHTTPResponse* currentResponse() const { return m_currentResponse.get(); }
-    void setCurrentResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response) { m_currentResponse.set(vm, this, response); }
+    /* A close does not reach the response that leaves the slot, so the connection is taken back from it first. */
+    void setCurrentResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response)
+    {
+        if (auto* replaced = m_currentResponse.get(); replaced != nullptr && replaced != response && replaced->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_takeBackConnection(replaced->m_ctx, JSC::JSValue::encode(replaced));
+        }
+        m_currentResponse.set(vm, this, response);
+    }
     /* Stop parsing further HTTP requests on this connection (Node frees the
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();

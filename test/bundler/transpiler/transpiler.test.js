@@ -2808,6 +2808,13 @@ export default class {
               }
               return [...(await Promise.all(pending)), ...sync];
             },
+            async scan() {
+              const transpiler = new Bun.Transpiler({ inline: true, exports: { replace: { foo: "bar" } } });
+              await loadOtherModules();
+              const source =
+                'export const foo = 1; if (foo === "bar") a(); else b(); import { a } from "a"; import { b } from "b";';
+              return [JSON.stringify(transpiler.scan(source).imports.map(i => i.path))];
+            },
             async getter() {
               const values = { foo: "bar" };
               Object.defineProperty(values, "later", {
@@ -2840,7 +2847,7 @@ export default class {
             },
           };
 
-          process.stdout.write((await cases[process.argv[2]]()).join(""));
+          console.log((await cases[process.argv[2]]()).join(""));
         `,
       };
 
@@ -2858,11 +2865,14 @@ export default class {
         ["transformSync() after other modules are loaded", "transformSync", replaced.join("")],
         ["transform() after other modules are loaded", "transform", replaced.join("")],
         ["transform() and transformSync() at the same time", "concurrent", sixteen + sixteen],
+        ["scan() after other modules are loaded", "scan", '["a"]'],
         ["a getter of a later value loads a module", "getter", 'export const foo = "bar";\nexport const later = 1;\n'],
         ["toString() of a String object loads a module", "stringObject", 'export const foo = "bar";\n'],
         ["a transpiler that a macro creates", "macro", fromMacro + fromMacro + fromMacro],
       ];
 
+      // One process for each case: only the first load of a module parses it and resets
+      // the store, and a build with the defect ends the process in the first case.
       for (const [name, which, expected] of cases) {
         it.concurrent(name, async () => {
           using dir = tempDir("transpiler-replace-string-" + which, files);
@@ -2876,7 +2886,7 @@ export default class {
           });
           const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
           // A debug build prints this line to stdout for each macro call.
-          expect(stdout.replaceAll("[macro] call replaced\n", "")).toBe(expected);
+          expect(stdout.replaceAll("[macro] call replaced\n", "")).toBe(expected + "\n");
           expect(exitCode).toBe(0);
         });
       }

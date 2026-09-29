@@ -1027,6 +1027,256 @@ describe("fs.watch", () => {
       });
     },
   );
+
+  // Fixture source for a chain of directories top/name/name/..., `levels` deep.
+  // Paths are relative to the watched directory, like the names of its events.
+  const chainFixture = /* js */ `
+    const seen = new Set(), errors = [];
+    function chain(top, name, levels) {
+      const dirs = [];
+      for (let dir = top; dirs.length < levels; ) dirs.push((dir = path.join(dir, name)));
+      return dirs;
+    }
+    function writeInEveryLevel(watched, top, name, levels) {
+      for (const dir of chain(top, name, levels)) fs.writeFileSync(path.join(watched, dir, "f.txt"), "x");
+    }
+    // The levels of the chain whose file has no event.
+    function unwatchedLevels(top, name, levels) {
+      return chain(top, name, levels).flatMap((dir, i) => (seen.has(path.join(dir, "f.txt")) ? [] : [i + 1]));
+    }
+  `;
+
+  // fs.rmSync(dir, { recursive: true }) takes most of a second on a chain of 300
+  // directories, so the tests remove a deep chain from its bottom.
+  function removeChain(top: string, name: string, levels: number) {
+    const dirs = [top];
+    for (let level = 0; level < levels; level++) dirs.push(path.join(dirs[level], name));
+    for (const dir of dirs.reverse()) fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // The crawl of a recursive watch kept every directory on its way down open.
+  // It stopped where the process had no descriptor left, and the watch covered
+  // nothing below that depth, with no 'error'.
+  test.concurrent.skipIf(!isLinux)("recursive watch covers a tree deeper than the open-file limit", async () => {
+    const levels = 100;
+    using dir = tempDir("fs-watch-deep-tree", {});
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, ...Array(levels).fill("a")), { recursive: true });
+
+    const fixture = /* js */ `
+      ${descriptorFixture}
+      ${chainFixture}
+      const levels = ${levels};
+      const watcher = fs.watch(root, { recursive: true }, (type, name) => {
+        seen.add(name);
+        // inotify queues events in the order they happen, so every event of
+        // the chain arrives before this one.
+        if (type === "rename" && name === "last.txt") {
+          watcher.close();
+          console.log(JSON.stringify({ unwatched: unwatchedLevels("", "a", levels), errors }));
+        }
+      });
+      watcher.on("error", error => errors.push(error.code));
+      writeInEveryLevel(root, "", "a", levels);
+      fs.writeFileSync(path.join(root, "last.txt"), "x");
+    `;
+
+    const { stdout, stderr, exitCode } = await runWithOpenFileLimit(64, fixture, { WATCH_ROOT: root });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ unwatched: [], errors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A directory that moves into a recursive watch is crawled on the inotify
+  // reader thread, which reports every entry it finds. That crawl had the same
+  // limit, and it used 8 KiB of the thread's stack for every level.
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch covers a tree deeper than the open-file limit that moves into it",
+    async () => {
+      const levels = 300;
+      using dir = tempDir("fs-watch-deep-move", { "watched": {} });
+      const root = String(dir);
+      fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
+
+      const fixture = /* js */ `
+        ${descriptorFixture}
+        ${chainFixture}
+        const watched = path.join(root, "watched");
+        const dirs = chain("moved", "a", ${levels});
+        const bottomFile = path.join(dirs.at(-1), "f.txt");
+        const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+          seen.add(name);
+          if (type !== "rename") return;
+          // The reader thread crawls the directory while it handles the move,
+          // so the events of the crawl arrive before this one.
+          if (name === "crawled.txt") {
+            fs.writeFileSync(path.join(watched, bottomFile), "x");
+            fs.writeFileSync(path.join(watched, "last.txt"), "x");
+          } else if (name === "last.txt") {
+            watcher.close();
+            console.log(JSON.stringify({
+              unreported: dirs.flatMap((dir, i) => (seen.has(dir) ? [] : [i + 1])),
+              bottomFile: seen.has(bottomFile),
+              errors,
+            }));
+          }
+        });
+        watcher.on("error", error => errors.push(error.code));
+        fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+        fs.writeFileSync(path.join(watched, "crawled.txt"), "x");
+      `;
+
+      try {
+        const { stdout, stderr, exitCode } = await runWithOpenFileLimit(64, fixture, { WATCH_ROOT: root });
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        removeChain(path.join(root, "watched", "moved"), "a", levels);
+        removeChain(path.join(root, "src"), "a", levels);
+      }
+    },
+  );
+
+  // One descriptor is all a crawl needs, at any depth, for a new watch and for
+  // a directory that moves into one.
+  test.concurrent.skipIf(!isLinux)("recursive watch with one free descriptor covers every level", async () => {
+    const initialLevels = 12;
+    const movedLevels = 10;
+    using dir = tempDir("fs-watch-one-descriptor-deep", { "watched": { "before.txt": "" } });
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "watched", "tree", ...Array(initialLevels).fill("a")), { recursive: true });
+    fs.mkdirSync(path.join(root, "src", ...Array(movedLevels).fill("b")), { recursive: true });
+
+    const fixture = /* js */ `
+      ${descriptorFixture}
+      ${chainFixture}
+      const watched = path.join(root, "watched");
+      leaveFreeDescriptors(1);
+
+      const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+        seen.add(name);
+        if (type !== "rename") return;
+        if (name === "initial.txt") {
+          // A rename needs no descriptor, so the crawl on the reader thread has
+          // the free one. The second rename is reported after that crawl.
+          fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+          fs.renameSync(path.join(watched, "before.txt"), path.join(watched, "after.txt"));
+        } else if (name === "after.txt") {
+          writeInEveryLevel(watched, "moved", "b", ${movedLevels});
+          fs.writeFileSync(path.join(watched, "last.txt"), "x");
+        } else if (name === "last.txt") {
+          watcher.close();
+          console.log(JSON.stringify({
+            initial: unwatchedLevels("tree", "a", ${initialLevels}),
+            moved: unwatchedLevels("moved", "b", ${movedLevels}),
+            errors,
+          }));
+        }
+      });
+      watcher.on("error", error => errors.push(error.code));
+      writeInEveryLevel(watched, "tree", "a", ${initialLevels});
+      fs.writeFileSync(path.join(watched, "initial.txt"), "x");
+    `;
+
+    const { stdout, stderr, exitCode } = await runWithOpenFileLimit(64, fixture, { WATCH_ROOT: root });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ initial: [], moved: [], errors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With no descriptor free the crawl cannot read a directory. It reports the
+  // directory once, like node does (EMFILE from scandir), and the watcher stays
+  // open. It used to report nothing.
+  const unreadableTree = { "watched": { "before.txt": "" }, "src": { "sub": { "keep.txt": "" } } };
+
+  // Fixture source: a populated directory moves into the watch while every
+  // descriptor is in use. The second rename is reported after the crawl.
+  const moveWithoutDescriptors = /* js */ `
+    leaveFreeDescriptors(0);
+    fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+    fs.renameSync(path.join(watched, "before.txt"), path.join(watched, "after.txt"));
+  `;
+
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch emits 'error' for a directory it cannot read and stays open",
+    async () => {
+      using dir = tempDir("fs-watch-unreadable", unreadableTree);
+      const root = fs.realpathSync(String(dir));
+
+      const fixture = /* js */ `
+        ${descriptorFixture}
+        const watched = path.join(root, "watched");
+        const errors = [];
+        let closed = false;
+        const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+          if (type !== "rename") return;
+          if (name === "after.txt") {
+            for (const fd of held.splice(0)) fs.closeSync(fd);
+            fs.writeFileSync(path.join(watched, "moved", "f.txt"), "x");
+          } else if (name === path.join("moved", "f.txt")) {
+            console.log(JSON.stringify({ errors, closed }));
+            watcher.close();
+          }
+        });
+        watcher.on("error", error => errors.push({ code: error.code, syscall: error.syscall, path: error.path }));
+        watcher.on("close", () => { closed = true; });
+        ${moveWithoutDescriptors}
+      `;
+
+      const { stdout, stderr, exitCode } = await runWithOpenFileLimit(64, fixture, { WATCH_ROOT: root });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({
+          errors: [{ code: "EMFILE", syscall: "scandir", path: path.join(root, "watched", "moved") }],
+          closed: false,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent.skipIf(!isLinux)("recursive fs.promises.watch rejects for a directory it cannot read", async () => {
+    using dir = tempDir("fs-watch-unreadable-promises", unreadableTree);
+    const root = fs.realpathSync(String(dir));
+
+    const fixture = /* js */ `
+      ${descriptorFixture}
+      const watched = path.join(root, "watched");
+      (async () => {
+        const events = [];
+        let caught = null;
+        const watcher = fs.promises.watch(watched, { recursive: true });
+        ${moveWithoutDescriptors}
+        try {
+          for await (const event of watcher) {
+            events.push(event.filename);
+            if (event.filename === "after.txt") break;
+          }
+        } catch (error) {
+          caught = { code: error.code, syscall: error.syscall, path: error.path };
+        }
+        for (const fd of held.splice(0)) fs.closeSync(fd);
+        console.log(JSON.stringify({ events, caught }));
+      })();
+    `;
+
+    const { stdout, stderr, exitCode } = await runWithOpenFileLimit(64, fixture, { WATCH_ROOT: root });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        events: ["moved"],
+        caught: { code: "EMFILE", syscall: "scandir", path: path.join(root, "watched", "moved") },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("fs.promises.watch", () => {

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
+import { request as httpsRequest } from "https";
 import { connect as netConnect } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
@@ -520,6 +521,166 @@ it.concurrent.each(["handshake, error", "handshake", "error"] as const)(
         ? ["error ERR_TLS_SESSION_ATTACK", "close undefined authorized=false"]
         : ["close ERR_TLS_SESSION_ATTACK authorized=false"]),
     ]);
+  },
+);
+
+// Plays an HTTP server and a WebSocket server by hand. For a plain request it renegotiates 4 times in a row before
+// it answers, so the client refuses the last one while it waits for the response. For a WebSocket it renegotiates
+// once for each frame of the client and answers with the text frame "done N". It answers a CONNECT request first,
+// so it can also play an HTTPS proxy.
+const refusedRenegotiationHttpServer = /* js */ `
+  const tls = require("tls");
+  const crypto = require("crypto");
+  // The server counts handshakes too. Only the limit of the client is under test.
+  tls.CLIENT_RENEG_LIMIT = 100;
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let head = "";
+      socket.on("data", function onHead(chunk) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\\r\\n\\r\\n")) return;
+        if (head.startsWith("CONNECT ")) {
+          head = "";
+          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+          return;
+        }
+        socket.off("data", onHead);
+        const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head);
+        if (key) {
+          const accept = crypto.createHash("sha1").update(key[1] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+              "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+          );
+          let asked = 0;
+          socket.on("data", () => {
+            const n = ++asked;
+            socket.renegotiate({ rejectUnauthorized: false }, err => {
+              if (err) return;
+              const text = Buffer.from("done " + n);
+              socket.write(Buffer.concat([Buffer.from([0x81, text.length]), text]));
+            });
+          });
+          return;
+        }
+        socket.resume();
+        let asked = 0;
+        (function ask() {
+          if (asked === 4) {
+            socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+            return;
+          }
+          asked++;
+          socket.renegotiate({ rejectUnauthorized: false }, err => {
+            if (!err) ask();
+          });
+        })();
+      });
+    },
+  );
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
+
+function spawnRefusedRenegotiationHttpServer() {
+  return Bun.spawn({
+    cmd: ["node", "-e", refusedRenegotiationHttpServer],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+}
+
+// An ambient NO_PROXY applies to an explicit `proxy` option too and would send the request direct.
+async function withoutNoProxy<T>(run: () => Promise<T>): Promise<T> {
+  const keys = ["NO_PROXY", "no_proxy"];
+  const saved = keys.map(key => [key, Bun.env[key]] as const);
+  for (const key of keys) Bun.env[key] = "";
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete Bun.env[key];
+      else Bun.env[key] = value;
+    }
+  }
+}
+
+it("fetch fails with the TLS error when the client refuses a renegotiation", async () => {
+  await using server = spawnRefusedRenegotiationHttpServer();
+  const port = await portOf(server);
+  const outcome = await fetch(`https://localhost:${port}/`, { keepalive: false, tls: { ca: tls.cert } }).then(
+    res => `status ${res.status}`,
+    (err: NodeJS.ErrnoException) => `${err.name} ${err.code}: ${err.message}`,
+  );
+  expect(outcome).toBe("TypeError ERR_TLS_SESSION_ATTACK: TLS session renegotiation attack detected");
+});
+
+it("fetch through a CONNECT proxy fails with the TLS error when the client refuses a renegotiation", async () => {
+  await using server = spawnRefusedRenegotiationHttpServer();
+  const port = await portOf(server);
+  using proxy = await startRecordingProxy();
+  const outcome = await withoutNoProxy(() =>
+    fetch(`https://localhost:${port}/`, {
+      keepalive: false,
+      tls: { ca: tls.cert },
+      proxy: `http://127.0.0.1:${proxy.port}`,
+    }).then(
+      res => `status ${res.status}`,
+      (err: NodeJS.ErrnoException) => `${err.name} ${err.code}: ${err.message}`,
+    ),
+  );
+  expect({ outcome, proxied: proxy.requests.map(r => r.requestLine) }).toEqual({
+    outcome: "TypeError ERR_TLS_SESSION_ATTACK: TLS session renegotiation attack detected",
+    proxied: [`CONNECT localhost:${port} HTTP/1.1`],
+  });
+});
+
+it("https.request fails with the TLS error when the client refuses a renegotiation", async () => {
+  await using server = spawnRefusedRenegotiationHttpServer();
+  const port = await portOf(server);
+  const outcome = Promise.withResolvers<string>();
+  const req = httpsRequest(
+    { host: "localhost", port, path: "/", agent: false, ca: tls.cert },
+    (res: IncomingMessage) => {
+      res.resume();
+      res.on("end", () => outcome.resolve(`status ${res.statusCode}`));
+    },
+  );
+  req.on("error", (err: NodeJS.ErrnoException) => outcome.resolve(`${err.code}: ${err.message}`));
+  req.end();
+  expect(await outcome.promise).toBe("ERR_TLS_SESSION_ATTACK: TLS session renegotiation attack detected");
+});
+
+// 1015 is the close code of a TLS failure. 1006 says only that the connection ended.
+it.concurrent.each(["direct", "through an HTTPS proxy"])(
+  "WebSocket (%s) closes with 1015 when the client refuses a renegotiation",
+  async route => {
+    await using server = spawnRefusedRenegotiationHttpServer();
+    const port = await portOf(server);
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const ws = new WebSocket(route === "direct" ? `wss://localhost:${port}/` : "ws://target.invalid/", {
+      tls: { ca: tls.cert },
+      ...(route !== "direct" && { proxy: `https://localhost:${port}` }),
+    });
+    ws.onopen = () => {
+      events.push("open");
+      ws.send("go");
+    };
+    ws.onmessage = event => {
+      events.push(`message ${event.data}`);
+      ws.send("go");
+    };
+    ws.onclose = event => {
+      events.push(`close ${event.code}`);
+      closed.resolve();
+    };
+    await closed.promise;
+    expect(events).toEqual(["open", "message done 1", "message done 2", "message done 3", "close 1015"]);
   },
 );
 

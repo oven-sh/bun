@@ -177,26 +177,33 @@ const ORIGIN_TOKENS: [&[u8]; 3] = [b"${ORIGIN}", b"$ORIGIN", b"@loader_path"];
 
 /// How many directory levels a loader search path reaches above the embedded
 /// root, from a library whose own directory is `depth` levels below it. 0 when
-/// the path stays inside, or does not start at the library.
+/// the path stays inside, or names no token.
 ///
-/// Only a path that STARTS with the token is relative to the library: the
-/// loaders expand the token anywhere, but a path with anything before it is
-/// rooted there instead (`/opt/$ORIGIN/..` is under `/opt`), which the mirror
-/// cannot move. What follows the token up to the first `/` only renames the
-/// library's directory (`$ORIGIN.old/x` is a sibling of it): glibc wants a
-/// non-identifier character there and musl takes any, so every prefix counts.
-/// The walk takes the highest point the path reaches, not its end: once a
-/// path leaves the root, a later segment re-enters the directory it left.
+/// The loaders put the library's absolute directory where the token is, so
+/// the walk starts there, wherever the token is: what comes before it can
+/// resolve to `/` (`/./$ORIGIN/..`, or `lib/../$ORIGIN/..` run from `/`), and
+/// then the path is the library's own. What follows the token up to the next
+/// `/` only renames the library's directory (`$ORIGIN.old/x` is a sibling of
+/// it): glibc wants a non-identifier character there and musl takes any, so
+/// every suffix counts. The walk takes the highest point the path reaches,
+/// not its end: once a path leaves the root, a later segment re-enters the
+/// directory it left.
 pub fn origin_climb(path: &[u8], depth: usize) -> u32 {
-    let Some(rest) = ORIGIN_TOKENS
+    origin_climb_then(path, depth, 0)
+}
+
+/// [`origin_climb`] of `path` followed by `parents` more `..` segments.
+fn origin_climb_then(path: &[u8], depth: usize, parents: u32) -> u32 {
+    let Some(from_token) = ORIGIN_TOKENS
         .iter()
-        .find_map(|token| path.strip_prefix(*token))
+        .filter_map(|token| strings::index_of(path, token))
+        .min()
     else {
         return 0;
     };
     let mut level = i64::try_from(depth).unwrap_or(i64::MAX);
     let mut highest = level;
-    for segment in strings::split(rest, b"/").skip(1) {
+    for segment in strings::split(&path[from_token..], b"/").skip(1) {
         match segment {
             b"" | b"." => continue,
             b".." => level -= 1,
@@ -205,7 +212,8 @@ pub fn origin_climb(path: &[u8], depth: usize) -> u32 {
         }
         highest = highest.min(level);
     }
-    u32::try_from(-highest).unwrap_or(if highest < 0 { u32::MAX } else { 0 })
+    highest = highest.min(level.saturating_sub(i64::from(parents)));
+    u32::try_from(highest.saturating_neg()).unwrap_or(0)
 }
 
 /// Where a load name that carries a path of its own lands inside the mirror:
@@ -250,11 +258,29 @@ pub fn needed_relative_path<'a>(dir: &[u8], name: &[u8], buf: &'a mut [u8]) -> O
 /// What one embedded shared library tells the dynamic loader.
 #[derive(Default)]
 pub struct LoaderFacts<'a> {
-    /// [`origin_climb`] over every search path it declares.
+    /// [`origin_climb`] over every search path and load name it declares.
     pub climb: u32,
     /// The names it loads, as written: a soname (`libfoo.so.1`), or a path
     /// that starts with `@rpath`, `@loader_path` or `$ORIGIN`.
     pub needed: Vec<&'a [u8]>,
+    /// Most `..` segments in one of its `@rpath/` load names.
+    pub rpath_name_parents: u32,
+    /// Its `LC_RPATH` entries.
+    rpaths: Vec<&'a [u8]>,
+    depth: usize,
+}
+
+impl LoaderFacts<'_> {
+    /// `climb`, and an `@rpath/` load name with `name_parents` `..` segments
+    /// joined to each of its `LC_RPATH` entries. dyld joins such a name to the
+    /// entries of the image that carries it and of every image that loaded
+    /// it, so `name_parents` is the most of the whole set.
+    pub fn climb_below_rpaths(&self, name_parents: u32) -> u32 {
+        self.rpaths
+            .iter()
+            .map(|rpath| origin_climb_then(rpath, self.depth, name_parents))
+            .fold(self.climb, u32::max)
+    }
 }
 
 /// [`LoaderFacts`] of the library in `bytes`, which the mirror puts `depth`
@@ -268,7 +294,10 @@ pub fn loader_facts(
     let Some(entries) = loader_entries::read(bytes)? else {
         return Ok(None);
     };
-    let mut facts = LoaderFacts::default();
+    let mut facts = LoaderFacts {
+        depth,
+        ..LoaderFacts::default()
+    };
     for entry in entries {
         match entry.kind {
             // An ELF entry is a list. glibc splits it at `:`, musl at `:` and
@@ -280,11 +309,22 @@ pub fn loader_facts(
                     facts.climb = facts.climb.max(origin_climb(path, depth));
                 }
             }
-            Kind::MachoRpath => facts.climb = facts.climb.max(origin_climb(entry.value, depth)),
+            Kind::MachoRpath => {
+                facts.climb = facts.climb.max(origin_climb(entry.value, depth));
+                facts.rpaths.push(entry.value);
+            }
             // A load name can carry a path of its own, and the loaders expand
             // the same tokens in it.
             Kind::ElfNeeded | Kind::ElfAuxiliary | Kind::ElfFilter | Kind::MachoDylib => {
                 facts.climb = facts.climb.max(origin_climb(entry.value, depth));
+                if let Some(below) = entry.value.strip_prefix(b"@rpath/") {
+                    let parents = strings::split(below, b"/")
+                        .filter(|segment| *segment == b"..")
+                        .count();
+                    facts.rpath_name_parents = facts
+                        .rpath_name_parents
+                        .max(u32::try_from(parents).unwrap_or(u32::MAX));
+                }
                 facts.needed.push(entry.value);
             }
             Kind::ElfSoname | Kind::MachoId => {}
@@ -397,12 +437,19 @@ mod tests {
         );
         // The highest point counts, not the end.
         assert_eq!(origin_climb(b"$ORIGIN/../../a/b", 0), 2);
-        // Not relative to the library.
+        // No token: not a path from the library.
         assert_eq!(origin_climb(b"/opt/lib", 0), 0);
-        assert_eq!(origin_climb(b"lib", 0), 0);
+        assert_eq!(origin_climb(b"lib/../..", 0), 0);
         assert_eq!(origin_climb(b"", 0), 0);
+        assert_eq!(origin_climb(b"..", 0), 0);
         assert_eq!(origin_climb(b"@executable_path/../lib", 0), 0);
-        assert_eq!(origin_climb(b"/opt/$ORIGIN/../..", 0), 0);
+        // The token is an absolute path, so what stands in front of it can
+        // lead back to `/`. The walk starts at the token.
+        assert_eq!(origin_climb(b"/$ORIGIN/../lib", 0), 1);
+        assert_eq!(origin_climb(b"./$ORIGIN/../../lib", 0), 2);
+        assert_eq!(origin_climb(b"lib/../$ORIGIN/..", 0), 1);
+        assert_eq!(origin_climb(b".$ORIGIN/../..", 1), 1);
+        assert_eq!(origin_climb(b"/opt/${ORIGIN}/../..", 0), 2);
         // What follows the token renames the library's directory: a sibling,
         // at the same level. musl reads `$ORIGINAL` that way too.
         assert_eq!(origin_climb(b"$ORIGIN.old/lib", 0), 0);
@@ -461,9 +508,32 @@ mod tests {
         image
     }
 
+    /// A 64-bit Mach-O image with these `rpath_command`s and `dylib_command`s.
+    fn macho_with(commands: &[(u32, &[u8])]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for &(cmd, string) in commands {
+            let size = (24 + string.len() + 1).next_multiple_of(8);
+            let start = body.len();
+            body.extend_from_slice(&cmd.to_le_bytes());
+            body.extend_from_slice(&(size as u32).to_le_bytes());
+            body.extend_from_slice(&24u32.to_le_bytes());
+            body.resize(start + 24, 0);
+            body.extend_from_slice(string);
+            body.resize(start + size, 0);
+        }
+        let mut image = vec![0u8; 32];
+        image[..4].copy_from_slice(&0xfeed_facfu32.to_le_bytes());
+        image[16..20].copy_from_slice(&(commands.len() as u32).to_le_bytes());
+        image[20..24].copy_from_slice(&(body.len() as u32).to_le_bytes());
+        image.extend_from_slice(&body);
+        image
+    }
+
     #[test]
     fn loader_facts_of_a_library() {
         const DT_NEEDED: i64 = 1;
+        const LC_LOAD_DYLIB: u32 = 0xc;
+        const LC_RPATH: u32 = 0x8000_001c;
         const DT_RPATH: i64 = 15;
         const DT_RUNPATH: i64 = 29;
 
@@ -491,6 +561,27 @@ mod tests {
             loader_facts(b"MZ\x90\0not an image bun reads", 0)
                 .unwrap()
                 .is_none()
+        );
+
+        // dyld joins an `@rpath/` name to the `LC_RPATH` entries: the name's
+        // `..` segments continue where the entry ends.
+        let image = macho_with(&[
+            (LC_RPATH, b"@loader_path/../Frameworks"),
+            (LC_LOAD_DYLIB, b"@rpath/../../lib/libfoo.dylib"),
+            (LC_LOAD_DYLIB, b"@loader_path/libbar.dylib"),
+        ]);
+        let facts = loader_facts(&image, 1).unwrap().unwrap();
+        assert_eq!(facts.climb, 0);
+        assert_eq!(facts.rpath_name_parents, 2);
+        assert_eq!(facts.climb_below_rpaths(0), 0);
+        assert_eq!(facts.climb_below_rpaths(2), 1);
+        assert_eq!(facts.climb_below_rpaths(5), 4);
+        assert_eq!(
+            facts.needed,
+            [
+                &b"@rpath/../../lib/libfoo.dylib"[..],
+                b"@loader_path/libbar.dylib"
+            ]
         );
         let mut cut = elf_with(&[(DT_NEEDED, b"libfoo.so.1")]);
         cut.truncate(cut.len() - 4);

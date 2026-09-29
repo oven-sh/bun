@@ -46,11 +46,11 @@ pub struct Entry<'a> {
 pub enum Malformed {
     #[error("the program headers are outside the file")]
     ProgramHeaders,
-    #[error("the dynamic section is outside the loaded file or has no DT_NULL")]
+    #[error("the dynamic section is not in a part of the file that is loaded")]
     Dynamic,
-    #[error("the dynamic string table is missing or outside the loaded file")]
+    #[error("the dynamic section names no string table")]
     StringTable,
-    #[error("a dynamic string is outside the string table")]
+    #[error("a dynamic string is not in a part of the file that is loaded, or has no end")]
     String,
     #[error("the load commands are outside the file")]
     LoadCommands,
@@ -193,18 +193,18 @@ pub mod elf {
 }
 
 /// What the loader finds at `vaddr`: the file bytes of the `PT_LOAD` that maps
-/// it, `len` of them at most. It reads the dynamic section and the string
-/// table there, whatever `p_offset` or a section header says.
-fn mapped<'a>(
-    bytes: &'a [u8],
-    headers: &[elf::ProgramHeader],
-    vaddr: u64,
-    len: u64,
-) -> Option<&'a [u8]> {
+/// it, from there to the end of that segment's bytes. A later `PT_LOAD` maps
+/// over an earlier one. The loaders read the dynamic section and its strings
+/// there, whatever `p_offset`, `p_filesz` of `PT_DYNAMIC`, `DT_STRSZ` or a
+/// section header says.
+fn mapped<'a>(bytes: &'a [u8], headers: &[elf::ProgramHeader], vaddr: u64) -> Option<&'a [u8]> {
     let (load, offset) = headers
         .iter()
+        .rev()
         .find_map(|load| Some((load, load.offset_of(vaddr)?)))?;
-    slice_at(bytes, offset, len.min(load.filesz - (vaddr - load.vaddr)))
+    let rest = bytes.get(usize::try_from(offset).ok()?..)?;
+    let len = usize::try_from(load.filesz - (vaddr - load.vaddr)).unwrap_or(usize::MAX);
+    Some(&rest[..rest.len().min(len)])
 }
 
 fn read_elf<'a>(
@@ -226,29 +226,19 @@ fn read_elf<'a>(
     )
     .ok_or(Malformed::ProgramHeaders)?;
     let headers: Vec<elf::ProgramHeader> = elf::program_headers(table, stride).collect();
-    // The loaders keep the last `PT_DYNAMIC`.
+    // The loaders keep the last `PT_DYNAMIC`, and walk it to `DT_NULL`.
     let Some(dynamic) = headers.iter().rfind(|h| h.kind == elf::PT_DYNAMIC) else {
         return Ok(());
     };
-    let dynamic =
-        mapped(bytes, &headers, dynamic.vaddr, dynamic.filesz).ok_or(Malformed::Dynamic)?;
-    // The loaders walk to `DT_NULL` with no other bound.
-    if elf::dynamic_entries(dynamic).count() == dynamic.len() / elf::DYN_SIZE {
-        return Err(Malformed::Dynamic);
-    }
+    let dynamic = mapped(bytes, &headers, dynamic.vaddr).ok_or(Malformed::Dynamic)?;
 
-    // `DT_STRTAB` may follow the tags that point into it.
-    let mut strtab_vaddr = None;
-    let mut strtab_size = 0u64;
+    // `DT_STRTAB` may follow the tags that point into it. The last one counts.
+    let mut strtab = None;
     let mut strings_at: Vec<(Kind, u64)> = Vec::new();
     for (tag, val) in elf::dynamic_entries(dynamic) {
         let kind = match tag {
             elf::DT_STRTAB => {
-                strtab_vaddr = Some(val);
-                continue;
-            }
-            elf::DT_STRSZ => {
-                strtab_size = val;
+                strtab = Some(val);
                 continue;
             }
             elf::DT_RPATH => Kind::ElfRpath,
@@ -264,14 +254,14 @@ fn read_elf<'a>(
     if strings_at.is_empty() {
         return Ok(());
     }
-    let strtab = strtab_vaddr
-        .and_then(|vaddr| mapped(bytes, &headers, vaddr, strtab_size))
-        .ok_or(Malformed::StringTable)?;
+    let strtab = strtab.ok_or(Malformed::StringTable)?;
     for (kind, offset) in strings_at {
-        match elf::string_at(strtab, offset) {
-            Some((value, true)) => entries.push(Entry { kind, value }),
-            _ => return Err(Malformed::String),
-        }
+        let value = strtab
+            .checked_add(offset)
+            .and_then(|vaddr| mapped(bytes, &headers, vaddr))
+            .and_then(|text| Some(&text[..strings::index_of_char_usize(text, 0)?]))
+            .ok_or(Malformed::String)?;
+        entries.push(Entry { kind, value });
     }
     Ok(())
 }
@@ -284,9 +274,10 @@ mod macho {
     /// Big-endian on disk, like every field of the universal header.
     const FAT_MAGIC: u32 = 0xcafe_babe;
     const FAT_MAGIC_64: u32 = 0xcafe_babf;
-    /// A Java class file starts with `FAT_MAGIC` too, then its version: 45 or
-    /// more where a universal file has its image count.
-    const FIRST_JAVA_CLASS_VERSION: u32 = 45;
+    /// dyld reads the universal header from the first page of the file and
+    /// refuses a count that does not fit there. (A Java class file starts with
+    /// `FAT_MAGIC` too, then its version where the count is.)
+    const FAT_HEADER_PAGE: usize = 4096;
 
     const LC_LOAD_DYLIB: u32 = 0xc;
     const LC_ID_DYLIB: u32 = 0xd;
@@ -319,12 +310,12 @@ mod macho {
             FAT_MAGIC_64 => true,
             _ => return read_image(bytes, entries),
         };
-        if count >= FIRST_JAVA_CLASS_VERSION {
-            return Ok(false);
-        }
         // `fat_arch`: cputype, cpusubtype, offset, size, align (`u32` each).
         // `fat_arch_64`: offset and size are `u64`, and a reserved `u32` ends it.
         let arch_size = if wide { 32 } else { 20 };
+        if count as usize > (FAT_HEADER_PAGE - 8) / arch_size {
+            return Ok(false);
+        }
         let mut found = false;
         for index in 0..count as usize {
             let arch = 8 + index * arch_size;
@@ -490,13 +481,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_elf_strings_outside_the_table() {
+    fn rejects_elf_strings_the_loader_cannot_read() {
         let past_the_end = elf_image(&[(elf::DT_RPATH, 64)], b"\0lib\0");
         assert_eq!(read(&past_the_end), Err(Malformed::String));
         let unterminated = elf_image(&[(elf::DT_RPATH, 1)], b"\0lib");
         assert_eq!(read(&unterminated), Err(Malformed::String));
+
+        // No `DT_STRTAB` for the string tags to point into.
         let mut no_table = elf_image(&[(elf::DT_NEEDED, 1)], b"\0lib\0");
-        no_table.truncate(no_table.len() - 2);
+        let strtab_tag_at = DYNAMIC_AT + elf::DYN_SIZE;
+        no_table[strtab_tag_at..strtab_tag_at + 8].copy_from_slice(&0x6fff_fffbi64.to_le_bytes());
         assert_eq!(read(&no_table), Err(Malformed::StringTable));
     }
 
@@ -544,13 +538,47 @@ mod tests {
     }
 
     #[test]
-    fn rejects_elf_dynamic_the_loader_cannot_walk() {
-        let mut no_terminator = elf_image(&[(elf::DT_RUNPATH, 1)], b"\0lib\0");
+    fn reads_elf_like_the_loader_when_its_sizes_are_wrong() {
+        let strtab = b"\0$ORIGIN/../lib\0";
+        let expected = [(Kind::ElfRunpath, &b"$ORIGIN/../lib"[..])];
+
+        // `p_filesz` of `PT_DYNAMIC` covers one entry: the walk still ends at `DT_NULL`.
+        let mut short_dynamic = elf_image(&[(elf::DT_RUNPATH, 1)], strtab);
+        set_phdr(
+            &mut short_dynamic,
+            1,
+            elf::PT_DYNAMIC,
+            DYNAMIC_AT as u64,
+            VADDR + DYNAMIC_AT as u64,
+            elf::DYN_SIZE as u64,
+        );
+        assert_eq!(pairs(&read(&short_dynamic).unwrap().unwrap()), expected);
+
+        // `DT_STRSZ` says the table is empty: the string is read to its NUL.
+        let mut no_size = elf_image(&[(elf::DT_RUNPATH, 1)], strtab);
+        let strsz_at = DYNAMIC_AT + 2 * elf::DYN_SIZE + 8;
+        no_size[strsz_at..strsz_at + 8].copy_from_slice(&0u64.to_le_bytes());
+        assert_eq!(pairs(&read(&no_size).unwrap().unwrap()), expected);
+
+        // No `DT_NULL`: the walk ends with the bytes of the segment.
+        let mut no_terminator = elf_image(&[(elf::DT_RUNPATH, 1)], strtab);
         let terminator_at = DYNAMIC_AT + 3 * elf::DYN_SIZE;
         no_terminator[terminator_at..terminator_at + 8]
             .copy_from_slice(&0x6fff_fffbi64.to_le_bytes());
-        assert_eq!(read(&no_terminator), Err(Malformed::Dynamic));
+        assert_eq!(pairs(&read(&no_terminator).unwrap().unwrap()), expected);
 
+        // Two `PT_LOAD` headers map the address of the dynamic section, the
+        // first one from the wrong bytes: the later one counts.
+        let mut overlapped = elf_image(&[(elf::DT_RUNPATH, 1)], strtab);
+        let total = overlapped.len() as u64;
+        set_phdr(&mut overlapped, 0, elf::PT_LOAD, 16, VADDR, total - 16);
+        set_phdr(&mut overlapped, 2, elf::PT_LOAD, 0, VADDR, total);
+        overlapped[56..58].copy_from_slice(&3u16.to_le_bytes());
+        assert_eq!(pairs(&read(&overlapped).unwrap().unwrap()), expected);
+    }
+
+    #[test]
+    fn rejects_elf_the_loader_cannot_map() {
         let mut unmapped = elf_image(&[(elf::DT_RUNPATH, 1)], b"\0lib\0");
         set_phdr(
             &mut unmapped,
@@ -636,8 +664,8 @@ mod tests {
             b"MZ\x90\0",
             b"\x7fELF\x01\x01",
             b"#!/bin/sh\n",
-            // A Java class file: the universal magic, then version 52.
-            b"\xca\xfe\xba\xbe\x00\x00\x00\x34\x00\x10",
+            // The universal magic with more images than dyld reads.
+            b"\xca\xfe\xba\xbe\x00\x00\x00\xcd\x00\x10",
         ] {
             assert_eq!(read(bytes), Ok(None));
         }

@@ -1557,8 +1557,9 @@ struct Candidate<'a> {
     rank: (bool, usize, core::cmp::Reverse<usize>),
     content_hash: u64,
     alias_index: u32,
-    climb: u32,
-    needed: Vec<&'a [u8]>,
+    /// What the loaded copy tells the loader. `None` for an alias, and for a
+    /// file that is not an image Bun reads.
+    facts: Option<native_libs::LoaderFacts<'a>>,
     /// A PE image names the DLLs it imports and no place to find them: the
     /// Windows loader looks in the image's own directory.
     needs_its_directory: bool,
@@ -1602,8 +1603,7 @@ fn collect_native_library_set<'a>(
             mirror_path,
             content_hash: bun_wyhash::hash(output_file.value.as_slice()),
             alias_index: NativeLibrarySet::NO_ALIAS,
-            climb: 0,
-            needed: Vec::new(),
+            facts: None,
             needs_its_directory: false,
         });
     }
@@ -1636,19 +1636,7 @@ fn collect_native_library_set<'a>(
             .value
             .as_slice();
         match native_libs::loader_facts(bytes, depth) {
-            Ok(Some(facts)) if facts.climb > NativeLibrarySet::MAX_PAD => {
-                bun_core::pretty_errorln!(
-                    "<red>error<r>: embedded shared library <b>{}<r> has a search path that climbs {} directories above the embedded files (at most {})",
-                    bun_core::fmt::quote(candidates[index].rel_name),
-                    facts.climb,
-                    NativeLibrarySet::MAX_PAD,
-                );
-                return Err(crate::Error::UnusableEmbeddedLibrary);
-            }
-            Ok(Some(facts)) => {
-                candidates[index].climb = facts.climb;
-                candidates[index].needed = facts.needed;
-            }
+            Ok(Some(facts)) => candidates[index].facts = Some(facts),
             Ok(None) => candidates[index].needs_its_directory = bytes.starts_with(b"MZ"),
             Err(reason) => {
                 bun_core::pretty_errorln!(
@@ -1660,7 +1648,28 @@ fn collect_native_library_set<'a>(
             }
         }
     }
-    let pad = candidates.iter().map(|c| c.climb).max().unwrap_or(0);
+    let rpath_name_parents = candidates
+        .iter()
+        .filter_map(|c| Some(c.facts.as_ref()?.rpath_name_parents))
+        .max()
+        .unwrap_or(0);
+    let mut pad = 0;
+    for candidate in &candidates {
+        let Some(facts) = &candidate.facts else {
+            continue;
+        };
+        let climb = facts.climb_below_rpaths(rpath_name_parents);
+        if climb > NativeLibrarySet::MAX_PAD {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: embedded shared library <b>{}<r> has a search path that climbs {} directories above the embedded files (at most {})",
+                bun_core::fmt::quote(candidate.rel_name),
+                climb,
+                NativeLibrarySet::MAX_PAD,
+            );
+            return Err(crate::Error::UnusableEmbeddedLibrary);
+        }
+        pad = pad.max(climb);
+    }
     // The member the runtime writes for `file_index`, following the alias.
     let position_of = |file_index: u32| -> Option<usize> {
         let index = candidates.iter().position(|c| c.file_index == file_index)?;
@@ -1679,8 +1688,9 @@ fn collect_native_library_set<'a>(
                 && path::dirname(&c.mirror_path) == path::dirname(&candidate.mirror_path)
         });
         let named = candidate
-            .needed
+            .facts
             .iter()
+            .flat_map(|facts| &facts.needed)
             .flat_map(|name| needed_members(&candidates, candidate, name));
         for found in beside.map(|(other, _)| other).chain(named) {
             let Some(found) = position_of(candidates[found].file_index) else {

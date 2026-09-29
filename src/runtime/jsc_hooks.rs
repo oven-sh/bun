@@ -4547,7 +4547,9 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     let rel = native_libs::mirror_relative_path(target.name, 0, &mut rel_buf[..])?;
     let facts = native_libs::loader_facts(bytes, bun_core::strings::count_char(rel, b'/')).ok()?;
-    let pad = facts.map_or(0, |facts| facts.climb);
+    let pad = facts.map_or(0, |facts| {
+        facts.climb_below_rpaths(facts.rpath_name_parents)
+    });
     if pad > NativeLibrarySet::MAX_PAD {
         return None;
     }

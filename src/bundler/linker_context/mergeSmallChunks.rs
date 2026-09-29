@@ -225,6 +225,9 @@ impl LinkerContext<'_> {
 
     /// The first live part of an unwrapped `file` that runs something when the file loads: a statement that does more than declare, a `require_x()` / `init_x()`, or a `require()`. The namespace export part only holds getters, and the `import` of an external module runs ahead of all of the chunk's code.
     fn first_part_that_runs(&self, file: u32) -> Option<u32> {
+        if file == Index::RUNTIME.value() {
+            return None;
+        }
         let flags = self.graph.meta.items_flags();
         if flags[file as usize].is_async_or_has_async_dependency
             || self.graph.files.items_entry_point_kind()[file as usize].is_entry_point()

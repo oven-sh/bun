@@ -2141,6 +2141,15 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
       "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
     ],
     [
+      "removeHeader(Transfer-Encoding), addTrailers(), end(data)",
+      (res: any) => {
+        res.removeHeader("Transfer-Encoding");
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+    ],
+    [
       "Content-Length + chunked, chunked removed",
       (res: any) => {
         res.setHeader("Content-Length", "2");
@@ -2829,17 +2838,18 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
     expect(await wireWithProbe(respond, end)).toBe(expected);
   });
 
-  // The second request arrives while the first response is open, so its response waits for the socket.
-  async function wireQueued(respond: (res: any) => void) {
+  // The second request arrives while the first response is open, so its response waits for the socket. Node stores
+  // its head and decides its framing in the handler's call, not when the response gets the socket.
+  async function wireQueued(respond: (res: any) => object | void) {
     let first: any;
-    let queued = false;
+    const seen: Record<string, unknown> = {};
     await using server = createServer((req, res) => {
       if (req.url === "/first") {
         first = res;
         return;
       }
-      queued = res.socket === null;
-      respond(res);
+      seen.queued = res.socket === null;
+      Object.assign(seen, respond(res));
       first.end("first");
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -2861,7 +2871,7 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
       ),
     );
     const raw = await done.promise;
-    return { queued, second: raw.slice(raw.indexOf("HTTP/1.1 ", 1)) };
+    return { ...seen, second: raw.slice(raw.indexOf("HTTP/1.1 ", 1)) };
   }
 
   test.concurrent.each([
@@ -2872,7 +2882,10 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
         res.write("o");
         res.end("k");
       },
-      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+      {
+        queued: true,
+        second: "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+      },
     ],
     [
       "Content-Length + chunked, addTrailers()",
@@ -2882,11 +2895,108 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
         res.addTrailers({ "X-Foo": "bar" });
         res.end("ok");
       },
-      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+      {
+        queued: true,
+        second:
+          "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+      },
     ],
-  ] as Row[])("a response that is queued behind a pipelined one: %s", async (_, respond, expected) => {
-    expect(await wireQueued(respond)).toEqual({ queued: true, second: expected });
-  });
+    [
+      "a Trailer header with Content-Length throws from end(data)",
+      (res: any) => {
+        res.setHeader("Content-Length", "2");
+        res.setHeader("Trailer", "X-Foo");
+        try {
+          res.end("ok");
+        } catch (error: any) {
+          const seen = { code: error.code, headersSent: res.headersSent };
+          res.removeHeader("Trailer");
+          res.end("ok");
+          return seen;
+        }
+      },
+      {
+        queued: true,
+        code: "ERR_HTTP_TRAILER_INVALID",
+        headersSent: false,
+        second: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+      },
+    ],
+    [
+      "a Trailer header with Content-Length throws from write(data)",
+      (res: any) => {
+        res.setHeader("Content-Length", "2");
+        res.setHeader("Trailer", "X-Foo");
+        try {
+          res.write("ok");
+        } catch (error: any) {
+          const seen = { code: error.code, headersSent: res.headersSent };
+          res.removeHeader("Trailer");
+          res.end("ok");
+          return seen;
+        }
+      },
+      {
+        queued: true,
+        code: "ERR_HTTP_TRAILER_INVALID",
+        headersSent: false,
+        second: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+      },
+    ],
+    [
+      "setHeader() after write() throws ERR_HTTP_HEADERS_SENT",
+      (res: any) => {
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.write("a");
+        let code = null;
+        try {
+          res.setHeader("Transfer-Encoding", "identity");
+        } catch (error: any) {
+          code = error.code;
+        }
+        res.end("b");
+        return { code, headersSent: res.headersSent };
+      },
+      {
+        queued: true,
+        code: "ERR_HTTP_HEADERS_SENT",
+        headersSent: true,
+        second:
+          "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+      },
+    ],
+    [
+      "chunkedEncoding = false after end(data)",
+      (res: any) => {
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.end("ok");
+        res.chunkedEncoding = false;
+      },
+      {
+        queued: true,
+        second:
+          "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+      },
+    ],
+    [
+      "no framing header, end(data)",
+      (res: any) => {
+        res.end("ok");
+        return { chunkedEncoding: res.chunkedEncoding, headersSent: res.headersSent };
+      },
+      {
+        queued: true,
+        chunkedEncoding: false,
+        headersSent: true,
+        second: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+      },
+    ],
+  ] as [string, (res: any) => object | void, object][])(
+    "a response that is queued behind a pipelined one: %s",
+    async (_, respond, expected) => {
+      expect(await wireQueued(respond)).toEqual(expected);
+    },
+  );
 
   test.concurrent.each([
     [

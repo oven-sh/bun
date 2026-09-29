@@ -2197,12 +2197,15 @@ function getNodeHTTPServerSocket() {
   return NodeHTTPServerSocket;
 }
 
-// The decision of the head, set where Node stores the head: in writeHead(), or in the first call that sends bytes.
+// The framing of the response, in one slot that the constructor makes: the NodeHTTPFraming bits of the head, and the bits below.
 const kHeadFraming = Symbol("kHeadFraming");
-// kHeadFraming: the head has a Transfer-Encoding line, of the handler or the automatic one.
-const kHeadHasTransferEncoding = 1 << 8;
-// Whether the body is chunk-framed, as the head stated it to the handle.
-const kBodyChunked = Symbol("kBodyChunked");
+// The head is decided. Node decides it where it stores the head: in writeHead(), or in the first call that sends bytes.
+const kHeadDecided = 1 << 8;
+// The head has a Transfer-Encoding line, of the handler or the automatic one.
+const kHeadHasTransferEncoding = 1 << 9;
+// The body is chunk-framed. With kBodyStated, a response that waits behind a pipelined one decided it in the handler's call.
+const kBodyChunked = 1 << 10;
+const kBodyStated = 1 << 11;
 
 // Whether Node's _storeHeader renders a line for this stored header value. An empty array renders none.
 function rendersHeaderLine(value) {
@@ -2240,8 +2243,8 @@ function decideHead(res, lengthKnown) {
     const trailer = outHeaders["trailer"];
     if (trailer !== undefined) hasTrailer = rendersHeaderLine(trailer[1]);
   }
-  // Deliberate divergence: Node sends Content-Length here and discards the trailers of addTrailers(). Bun chunk-frames the body and sends them.
-  if (lengthKnown && res._trailer && !isHTTP10Request(res.req)) lengthKnown = false;
+  // Deliberate divergence: Node sends Content-Length here and discards the trailers of addTrailers(). Bun chunk-frames the body and sends them, when the response can be chunk-framed.
+  if (lengthKnown && res._trailer && !res._removedTE && !isHTTP10Request(res.req)) lengthKnown = false;
 
   const framing = decideFraming(res, hasContentLength, hasTransferEncoding, hasTrailer, lengthKnown);
   if (framing & NodeHTTPFraming.trailerInvalid) {
@@ -2253,11 +2256,18 @@ function decideHead(res, lengthKnown) {
     if (isHTTP10Request(res.req)) {
       // Deliberate divergence: Node chunk-frames this body for an HTTP/1.0 request that has `TE: chunked`. Bun sends the chunked coding to an HTTP/1.0 client only when the handler set the header.
       res.chunkedEncoding = false;
-      return NodeHTTPFraming.closeDelimited;
+      return NodeHTTPFraming.closeDelimited | kHeadDecided;
     }
-    return framing | kHeadHasTransferEncoding;
+    return framing | kHeadDecided | kHeadHasTransferEncoding;
   }
-  return hasTransferEncoding ? framing | kHeadHasTransferEncoding : framing;
+  return hasTransferEncoding ? framing | kHeadDecided | kHeadHasTransferEncoding : framing | kHeadDecided;
+}
+
+// Node's write_() and end() read chunkedEncoding. The server reads it once, in the call that sends the head. A chunkedEncoding that the handler set, on a response that has no Transfer-Encoding line, does not frame the body.
+function withBodyFraming(res, framing) {
+  return framing & kHeadHasTransferEncoding && res._hasBody && res.chunkedEncoding
+    ? framing | kBodyChunked
+    : framing & ~kBodyChunked;
 }
 
 // Like Node's end(), the trailers of addTrailers() follow the last chunk of a chunk-framed body. Node discards them in every other case.
@@ -2375,6 +2385,7 @@ function ServerResponse(req, options): void {
 
   this.statusCode = 200;
   this.statusMessage = undefined;
+  this[kHeadFraming] = 0;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
@@ -2489,7 +2500,13 @@ function renderNativeHeaders(res, lengthKnown) {
     }
 
     // writeHead() decided the framing already. Decide before the Connection header is rendered so the advertised value matches the transport.
-    const framing = res[kHeadFraming] ?? decideHead(res, lengthKnown);
+    const stored = res[kHeadFraming];
+    let framing = stored & kHeadDecided ? stored : decideHead(res, lengthKnown);
+    if (!(stored & kBodyStated)) {
+      framing = withBodyFraming(res, framing);
+      // For write() and end(). A head that writeHead() did not store is decided again when this render throws.
+      res[kHeadFraming] = stored & kHeadDecided ? framing : framing & kBodyChunked;
+    }
     const closeDelimited = (framing & NodeHTTPFraming.closeDelimited) !== 0;
     if (closeDelimited) res[kMustCloseConnection] = true;
     // Node's shouldSendKeepAlive: without chunked encoding only an explicit Content-Length lets the connection persist.
@@ -2552,10 +2569,7 @@ function renderNativeHeaders(res, lengthKnown) {
       flat.push("\u0000", "2");
     }
 
-    // A chunkedEncoding that the handler set, on a response that has no Transfer-Encoding line, does not frame the body.
-    const chunked = (framing & kHeadHasTransferEncoding) !== 0 && res._hasBody && res.chunkedEncoding;
-    res[kBodyChunked] = !!chunked;
-    autoHeaders |= chunked ? AUTO_HEADER_BODY_CHUNKED : AUTO_HEADER_BODY_RAW;
+    autoHeaders |= framing & kBodyChunked ? AUTO_HEADER_BODY_CHUNKED : AUTO_HEADER_BODY_RAW;
 
     if (closeDelimited) {
       // The NUL-named sentinel pair tells the native writeHead the body is
@@ -3016,11 +3030,23 @@ function accountQueuedHeaderBytes(res, queued) {
   addPipelineOutgoingData(queued, bytes);
 }
 
-function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
-  callWriteHeadIfObservable(res, res[headerStateSymbol]);
+// Node stores the head of a response in its first write() or end(), also while the response has no socket: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L966
+function storeQueuedHead(res, fromEnd) {
+  callWriteHeadIfObservable(res, res[headerStateSymbol], fromEnd);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    if (fromEnd) res[kImplicitHeaderFromEnd] = true;
+    try {
+      OriginalWriteHeadFn.$call(res, res.statusCode, res.statusMessage);
+    } finally {
+      if (fromEnd) res[kImplicitHeaderFromEnd] = false;
+    }
   }
+  const framing = res[kHeadFraming];
+  if (!(framing & kBodyStated)) res[kHeadFraming] = withBodyFraming(res, framing) | kBodyStated;
+}
+
+function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
+  storeQueuedHead(res, false);
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
     if (chunk && res[kRejectNonStandardBodyWrites]) {
@@ -3048,10 +3074,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 }
 
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
-  callWriteHeadIfObservable(res, res[headerStateSymbol], true);
-  if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
-  }
+  storeQueuedHead(res, true);
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
     if (res[kRejectNonStandardBodyWrites]) {
@@ -3512,7 +3535,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // (no native call in between can change it), so reuse its bits instead of
     // paying two more native getter crossings.
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      sendTrailersIfChunked(this, this[kBodyChunked]);
+      sendTrailersIfChunked(this, this[kHeadFraming] & kBodyChunked);
       draining = handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true)) < 0;
     }
   }
@@ -3711,7 +3734,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   let written = 0;
   if (chunk) {
     written = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
-    if (written > 0 && this[kBodyChunked]) {
+    if (written > 0 && this[kHeadFraming] & kBodyChunked) {
       // Chunked framing overhead: <hex length>\r\n<chunk>\r\n
       written += written.toString(16).length + 4;
     }

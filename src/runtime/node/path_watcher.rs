@@ -569,20 +569,23 @@ pub(crate) fn watch(
 /// and for every entry call `cb` with (abs, rel, is_file); recurse into
 /// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
 /// (inotify delivers file events on the parent dir's wd so we only need a watch
-/// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
+/// per directory; kqueue needs an fd per file too). Returns the first failure of
+/// `cb` in walk order without stopping the walk. Best-effort — an unreadable
 /// subdirectory just stops that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[must_use]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],
-    cb: &mut impl FnMut(&ZStr, &[u8], bool),
-) {
+    cb: &mut impl FnMut(&ZStr, &[u8], bool) -> sys::Result<()>,
+) -> Option<sys::Error> {
+    let mut first_err: Option<sys::Error> = None;
     let dfd = match sys::open(
         abs_dir,
         sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
         0,
     ) {
-        Err(_) => return,
+        Err(_) => return first_err,
         Ok(f) => f,
     };
     let _close = sys::CloseOnDrop::new(dfd);
@@ -593,8 +596,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     let mut rel_spill: Vec<u8> = Vec::new();
     loop {
         let entry = match it.next() {
-            Err(_) => return,
-            Ok(None) => return,
+            Err(_) => return first_err,
+            Ok(None) => return first_err,
             Ok(Some(e)) => e,
         };
         let child_is_file = entry.kind != sys::EntryKind::Directory;
@@ -618,9 +621,13 @@ fn walk_subtree<const DIRS_ONLY: bool>(
             )
             .as_bytes()
         };
-        cb(child_abs, child_rel, child_is_file);
+        let mut err = cb(child_abs, child_rel, child_is_file).err();
         if !child_is_file {
-            walk_subtree::<DIRS_ONLY>(child_abs, child_rel, cb);
+            let below = walk_subtree::<DIRS_ONLY>(child_abs, child_rel, cb);
+            err = err.or(below);
+        }
+        if first_err.is_none() {
+            first_err = err;
         }
     }
 }
@@ -825,15 +832,9 @@ impl Linux {
         abs_dir: &ZStr,
         rel_dir: &[u8],
     ) -> Option<sys::Error> {
-        let mut first_err: Option<sys::Error> = None;
         walk_subtree::<true>(abs_dir, rel_dir, &mut |abs, rel, _is_file| {
-            if let Err(e) = Linux::add_one(manager, watcher, abs, rel) {
-                if first_err.is_none() {
-                    first_err = Some(e);
-                }
-            }
-        });
-        first_err
+            Linux::add_one(manager, watcher, abs, rel)
+        })
     }
 
     /// Caller holds `manager.mutex`. Drops this watcher's ownership of each of its
@@ -1118,7 +1119,7 @@ impl Linux {
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         // SAFETY: owner_watcher live under manager.mutex; the `&mut`
                         // is scoped to the call.
-                        let mut add_err = Linux::add_one(
+                        let add_err = Linux::add_one(
                             manager,
                             unsafe { &mut *owner_watcher },
                             child_abs,
@@ -1133,21 +1134,18 @@ impl Linux {
                         // (lib/internal/fs/recursive_watch.js). An entry created after
                         // the watch attached may emit twice; per-handler ChangeEvent
                         // coalescing absorbs back-to-back duplicates.
-                        walk_subtree::<false>(
+                        let walk_err = walk_subtree::<false>(
                             child_abs,
                             &rel_owned,
                             &mut |abs, entry_rel, entry_is_file| {
-                                if !entry_is_file {
+                                let added = if entry_is_file {
+                                    Ok(())
+                                } else {
                                     // SAFETY: owner_watcher live under manager.mutex;
                                     // the `&mut` is scoped to the call.
                                     let watcher = unsafe { &mut *owner_watcher };
-                                    if let Err(e) = Linux::add_one(manager, watcher, abs, entry_rel)
-                                    {
-                                        if add_err.is_none() {
-                                            add_err = Some(e);
-                                        }
-                                    }
-                                }
+                                    Linux::add_one(manager, watcher, abs, entry_rel)
+                                };
                                 // SAFETY: owner_watcher live under manager.mutex;
                                 // `emit` takes `&self`.
                                 unsafe {
@@ -1157,9 +1155,10 @@ impl Linux {
                                         entry_is_file,
                                     );
                                 }
+                                added
                             },
                         );
-                        if let Some(err) = add_err {
+                        if let Some(err) = add_err.or(walk_err) {
                             // SAFETY: owner_watcher live under manager.mutex;
                             // `emit_error` takes `&self`.
                             unsafe { (*owner_watcher).emit_error(&err, false) };
@@ -1414,13 +1413,8 @@ impl Kqueue {
         Kqueue::add_one(manager, watcher, &root, b"", is_file)?;
         if watcher.recursive && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
-            let mut first_err: Option<sys::Error> = None;
-            walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
-                if let Err(e) = Kqueue::add_one(manager, watcher, abs, rel, is_file) {
-                    if first_err.is_none() {
-                        first_err = Some(e);
-                    }
-                }
+            let first_err = walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
+                Kqueue::add_one(manager, watcher, abs, rel, is_file)
             });
             if let Some(err) = first_err {
                 // Partial coverage: emit 'error' but keep the watcher, like node.

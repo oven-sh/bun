@@ -1880,10 +1880,10 @@ fn console_print_dom_node<'a, 'f>(
 ) -> JsResult<bool> {
     use crate::test_runner::dom_node;
     let global = formatter.global_this;
-    let Some(kind) = dom_node::node_kind(global, value, class_name)? else {
+    let Some(node) = dom_node::as_node(global, value, class_name)? else {
         return Ok(false);
     };
-    dom_node::print_node::<_, dyn bun_io::Write, false>(formatter, global, writer, value, kind)?;
+    dom_node::print_node::<_, dyn bun_io::Write, false>(formatter, global, writer, value, node)?;
     Ok(true)
 }
 

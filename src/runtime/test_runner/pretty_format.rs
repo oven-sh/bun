@@ -522,7 +522,7 @@ impl Tag {
             JSType::ProxyObject => {
                 let target = value.get_proxy_target();
                 let class_name = target.get_class_name(global_this)?;
-                if dom_node::node_kind(global_this, target, &class_name)?.is_some() {
+                if dom_node::as_node(global_this, target, &class_name)?.is_some() {
                     Tag::Object
                 } else {
                     Tag::JSON
@@ -2344,15 +2344,15 @@ impl<'a> Formatter<'a> {
                     // Only a DOM node Proxy reaches this arm (`Tag::get`); print its target.
                     let value = if js_type == JSType::ProxyObject { value.get_proxy_target() } else { value };
                     let class_name = value.get_class_name(self.global_this)?;
-                    let node_kind = dom_node::node_kind(self.global_this, value, &class_name)?;
+                    let node = dom_node::as_node(self.global_this, value, &class_name)?;
 
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
-                    if let Some(kind) = node_kind {
+                    if let Some(node) = node {
                         let global = self.global_this;
                         let result = dom_node::print_node::<_, W, ENABLE_ANSI_COLORS>(
-                            self, global, writer.ctx, value, kind,
+                            self, global, writer.ctx, value, node,
                         );
                         self.quote_strings = prev_quote_strings;
                         return result;

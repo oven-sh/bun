@@ -287,6 +287,65 @@ describe("values that are not nodes", () => {
     expect(received(value)).toBe(expected);
   });
 
+  test("a class that lacks the string its markup starts from", () => {
+    class Text {
+      nodeType = 3;
+      value = "x";
+    }
+    class Comment {
+      nodeType = 8;
+    }
+    class HTMLDivElement {
+      nodeType = 1;
+    }
+    expect(received(new Text())).toBe('Text {\n  nodeType: 3,\n  value: "x",\n}');
+    expect(received(new Comment())).toBe("Comment {\n  nodeType: 8,\n}");
+    expect(received(new HTMLDivElement())).toBe("HTMLDivElement {\n  nodeType: 1,\n}");
+    expect(new Text()).toMatchInlineSnapshot(`
+      Text {
+        "nodeType": 3,
+        "value": "x",
+      }
+    `);
+    expect(new Comment()).toMatchInlineSnapshot(`
+      Comment {
+        "nodeType": 8,
+      }
+    `);
+    expect(new HTMLDivElement()).toMatchInlineSnapshot(`
+      HTMLDivElement {
+        "nodeType": 1,
+      }
+    `);
+  });
+
+  test("a tagName or data getter that throws does not fail the message", () => {
+    class HTMLDivElement {
+      nodeType = 1;
+      get tagName() {
+        throw new Error("boom");
+      }
+    }
+    class Text {
+      nodeType = 3;
+      get data() {
+        throw new Error("boom");
+      }
+    }
+    expect(received(new HTMLDivElement())).toBe("HTMLDivElement {\n  nodeType: 1,\n  tagName: [Getter],\n}");
+    expect(received(new Text())).toBe("Text {\n  nodeType: 3,\n  data: [Getter],\n}");
+    expect(new HTMLDivElement()).toMatchInlineSnapshot(`
+      HTMLDivElement {
+        "nodeType": 1,
+      }
+    `);
+    expect(new Text()).toMatchInlineSnapshot(`
+      Text {
+        "nodeType": 3,
+      }
+    `);
+  });
+
   test("in an object, an array, a Map and a Set, beside a node", () => {
     const value = {
       object: { w: new Widget() },

@@ -960,6 +960,356 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nlogger\nsetup function\nindex s\nlazy s" },
   });
+  // setup.cjs runs where `require_setup()` is called. index.js stays in its chunk, so the hashed chunk calls it first.
+  const wrappedSetupBeforeShared = (entryTail: string) => ({
+    "/index.js": /* js */ `
+      import "./setup.cjs";
+      import { Store } from "./store.js";
+      console.log("index", new Store().name);
+      import("./settings.js");
+      ${entryTail}
+    `,
+    "/setup.cjs": `globalThis.APP = { name: "app" };`,
+    "/store.js": /* js */ `
+      const NAME = globalThis.APP.name;
+      export class Store { name = NAME; }
+    `,
+    "/settings.js": /* js */ `
+      import { Store } from "./store.js";
+      console.log("settings", new Store().name);
+    `,
+  });
+  const noChunkImportsIndex = (api: BundlerTestBundleAPI) => {
+    for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+  };
+  for (const target of ["browser", "bun", "node"] as const) {
+    itFolds("splitting/EntryCommonJSImportRunsBeforeSharedCode/" + target, {
+      files: wrappedSetupBeforeShared(""),
+      entryPoints: ["/index.js"],
+      splitting: true,
+      target,
+      outdir: "/out",
+      format: "esm",
+      pinned(api) {
+        expect(jsOutputs(api)).toEqual(["index.js", "index.js", "settings.js"]);
+        api.expectFile("/out/index.js").not.toContain("globalThis.APP");
+      },
+      folded(api) {
+        expect(jsOutputs(api)).toEqual(["index.entry.js", "settings.js"]);
+      },
+      run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+    });
+  }
+  itBundled("splitting/EntryCommonJSImportRunsBeforeSharedCodeMinified", {
+    files: wrappedSetupBeforeShared(""),
+    entryPoints: ["/index.js"],
+    splitting: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  itBundled("splitting/EntryWithExportsCommonJSImportRunsBeforeSharedCode", {
+    files: wrappedSetupBeforeShared("export const version = 1;"),
+    entryPoints: ["/index.js"],
+    entryNaming: "[name].entry-[hash].[ext]",
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.entry.js", "settings.js"]);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.entry-/);
+      launchHashedEntry(api, "index");
+    },
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  itBundled("splitting/LazyRouteCommonJSImportRunsBeforeSharedCode", {
+    files: {
+      "/main.js": `import("./route.js").then(m => console.log(m.default));`,
+      "/route.js": /* js */ `
+        import "./route-setup.cjs";
+        import { value } from "./route-shared.js";
+        import("./panel.js");
+        export default "route " + value;
+      `,
+      "/route-setup.cjs": `globalThis.ROUTE = "ready";`,
+      "/route-shared.js": `export const value = globalThis.ROUTE;`,
+      "/panel.js": `import { value } from "./route-shared.js"; console.log("panel", value);`,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const route = chunkContaining(api, `"route "`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(new RegExp(`(from|import)\\s*"\\./${route}"`));
+    },
+    run: { file: "/out/main.js", stdout: "route ready\npanel ready" },
+  });
+  // The host loads the entry point again under another URL. The hashed chunk, and setup.cjs in it, runs once.
+  itBundled("splitting/EntryLoadedTwiceStartsCommonJSImportOnce", {
+    files: {
+      ...wrappedSetupBeforeShared(""),
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/settings.js": `import { Store } from "./store.js"; globalThis.SETTINGS = new Store().name;`,
+      "/page.js": `await import("./out/index.js"); await import("./out/index.js?v=1");`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/page.js", stdout: "setup\nindex app\nindex app" },
+  });
+  // setup.js is wrapped in `__esm` because settings.js calls require() on it.
+  itBundled("splitting/EntryWrappedESMImportRunsBeforeSharedCode", {
+    files: {
+      ...wrappedSetupBeforeShared(""),
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/setup.js": `globalThis.APP = { name: "app" }; export const ready = true;`,
+      "/settings.js": /* js */ `
+        import { Store } from "./store.js";
+        const { ready } = require("./setup.js");
+        console.log("settings", new Store().name, ready);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "index app\nsettings app true" },
+  });
+  itBundled("splitting/EntryReExportOfCommonJSRunsBeforeSharedCode", {
+    files: {
+      ...wrappedSetupBeforeShared(""),
+      "/index.js": /* js */ `
+        export * from "./setup.cjs";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/setup.cjs": `globalThis.APP = { name: "app" }; module.exports = { version: 1 };`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  // setup.cjs is imported twice. The hashed chunk starts it once, where the first import is.
+  itBundled("splitting/CommonJSImportedTwiceStartsAtFirstImport", {
+    files: {
+      ...wrappedSetupBeforeShared(""),
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import { Store } from "./store.js";
+        import setup from "./setup.cjs";
+        console.log("index", new Store().name, setup.runs);
+        import("./settings.js");
+      `,
+      "/setup.cjs": /* js */ `
+        console.log("setup");
+        globalThis.APP = { name: "app" };
+        globalThis.RUNS = (globalThis.RUNS ?? 0) + 1;
+        module.exports = { runs: globalThis.RUNS };
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "settings.js"]);
+      const hashed = api.readFile("/out/" + jsFilesIn(api).find(f => f.startsWith("index-"))!);
+      expect(hashed.match(/require_setup\(\)/g)).toHaveLength(1);
+      noChunkImportsIndex(api);
+    },
+    run: { file: "/out/index.js", stdout: "setup\nindex app 1\nsettings app" },
+  });
+  // settings.js imports setup.cjs too, so setup.cjs is in the hashed chunk already.
+  itBundled("splitting/CommonJSOfSharedCodeStartsBeforeSharedCode", {
+    files: {
+      ...wrappedSetupBeforeShared(""),
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/settings.js": /* js */ `
+        import "./setup.cjs";
+        import { Store } from "./store.js";
+        console.log("settings", new Store().name);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "setup\nindex app\nsettings app" },
+  });
+  // w.cjs is in the chunk that app.js shares with admin.js. Nothing runs when that chunk loads.
+  itBundled("splitting/CommonJSSharedWithOtherEntryStartsBeforeSharedCode", {
+    files: {
+      "/app.js": /* js */ `
+        import "./w.cjs";
+        import { Store } from "./store.js";
+        console.log("app", new Store().name);
+        import("./route.js");
+      `,
+      "/admin.js": `import "./w.cjs"; console.log("admin");`,
+      "/w.cjs": `console.log("w"); globalThis.APP = { name: "app" };`,
+      "/store.js": `console.log("store", globalThis.APP?.name); export class Store { name = "s"; }`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+    },
+    run: [
+      { file: "/out/app.js", stdout: "w\nstore app\napp s\nroute s" },
+      { file: "/out/admin.js", stdout: "w\nadmin" },
+    ],
+  });
+  itBundled("splitting/CommonJSImportBetweenSharedFilesRunsBetweenThem", {
+    files: {
+      "/index.js": /* js */ `
+        import { a } from "./a.js";
+        import "./setup.cjs";
+        import { b } from "./b.js";
+        console.log("index", a, b);
+        import("./settings.js");
+      `,
+      "/a.js": `console.log("a", typeof globalThis.APP); export const a = 1;`,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/b.js": `console.log("b", globalThis.APP.name); export const b = 2;`,
+      "/settings.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log("settings", a, b);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "a undefined\nsetup\nb app\nindex 1 2\nsettings 1 2" },
+  });
+  itBundled("splitting/CommonJSImportsAndEntryFileKeepOrderAroundSharedFiles", {
+    files: {
+      "/index.js": /* js */ `
+        import "./a.cjs";
+        import { S1 } from "./store1.js";
+        import "./own.js";
+        import "./b.cjs";
+        import { S2 } from "./store2.js";
+        console.log("index", S1, S2);
+        import("./settings.js");
+      `,
+      "/a.cjs": `console.log("a"); globalThis.A = 1;`,
+      "/store1.js": `console.log("store1", globalThis.A); export const S1 = 1;`,
+      "/own.js": `console.log("own", globalThis.A, typeof globalThis.B);`,
+      "/b.cjs": `console.log("b"); globalThis.B = 2;`,
+      "/store2.js": `console.log("store2", globalThis.B); export const S2 = 2;`,
+      "/settings.js": /* js */ `
+        import { S1 } from "./store1.js";
+        import { S2 } from "./store2.js";
+        console.log("settings", S1, S2);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: {
+      file: "/out/index.js",
+      stdout: "a\nstore1 1\nown 1 undefined\nb\nstore2 2\nindex 1 2\nsettings 1 2",
+    },
+  });
+  itBundled("splitting/EntryFileRunsBetweenCommonJSImportAndSharedCode", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import "./reader.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/setup.cjs": `globalThis.APP = { name: "app" };`,
+      "/reader.js": `console.log("reader", globalThis.APP.name);`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "reader app\nstore\nindex s\nsettings s" },
+  });
+  itBundled("splitting/EntryFilesInImportCycleRunAfterCommonJSImport", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import "./a.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/setup.cjs": `globalThis.APP = { name: "app" };`,
+      "/a.js": `import "./b.js"; console.log("a", globalThis.APP.name);`,
+      "/b.js": `import "./a.js"; console.log("b", globalThis.APP.name);`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "b app\na app\nstore\nindex s\nsettings s" },
+  });
+  // helper.js leads back to the entry point, so it stays. The hashed chunk starts setup.cjs for it.
+  itBundled("splitting/EntryFileThatStaysStartsCommonJSImportBeforeSharedCode", {
+    files: {
+      ...wrappedSetupBeforeShared(""),
+      "/index.js": /* js */ `
+        import { helper } from "./helper.js";
+        import { Store } from "./store.js";
+        export const name = "index";
+        console.log(helper(), new Store().name);
+        import("./settings.js");
+      `,
+      "/helper.js": /* js */ `
+        import "./setup.cjs";
+        import { name } from "./index.js";
+        export const helper = () => "helper of " + name;
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain("helper of");
+      noChunkImportsIndex(api);
+    },
+    run: { file: "/out/index.js", stdout: "helper of index app\nsettings app" },
+  });
 
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {

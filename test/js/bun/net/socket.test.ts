@@ -3768,12 +3768,16 @@ Reo=
       server.close();
     }
 
-    // The peer closes the connection, and the handshake can never complete.
-    // `close` is the only call when the peer resets the connection, and when
-    // the peer ends the connection of a socket that sent its FIN first.
+    // The peer closes the connection while the handshake is still in progress.
+    // No `handshake` call comes before `close` when the peer resets the
+    // connection, and when the peer ends the connection of a socket that sent
+    // its FIN first. A handshake that the peer fails first is reported.
     describe("the peer closes the connection before the handshake completes", () => {
       const failed = "handshake success=false code=ECONNRESET";
+      const refused = "handshake success=false code=EPROTO";
       const reset = "close ECONNRESET";
+      // A fatal alert: handshake_failure.
+      const ALERT = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
 
       // step() rejects when a socket of the test reports a failure.
       function failures() {
@@ -3785,7 +3789,10 @@ Reo=
           step: <T>(promise: Promise<T>) => Promise.race([promise, failure.promise]),
         };
       }
-      const leave = (how: string, socket: net.Socket) => (how === "resets" ? socket.resetAndDestroy() : socket.end());
+      const leave = (how: string, socket: net.Socket) => {
+        if (how === "resets") socket.resetAndDestroy();
+        else socket.end(how === "refuses" ? ALERT : undefined);
+      };
       const closeCall = (error?: Error) => (error ? `close ${(error as NodeJS.ErrnoException).code}` : "close");
 
       for (const { how, shutDown, handshakeHandler, calls } of [
@@ -3798,6 +3805,9 @@ Reo=
         { how: "resets", shutDown: true, handshakeHandler: true, calls: ["open", reset] },
         { how: "resets", shutDown: false, handshakeHandler: false, calls: [reset] },
         { how: "resets", shutDown: true, handshakeHandler: false, calls: [reset] },
+        // The peer sends an alert, then ends the connection.
+        { how: "refuses", shutDown: false, handshakeHandler: true, calls: ["open", refused, "close"] },
+        { how: "refuses", shutDown: true, handshakeHandler: true, calls: ["open", refused, "close"] },
       ]) {
         const state = shutDown ? "shut down" : "did not shut down";
         const handler = handshakeHandler ? "a handshake handler" : "no handshake handler";
@@ -3806,14 +3816,11 @@ Reo=
           const { fail, step } = failures();
           const closed = Promise.withResolvers<void>();
           const sawClientHello = Promise.withResolvers<void>();
-          // Never answers. Leaves after the ClientHello, or after the client's FIN.
+          // Leaves after the ClientHello, or after the client's FIN.
           const peer = net.createServer({ allowHalfOpen: true }, socket => {
             socket.on("error", fail);
-            socket.once("data", () => {
-              sawClientHello.resolve();
-              if (!shutDown) leave(how, socket);
-            });
-            socket.on("end", () => leave(how, socket));
+            socket.once("data", () => sawClientHello.resolve());
+            socket.once(shutDown ? "end" : "data", () => leave(how, socket));
           });
           await once(peer.listen(0, "127.0.0.1"), "listening");
           try {

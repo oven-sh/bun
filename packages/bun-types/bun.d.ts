@@ -7202,7 +7202,8 @@ declare module "bun" {
     /**
      * Called when the socket connects. For TLS sockets with no `handshake`
      * handler, this is called when `handshake` would be: after the handshake
-     * completes or fails. Only a `handshake` handler gets the result.
+     * completes or fails. If `handshake` would not be called, `open` is not
+     * called either. Only a `handshake` handler gets the result.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -7213,10 +7214,13 @@ declare module "bun" {
     /**
      * Called when the TLS handshake completes or fails.
      *
-     * A connection can close before its handshake completes with no call to
-     * `handshake`. Then `close` is the only call. This is the case when:
+     * It is not called for a connection that closes while its handshake is
+     * still in progress, when:
      * - the peer resets the connection
      * - the peer ends the connection after this socket called `shutdown()`
+     *
+     * A handshake that fails before that, for example on an alert from the
+     * peer, is reported.
      *
      * @param success Whether the server authorized the connection despite `authorizationError`. `false` when the handshake failed.
      * @param authorizationError The certificate authorization error or the reason the handshake failed, or `null` if there was none

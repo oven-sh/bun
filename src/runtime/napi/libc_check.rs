@@ -59,78 +59,57 @@ fn check_enabled() -> bool {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn elf_glibc_needed(path: &[u8]) -> Option<Vec<u8>> {
+    use bun_exe_format::loader_entries::elf;
     use bun_sys::{Fd, File, O};
-
-    const PHDR_SIZE: usize = 56; // Elf64_Phdr
-    const DYN_SIZE: usize = 16; // Elf64_Dyn
-    const PT_LOAD: u32 = 1;
-    const PT_DYNAMIC: u32 = 2;
-    const DT_NULL: i64 = 0;
-    const DT_NEEDED: i64 = 1;
-    const DT_STRTAB: i64 = 5;
-    const DT_STRSZ: i64 = 10;
 
     let file = File::openat(Fd::cwd(), path, O::RDONLY | O::CLOEXEC, 0).ok()?;
 
-    let mut ehdr = [0u8; 64];
+    let mut ehdr = [0u8; elf::EHDR_SIZE];
     if file.pread_all(&mut ehdr, 0).ok()? < ehdr.len() {
         return None;
     }
     // ELF64 little-endian only (matches every Bun target).
-    if &ehdr[0..4] != b"\x7fELF" || ehdr[4] != 2 || ehdr[5] != 1 {
-        return None;
-    }
-    let e_phoff = read_u64_le(&ehdr[32..40]);
-    let e_phnum = read_u16_le(&ehdr[56..58]) as usize;
-    if e_phnum == 0 || e_phnum > 256 {
+    let header = elf::header(&ehdr)?;
+    let phnum = usize::from(header.phnum);
+    if phnum == 0 || phnum > 256 {
         return None;
     }
 
-    let mut phdrs = vec![0u8; e_phnum.checked_mul(PHDR_SIZE)?];
-    if file.pread_all(&mut phdrs, e_phoff).ok()? < phdrs.len() {
+    let mut phdrs = vec![0u8; phnum * elf::PHDR_SIZE];
+    if file.pread_all(&mut phdrs, header.phoff).ok()? < phdrs.len() {
         return None;
     }
 
-    let mut loads: [(u64, u64, u64); 16] = [(0, 0, 0); 16];
+    let mut loads = [None; 16];
     let mut load_count = 0usize;
-    let mut dynamic: Option<(u64, u64)> = None;
-    for i in 0..e_phnum {
-        let ph = &phdrs[i * PHDR_SIZE..][..PHDR_SIZE];
-        let p_type = read_u32_le(&ph[0..4]);
-        let p_offset = read_u64_le(&ph[8..16]);
-        let p_vaddr = read_u64_le(&ph[16..24]);
-        let p_filesz = read_u64_le(&ph[32..40]);
-        match p_type {
-            PT_LOAD if load_count < loads.len() => {
-                loads[load_count] = (p_vaddr, p_filesz, p_offset);
+    let mut dynamic = None;
+    for phdr in elf::program_headers(&phdrs, elf::PHDR_SIZE) {
+        match phdr.kind {
+            elf::PT_LOAD if load_count < loads.len() => {
+                loads[load_count] = Some(phdr);
                 load_count += 1;
             }
-            PT_DYNAMIC => dynamic = Some((p_offset, p_filesz)),
+            elf::PT_DYNAMIC => dynamic = Some(phdr),
             _ => {}
         }
     }
-    let (dyn_off, dyn_size) = dynamic?;
+    let dynamic = dynamic?;
     // Cap the dynamic-section read: real addons carry a few dozen entries.
-    let dyn_size = dyn_size.min(8192) as usize;
-    let mut dynb = vec![0u8; dyn_size];
-    let n = file.pread_all(&mut dynb, dyn_off).ok()?;
-    let dynb = &dynb[..n];
+    let mut dynb = vec![0u8; dynamic.filesz.min(8192) as usize];
+    let n = file.pread_all(&mut dynb, dynamic.offset).ok()?;
 
     let mut strtab_vaddr: Option<u64> = None;
     let mut strsz: u64 = 0;
     let mut needed: [u64; 32] = [0; 32];
     let mut needed_count = 0usize;
-    for chunk in dynb.as_chunks::<DYN_SIZE>().0 {
-        let d_tag = read_u64_le(&chunk[0..8]) as i64;
-        let d_val = read_u64_le(&chunk[8..16]);
+    for (d_tag, d_val) in elf::dynamic_entries(&dynb[..n]) {
         match d_tag {
-            DT_NULL => break,
-            DT_NEEDED if needed_count < needed.len() => {
+            elf::DT_NEEDED if needed_count < needed.len() => {
                 needed[needed_count] = d_val;
                 needed_count += 1;
             }
-            DT_STRTAB => strtab_vaddr = Some(d_val),
-            DT_STRSZ => strsz = d_val,
+            elf::DT_STRTAB => strtab_vaddr = Some(d_val),
+            elf::DT_STRSZ => strsz = d_val,
             _ => {}
         }
     }
@@ -138,24 +117,21 @@ fn elf_glibc_needed(path: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let strtab_vaddr = strtab_vaddr?;
-    let strtab_off = vaddr_to_offset(&loads[..load_count], strtab_vaddr)?;
+    let strtab_off = loads[..load_count]
+        .iter()
+        .flatten()
+        .find_map(|load| load.offset_of(strtab_vaddr))?;
     // DT_NEEDED names sit at the front of .dynstr; cap the read.
     let strsz = (strsz.min(64 * 1024) as usize).max(256);
     let mut strtab = vec![0u8; strsz];
     let n = file.pread_all(&mut strtab, strtab_off).ok()?;
     let strtab = &strtab[..n];
 
-    for &off in &needed[..needed_count] {
-        let off = off as usize;
-        if off >= strtab.len() {
-            continue;
-        }
-        let name = bun_core::slice_to_nul(&strtab[off..]);
-        if is_glibc_soname(name) {
-            return Some(name.to_vec());
-        }
-    }
-    None
+    needed[..needed_count]
+        .iter()
+        .filter_map(|&offset| elf::string_at(strtab, offset))
+        .find(|&(name, _)| is_glibc_soname(name))
+        .map(|(name, _)| name.to_vec())
 }
 
 /// glibc ships its libc split across several sonames (merged into `libc.so.6`
@@ -174,32 +150,4 @@ fn is_glibc_soname(name: &[u8]) -> bool {
             | b"libresolv.so.2"
             | b"libutil.so.1"
     ) || name.starts_with(b"ld-linux")
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn vaddr_to_offset(loads: &[(u64, u64, u64)], vaddr: u64) -> Option<u64> {
-    for &(base, size, off) in loads {
-        if vaddr >= base && vaddr - base < size {
-            return Some(off + (vaddr - base));
-        }
-    }
-    None
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn read_u16_le(b: &[u8]) -> u16 {
-    u16::from_le_bytes([b[0], b[1]])
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn read_u32_le(b: &[u8]) -> u32 {
-    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn read_u64_le(b: &[u8]) -> u64 {
-    u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
 }

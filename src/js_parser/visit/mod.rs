@@ -91,6 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
+        let old_in_callee = core::mem::replace(&mut self.in_callee, false);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             ..Default::default()
         };
@@ -214,6 +215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
+        self.in_callee = old_in_callee;
 
         func
     }
@@ -298,6 +300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
+                let prev_const_call_fold_count = self.const_call_fold_count;
                 let orig_dead = self.is_control_flow_dead;
                 // `replacement` is a `BackRef` so the
                 // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
@@ -599,6 +602,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
+                if prev_const_call_fold_count != self.const_call_fold_count {
+                    self.note_const_call_derived(decl.binding);
+                }
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;

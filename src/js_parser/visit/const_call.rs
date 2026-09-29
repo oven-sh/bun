@@ -82,7 +82,9 @@ pub(crate) struct ConstCalls {
     /// Import items that a branch condition calls with no argument or with literals only.
     guard_imports: HashMap<Ref, ()>,
     /// Function declarations that share their binding with a `var`.
-    merged_with_var: Vec<Ref>,
+    merged_with_var: HashMap<Ref, ()>,
+    /// `const` locals whose value a fold made.
+    derived: HashMap<Ref, ()>,
     /// Name locs of folded functions that something rebinds.
     pub(crate) unsound: Vec<Loc>,
     /// A direct `eval` can rebind every function.
@@ -123,6 +125,19 @@ pub(crate) fn const_calls_allowed(options: &crate::parse::parse_entry::Options<'
         && !options.const_call_retry.is_some_and(|retry| retry.disable)
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING::get()
             .unwrap_or(false)
+}
+
+/// A call target or a template tag that can become a property access when a part of it gets a value. That changes the `this` of the call.
+pub(crate) fn is_compound_callee(data: &ExprData) -> bool {
+    use js_ast::OpCode as Op;
+    match data {
+        ExprData::EIf(_) => true,
+        ExprData::EBinary(binary) => matches!(
+            binary.op,
+            Op::BinComma | Op::BinLogicalOr | Op::BinLogicalAnd | Op::BinNullishCoalescing
+        ),
+        _ => false,
+    }
 }
 
 fn is_plain_function(flags: flags::FunctionSet) -> bool {
@@ -202,7 +217,7 @@ fn scan_returns(stmts: &[Stmt], steps: &mut u32, found: &mut dyn FnMut(Ref)) {
 
 impl ConstCalls {
     fn record(&mut self, ref_: Ref, name_loc: Loc, value: ConstCallValue) {
-        if self.unsound_all || self.merged_with_var.contains(&ref_) {
+        if self.unsound_all || self.merged_with_var.contains_key(&ref_) {
             return;
         }
         self.values.insert(
@@ -287,8 +302,8 @@ impl ConstCalls {
                         .is_some_and(|member| member.ref_ == export.ref_)
                 {
                     exports.values.push((Box::from(&alias[..]), fact.value));
+                    continue;
                 }
-                continue;
             }
             let Some(import) = ast.named_imports.get(&export.ref_) else {
                 continue;
@@ -327,8 +342,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.const_calls
                 .get_or_insert_with(Default::default)
                 .merged_with_var
-                .push(function_ref);
+                .insert(function_ref, ());
         }
+    }
+
+    /// `function f() {}` two times in one scope: the second one has the binding of the first.
+    #[cold]
+    pub(crate) fn note_function_replaced(&mut self, replaced: Ref, function_ref: Ref) {
+        if let Some(calls) = self.const_calls.as_mut() {
+            if calls.merged_with_var.contains_key(&replaced) {
+                calls.merged_with_var.insert(function_ref, ());
+            }
+        }
+    }
+
+    /// After `visit_decl` of a declaration whose initializer has a fold in it.
+    #[cold]
+    pub(crate) fn note_const_call_derived(&mut self, binding: js_ast::Binding) {
+        let BData::BIdentifier(id) = binding.data else {
+            return;
+        };
+        if self.const_values.contains(&id.r#ref) {
+            if let Some(calls) = self.const_calls.as_mut() {
+                calls.derived.insert(id.r#ref, ());
+            }
+        }
+    }
+
+    /// A use of a `const` whose value a fold made. The name stays where a call stays, and the value counts as a fold anywhere else.
+    #[inline]
+    pub(crate) fn keeps_const_call_derived(&mut self, ref_: Ref) -> bool {
+        let Some(calls) = self.const_calls.as_deref() else {
+            return false;
+        };
+        if calls.derived.is_empty() || !calls.derived.contains_key(&ref_) {
+            return false;
+        }
+        if self.in_import_specifier || self.in_callee {
+            return true;
+        }
+        self.const_call_fold_count += 1;
+        false
     }
 
     fn const_call_flow(&self, stmts: &[Stmt], steps: &mut u32) -> Flow {
@@ -442,8 +496,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `e_call` after the target and the arguments are visited. Argument side effects stay, in order, before the value.
     #[inline(never)]
     pub(crate) fn fold_const_call(&mut self, call: &E::Call, loc: Loc) -> Option<Expr> {
-        // `require(cond() ? a : b)` is a way to keep a specifier away from the bundler.
-        if call.optional_chain.is_some() || self.in_import_specifier || self.in_template_tag {
+        // In these places the visitor gets what it gets on main.
+        if call.optional_chain.is_some() || self.in_import_specifier || self.in_callee {
             return None;
         }
         let target_ref = match call.target.data {
@@ -454,6 +508,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let fact = self.const_calls.as_mut()?.values.get_mut(&target_ref)?;
         fact.folds += 1;
+        self.const_call_fold_count += 1;
         let result = Expr {
             loc,
             data: fact.value.data(),

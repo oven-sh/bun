@@ -684,8 +684,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) const_calls_enabled: bool,
     /// Visiting the argument of `import()`, `require()` or `require.resolve()`.
     pub(crate) in_import_specifier: bool,
-    /// Visiting the tag of a template. A value in place of a call there can change the `this` of the tag.
-    pub(crate) in_template_tag: bool,
+    /// Visiting a call target or a template tag that `is_compound_callee`, outside a function in it.
+    pub(crate) in_callee: bool,
+    /// Folds, and uses of a `const` whose value a fold made.
+    pub(crate) const_call_fold_count: u32,
     /// The parse pass looks for imports that a branch condition calls.
     pub(crate) const_call_prefilter: bool,
 
@@ -2207,8 +2209,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
-                self.ignore_usage(ref_);
-                return replacement;
+                if !self.keeps_const_call_derived(ref_) {
+                    self.ignore_usage(ref_);
+                    return replacement;
+                }
             }
         }
 
@@ -5228,6 +5232,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                        self.note_function_replaced(existing.ref_, ref_);
                     } else {
                         // "var foo; function foo() {}" keeps the function's symbol.
                         if existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function() {
@@ -9923,7 +9928,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             const_calls: None,
             const_calls_enabled: false,
             in_import_specifier: false,
-            in_template_tag: false,
+            in_callee: false,
+            const_call_fold_count: 0,
             const_call_prefilter,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

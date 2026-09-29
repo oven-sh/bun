@@ -666,9 +666,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
-            let prev_in_template_tag = core::mem::replace(&mut p.in_template_tag, true);
+            let prev_in_callee = p.in_callee;
+            p.in_callee |= crate::visit::const_call::is_compound_callee(&tag.data);
             p.visit_expr(tag);
-            p.in_template_tag = prev_in_template_tag;
+            p.in_callee = prev_in_callee;
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1882,9 +1883,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        let prev_call_target = core::mem::replace(&mut p.call_target, e_.target.data);
+        p.call_target = e_.target.data;
 
-        let then_catch_chain = ThenCatchChain {
+        p.then_catch_chain = ThenCatchChain {
             next_target: e_.target.data,
             has_multiple_args: e_.args.len_u32() >= 2,
             has_catch: matches!(
@@ -1892,9 +1893,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Data::ECall(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
             ) && p.then_catch_chain.has_catch,
         };
-        let prev_then_catch_chain = core::mem::replace(&mut p.then_catch_chain, then_catch_chain);
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
+        let prev_in_callee = p.in_callee;
+        p.in_callee |= crate::visit::const_call::is_compound_callee(&e_.target.data);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1902,6 +1904,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+        p.in_callee = prev_in_callee;
 
         // Copy the call side effect flag over if this is a known target
         // copy the small inline payloads out first so the `match &e_.target.data`
@@ -2182,9 +2185,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.const_calls.is_some() {
             if let Some(result) = p.fold_const_call(&e_, expr.loc) {
-                // The visitor state is the same as after a visit of the value.
-                p.call_target = prev_call_target;
-                p.then_catch_chain = prev_then_catch_chain;
                 *e = result;
                 return;
             }
@@ -2605,6 +2605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+        let old_in_callee = core::mem::replace(&mut p.in_callee, false);
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             ..Default::default()
         };
@@ -2678,6 +2679,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.react_compiler_may_replace_body = prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        p.in_callee = old_in_callee;
 
         // Restore before any further `p.*` call so the stack-local pointer
         // never escapes this frame.

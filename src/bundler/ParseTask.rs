@@ -2672,10 +2672,17 @@ pub mod parse_worker {
         opts.module_type = task.module_type;
         opts.is_entry_point = task.is_entry_point;
 
+        let mut const_call_lookup_log = Log::init();
         let const_call_lookup = if loader.is_javascript_like() && !task.source_index.is_runtime() {
-            // SAFETY: `transpiler` is the one of this worker. It and the bundle outlive the parse.
+            // SAFETY: `transpiler` is the one of this worker. It, the bundle and the log outlive the parse.
             unsafe {
-                crate::const_call_lookup::Lookup::new(task.ctx(), transpiler, bump, task.path)
+                crate::const_call_lookup::Lookup::new(
+                    task.ctx(),
+                    transpiler,
+                    bump,
+                    task.path,
+                    core::ptr::NonNull::from(&mut const_call_lookup_log),
+                )
             }
         } else {
             None
@@ -2718,6 +2725,8 @@ pub mod parse_worker {
             } else {
                 get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
+        // An error in a `package.json` or `tsconfig.json` that the lookup read first.
+        const_call_lookup_log.append_to_with_recycled(log, false);
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {

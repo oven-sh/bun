@@ -31,7 +31,7 @@ Bun reads the flag at startup. Nothing turns it off afterwards:
 
 When the flag appears more than once on a command line, the last one counts, as for any option. Bun reads `BUN_OPTIONS` before the command line, so the command line wins.
 
-A `Worker` cannot raise the level. A `Worker` whose own `execArgv` asks for a level that the process does not have throws a `TypeError`, so pass the flag to the process. Asking for what the process already does is allowed, so `new Worker(file, { execArgv: process.execArgv })` works.
+A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXEC_ARGV`, as in Node.js, whether or not the process has the flag. Pass the flag to the process. `new Worker(file, { execArgv: process.execArgv })` throws in a process that has the flag, so leave the flag out of the list you pass on.
 
 ### Workers whose code is a string
 

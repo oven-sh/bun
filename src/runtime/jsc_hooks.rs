@@ -1553,9 +1553,9 @@ unsafe fn parse_worker_exec_argv_flags(
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
-        disallow_code_generation_from_strings: false,
+        invalid: None,
     };
-    for &arg in exec_argv {
+    for (index, &arg) in exec_argv.iter().enumerate() {
         if arg.is_null() {
             continue;
         }
@@ -1572,15 +1572,11 @@ unsafe fn parse_worker_exec_argv_flags(
             flags.allow_addons = false;
         } else if bytes == b"--no-ffi-cc" {
             flags.allow_ffi_cc = false;
-        } else if let Some(rest @ ([] | [b'=', ..])) =
-            bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice())
-        {
-            // What the process already does is not an error to ask for: `execArgv: process.execArgv`.
-            let asked =
-                bun_core::CodeGenerationFromStrings::from_flag_value(rest.get(1..).unwrap_or(b""));
-            if asked.is_none_or(|level| level > bun_core::code_generation_from_strings()) {
-                flags.disallow_code_generation_from_strings = true;
-            }
+        } else if matches!(
+            bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
+            Some([] | [b'=', ..])
+        ) {
+            flags.invalid.get_or_insert(index);
         }
     }
     Some(flags)

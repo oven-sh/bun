@@ -2719,9 +2719,9 @@ pub struct WorkerExecArgvFlags {
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
-    /// `--disallow-code-generation-from-strings` is there and asks for more than the process does.
-    /// The level is the process's and a Worker cannot raise it, so `true` here is an error.
-    pub disallow_code_generation_from_strings: bool,
+    /// Where a flag is that is the process's, which a Worker cannot be given
+    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
+    pub invalid: Option<usize>,
 }
 
 pub struct RuntimeHooks {

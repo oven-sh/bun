@@ -1,7 +1,7 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, nodeExe, tempDir } from "harness";
 
 const refused = "EvalError: Code generation from strings disallowed for this context";
 const flag = "--disallow-code-generation-from-strings";
@@ -329,50 +329,64 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     expect(exitCode).toBe(1);
   });
 
-  // The level is the process's. A Worker cannot raise it, and may be given what is already in force,
-  // so that `execArgv: process.execArgv` works, in a Worker of a Worker too.
-  test.each([
-    ["no flag", [], { [flag]: "TypeError", [strict]: "TypeError", [flag + "=other"]: "TypeError" }],
-    ["the flag", [flag], { [flag]: [flag], [strict]: "TypeError", [flag + "=other"]: "TypeError" }],
-    ["=strict", [strict], { [flag]: [flag, strict], [strict]: [strict], [flag + "=other"]: "TypeError" }],
-  ] as const)("a Worker's execArgv with the flag, in a process with %s", async (_, args, expected) => {
-    using dir = tempDir("disallow-code-generation-worker", {
-      "worker.mjs": `
-        import { Worker, parentPort, workerData } from "node:worker_threads";
-        import { start } from "./start.mjs";
-        // Its own process.execArgv, which a Worker of its own can be given.
-        parentPort.postMessage(workerData ? process.execArgv : await start(Worker, process.execArgv, true));
-      `,
-      "start.mjs": `
-        export const start = (Worker, execArgv, workerData) => new Promise(resolve => {
-          try {
-            const worker = new Worker(new URL("./worker.mjs", import.meta.url), { execArgv, workerData });
-            worker.on("message", resolve);
-            worker.on("error", error => resolve("error: " + error.message));
-          } catch (e) {
-            resolve(e.message === "Initiated Worker with invalid execArgv flags: ${flag}" ? e.name : e.message);
-          }
-        });
-      `,
-      "main.mjs": `
-        import { Worker } from "node:worker_threads";
-        import { start } from "./start.mjs";
-        const seen = {};
-        for (const given of JSON.parse(process.argv[2])) seen[given] = await start(Worker, [given]);
-        console.log(JSON.stringify(seen));
-        process.exit(0);
-      `,
-    });
+  // The flag is the process's. As in Node.js, a Worker cannot be given it, whether or not the process
+  // has it, so `execArgv: process.execArgv` throws in a process that does.
+  const workerGivenTheFlag = {
+    "worker.mjs": `import { parentPort } from "node:worker_threads"; parentPort.postMessage("started");`,
+    "main.mjs": `
+      import { Worker } from "node:worker_threads";
+      const start = execArgv => new Promise(resolve => {
+        try {
+          const worker = new Worker(new URL("./worker.mjs", import.meta.url), { execArgv });
+          worker.on("message", resolve);
+          worker.on("error", error => resolve("error event: " + error.message));
+        } catch (e) {
+          resolve({ name: e.name, code: e.code, message: e.message, isError: e instanceof Error, isTypeError: e instanceof TypeError });
+        }
+      });
+      const seen = { "process.execArgv": await start(process.execArgv) };
+      for (const given of JSON.parse(process.argv[2])) seen[given] = await start([given]);
+      console.log(JSON.stringify(seen));
+      process.exit(0);
+    `,
+  };
+  const invalidExecArgv = (given: string) => ({
+    name: "Error",
+    code: "ERR_WORKER_INVALID_EXEC_ARGV",
+    message: "Initiated Worker with invalid execArgv flags: " + given,
+    isError: true,
+    isTypeError: false,
+  });
+  async function startWorkersGiven(exe: string, args: readonly string[], given: string[]) {
+    using dir = tempDir("disallow-code-generation-worker", workerGivenTheFlag);
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args, "main.mjs", JSON.stringify(Object.keys(expected))],
+      cmd: [exe, ...args, "main.mjs", JSON.stringify(given)],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual(expected);
-    expect(exitCode).toBe(0);
+    return { seen: JSON.parse(stdout), exitCode };
+  }
+
+  test.each([
+    ["no flag", [], "started"],
+    ["the flag", [flag], invalidExecArgv(flag)],
+    ["=strict", [strict], invalidExecArgv(strict)],
+  ] as const)("a Worker's execArgv with the flag, in a process with %s", async (_, args, ownExecArgv) => {
+    expect(await startWorkersGiven(bunExe(), args, [flag, strict])).toEqual({
+      seen: { "process.execArgv": ownExecArgv, [flag]: invalidExecArgv(flag), [strict]: invalidExecArgv(strict) },
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(!nodeExe())("a Worker's execArgv with the flag is refused as Node.js refuses it", async () => {
+    for (const args of [[], [flag]]) {
+      expect(await startWorkersGiven(bunExe(), args, [flag])).toEqual(
+        await startWorkersGiven(nodeExe()!, args, [flag]),
+      );
+    }
   });
 
   // The inspector evaluates what its client sends. Asking for both is an error: the process never

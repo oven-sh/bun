@@ -1603,6 +1603,37 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     expect(alive).toBeLessThanOrEqual(count / 2);
   });
 
+  it.each(["in the same tick", "after the engine started"])(
+    "a connected net.Socket is closed when the TLS socket is destroyed %s",
+    async when => {
+      // The TLS socket does not destroy a net.Socket it runs over, so its own
+      // close has to end that socket. Node closes it in both cases.
+      const peerSawFin = Promise.withResolvers<void>();
+      await using server = net.createServer({ allowHalfOpen: true }, peer => {
+        peer.on("error", () => {});
+        peer.resume();
+        peer.on("end", () => {
+          peerSawFin.resolve();
+          peer.end();
+        });
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const transport = net.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+      await once(transport, "connect");
+      // A held write sends the wrap to the engine that runs over the stream.
+      transport.cork();
+      transport.write("x");
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const teardown = recordTeardown(client);
+      const transportClosed = once(transport, "close");
+      if (when === "after the engine started") await new Promise<void>(resolve => setImmediate(resolve));
+      client.destroy();
+      expect(await teardown).toEqual(["close:false"]);
+      await Promise.all([transportClosed, peerSawFin.promise]);
+      expect(transport.destroyed).toBe(true);
+    },
+  );
+
   // A transport that ends has delivered a FIN. Node hands that EOF to the TLS
   // socket inside the transport's 'end', so the socket's own 'end' is ahead of
   // the transport's 'close':

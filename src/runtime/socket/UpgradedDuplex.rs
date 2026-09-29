@@ -263,6 +263,15 @@ impl UpgradedDuplex {
                 // Best-effort probe: consume the exception and fall through.
                 Err(err) => drop(global.take_exception(err)),
             }
+            // `start_tls` is still queued: this close can be the answer to a
+            // transport that was destroyed, and node ends no destroyed stream.
+            if self.wrapper_ref().is_none() {
+                match duplex.get(&global, "destroyed") {
+                    Ok(Some(destroyed)) if destroyed.to_boolean() => return,
+                    Ok(_) => {}
+                    Err(err) => drop(global.take_exception(err)),
+                }
+            }
         }
 
         let name = if msg_more { "write" } else { "end" };

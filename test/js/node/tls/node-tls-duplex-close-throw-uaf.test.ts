@@ -123,8 +123,10 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     async how => {
       // No SSL wrapper exists yet, so the queued .StartTLS task carries the
       // close out: TLSSocket.onClose frees the Handlers, then duplex.end()
-      // throws into onError.
-      await run(`
+      // throws into onError. Only a duplex that is still open gets that
+      // end(), so destroy() leaves this one open.
+      await run(
+        `
       const tls = require("node:tls");
       const { Duplex } = require("node:stream");
 
@@ -133,8 +135,13 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
         write(chunk, enc, cb) { cb(); },
         final(cb) { cb(); },
       });
+      let ends = 0;
       duplex.end = function () {
+        ends++;
         throw new Error("end() throws during close");
+      };
+      duplex.destroy = function () {
+        return this;
       };
 
       const sock = tls.connect({
@@ -149,11 +156,14 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
 
       setImmediate(() => {
         setImmediate(() => {
+          console.log("end() calls: " + ends);
           console.log("ok");
           process.exit(0);
         });
       });
-    `);
+    `,
+        "end() calls: 1\nok",
+      );
     },
   );
 

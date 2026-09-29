@@ -516,7 +516,7 @@ pub(crate) fn post_process_js_chunk(
     let mut preload_registration = module_preload_registration(c, chunk, chunk_index, &ctx.chunks)?;
 
     // For Kit, hoist runtime.js outside of the IIFE
-    let compile_results = &chunk.compile_results_for_chunk;
+    let compile_results = chunk.compile_results_for_chunk.as_slice();
     // Right after the runtime (which declares `__chunks`) if it is in this chunk, else first.
     let preload_registration_index = compile_results
         .iter()
@@ -583,16 +583,17 @@ pub(crate) fn post_process_js_chunk(
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
     let mut starts = chunk.content.javascript().starts_in_chunk_order.iter();
-    let mut results = compile_results.iter().enumerate();
+    let mut joined = 0;
     loop {
         let next_start = starts.next();
         // The results ahead of the next start; every one that is left when there is none.
-        let ahead = next_start.map_or(usize::MAX, |&(index, _)| {
-            let joined = compile_results.len() - results.len();
+        let until = next_start.map_or(compile_results.len(), |&(index, _)| {
             debug_assert!(joined <= index as usize && index as usize <= compile_results.len());
-            (index as usize).saturating_sub(joined)
+            (index as usize).clamp(joined, compile_results.len())
         });
-        for (compile_result_index, compile_result) in results.by_ref().take(ahead) {
+        for (compile_result_index, compile_result) in
+            (joined..).zip(&compile_results[joined..until])
+        {
             let source_index = compile_result.source_index();
             let is_runtime = source_index == Index::RUNTIME.value();
 
@@ -724,6 +725,7 @@ pub(crate) fn post_process_js_chunk(
             // TODO: metafile
             newline_before_comment = !compile_result.code().is_empty();
         }
+        joined = until;
         let Some(&(_, wrapped)) = next_start else {
             break;
         };

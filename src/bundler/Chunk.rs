@@ -183,6 +183,15 @@ impl CompileResultSlots {
         self.0.iter().map(|c| unsafe { &*c.get() })
     }
 
+    /// The post-join read view of `iter` as one slice, for a reader that takes ranges of it.
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[CompileResult] {
+        // SAFETY: as in `iter`, no writer after the pool join; `UnsafeCell<T>` has the layout of `T`.
+        unsafe {
+            core::slice::from_raw_parts(self.0.as_ptr().cast::<CompileResult>(), self.0.len())
+        }
+    }
+
     /// Post-join exclusive access to one slot (e.g. to transfer ownership of
     /// the result out of the chunk). `&mut self` proves no concurrent writer,
     /// so `UnsafeCell::get_mut` needs no unsafe here.

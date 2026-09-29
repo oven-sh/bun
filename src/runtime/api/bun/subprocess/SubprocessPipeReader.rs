@@ -209,8 +209,7 @@ impl PipeReader {
             #[cfg(unix)]
             {
                 if matches!(self.state, State::Err(..)) {
-                    // onReaderError already ran; `_guard`'s Drop on return
-                    // will drop the last ref and deinit() closes the handle.
+                    // onReaderError already ran; `_guard`'s Drop on return drops the last ref.
                     return;
                 }
                 if let Some(poll) = self.reader.handle.get_poll() {
@@ -340,7 +339,8 @@ impl PipeReader {
 
     fn on_reader_error(&mut self, err: bun_sys::Error) {
         let owned = self.to_owned_slice();
-        // Release the fd now, as EOF does, so a child still writing gets EPIPE.
+        // Release the pipe now, as EOF does, so a child still writing gets EPIPE. The POSIX reader has done it before it reported.
+        #[cfg(windows)]
         self.reader.deinit();
         self.state = State::Err(owned, err);
         if let Some(process) = self.process.take() {

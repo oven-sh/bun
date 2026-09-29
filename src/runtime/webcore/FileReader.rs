@@ -988,7 +988,8 @@ impl FileReader {
             self.read_error.set(Some(err));
         }
 
-        if self.waiting_for_on_reader_done.get() && !self.done.get() {
+        // A cancel from inside the delivery above finds the reader closed and gets no `on_reader_done` to release the ref.
+        if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
             // SAFETY: see `parent()`; `_pin` keeps the count > 0.
             let _ = unsafe { Source::decrement_count(parent) };
@@ -996,7 +997,7 @@ impl FileReader {
         self.close_after_error();
     }
 
-    /// An errored stream is never cancelled, so release the poll and the fd here.
+    /// An errored stream is never cancelled, so it ends here. The POSIX reader has released its poll and fd before it reported; `deinit` drops the buffer, and the source on Windows.
     fn close_after_error(&self) {
         if self.done.get() {
             return;

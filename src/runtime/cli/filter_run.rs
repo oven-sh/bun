@@ -223,7 +223,7 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: caller contract; raw-ptr reborrows end before each dispatch.
         unsafe {
             for reader in [&raw mut (*this).stdout, &raw mut (*this).stderr] {
-                // `is_done()` = EOF already counted out of `remaining_fds`.
+                // `is_done()` = EOF or a read error, already counted out of `remaining_fds`.
                 #[cfg(unix)]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
                     BufferedReader::read(reader);

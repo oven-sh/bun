@@ -255,6 +255,11 @@ impl FileRoute {
             return;
         };
 
+        if route.not_modified_from_stat(path, &mut req, resp, method) {
+            route.on_response_complete(resp);
+            return;
+        }
+
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
         let fd_result: bun_sys::Result<Fd> = {
@@ -315,6 +320,62 @@ impl FileRoute {
                 });
             }
         }
+    }
+
+    /// A 304 needs the file's metadata, never its contents. When the route was
+    /// given an ETag and the request's `If-None-Match` matches it, one `stat`
+    /// answers what would otherwise cost open + fstat + close. Anything less
+    /// clear-cut (no match, `If-Match`, `If-Unmodified-Since`, a missing file,
+    /// a directory) returns `false` and takes the regular path.
+    fn not_modified_from_stat(
+        &self,
+        path: &[u8],
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) -> bool {
+        if !(method == Method::GET || method == Method::HEAD) || self.status_code != 200 {
+            return false;
+        }
+        let Some(etag) = self.headers.get(b"etag").filter(|v| !v.is_empty()) else {
+            return false;
+        };
+        let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) else {
+            return false;
+        };
+        if req.header(b"if-match").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+            || !ETag::if_none_match(etag, inm)
+        {
+            return false;
+        }
+
+        let mut path_buffer = bun_paths::path_buffer_pool::get();
+        if path.len() >= path_buffer.len() {
+            return false;
+        }
+        path_buffer[..path.len()].copy_from_slice(path);
+        path_buffer[path.len()] = 0;
+        let Ok(stat) = bun_sys::stat(bun_core::ZStr::from_buf(&path_buffer[..], path.len())) else {
+            return false;
+        };
+        if bun_sys::S::ISDIR(stat.st_mode as bun_sys::Mode) {
+            return false;
+        }
+
+        let mut sh = self.stat_hash.take();
+        sh.hash(&stat, path);
+        self.stat_hash.set(sh);
+
+        req.set_yield(false);
+        write_any_status(resp, 304);
+        if self.has_date_header {
+            resp.mark_wrote_date_header();
+        }
+        resp.write_mark();
+        self.write_headers(resp);
+        resp.end_without_body(resp.should_close_connection());
+        true
     }
 
     fn serve(

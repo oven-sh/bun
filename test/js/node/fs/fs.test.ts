@@ -5434,18 +5434,22 @@ describe("fs.write", () => {
 // syscall fails, so a caller that resumes after a retryable error still has
 // its buffer. fs.WriteStream's writeAll depends on that after EAGAIN.
 describe("fs.read/readv/write/writev pass the buffer to the callback on error", () => {
-  const closedFd = () => {
-    const fd = fs.openSync(`${tmpdir()}/bun-fs-cb-arity-${Date.now()}-${Math.random()}.txt`, "w+");
-    fs.closeSync(fd);
-    return fd;
-  };
-  const settle = () => Promise.withResolvers<any[]>();
+  // A descriptor opened for the other direction fails with EBADF.
+  async function failing(flags: "r" | "w", call: (fd: number, cb: (...args: any[]) => void) => void) {
+    using dir = tempDir("fs-callback-error", { "file.txt": "bun" });
+    const fd = fs.openSync(join(String(dir), "file.txt"), flags);
+    try {
+      const { promise, resolve } = Promise.withResolvers<any[]>();
+      call(fd, (...args) => resolve(args));
+      return await promise;
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
 
   it("fs.read", async () => {
     const buffer = Buffer.alloc(8);
-    const { promise, resolve } = settle();
-    fs.read(closedFd(), buffer, 0, 8, null, (...args) => resolve(args));
-    const [err, bytesRead, buf] = await promise;
+    const [err, bytesRead, buf] = await failing("w", (fd, cb) => fs.read(fd, buffer, 0, 8, null, cb));
     expect(err.code).toBe("EBADF");
     expect(bytesRead).toBe(0);
     expect(buf).toBe(buffer);
@@ -5453,9 +5457,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
 
   it("fs.readv", async () => {
     const buffers = [Buffer.alloc(4), Buffer.alloc(4)];
-    const { promise, resolve } = settle();
-    fs.readv(closedFd(), buffers, (...args) => resolve(args));
-    const [err, bytesRead, bufs] = await promise;
+    const [err, bytesRead, bufs] = await failing("w", (fd, cb) => fs.readv(fd, buffers, cb));
     expect(err.code).toBe("EBADF");
     expect(bytesRead).toBe(0);
     expect(bufs).toBe(buffers);
@@ -5463,18 +5465,14 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
 
   it("fs.write with a buffer", async () => {
     const buffer = Buffer.from("bun");
-    const { promise, resolve } = settle();
-    fs.write(closedFd(), buffer, 0, 3, null, (...args) => resolve(args));
-    const [err, bytesWritten, buf] = await promise;
+    const [err, bytesWritten, buf] = await failing("r", (fd, cb) => fs.write(fd, buffer, 0, 3, null, cb));
     expect(err.code).toBe("EBADF");
     expect(bytesWritten).toBe(0);
     expect(buf).toBe(buffer);
   });
 
   it("fs.write with a string", async () => {
-    const { promise, resolve } = settle();
-    fs.write(closedFd(), "bun", (...args) => resolve(args));
-    const [err, bytesWritten, str] = await promise;
+    const [err, bytesWritten, str] = await failing("r", (fd, cb) => fs.write(fd, "bun", cb));
     expect(err.code).toBe("EBADF");
     expect(bytesWritten).toBe(0);
     expect(str).toBe("bun");
@@ -5482,12 +5480,60 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
 
   it("fs.writev", async () => {
     const buffers = [Buffer.from("b"), Buffer.from("un")];
-    const { promise, resolve } = settle();
-    fs.writev(closedFd(), buffers, (...args) => resolve(args));
-    const [err, bytesWritten, bufs] = await promise;
+    const [err, bytesWritten, bufs] = await failing("r", (fd, cb) => fs.writev(fd, buffers, cb));
     expect(err.code).toBe("EBADF");
     expect(bytesWritten).toBe(0);
     expect(bufs).toBe(buffers);
+  });
+
+  // A full non-blocking FIFO makes the first write fail with EAGAIN. The wrapper
+  // empties the FIFO before writeAll sees the error, so the retry succeeds.
+  it.skipIf(isWindows)("fs.WriteStream retries an EAGAIN write with the same buffer", async () => {
+    using dir = tempDir("fs-write-stream-eagain", {});
+    const path = join(String(dir), "fifo");
+    mkfifo(path, 0o666);
+    const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const writer = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+    try {
+      const filler = Buffer.alloc(4096, 0x61);
+      let filled = 0;
+      expect(() => {
+        for (;;) filled += fs.writeSync(writer, filler);
+      }).toThrow(expect.objectContaining({ code: "EAGAIN" }));
+
+      const scratch = Buffer.alloc(65536);
+      const payload = Buffer.alloc(1024, 0x62);
+      const calls: any[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const stream = fs.createWriteStream(null, {
+        fd: writer,
+        autoClose: false,
+        fs: {
+          write(fd, buffer, offset, length, position, cb) {
+            fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buf) => {
+              calls.push([err?.code, bytesWritten, buf === buffer]);
+              if (err?.code === "EAGAIN") {
+                for (let left = filled; left > 0; )
+                  left -= fs.readSync(reader, scratch, 0, Math.min(left, scratch.length));
+              }
+              cb(err, bytesWritten, buf);
+            });
+          },
+        },
+      });
+      stream.on("error", reject);
+      stream.write(payload, err => (err ? reject(err) : resolve()));
+      await promise;
+
+      expect(calls).toEqual([
+        ["EAGAIN", 0, true],
+        [undefined, payload.length, true],
+      ]);
+      expect(scratch.subarray(0, fs.readSync(reader, scratch))).toEqual(payload);
+    } finally {
+      fs.closeSync(writer);
+      fs.closeSync(reader);
+    }
   });
 
   // A pipe that bun has already used through process.stdout is in non-blocking

@@ -1138,7 +1138,10 @@ describe("bundler", () => {
       "/dist/node_modules/dep-above-exe-44053/index.js": `module.exports = "above-exe";`,
     },
     run: {
-      error: 'Cannot find package "dep-above-exe-44053"',
+      error: "Cannot find package 'dep-above-exe-44053'",
+      validate: ({ stderr }) => {
+        expect(stderr).toContain("Cannot find package 'dep-above-exe-44053'");
+      },
       setCwd: false,
     },
     compile: true,

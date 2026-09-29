@@ -686,7 +686,7 @@ If you use a relative path to a file not included in the standalone executable, 
 
 A package that is not included in the standalone executable (for example, one you left out with `--external`, or one you load with `import(name)` at runtime) is resolved from disk when the executable runs. Bun searches, in this order:
 
-1. `node_modules` in the directory of the executable, then in each parent directory.
+1. `node_modules` in the directory of the executable (that directory only, not its parents).
 2. `node_modules` in the process's current working directory, then in each parent directory.
 3. The directories in `NODE_PATH`.
 

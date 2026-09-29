@@ -988,6 +988,32 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nreader app\nindex s\nsettings s" },
   });
+  // A browser build has no node:fs. The import loads nothing, so reader.js moves and runs ahead of store.js.
+  itBundled("splitting/EntryFilesAfterDisabledImportRunBeforeSharedCode", {
+    files: {
+      "/index.js": /* js */ `
+        import { existsSync } from "node:fs";
+        import "./reader.js";
+        import { Store } from "./store.js";
+        console.log("index", typeof existsSync, new Store().name);
+        import("./settings.js");
+      `,
+      "/reader.js": `console.log("reader"); globalThis.APP = { name: "app" };`,
+      "/store.js": `console.log("store", globalThis.APP.name); export class Store { name = "s"; }`,
+      "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").not.toContain(`"reader"`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+    },
+    run: { file: "/out/index.js", stdout: "reader\nstore app\nindex undefined s\nsettings s" },
+  });
   // With m.js the hashed chunk would import the chunk of plugin.js, and plugin.js would run ahead of registry.js.
   itBundled("splitting/EntryFileThatImportsLaterChunkOfOtherEntryStays", {
     files: {

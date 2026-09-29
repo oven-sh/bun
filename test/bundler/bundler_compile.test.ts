@@ -589,7 +589,7 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
-  // Spellings that must not map to an embedded module, and inputs that must fail cleanly rather than crash.
+  // Spellings the graph lookup does not map (the resolver may still find them, as on disk), and inputs that must fail cleanly rather than crash.
   itBundled("compile/EmbeddedResolveMisses", {
     backend: "cli",
     compile: true,
@@ -611,7 +611,7 @@ describe("bundler", () => {
         console.log(await outcome(s("./mod.ts")));          // maps to mod.js
         console.log(await outcome(s("./UP.ts")), await outcome(s("./up.TS"))); // the extension is case-insensitive, the name is not
         console.log(await outcome(s("./mod.css")));         // not a source extension: no mapping
-        console.log(await outcome(s("./mod.js/")));         // trailing slash
+        console.log(await outcome(s("./mod.js/")));         // trailing slash: the resolver's own rules, as on disk
         console.log(await outcome(s("../mod.ts")));         // escapes the embedded root
         console.log(await outcome(s("./" + Buffer.alloc(70000, "a").toString() + ".ts"))); // longer than any path buffer
         console.log(await outcome(s(".\\\\mod.ts")));      // a relative specifier on Windows only
@@ -626,7 +626,7 @@ describe("bundler", () => {
         "mod",
         "UP ResolveMessage",
         "ResolveMessage",
-        "ResolveMessage",
+        "mod",
         "ResolveMessage",
         "ResolveMessage",
         isWindows ? "mod" : "ResolveMessage",

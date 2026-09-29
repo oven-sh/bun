@@ -972,6 +972,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lint"
+version = "0.0.0"
+
+[[package]]
 name = "bun_lsquic_sys"
 version = "0.0.0"
 dependencies = [
@@ -1270,6 +1274,7 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lint",
  "bun_lsquic_sys",
  "bun_md",
  "bun_opaque",
@@ -1300,6 +1305,7 @@ dependencies = [
  "bun_sys_jsc",
  "bun_tcc_sys",
  "bun_threading",
+ "bun_typecheck",
  "bun_url",
  "bun_uws",
  "bun_uws_sys",
@@ -1630,6 +1636,10 @@ version = "0.0.0"
 dependencies = [
  "bun_bundler",
 ]
+
+[[package]]
+name = "bun_typecheck"
+version = "0.0.0"
 
 [[package]]
 name = "bun_url"

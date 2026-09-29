@@ -100,6 +100,8 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
+  "src/typecheck",
+  "src/lint",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -443,6 +445,14 @@ bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+bun_typecheck = { path = "src/typecheck" }
+bun_lint = { path = "src/lint" }
 
 [profile.release.package.bun_react_compiler]
+opt-level = "s"
+
+[profile.release.package.bun_typecheck]
+opt-level = "s"
+
+[profile.release.package.bun_lint]
 opt-level = "s"

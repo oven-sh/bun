@@ -361,6 +361,8 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
              * kernel refused to take it back: nothing would report it again (see us_socket_resume). */
             int err = LIBUS_ERR;
             us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+            /* The caller picked the timeout of this tick before the close handler ran. */
+            us_wakeup_loop(loop);
         }
     }
 }
@@ -882,10 +884,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * takes the write side down too, so a hangup_closes_unsent socket does
              * not wait when the write this event retried failed again.
              * A socket that waits in the low-priority queue has its reads off too, and
-             * us_internal_handle_low_priority_sockets is its resume(). */
+             * us_internal_handle_low_priority_sockets is its resume(). READABLE in
+             * `events` means that the read loop ran here: that eof is behind the data. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
-            const int reads_are_off = eof_deferrable && (s->flags.is_paused || s->flags.low_prio_state == 1);
+            const int reads_are_off = eof_deferrable &&
+                (s->flags.is_paused || (s->flags.low_prio_state == 1 && !(events & LIBUS_SOCKET_READABLE)));
             if (reads_are_off && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in

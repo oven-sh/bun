@@ -1761,6 +1761,25 @@ describe("WebP container walk", () => {
       riff([vp8x(ICCP), chunk("ICCP", profile(512)), image, anim, frame([alph]), lossy]),
       "none",
     ],
+    // The decoder steps over a frame chunk. The demuxer goes on inside it, where these frames
+    // end in a chunk header that covers the picture: the demuxer has no picture then.
+    [
+      "a picture that a header inside a frame chunk covers",
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), anim, frame([chunk("XXXX", image).subarray(0, 8)]), image]),
+      "none",
+    ],
+    [
+      "the same after an alpha plane",
+      riff([
+        vp8x(ICCP | ALPHA),
+        chunk("ICCP", profile(512)),
+        alph,
+        anim,
+        frame([chunk("XXXX", lossy).subarray(0, 8)]),
+        lossy,
+      ]),
+      "none",
+    ],
     // The walk goes on from the frame's last chunk, not from the end of the frame chunk.
     [
       "ICCP inside a frame chunk, after the frame's picture",

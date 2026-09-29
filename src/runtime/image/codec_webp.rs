@@ -357,6 +357,8 @@ fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
                     return None;
                 }
                 let frame = split_frame(rest)?;
+                // The decode can find a picture in bytes that are another chunk's payload here.
+                frame.picture?;
                 // An alpha plane after the picture is an error only when the container flags alpha.
                 if frame.alpha_after && flags & ALPHA_FLAG != 0 {
                     return None;

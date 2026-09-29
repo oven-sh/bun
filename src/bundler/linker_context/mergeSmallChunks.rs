@@ -1778,7 +1778,6 @@ fn files_that_leave_entry_chunk(
         turned_down_from = Some(open.first);
     }
     // A file of the parent behind the run point does not rank the parent again: a chunk that the walk reaches in between stays behind the parent.
-    // It does when it loads, through files of the parent, a chunk that the guard keeps the parent from loading: the parent has to run behind that chunk.
     if let Some(first) = turned_down_from {
         let mut loads: Vec<u32> = Vec::new();
         let mut reached: ArrayHashMap<u32, ()> = ArrayHashMap::new();
@@ -1804,6 +1803,7 @@ fn files_that_leave_entry_chunk(
                                 other,
                             )?
                         {
+                            // The file loads, through files of the parent, a chunk that the guard keeps the parent from loading: the parent has to run behind that chunk.
                             ranks_again = true;
                             break;
                         }

@@ -652,8 +652,7 @@ pub(crate) fn post_process_js_chunk(
                     }
                 }
 
-                // A `*/` in the path would terminate the block comment early and
-                // turn the rest of the path into generated JavaScript.
+                // A `*/` in the path would terminate the block comment early and turn the rest of the path into generated JavaScript.
                 if matches!(comment_type, CommentType::Multiline)
                     && strings::contains(pretty, b"*/")
                 {

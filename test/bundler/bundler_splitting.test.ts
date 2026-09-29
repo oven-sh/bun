@@ -1159,8 +1159,7 @@ describe("bundler", () => {
       run: { file: "/out/app.js", stdout: "registry\nstore\nplugin\nm 1\napp s 1\nroute s" },
     });
   }
-  // With m.js the hashed chunk would import the chunk of plugin.js, so m.js stays. s1.js of the hashed chunk imports
-  // y.js, which third.js loads too: the hashed chunk runs behind the chunk of y.js, and the chunk of plugin.js ahead of both.
+  // m.js stays as above. s1.js of the hashed chunk imports y.js, which third.js loads too: the hashed chunk runs behind the chunk of y.js, and the chunk of plugin.js ahead of both.
   itBundled("splitting/SharedCodeRunsAfterChunkThatItImportsWhenEntryFileStays", {
     files: {
       "/app.js": /* js */ `
@@ -1191,8 +1190,7 @@ describe("bundler", () => {
     },
     run: { file: "/out/app.js", stdout: "plugin\ny\ns0\ns1 y\nm 1\napp s\nroute s" },
   });
-  // w.cjs requires wx0.cjs of the chunk of x1.js, and x1.js starts wx0.cjs when that chunk loads, so w.cjs stays.
-  // s1.js of the hashed chunk imports x1.js, so the hashed chunk runs behind that chunk.
+  // w.cjs requires wx0.cjs of the chunk of x1.js, and x1.js starts wx0.cjs when that chunk loads, so w.cjs stays. s1.js of the hashed chunk imports x1.js, so the hashed chunk runs behind that chunk.
   itBundled("splitting/SharedCodeRunsAfterChunkThatItImportsWhenCommonJSImportStays", {
     files: {
       "/index.js": /* js */ `
@@ -1511,8 +1509,7 @@ describe("bundler", () => {
       run: { file: "/out/app.js", stdout: "store undefined\nq ready\nw\napp s 1\nroute s" },
     });
   }
-  // The helpers of setup.cjs are in the chunk that index.js shares with admin.js. common.js runs when that chunk
-  // loads, which is ahead of the hashed chunk as it is, so setup.cjs moves.
+  // The helpers of setup.cjs are in the chunk that index.js shares with admin.js. common.js runs when that chunk loads, which is ahead of the hashed chunk as it is, so setup.cjs moves.
   itBundled("splitting/CommonJSImportBehindChunkOfOtherEntryStartsBeforeSharedCode", {
     files: {
       ...wrappedSetupBeforeShared(""),
@@ -1573,9 +1570,7 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "common\nw\nsetup\nstore\nindex app\nsettings app" },
   });
-  // The helpers of setup.cjs are in the chunk that app.js shares with admin.js, and app.js imports v of that chunk
-  // first. later.js runs when that chunk loads, behind store.js. With setup.cjs the hashed chunk would import that
-  // chunk, so setup.cjs stays.
+  // The helpers of setup.cjs are in the chunk of later.js, which runs behind store.js though app.js imports v of that chunk first. With setup.cjs the hashed chunk would import that chunk, so setup.cjs stays.
   for (const [name, from, files] of droppedWhenUnused) {
     itBundled("splitting/CommonJSImportWithHelpersInLaterChunkOfOtherEntryStays/" + name, {
       files: {
@@ -1617,8 +1612,7 @@ describe("bundler", () => {
       run: { file: "/out/app.js", stdout: "store undefined\nlater 5\nsetup\napp s 1\nroute s" },
     });
   }
-  // setup.cjs requires plugin.cjs of the chunk that app.js shares with admin.js. registry.js runs when that chunk
-  // loads, behind store.js. With x.js and setup.cjs the hashed chunk would import that chunk, so both stay.
+  // setup.cjs requires plugin.cjs of the chunk of registry.js, which runs behind store.js. With x.js and setup.cjs the hashed chunk would import that chunk, so both stay.
   itBundled("splitting/EntryFileWhoseCommonJSImportRequiresLaterChunkOfOtherEntryStays", {
     files: {
       "/app.js": /* js */ `
@@ -1656,8 +1650,7 @@ describe("bundler", () => {
     },
     run: { file: "/out/app.js", stdout: "store undefined\nregistry 5\nplugin\nsetup 1\nx app\napp s\nroute s" },
   });
-  // app.js starts setup.cjs, which requires helper.js, and helper.js imports plugin.cjs of the chunk of registry.js.
-  // Both stay as above. third.js keeps the helpers out of that chunk.
+  // app.js starts setup.cjs, which requires helper.js, and helper.js imports plugin.cjs of the chunk of registry.js. Both stay as above. third.js keeps the helpers out of that chunk.
   itBundled("splitting/CommonJSImportWhoseRequiredFileImportsLaterChunkOfOtherEntryStays", {
     files: {
       "/app.js": /* js */ `
@@ -1831,8 +1824,7 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "helper of index app\nsettings app" },
   });
-  // own.js can load index.js again with require(), so it stays in the chunk of index.js.
-  // The hashed chunk starts nothing then: w.cjs would run ahead of own.js.
+  // own.js can load index.js again with require(), so it stays in the chunk of index.js. The hashed chunk starts nothing then: w.cjs would run ahead of own.js.
   itBundled("splitting/EntryFileThatCannotMoveKeepsCommonJSImportBehindIt", {
     files: {
       "/index.js": /* js */ `
@@ -1866,8 +1858,7 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nown undefined\nw\nindex s\nsettings s" },
   });
-  // store.js can load index.js again with require(), so its chunk takes no fold and the class of index.js has no parent.
-  // No chunk starts w.cjs.
+  // store.js can load index.js again with require(), so its chunk takes no fold and the class of index.js has no parent. No chunk starts w.cjs.
   itBundled("splitting/CommonJSImportStaysWhereNoChunkTakesTheFold", {
     files: {
       "/index.js": /* js */ `
@@ -1898,8 +1889,7 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store undefined\nw\nindex s\nsettings s" },
   });
-  // helper.js can load cmd.js again with require(), so the chunk of helper.js and setup.cjs stays out of the hashed chunk.
-  // The hashed chunk does not import that chunk, so cmd.js starts setup.cjs.
+  // helper.js can load cmd.js again with require(), so the chunk of helper.js and setup.cjs stays out of the hashed chunk. The hashed chunk does not import that chunk, so cmd.js starts setup.cjs.
   itBundled("splitting/CommonJSInChunkThatStaysOutOfFoldStartsAfterSharedCode", {
     files: {
       "/main.js": /* js */ `

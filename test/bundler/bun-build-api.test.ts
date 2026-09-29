@@ -1044,6 +1044,52 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
+  test.concurrent("a deeply nested define value builds", async () => {
+    // The define loader used to copy the parsed value with a recursion that
+    // had no stack guard, and the bundler thread has a small stack. The depth
+    // is above the depth where that copy overflowed and below the depth where
+    // the parser stops. SHALLOW is read by two files, after the thread reset
+    // its per-file allocations.
+    const depth = isDebug || isASAN ? 200 : 3000;
+    using dir = tempDir("build-api-deep-define", {
+      "a.ts": `console.log(SHALLOW.a);`,
+      "b.ts": `console.log(SHALLOW.a[1]);`,
+      "build.ts": `
+        const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+        const result = await Bun.build({
+          entrypoints: ["./a.ts", "./b.ts"],
+          define: { DEEPX: nested(${depth}), SHALLOW: '{"a":[1,"two"]}' },
+          throw: false,
+        });
+        console.log(
+          JSON.stringify({
+            success: result.success,
+            logs: result.logs.map(String),
+            outputs: await Promise.all(result.outputs.map(output => output.text())),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        success: true,
+        logs: [],
+        outputs: ['// a.ts\nconsole.log({ a: [1, "two"] }.a);\n', '// b.ts\nconsole.log({ a: [1, "two"] }.a[1]);\n'],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

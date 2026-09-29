@@ -431,15 +431,18 @@ export default p;
 
   // A failed plugin load is remembered for the lifetime of the server. The first
   // request is answered when the load rejects; later requests hit the remembered
-  // failure right away, both in production (the route stays failed) and in
-  // development without HMR (the route is retried per request and fails again).
-  test("requests after a failed plugin load keep getting 500", async () => {
+  // failure right away. In production the route stays failed, in development
+  // without HMR the route is retried per request and fails again, and with HMR
+  // the dev server answers a route it has not seen before from its plugin error
+  // state.
+  test.concurrent("requests after a failed plugin load keep getting 500", async () => {
     await using dir = tempDir("html-failed-plugin-load", {
       "bunfig.toml": /* toml */ `
 [serve.static]
 plugins = ["./plugin.ts"]
 `,
       "index.html": /*html*/ `<!DOCTYPE html><html><head><title>Plugin load failure</title></head><body></body></html>`,
+      "other.html": /*html*/ `<!DOCTYPE html><html><head><title>Other route</title></head><body></body></html>`,
       "plugin.ts": /*ts*/ `
 export default {
   name: "throws-in-setup",
@@ -450,16 +453,57 @@ export default {
 `,
       "serve-fixture.ts": /*ts*/ `
 import html from "./index.html";
+import other from "./other.html";
+import net from "node:net";
 
+const mode = process.argv[2];
 const server = Bun.serve({
   port: 0,
-  development: process.argv[2] === "development" ? { hmr: false } : false,
-  routes: { "/": html },
+  development: mode === "hmr" ? true : mode === "development" ? { hmr: false } : false,
+  // Keep the idle timeout out of the picture: only an explicit close counts.
+  idleTimeout: 255,
+  routes: { "/": html, "/other": other },
   fetch: () => new Response("fallback", { status: 404 }),
 });
-const results = [];
-for (const method of ["GET", "GET", "HEAD"]) {
-  const response = await fetch(server.url, { method });
+
+// The first request waits for the plugin load and is answered from an
+// event-loop task once it rejects. Read it from a raw socket so the fixture
+// can report whether the server closes the connection it marked
+// "Connection: close".
+const first = await new Promise((resolve, reject) => {
+  const sock = net.connect(server.port, "127.0.0.1", () => {
+    sock.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+  });
+  let data = "";
+  let closedByServer = true;
+  sock.on("data", chunk => {
+    data += chunk.toString();
+    // The response has arrived. Give the server a bounded time to close.
+    sock.setTimeout(2000, () => {
+      closedByServer = false;
+      sock.destroy();
+    });
+  });
+  sock.on("error", reject);
+  sock.on("close", () => {
+    const [head, body = ""] = data.split("\\r\\n\\r\\n");
+    const [statusLine, ...headerLines] = head.split("\\r\\n");
+    const headers = new Headers(headerLines.map(line => line.split(": ", 2)));
+    resolve({
+      method: "GET",
+      status: Number(statusLine.split(" ")[1]),
+      contentLength: headers.get("content-length"),
+      body,
+      closedByServer,
+    });
+  });
+});
+
+const results = [first];
+// The later requests go to a route the dev server has not bundled yet.
+const later = new URL(mode === "hmr" ? "/other" : "/", server.url);
+for (const method of ["GET", "HEAD"]) {
+  const response = await fetch(later, { method });
   results.push({
     method,
     status: response.status,
@@ -472,8 +516,22 @@ console.log(JSON.stringify(results));
 `,
     });
 
+    const firstResponse = { ...buildFailedResponses[0], closedByServer: true };
+    const expected = {
+      production: [firstResponse, ...buildFailedResponses.slice(1)],
+      development: [firstResponse, ...buildFailedResponses.slice(1)],
+      // The dev server answers the parked request from its own deferred
+      // request path, which does not close the socket yet, and later requests
+      // with its own plugin error body.
+      hmr: [
+        { ...firstResponse, closedByServer: expect.any(Boolean) },
+        { method: "GET", status: 500, contentLength: "12", body: "Plugin Error" },
+        { method: "HEAD", status: 500, contentLength: "12", body: "" },
+      ],
+    };
+
     await Promise.all(
-      ["production", "development"].map(async mode => {
+      Object.entries(expected).map(async ([mode, responses]) => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "serve-fixture.ts", mode],
           env: bunEnv,
@@ -484,7 +542,7 @@ console.log(JSON.stringify(results));
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toContain("Failed to load plugins for Bun.serve");
         expect(stderr).toContain("setup failed on purpose");
-        expect(JSON.parse(stdout)).toEqual(buildFailedResponses);
+        expect(JSON.parse(stdout)).toEqual(responses);
         expect(exitCode).toBe(0);
       }),
     );

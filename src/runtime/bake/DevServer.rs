@@ -1880,6 +1880,7 @@ impl RequestEnsureRouteBundledCtx {
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
+        self.resp.write_status(b"500 Internal Server Error");
         self.resp.end(b"Plugin Error", false);
         Ok(())
     }

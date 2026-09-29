@@ -686,6 +686,7 @@ impl Route {
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(true);
+                    resp.close_if_done_and_marked();
                 }
             }
         }
@@ -695,6 +696,9 @@ impl Route {
         resp.write_status(b"500 Build Failed");
         resp.write_header_int(b"Content-Length", 0);
         resp.end_without_body(true);
+        // `resume_pending_responses` runs uncorked from an event-loop task,
+        // where nothing else runs the close gate for `Connection: close`.
+        resp.close_if_done_and_marked();
     }
 }
 
@@ -720,6 +724,7 @@ impl Drop for PendingResponse {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
+            self.resp.close_if_done_and_marked();
         }
     }
 }

@@ -2030,7 +2030,7 @@ describe("node:vm Script functions called without a receiver", () => {
     expect({ viaCallUndefined, bare, reads }).toEqual({ viaCallUndefined: expected, bare: expected, reads: 0 });
   });
 
-  test("do not fail on a variable of the caller that is not initialized", async () => {
+  test.concurrent("do not fail on a variable of the caller that is not initialized", async () => {
     const fixture = `
       const { Script, createContext } = require("node:vm");
       ${scriptNatives}

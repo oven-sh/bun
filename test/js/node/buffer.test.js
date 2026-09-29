@@ -5773,7 +5773,7 @@ describe("read*/write* called without a receiver", () => {
 
   // A `let`, `const` or `class` binding that is not initialized yet holds no value at all. The accessors
   // read it as the `constructor` of their receiver, and the process died with a segmentation fault.
-  it("does not crash while `constructor` in the calling scope is not initialized", async () => {
+  it.concurrent("does not crash while `constructor` in the calling scope is not initialized", async () => {
     const calls = setCallee => `
       ${argumentsFor}
       const results = {};
@@ -5811,7 +5811,7 @@ describe("read*/write* called without a receiver", () => {
   // The call site first calls a JS function that returns. The DFG then keeps the call in the code it
   // compiles, and the accessor that the binding holds next is called from that code. This is a plain
   // call: the compiler inlines an accessor only at a method call on a Buffer.
-  it("keeps throwing the same error from a compiled call site", async () => {
+  it.concurrent("keeps throwing the same error from a compiled call site", async () => {
     using dir = tempDir("buffer-accessor-compiled-bare-call", {
       "compiled-call-site.cjs": `
         const { numberOfDFGCompiles, noInline } = require("bun:jsc");

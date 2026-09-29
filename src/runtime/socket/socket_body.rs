@@ -1113,6 +1113,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         matches!(self.socket.get().socket, uws::InternalSocket::Connected(_))
     }
 
+    /// `end()` was called and part of its data still waits in the queue.
+    #[inline]
+    fn has_pending_end_tail(&self) -> bool {
+        self.flags.get().contains(Flags::END_AFTER_FLUSH)
+            && self.buffered_data_for_node_net.get().len() > 0
+    }
+
+    /// The process stays alive until a pending `end()` tail is sent or the socket closes.
+    fn hold_loop_for_end_tail(&self) {
+        if self.has_pending_end_tail() {
+            self.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+        }
+    }
+
     /// True when this socket still points at `handlers` — false once a
     /// re-entrant reconnect or `upgradeTLS` repointed it.
     #[inline]
@@ -1421,6 +1435,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
+            self.buffered_data_for_node_net
+                .with_mut(|b| b.clear_and_free());
             // Allow the JS wrapper to be GC'd now that the socket is idle.
             // Do this before touching `handlers`: for the last server-side
             // connection on a stopped listener, `mark_inactive` releases the
@@ -1767,6 +1783,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if this.is_usockets_backed() && this.buffered_data_for_node_net.get().len() > 0 {
                 // `on_writable` sends the queued tail, then ends the socket.
                 this.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
+                this.hold_loop_for_end_tail();
                 return Ok(());
             }
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -1807,6 +1824,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
         if self.can_end_after_flush() {
             self.mark_inactive();
+        } else {
+            self.hold_loop_for_end_tail();
         }
     }
 
@@ -3320,7 +3339,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else {
+        } else if !this.has_pending_end_tail() {
+            // Otherwise the pending `end()` sends the FIN, after the tail.
             this.socket.get().shutdown();
         }
 
@@ -3406,6 +3426,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let sent = usize::try_from(wrote).expect("int cast");
                     if sent == total {
                         let _ = this.internal_flush();
+                    } else {
+                        this.hold_loop_for_end_tail();
                     }
                     let accepted = if queues_tail { total } else { sent };
                     JSValue::js_number(accepted as f64)
@@ -3438,6 +3460,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        if this.has_pending_end_tail() {
+            // The close that follows the tail releases the loop.
+            return Ok(JSValue::UNDEFINED);
+        }
         if this.socket.get().is_established() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         } else {

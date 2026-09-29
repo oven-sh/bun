@@ -4173,84 +4173,93 @@ Reo=
         };
       }
 
-      it("every client that shut down reads the last flight and the data of its server", async () => {
-        const { fail, step } = failures();
-        const server = tlsCreateServer({ key: SERVER_KEY, cert: SERVER_CRT, maxVersion: "TLSv1.2" }, socket => {
-          socket.on("error", fail);
-          socket.end(PAYLOAD);
-        });
-        server.on("tlsClientError", fail);
-        await once(server.listen(0, "127.0.0.1"), "listening");
-        // Flight 4 of TLS 1.2 is the server's Finished.
-        const relay = await holdingRelay((server.address() as net.AddressInfo).port, 4, fail);
-        const clients: Socket<Observed>[] = [];
-        try {
-          for (let i = 0; i < CONNECTIONS; i++) {
-            clients.push(
-              await Bun.connect({
-                hostname: "127.0.0.1",
-                port: relay.port,
-                tls: { ca: CA_CRT, serverName: "localhost" },
-                data: observed(fail),
-                socket: { open() {}, ...handlers },
-              }),
-            );
-          }
-          await step(relay.allHeld);
-          for (const client of clients) client.shutdown();
-          await step(relay.allShutDown);
-          relay.release();
-          await step(allClosed(clients));
-          expect(tally(clients)).toEqual(everyByte);
-        } finally {
-          for (const client of clients) client.terminate();
-          relay.close();
-          server.close();
-        }
-      });
+      // With no shutdown() the sockets read all of it on epoll before this change too.
+      for (const shutDown of [true, false]) {
+        const state = shutDown ? "shut down" : "did not shut down";
 
-      it("every accepted socket that shut down reads the last flight and the data of its client", async () => {
-        const { fail, step } = failures();
-        const accepted: Socket<Observed>[] = [];
-        using server = Bun.listen<Observed>({
-          hostname: "127.0.0.1",
-          port: 0,
-          tls: { key: SERVER_KEY, cert: SERVER_CRT },
-          socket: {
-            open(socket) {
-              socket.data = observed(fail);
-              accepted.push(socket);
-            },
-            ...handlers,
-          },
-        });
-        // Flight 3 of TLS 1.3 is the client's Finished.
-        const relay = await holdingRelay(server.port, 3, fail);
-        const clients: ReturnType<typeof tlsConnect>[] = [];
-        try {
-          for (let i = 0; i < CONNECTIONS; i++) {
-            const client = tlsConnect({
-              port: relay.port,
-              host: "127.0.0.1",
-              ca: CA_CRT,
-              servername: "localhost",
-              minVersion: "TLSv1.3",
-            });
-            client.on("error", fail);
-            client.on("secureConnect", () => client.end(PAYLOAD));
-            clients.push(client);
+        it(`every client that ${state} reads the last flight and the data of its server`, async () => {
+          const { fail, step } = failures();
+          const server = tlsCreateServer({ key: SERVER_KEY, cert: SERVER_CRT, maxVersion: "TLSv1.2" }, socket => {
+            socket.on("error", fail);
+            socket.end(PAYLOAD);
+          });
+          server.on("tlsClientError", fail);
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          // Flight 4 of TLS 1.2 is the server's Finished.
+          const relay = await holdingRelay((server.address() as net.AddressInfo).port, 4, fail);
+          const clients: Socket<Observed>[] = [];
+          try {
+            for (let i = 0; i < CONNECTIONS; i++) {
+              clients.push(
+                await Bun.connect({
+                  hostname: "127.0.0.1",
+                  port: relay.port,
+                  tls: { ca: CA_CRT, serverName: "localhost" },
+                  data: observed(fail),
+                  socket: { open() {}, ...handlers },
+                }),
+              );
+            }
+            await step(relay.allHeld);
+            if (shutDown) {
+              for (const client of clients) client.shutdown();
+              await step(relay.allShutDown);
+            }
+            relay.release();
+            await step(allClosed(clients));
+            expect(tally(clients)).toEqual(everyByte);
+          } finally {
+            for (const client of clients) client.terminate();
+            relay.close();
+            server.close();
           }
-          await step(relay.allHeld);
-          for (const socket of accepted) socket.shutdown();
-          await step(relay.allShutDown);
-          relay.release();
-          await step(allClosed(accepted));
-          expect(tally(accepted)).toEqual(everyByte);
-        } finally {
-          for (const client of clients) client.destroy();
-          relay.close();
-        }
-      });
+        });
+
+        it(`every accepted socket that ${state} reads the last flight and the data of its client`, async () => {
+          const { fail, step } = failures();
+          const accepted: Socket<Observed>[] = [];
+          using server = Bun.listen<Observed>({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key: SERVER_KEY, cert: SERVER_CRT },
+            socket: {
+              open(socket) {
+                socket.data = observed(fail);
+                accepted.push(socket);
+              },
+              ...handlers,
+            },
+          });
+          // Flight 3 of TLS 1.3 is the client's Finished.
+          const relay = await holdingRelay(server.port, 3, fail);
+          const clients: ReturnType<typeof tlsConnect>[] = [];
+          try {
+            for (let i = 0; i < CONNECTIONS; i++) {
+              const client = tlsConnect({
+                port: relay.port,
+                host: "127.0.0.1",
+                ca: CA_CRT,
+                servername: "localhost",
+                minVersion: "TLSv1.3",
+              });
+              client.on("error", fail);
+              client.on("secureConnect", () => client.end(PAYLOAD));
+              clients.push(client);
+            }
+            await step(relay.allHeld);
+            if (shutDown) {
+              for (const socket of accepted) socket.shutdown();
+              await step(relay.allShutDown);
+            }
+            relay.release();
+            await step(allClosed(accepted));
+            expect(tally(accepted)).toEqual(everyByte);
+          } finally {
+            for (const client of clients) client.destroy();
+            relay.close();
+          }
+        });
+      }
     });
   });
 });

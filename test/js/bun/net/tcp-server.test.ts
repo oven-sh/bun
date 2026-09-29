@@ -343,21 +343,33 @@ describe("one readiness event of a listener does not empty a long queue", () => 
 
   // No JS runs when an HTTP listener with TLS accepts, and its handshakes have a budget per
   // iteration of their own. What an accept changes for JS to see is the number of polls of the
-  // loop, read once per iteration. The clients never finish their handshake.
-  function watchPolls(arrived: Arrived, fail: (error: Error) => void) {
+  // loop, read once per iteration. The clients never finish their handshake, so the number
+  // rises by one per client and then stays: the promise rejects for more and for fewer.
+  function watchPolls(arrived: Arrived) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
     let last = getEventLoopStats().numPolls;
     let seen = 0;
     let samples = 0;
+    let quiet = 0;
     (function sample() {
-      for (const { numPolls } = getEventLoopStats(); last < numPolls; last++, seen++) arrived();
-      if (seen >= count) return;
+      for (const { numPolls } = getEventLoopStats(); last < numPolls; last++, seen++, quiet = 0) {
+        if (seen === count) return reject(new Error(`more than ${count} new polls`));
+        arrived();
+      }
+      if (seen === count && ++quiet === 10) return resolve();
       // Every client is in the queue already, so the accepts come in consecutive iterations.
-      if (++samples > 10 * count) return fail(new Error(`${seen} of ${count} accepts in ${samples} iterations`));
+      if (++samples > 10 * count) return reject(new Error(`${seen} of ${count} accepts in ${samples} iterations`));
       setImmediate(sample);
     })();
+    return promise;
   }
 
-  async function nodeServer(server: net.Server, unix: string | undefined, first?: string): Promise<Listener> {
+  async function nodeServer(
+    server: net.Server,
+    unix: string | undefined,
+    first?: string,
+    sockets: net.Socket[] = [],
+  ): Promise<Listener> {
     if (unix) server.listen(unix);
     else server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -367,6 +379,8 @@ describe("one readiness event of a listener does not empty a long queue", () => 
       stop() {
         server.close();
         (server as http.Server).closeAllConnections?.();
+        // close() leaves the connections of a net.Server open.
+        for (const socket of sockets) socket.destroy();
       },
     };
   }
@@ -379,8 +393,7 @@ describe("one readiness event of a listener does not empty a long queue", () => 
       arrived(socket.isPaused() ? "paused" : "c");
     });
     server.on("drop", () => arrived("d"));
-    server.on("close", () => sockets.forEach(socket => socket.destroy()));
-    return { server, listening: nodeServer(server, unix) };
+    return { server, listening: nodeServer(server, unix, undefined, sockets) };
   }
 
   const address = (server: { port?: number }, unix?: string) =>
@@ -487,7 +500,7 @@ describe("one readiness event of a listener does not empty a long queue", () => 
 
   it.each(Object.keys(kinds).filter(kind => !skipped(kind)))("%s", async kind => {
     const order: string[] = [];
-    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    const { promise: done, resolve } = Promise.withResolvers<void>();
     let accepted = 0;
     const arrived: Arrived = (label = "c") => {
       const id = ++accepted;
@@ -501,8 +514,7 @@ describe("one readiness event of a listener does not empty a long queue", () => 
 
     await using listener = await queued(kinds[kind], watched ? () => {} : arrived);
     expect(listener.connected).toBe(true);
-    if (watched) watchPolls(arrived, reject);
-    await done;
+    await Promise.all([done, watched ? watchPolls(arrived) : undefined]);
 
     const label = (id: number) => {
       if (kind === "node:net pauseOnConnect") return "paused" + id;

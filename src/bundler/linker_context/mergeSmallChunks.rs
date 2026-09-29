@@ -962,7 +962,8 @@ fn files_that_leave_entry_chunk(
     let mut only_starts: ArrayHashMap<u32, ()> = ArrayHashMap::new();
     // The wrapped files of another class.
     let mut outside: ArrayHashMap<u32, ()> = ArrayHashMap::new();
-    let mut external_parts: Vec<u32> = Vec::new();
+    // The external imports of the file that the walk is in: (part, edges that the part makes ahead of the import).
+    let mut externals: Vec<(u32, u32)> = Vec::new();
     let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
@@ -1025,33 +1026,48 @@ fn files_that_leave_entry_chunk(
         let mark = stack.len();
         let starts_here = own(file);
         let mut made_start = false;
-        // `for_each_edge` leaves out the imports of external modules. They go between the edges of the parts around them.
-        external_parts.clear();
+        // `for_each_edge` leaves out the imports of external modules. Each goes behind the edges of the records that its part lists ahead of it.
+        externals.clear();
         if starts_here && (file == entry_source || flags[file as usize].wrap == WrapKind::None) {
             for (part_index, part) in parts[file as usize].as_slice().iter().enumerate() {
-                if this.graph.parts_live[file as usize].is_set(part_index)
-                    && part.import_record_indices.iter().any(|&record| {
-                        let record = &records[file as usize][record as usize];
-                        record.kind == ImportKind::Stmt
-                            && !record.source_index.is_valid()
-                            && !record.flags.intersects(
-                                ImportRecordFlags::IS_UNUSED
-                                    | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
-                            )
-                    })
-                {
-                    external_parts.push(part_index as u32);
+                if !this.graph.parts_live[file as usize].is_set(part_index) {
+                    continue;
+                }
+                let mut edges_ahead = 0;
+                for &record in part.import_record_indices.iter() {
+                    let record = &records[file as usize][record as usize];
+                    if record.source_index.is_valid() {
+                        edges_ahead += 1;
+                    } else if record.kind == ImportKind::Stmt
+                        && !record.flags.intersects(
+                            ImportRecordFlags::IS_UNUSED
+                                | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                        )
+                    {
+                        externals.push((part_index as u32, edges_ahead));
+                    }
                 }
             }
         }
-        let mut externals = external_parts.iter().peekable();
+        let mut next_external = 0;
+        // The part of the last edge and the count of the edges of that part ahead of it.
+        let mut last_edge: (u32, u32) = (u32::MAX, 0);
         for_each_edge(this, file, live(file), |part_index, edge| {
+            last_edge = if last_edge.0 == part_index {
+                (part_index, last_edge.1 + 1)
+            } else {
+                (part_index, 0)
+            };
+            while externals
+                .get(next_external)
+                .is_some_and(|&external| external <= last_edge)
+            {
+                stack.push(OrderFrame::External(file));
+                next_external += 1;
+            }
             let Edge::Import(other) = edge else {
                 return;
             };
-            while externals.next_if(|&&part| part < part_index).is_some() {
-                stack.push(OrderFrame::External(file));
-            }
             if flags[other as usize].wrap != WrapKind::None
                 && live(other)
                 && let Some(part) = parts[file as usize].as_slice().get(part_index as usize)
@@ -1069,7 +1085,7 @@ fn files_that_leave_entry_chunk(
             }
             stack.push(OrderFrame::Enter(other));
         });
-        for _ in externals {
+        for _ in next_external..externals.len() {
             stack.push(OrderFrame::External(file));
         }
         stack[mark..].reverse();

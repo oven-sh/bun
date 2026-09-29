@@ -45,10 +45,11 @@ test("Response -> import { Response } from 'bun:app' transform in server compone
 
   // Check that Response import was added from 'bun:app'
   expect(serverResult).toContain('import { Response } from "bun:app"');
-  // Response is transformed to import_bun_app.Response
-  expect(serverResult).toContain("new import_bun_app.Response");
-  expect(serverResult).toContain("import_bun_app.Response.redirect");
-  expect(serverResult).toContain("import_bun_app.Response.render");
+  // Each read of Response is a read of the imported binding
+  expect(serverResult).toContain('= new Response("Hello"');
+  expect(serverResult).toContain('return Response.redirect("/login")');
+  expect(serverResult).toContain('return Response.render("/404")');
+  expect(serverResult).not.toContain("import_bun_app");
 
   // Build client component (should not have the transform)
   const clientResult = await Bun.$`${bunExe()} build ${path.join(dir, "client-component.js")} --target=browser`
@@ -94,11 +95,12 @@ test("Response import is added for global Response in various contexts", async (
 
   // Check that import was added
   expect(result).toContain('import { Response } from "bun:app"');
-  // Response is transformed to import_bun_app.Response
-  expect(result).toContain("new import_bun_app.Response");
-  expect(result).toContain("instanceof import_bun_app.Response");
-  expect(result).toContain("import_bun_app.Response.prototype.status");
-  expect(result).toContain("import_bun_app.Response.json");
+  // Each read of Response is a read of the imported binding
+  expect(result).toContain("= new Response");
+  expect(result).toContain("obj instanceof Response");
+  expect(result).toContain("status = Response.prototype.status");
+  expect(result).toContain("json = Response.json(");
+  expect(result).not.toContain("import_bun_app");
 });
 
 test("Response import is not added when Response is already imported or shadowed", async () => {
@@ -215,7 +217,8 @@ test("Response import is NOT added in client components", async () => {
 
   // Server component should have import from bun:app
   expect(serverResult).toContain('import { Response } from "bun:app"');
-  expect(serverResult).toContain("new import_bun_app.Response");
+  expect(serverResult).toContain('= new Response("Server"');
+  expect(serverResult).not.toContain("import_bun_app");
 });
 
 test("Response import is added when Response is global, but not when shadowed", async () => {
@@ -242,8 +245,170 @@ test("Response import is added when Response is global, but not when shadowed", 
   expect(serverResult).toContain('import { Response } from "bun:app"');
   // Local shadowed Response should not be affected
   expect(serverResult).toContain('new "ooga booga!"');
-  // Global Response is transformed to import_bun_app.Response
-  expect(serverResult).toContain("var lmao = new import_bun_app.Response");
+  // The global Response is a read of the imported binding
+  expect(serverResult).toContain("var lmao = new Response");
+  expect(serverResult).not.toContain("import_bun_app");
+});
+
+describe.concurrent("the built output runs", () => {
+  // The Response of "bun:app" is not the global one. It extends it and adds `render`.
+  const reads = `Response === globalThis.Response, new Response("x") instanceof globalThis.Response, typeof Response.render`;
+
+  async function buildAndRun(files: Record<string, string>, { args = [] as string[], entries = ["./entry.js"] } = {}) {
+    using dir = tempDir("response-run", files);
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--server-components", "--target=bun", ...args, ...entries, "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "out/entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = await Bun.file(path.join(dir, "out", "entry.js")).text();
+    return { output, result: { stdout, stderr, exitCode } };
+  }
+
+  test("esm", async () => {
+    const { output, result } = await buildAndRun({
+      "entry.js": `
+        export default function Page() {
+          return new Response("x");
+        }
+        console.log(${reads}, Page() instanceof Response);
+      `,
+    });
+    expect(result).toEqual({ stdout: "false true function true\n", stderr: "", exitCode: 0 });
+    expect(output).toContain('import { Response } from "bun:app"');
+  });
+
+  test("Response.redirect() and Response.render()", async () => {
+    const { result } = await buildAndRun({
+      "entry.js": `
+        const response = Response.redirect("/login", 302);
+        console.log(response instanceof globalThis.Response, response.status, response.headers.get("location"));
+        try {
+          Response.render("/404");
+        } catch (error) {
+          console.log(error.message);
+        }
+      `,
+    });
+    expect(result).toEqual({
+      stdout: "true 302 /login\nResponse.render() is only available in the Bun dev server\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The linker turns the read into `import_bun_app.Response` here, and declares `import_bun_app`.
+  // It does that only for a read that is an import item.
+  test("cjs", async () => {
+    const { output, result } = await buildAndRun({ "entry.js": `console.log(${reads});` }, { args: ["--format=cjs"] });
+    expect(result).toEqual({ stdout: "false true function\n", stderr: "", exitCode: 0 });
+    expect(output).toContain('var import_bun_app = require("bun:app")');
+  });
+
+  // The same conversion as cjs, with `__require` in place of `require`.
+  test("iife", async () => {
+    const { output, result } = await buildAndRun({ "entry.js": `console.log(${reads});` }, { args: ["--format=iife"] });
+    expect(result).toEqual({ stdout: "false true function\n", stderr: "", exitCode: 0 });
+    expect(output).toContain('var import_bun_app = __require("bun:app")');
+  });
+
+  test("two files that read Response, minified", async () => {
+    const { result } = await buildAndRun(
+      {
+        "entry.js": `
+          import { make } from "./other.js";
+          console.log(${reads}, make() instanceof Response);
+        `,
+        "other.js": `
+          export function make() {
+            return new Response("x");
+          }
+        `,
+      },
+      { args: ["--minify"] },
+    );
+    expect(result).toEqual({ stdout: "false true function true\n", stderr: "", exitCode: 0 });
+  });
+
+  test("a chunk shared by two entry points", async () => {
+    const { output, result } = await buildAndRun(
+      {
+        "entry.js": `
+          import { make } from "./shared.js";
+          console.log(${reads}, make() instanceof Response);
+        `,
+        "second.js": `
+          import { make } from "./shared.js";
+          console.log(make() instanceof Response);
+        `,
+        "shared.js": `
+          export function make() {
+            return new Response("x");
+          }
+        `,
+      },
+      { args: ["--splitting"], entries: ["./entry.js", "./second.js"] },
+    );
+    expect(result).toEqual({ stdout: "false true function true\n", stderr: "", exitCode: 0 });
+    expect(output).not.toContain("function make");
+  });
+
+  test("a re-export of Response", async () => {
+    const { output, result } = await buildAndRun({
+      "entry.js": `
+        import { Response as Named } from "./lib.js";
+        import * as ns from "./lib.js";
+        console.log(Named === globalThis.Response, ns.Response === Named, typeof Named.render, Object.keys(ns));
+      `,
+      "lib.js": `export { Response };`,
+    });
+    expect(result).toEqual({ stdout: 'false true function [ "Response" ]\n', stderr: "", exitCode: 0 });
+    expect(output).toContain('import { Response } from "bun:app"');
+  });
+
+  test("a CommonJS file", async () => {
+    const { output, result } = await buildAndRun({
+      "entry.js": `
+        module.exports = function Page() {
+          return new Response("x");
+        };
+        console.log(${reads}, module.exports() instanceof Response);
+      `,
+    });
+    expect(result).toEqual({ stdout: "false true function true\n", stderr: "", exitCode: 0 });
+    expect(output).toContain("__commonJS");
+  });
+
+  // The bundler keeps this statement, but the read is not counted as a use.
+  test("a read in dead code adds no import", async () => {
+    const { output, result } = await buildAndRun({
+      "entry.js": `
+        if (false) {
+          switch (new Response("x")) {
+            case 1:
+          }
+        }
+        console.log("ok");
+      `,
+    });
+    expect(output).toContain('switch (new Response("x"))');
+    expect(output).not.toContain("bun:app");
+    expect(result).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // Only the dev server sets the AsyncLocalStorage instance that these calls read.

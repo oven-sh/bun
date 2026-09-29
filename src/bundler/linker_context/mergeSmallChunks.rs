@@ -851,34 +851,56 @@ fn files_that_leave_entry_chunk(
         stack[mark..].reverse();
     }
 
-    // A file takes what it imports along. No chunk may import a pinned chunk, so the first file that cannot go ends the list.
+    // A file takes what it imports along. An import cycle imports a later file of the list: the list goes as one up to that file.
+    // No chunk may import a pinned chunk, so the first file that cannot go ends the list.
+    let mut position: ArrayHashMap<u32, usize> = ArrayHashMap::new();
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
-    for &candidate in &candidates[..cut] {
+    let mut later: Vec<u32> = Vec::new();
+    let mut next = 0;
+    while next < cut {
         taken.clear();
-        pending.push(candidate);
-        while let Some(file) = pending.pop() {
-            if leaves.is_set(file as usize) {
-                continue;
-            }
-            leaves.set(file as usize);
-            taken.push(file);
-            let mut stuck = false;
-            this.for_each_file_loaded_by(file, |other| {
-                if !own(other) || css[other as usize].is_some() || leaves.is_set(other as usize) {
-                    return;
+        let mut end = next + 1;
+        while next < end {
+            pending.push(candidates[next]);
+            next += 1;
+            while let Some(file) = pending.pop() {
+                if leaves.is_set(file as usize) {
+                    continue;
                 }
-                if other == entry_source || !this.loading_file_only_declares(other) {
-                    stuck = true;
-                } else {
-                    pending.push(other);
+                leaves.set(file as usize);
+                taken.push(file);
+                let mut stuck = false;
+                this.for_each_file_loaded_by(file, |other| {
+                    if !own(other) || css[other as usize].is_some() || leaves.is_set(other as usize)
+                    {
+                        return;
+                    }
+                    if other == entry_source {
+                        stuck = true;
+                    } else if this.loading_file_only_declares(other) {
+                        pending.push(other);
+                    } else {
+                        later.push(other);
+                    }
+                });
+                if !later.is_empty() && position.count() == 0 {
+                    for (index, &candidate) in candidates.iter().enumerate() {
+                        position.put(candidate, index)?;
+                    }
                 }
-            });
-            if stuck {
-                for &file in &taken {
-                    leaves.unset(file as usize);
+                for other in later.drain(..) {
+                    match position.get(&other) {
+                        Some(&index) => end = end.max(index + 1),
+                        None => stuck = true,
+                    }
                 }
-                return Ok(());
+                if stuck {
+                    for &file in &taken {
+                        leaves.unset(file as usize);
+                    }
+                    return Ok(());
+                }
             }
         }
     }

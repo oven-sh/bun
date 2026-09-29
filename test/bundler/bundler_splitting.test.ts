@@ -862,6 +862,104 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "after\nindex app declared\nsettings app" },
   });
+  // setup.js and logger.js import each other, so neither can move without the other.
+  itBundled("splitting/EntryFilesInImportCycleRunBeforeSharedCode", {
+    files: {
+      ...setupBeforeShared(""),
+      "/setup.js": /* js */ `
+        import { log } from "./logger.js";
+        globalThis.APP = { name: "app" };
+        log("setup");
+      `,
+      "/logger.js": /* js */ `
+        import "./setup.js";
+        console.log("logger");
+        export const log = message => console.log(message);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "settings.js"]);
+      api.expectFile("/out/index.js").not.toContain("globalThis.APP");
+      api.expectFile("/out/index.js").not.toContain(`"logger"`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+    },
+    run: { file: "/out/index.js", stdout: "logger\nsetup\nindex app\nsettings app" },
+  });
+  // The cycle ends after the shared code: setup.js and what runs before it go with logger.js. after.js stays.
+  itBundled("splitting/EntryFilesInImportCycleAroundSharedCodeMoveAsOne", {
+    files: {
+      ...setupBeforeShared(""),
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import "./after.js";
+        console.log("index");
+        import("./settings.js");
+      `,
+      "/setup.js": /* js */ `
+        import { log } from "./logger.js";
+        import { Store } from "./store.js";
+        import "./between.js";
+        log("setup " + new Store().name);
+      `,
+      "/logger.js": /* js */ `
+        import "./setup.js";
+        globalThis.APP = { name: "app" };
+        console.log("logger");
+        export const log = message => console.log(message);
+      `,
+      "/between.js": `console.log("between");`,
+      "/after.js": `console.log("after");`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`"after"`);
+      api.expectFile("/out/index.js").not.toContain(`"between"`);
+      api.expectFile("/out/index.js").not.toContain("globalThis.APP");
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+    },
+    run: { file: "/out/index.js", stdout: "logger\nbetween\nsetup app\nafter\nindex\nsettings app" },
+  });
+  // logger.js leads back to the entry point, so the cycle stays as a whole.
+  itBundled("splitting/EntryFilesInImportCycleThatLeadsBackToEntryStay", {
+    files: {
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import { Store } from "./store.js";
+        export const name = "index";
+        console.log(name, new Store().name);
+        import("./lazy.js");
+      `,
+      "/setup.js": `import { log } from "./logger.js"; log("setup");`,
+      "/logger.js": /* js */ `
+        import "./setup.js";
+        import { name } from "./index.js";
+        console.log("logger");
+        export const log = message => console.log(message, typeof (() => name));
+      `,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/lazy.js": `import { Store } from "./store.js"; console.log("lazy", new Store().name);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`"logger"`);
+      api.expectFile("/out/index.js").toContain(`"setup"`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+    },
+    run: { file: "/out/index.js", stdout: "store\nlogger\nsetup function\nindex s\nlazy s" },
+  });
 
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {

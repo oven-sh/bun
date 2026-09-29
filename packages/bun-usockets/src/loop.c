@@ -354,9 +354,14 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         }
 
         us_internal_socket_group_link_socket(s->group, s);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
-
         s->flags.low_prio_state = 2;
+
+        if (us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE) != 0) {
+            /* The dispatcher took this socket out of epoll when it hung up in the queue, and the
+             * kernel refused to take it back: nothing would report it again (see us_socket_resume). */
+            int err = LIBUS_ERR;
+            us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+        }
     }
 }
 
@@ -875,10 +880,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * read_eof is set there is nothing left to drain and deferring would only
              * lose the close. Error-flagged events keep the error path. A hangup
              * takes the write side down too, so a hangup_closes_unsent socket does
-             * not wait when the write this event retried failed again. */
+             * not wait when the write this event retried failed again.
+             * A socket that waits in the low-priority queue has its reads off too, and
+             * us_internal_handle_low_priority_sockets is its resume(). */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
-            if (eof_deferrable && s->flags.is_paused && !unsent_is_lost) {
+            const int reads_are_off = eof_deferrable &&
+                (s->flags.is_paused || (s->flags.low_prio_state == 1 && !(events & LIBUS_SOCKET_READABLE)));
+            if (reads_are_off && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */

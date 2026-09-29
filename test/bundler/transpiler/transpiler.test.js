@@ -2804,25 +2804,33 @@ export default class {
   describe("exports.eliminate", () => {
     // Side-effect-free `export class` / `export default` statements are hoisted to
     // the top of the file, but eliminating one leaves no part behind to hoist.
-    // [exports, source, printed module]
+    // [options, source, printed module]
     const keep = `export const keep = 1;\n`;
+    const eliminate = names => ({ exports: { eliminate: names } });
+    const inject = options => ({ exports: { replace: { default: ["N", 1] } }, ...options });
     const hoistable = [
-      [{ eliminate: ["A"] }, `export class A {}\n${keep}`, keep],
-      [{ eliminate: ["default"] }, `export default class A {}\n${keep}`, keep],
-      [{ eliminate: ["default"] }, `export default class {}\n${keep}`, keep],
-      [{ eliminate: ["default"] }, `export default function A() {}\n${keep}`, keep],
-      [{ eliminate: ["default"] }, `export default () => {};\n${keep}`, keep],
-      [{ eliminate: ["default"] }, `export default 42;\n${keep}`, keep],
+      [eliminate(["A"]), `export class A {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default class A {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default class {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default function A() {}\n${keep}`, keep],
+      [eliminate(["default"]), `export default () => {};\n${keep}`, keep],
+      [eliminate(["default"]), `export default 42;\n${keep}`, keep],
       // An entry that injects takes the export away too, and its own export stays.
-      [{ replace: { default: ["N", 1] } }, `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
-      [{ replace: { default: ["N", 1] } }, `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
-      [{ replace: { default: ["N", 1] } }, `export default function A() {}\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `export default function A() {}\n${keep}`, `export var N = 1;\n${keep}`],
+      [inject(), `interface T {}\nexport default T;\n${keep}`, `export var N = 1;\n${keep}`],
+      [
+        inject({ deadCodeElimination: false }),
+        `interface T {}\nexport default T;\n${keep}`,
+        `export var N = 1;\n${keep}`,
+      ],
     ];
 
     // Each of these aborted the process, so they run in one subprocess.
     it("takes a hoistable export away", async () => {
       const print = rows =>
-        rows.map(([exports, source]) => new Bun.Transpiler({ loader: "ts", exports }).transformSync(source));
+        rows.map(([options, source]) => new Bun.Transpiler({ loader: "ts", ...options }).transformSync(source));
       const result = await bunRun(["-e", `console.log(JSON.stringify((${print})(${JSON.stringify(hoistable)})))`]);
       expect(result).toEqual({
         stdout: JSON.stringify(hoistable.map(([, , module]) => module)),

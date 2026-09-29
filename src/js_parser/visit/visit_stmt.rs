@@ -524,6 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // this symbol, drop the statement.
                                     data.default_name.ref_ = Ref::NONE;
                                     restore_dead!();
+                                    inject_for_dead_value!();
                                     record_on_exit!();
                                     return Ok(());
                                 }

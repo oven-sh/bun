@@ -2869,6 +2869,7 @@ pub mod stmt;
 pub mod symbol;
 pub mod ts;
 pub mod use_directive;
+pub mod walk;
 
 pub mod lexer_log;
 pub use lexer_log::LexerLog;

@@ -2201,17 +2201,43 @@ describe("handling N rejected promises is O(N)", () => {
 });
 
 it("process.execArgv", async () => {
+  const script = join(__dirname, "print-process-execArgv.js");
+  // An eval has no script path in process.argv, so its `argv` is process.argv.slice(1).
+  const evalCode = "console.log(JSON.stringify({execArgv:process.execArgv,argv:process.argv.slice(1)}))";
+  // Every command below also gets `script` on stdin, so a bare `-` in the script
+  // position runs the same fixture from stdin. `argv` is process.argv.slice(2).
   const fixtures = [
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    // `-` is the stdin script, not an exec arg, and nothing after it is either.
+    ["run - a b", [], ["a", "b"]],
+    ["--smol run - -x --foo", ["--smol"], ["-x", "--foo"]],
+    ["run --smol - a", ["--smol"], ["a"]],
+    ["--smol - foo", ["--smol"], ["foo"]],
+    // `--` ends the exec args (node drops it from execArgv too).
+    ["--smol -- index.ts a", ["--smol"], ["a"]],
+    ["run --smol -- - a", ["--smol"], ["a"]],
+    ["--bun node --no-warnings -- index.ts a", ["--no-warnings"], ["a"]],
+    // #25387: a user option after `--` is not an exec arg, even when bun has an option with that name.
+    [`-e '${evalCode}' -- --silent a`, ["-e", evalCode], ["--silent", "a"]],
+    // ...unless they are the value of an option that takes one (and so is a value spelled `run`).
+    ["--conditions - index.ts", ["--conditions", "-"], []],
+    ["--conditions -- index.ts", ["--conditions", "--"], []],
+    ["--conditions run index.ts", ["--conditions", "run"], []],
+    // `--config` only takes a value as `--config=path`, so the next arg is the script.
+    ["--config index.ts a", ["--config"], ["a"]],
   ];
 
-  for (const [cmd, execArgv, argv] of fixtures) {
-    const replacedCmd = cmd.replace("index.ts", Bun.$.escape(join(__dirname, "print-process-execArgv.js")));
-    const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
-    expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
-  }
+  const results = await Promise.all(
+    fixtures.map(async ([cmd]) => {
+      const replacedCmd = cmd.replace("index.ts", Bun.$.escape(script));
+      return [cmd, await Bun.$`${bunExe()} ${{ raw: replacedCmd }} < ${script}`.json()];
+    }),
+  );
+  expect(Object.fromEntries(results)).toEqual(
+    Object.fromEntries(fixtures.map(([cmd, execArgv, argv]) => [cmd, { execArgv, argv }])),
+  );
 });
 
 describe("process.exitCode", () => {

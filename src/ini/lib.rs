@@ -436,9 +436,8 @@ mod draft {
                         };
                         offset += 1;
                     }
-                    // JSON.parse("") would throw; json::parse_utf8 returns the
-                    // shared EMPTY_OBJECT static, which a later [section] write
-                    // could then mutate. Fall through to the string path instead.
+                    // JSON.parse("") would throw. Fall through to the string
+                    // path instead.
                     if val.is_empty() {
                         break 'out;
                     }

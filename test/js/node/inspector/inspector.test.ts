@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, nodeExe, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExe, tempDir } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import inspector from "node:inspector";
 import { join } from "node:path";
 
@@ -655,6 +655,8 @@ async function spawnInspected(
   inspectedChildren.add(proc);
 
   let stderrText = "";
+  // A fixture can write a megabyte there.
+  const stderrEnd = () => stderrText.slice(-2000);
   let stderrClosed = false;
   let stderrChanged = Promise.withResolvers<void>();
   const drained = (async () => {
@@ -671,7 +673,7 @@ async function spawnInspected(
     for (;;) {
       const value = read();
       if (value !== undefined) return value;
-      if (stderrClosed) throw new Error(`stderr closed before ${what}: ${stderrText}`);
+      if (stderrClosed) throw new Error(`stderr closed before ${what}: ${stderrEnd()}`);
       await stderrChanged.promise;
     }
   };
@@ -683,7 +685,7 @@ async function spawnInspected(
       const marker = stderrText.indexOf(until);
       if (marker === -1) return undefined;
       const url = urlsIn(urlIsPrintedInsideTheCall ? stderrText.slice(marker) : stderrText.slice(0, marker)).at(-1);
-      if (!url && !urlIsPrintedInsideTheCall) throw new Error(`no inspector URL before ${until}: ${stderrText}`);
+      if (!url && !urlIsPrintedInsideTheCall) throw new Error(`no inspector URL before ${until}: ${stderrEnd()}`);
       return url;
     },
     `${JSON.stringify(until)} and the URL`,
@@ -708,7 +710,10 @@ async function spawnInspected(
     dir: String(dir),
     wsUrl,
     frontends,
-    stderr: () => stderrText,
+    stderrEnd,
+    /** Resolves when the child has printed the marker `count` times. */
+    marked: (count: number) =>
+      fromStderr(() => (stderrText.split(until).length > count ? true : undefined), `marker number ${count}`),
     /** The URL that the child prints after `previous`. */
     urlAfter: (previous: string) =>
       fromStderr(() => {
@@ -752,7 +757,7 @@ async function attachFrontend(inspected: Inspected, url: string = inspected.wsUr
     return entry;
   };
   const lost = (why: string) => {
-    const error = new Error(`${why}; stderr: ${inspected.stderr()}`);
+    const error = new Error(`${why}; stderr: ${inspected.stderrEnd()}`);
     opened.reject(error);
     for (const reply of replies.values()) reply.reject(error);
     for (const entry of notifications.values()) entry.reject(error);
@@ -805,7 +810,7 @@ async function sleeps(pid: number) {
 describe.each([
   ["bun", bunExe()],
   ["node", nodeExe()],
-])("the wait for a debugger (%s)", (runtime, exe) => {
+])("the wait for a debugger (%s)", (_runtime, exe) => {
   const inspectedTest = test.concurrent.skipIf(!exe);
   const spawn = (fixture: string, options?: Parameters<typeof spawnInspected>[2]) =>
     spawnInspected(exe!, fixture, options);
@@ -1008,37 +1013,6 @@ finish({ evaluated: globalThis.evaluated });
     });
   });
 
-  // A program starts its own frontend, as a debugger extension does with its
-  // bootloader. The helper is a process, so it runs while the program waits.
-  inspectedTest("returns when a helper that the program started resumes it", async () => {
-    await using inspected = await spawn(
-      `
-import { spawn } from "node:child_process";
-import { join } from "node:path";
-inspector.open(0, "127.0.0.1");
-spawn(process.execPath, [join(import.meta.dirname, "helper.mjs"), inspector.url()], { stdio: "inherit" });
-insideTheCall(() => inspector.waitForDebugger());
-finish();
-`,
-      {
-        files: {
-          "helper.mjs": `
-const ws = new WebSocket(process.argv[2]);
-ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
-// The program does not exit on Node while a frontend is attached.
-ws.onmessage = event => {
-  if (JSON.parse(event.data).id === 1) ws.close();
-};
-ws.onclose = () => process.exit(0);
-ws.onerror = () => process.exit(1);
-`,
-        },
-      },
-    );
-
-    expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode: 0 });
-  });
-
   // A call inside the wait returns at once, and the second expression runs
   // after it. The client sends that expression when the first one has begun,
   // so the two are never delivered in one batch. The nested call arms the wait
@@ -1100,21 +1074,64 @@ finish({ evaluatedByClient: globalThis.evaluatedByClient });
     },
   );
 
-  // At a breakpoint the call returns at once on both runtimes. Node keeps the
-  // request: the program stays stopped after Debugger.resume until a client
-  // sends Runtime.runIfWaitingForDebugger. Bun drops it, because the pause ends
-  // on Debugger.resume and nothing would run a wait that was armed inside it.
+  // JSC and V8 evaluate the condition of a breakpoint before the pause. The
+  // call in it is not at a pause: it waits.
+  inspectedTest("a call in the condition of a breakpoint waits for the client", async () => {
+    await using inspected = await spawn(
+      `
+globalThis.callInTheCondition = () => insideTheCall(() => inspector.waitForDebugger());
+inspector.open(0, "127.0.0.1");
+insideTheCall(() => inspector.waitForDebugger());
+const { withBreakpoint } = await import("./target.mjs");
+finish({ returned: withBreakpoint(), evaluatedByClient: globalThis.evaluatedByClient });
+`,
+      { files: { "target.mjs": `export function withBreakpoint() {\n  return "not paused";\n}\n` } },
+    );
+
+    const frontend = await attachFrontend(inspected);
+    await frontend.send("Debugger.enable");
+    await frontend.send("Debugger.setBreakpointByUrl", {
+      urlRegex: "target\\.mjs$",
+      lineNumber: 1,
+      columnNumber: 0,
+      condition: "(globalThis.callInTheCondition(), false)",
+    });
+    frontend.send("Runtime.runIfWaitingForDebugger");
+
+    await inspected.marked(2);
+    await frontend.send(...evaluate("globalThis.evaluatedByClient = 'inside the call: ' + globalThis.insideTheCall"));
+    frontend.send("Runtime.runIfWaitingForDebugger");
+
+    expect(await inspected.finished()).toEqual({
+      reported: { ...nothingRan, returned: "not paused", evaluatedByClient: "inside the call: true" },
+      exitCode: 0,
+    });
+  });
+
+  // At a breakpoint the call arms the wait and returns at once. The program
+  // then stays stopped after Debugger.resume, until a client sends
+  // Runtime.runIfWaitingForDebugger:
   // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_agent.cc#L778-L803
-  inspectedTest("a call that the client evaluates at a breakpoint returns at once", async () => {
+  inspectedTest("a call that the client evaluates at a breakpoint returns at once and arms the wait", async () => {
     await using inspected = await spawn(
       `
 globalThis.evaluated = [];
 inspector.open(0, "127.0.0.1");
 insideTheCall(() => inspector.waitForDebugger());
 await import("./paused.mjs");
+globalThis.ranAfterThePause = true;
 finish({ evaluated: globalThis.evaluated });
 `,
-      { files: { "paused.mjs": `debugger;\n` } },
+      {
+        files: {
+          "paused.mjs": `
+globalThis.ranAtThePause = [];
+setTimeout(() => globalThis.ranAtThePause.push("timer"), 0);
+setImmediate(() => globalThis.ranAtThePause.push("setImmediate"));
+debugger;
+`,
+        },
+      },
     );
 
     const frontend = await attachFrontend(inspected);
@@ -1135,14 +1152,86 @@ finish({ evaluated: globalThis.evaluated });
     const evaluated = await frontend.send(...evaluate("globalThis.evaluated.join()"));
     expect(evaluated.result.result.value).toBe("the nested call,the next expression");
 
-    frontend.send("Debugger.resume");
-    if (runtime === "node") frontend.send("Runtime.runIfWaitingForDebugger");
+    await frontend.send("Debugger.resume");
+    if (isLinux) await sleeps(inspected.proc.pid);
+    const stopped = await frontend.send(
+      ...evaluate("JSON.stringify([String(globalThis.ranAfterThePause), globalThis.ranAtThePause])"),
+    );
+    expect(stopped.result.result.value).toBe(`["undefined",[]]`);
+    frontend.send("Runtime.runIfWaitingForDebugger");
 
     expect(await inspected.finished()).toEqual({
       reported: { ...nothingRan, evaluated: ["the nested call", "the next expression"] },
       exitCode: 0,
     });
   });
+
+  // The client makes the call at a breakpoint and leaves at once. What it sent
+  // is delivered before the pause ends, so the program stays stopped until
+  // the next client resumes it.
+  inspectedTest("a call that the client evaluates at a breakpoint before it leaves arms the wait", async () => {
+    await using inspected = await spawn(
+      `
+inspector.open(0, "127.0.0.1");
+insideTheCall(() => inspector.waitForDebugger());
+await import("./paused.mjs");
+globalThis.ranAfterThePause = true;
+finish({ armedAtThePause: globalThis.armedAtThePause });
+`,
+      { files: { "paused.mjs": `debugger;\n` } },
+    );
+
+    const first = await attachFrontend(inspected);
+    await first.send("Debugger.enable");
+    const paused = first.notified("Debugger.paused");
+    await first.send("Runtime.runIfWaitingForDebugger");
+    await paused;
+    first.send(...evaluate("globalThis.inspectorOfTheProgram.waitForDebugger(); globalThis.armedAtThePause = true"));
+    await first.close();
+
+    const second = await attachFrontend(inspected);
+    const stopped = await second.send(
+      ...evaluate("JSON.stringify([String(globalThis.ranAfterThePause), globalThis.armedAtThePause])"),
+    );
+    expect(stopped.result.result.value).toBe(`["undefined",true]`);
+    second.send("Runtime.runIfWaitingForDebugger");
+
+    expect(await inspected.finished()).toEqual({
+      reported: { ...nothingRan, armedAtThePause: true },
+      exitCode: 0,
+    });
+  });
+});
+
+// A program starts its own frontend, as a debugger extension does with its
+// bootloader. The helper is a process, so it runs while the program waits.
+// Bun keeps a resume that comes before the call. Node handles it in an
+// interrupt, and the call then waits for a second one, so on Node this case
+// passes only when the helper is slower than the program.
+test.concurrent("inspector.waitForDebugger() returns when a helper that the program started resumes it", async () => {
+  await using inspected = await spawnInspected(
+    bunExe(),
+    `
+import { spawn } from "node:child_process";
+import { join } from "node:path";
+inspector.open(0, "127.0.0.1");
+spawn(process.execPath, [join(import.meta.dirname, "helper.mjs"), inspector.url()], { stdio: "inherit" });
+insideTheCall(() => inspector.waitForDebugger());
+finish();
+`,
+    {
+      files: {
+        "helper.mjs": `
+const ws = new WebSocket(process.argv[2]);
+ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+ws.onclose = () => process.exit(0);
+ws.onerror = () => process.exit(1);
+`,
+      },
+    },
+  );
+
+  expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode: 0 });
 });
 
 // A client attaches, resumes and leaves while the program is busy, before the
@@ -1191,6 +1280,81 @@ finish({ url: String(inspector.url()) });
     reported: { ...nothingRan, url: "undefined" },
     exitCode: 0,
   });
+});
+
+// The program has output that process.stderr could not write at once. The
+// listening line does not wait behind it: the queue of process.stderr is
+// flushed by the event loop, which does not run in the call. Node prints the
+// line from its I/O thread, and loses it when the pipe is full at that moment.
+test.concurrent(
+  "inspector.open(port, host, true) prints the listening line when process.stderr has a backlog",
+  async () => {
+    await using inspected = await spawnInspected(
+      bunExe(),
+      `
+insideTheCall(() => {
+  process.stderr.write(Buffer.alloc(1024 * 1024, "e").toString() + "\\n");
+  inspector.open(0, "127.0.0.1", true);
+});
+finish();
+`,
+      { urlIsPrintedInsideTheCall: true },
+    );
+
+    const frontend = await attachFrontend(inspected);
+    frontend.send("Runtime.runIfWaitingForDebugger");
+
+    expect(await inspected.finished()).toEqual({ reported: nothingRan, exitCode: 0 });
+  },
+);
+
+// fd 2 is full when open() writes the listening line: the test does not read
+// the pipe while its own event loop is blocked. The line then goes to the
+// queue of process.stderr, after the output that is already there. On Windows
+// a write to a full pipe blocks, so fd 2 is never full at the call.
+test.skipIf(isWindows)("inspector.open() keeps the listening line when fd 2 is full", async () => {
+  using dir = tempDir("inspector-listening-line", {
+    "fixture.mjs": `
+import inspector from "node:inspector";
+import { writeFileSync } from "node:fs";
+process.stderr.write(Buffer.alloc(1024 * 1024, "e").toString() + "\\n");
+inspector.open(0, "127.0.0.1");
+writeFileSync("url", inspector.url() + "\\n");
+inspector.waitForDebugger();
+process.stderr.write("AFTER_THE_CALL\\n", () => {
+  inspector.close();
+  process.exit(0);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "inherit",
+    stderr: "pipe",
+  });
+
+  const urlFile = join(String(dir), "url");
+  const deadline = Date.now() + 60_000;
+  let url = "";
+  while (!url.endsWith("\n")) {
+    if (Date.now() > deadline) throw new Error("the fixture did not open its inspector");
+    if (existsSync(urlFile)) url = readFileSync(urlFile, "utf8");
+  }
+  url = url.trim();
+
+  const ws = new WebSocket(url);
+  const opened = Promise.withResolvers<void>();
+  ws.onopen = () => opened.resolve();
+  ws.onerror = () => opened.reject(new Error("the inspector websocket errored"));
+  await opened.promise;
+  ws.send(JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  ws.close();
+  expect(stderr.replace(/^e+\n/, "")).toBe(`Debugger listening on ${url}\nAFTER_THE_CALL\n`);
+  expect(exitCode).toBe(0);
 });
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {

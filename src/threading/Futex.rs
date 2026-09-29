@@ -71,9 +71,6 @@ pub(crate) fn wake_raw(ptr: *const AtomicU32, max_waiters: u32) {
     imp::wake(ptr, max_waiters);
 }
 
-/// A backend got a return code that it has no arm for. The OS chose the code, or a layer that
-/// filters or emulates system calls did, so the message carries it.
-///
 /// `code` is by value: a reference gives the caller a stack slot, which every `wake()` pays for.
 #[cold]
 #[inline(never)]

@@ -960,6 +960,135 @@ test(
   timeout,
 );
 
+// A worker terminated after the direct stream it piped into a Bun.spawn() child's stdin has ended,
+// with the child not reading yet. The stream's controller detaches from the FileSink before it ends
+// it, so the sink is held only by the ref it keeps until its writer drains and closes. That close
+// never arrives once the worker's loop is gone: the sink leaked with the pipe open, and the child,
+// which outlives the worker, never saw EOF on its stdin.
+test(
+  "terminate() after a direct stream ended into a spawned child's stdin that has not drained",
+  async () => {
+    // controller.end() and controller.close() reach the sink through different entry points.
+    const cells = ["end", "close"];
+    using dir = tempDir("worker-ended-stdin-stream", {
+      "child.mjs": `
+        const [url, cell] = process.argv.slice(2);
+        // The gate answers once this child's worker is gone: nothing reads the pipe before that. Its
+        // response stays open, so the parent hears when this process goes away. No answer: the
+        // parent found a leak and does not wait for this child, or it is gone already.
+        const gate = await fetch(url + "gate/" + cell).then(response => response.body.getReader(), () => null);
+        const answer = gate ? new TextDecoder().decode((await gate.read().catch(() => ({}))).value) : "";
+        if (answer === "read") {
+          let failure = "";
+          try {
+            for await (const _ of Bun.stdin.stream()) {}
+          } catch (error) {
+            failure = String(error);
+          }
+          await fetch(url + (failure ? "failed/" : "eof/") + cell, { method: "POST", body: failure });
+        }
+        process.exit(0);
+      `,
+      "worker.js": `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const { url, cell, how } = workerData;
+        globalThis.child = Bun.spawn({
+          cmd: [process.execPath, require("node:path").join(__dirname, "child.mjs"), url, String(cell)],
+          stdin: new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              // More than the pipe holds: the rest stays buffered in the sink.
+              controller.write(new Uint8Array(4 << 20));
+              await 1;
+              controller[how]();
+              // After the microtasks in which the stream's owner hears that it ended.
+              setImmediate(() => parentPort.postMessage("ended"));
+            },
+          }),
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+      `,
+      "main.js": `
+        const { Worker } = require("node:worker_threads");
+        const { fileSinkInternals } = require("bun:internal-for-testing");
+        const { join } = require("node:path");
+        const cells = JSON.parse(process.argv[2]).map(how => ({ how, gate: Promise.withResolvers(), eof: Promise.withResolvers() }));
+        // Awaited only when nothing leaked: a child that goes away on the other path is no error.
+        for (const cell of cells) cell.eof.promise.catch(() => {});
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          async fetch(request) {
+            const [, what, index] = new URL(request.url).pathname.split("/");
+            const cell = cells[index];
+            if (what === "eof") {
+              cell.eof.resolve();
+              return new Response();
+            }
+            if (what === "failed") {
+              cell.eof.reject(new Error("child " + index + " failed: " + (await request.text())));
+              return new Response();
+            }
+            // The response stays open after the answer, so its abort is this child's exit.
+            request.signal.addEventListener("abort", () => cell.eof.reject(new Error("child " + index + " exited before it reported EOF")));
+            const answer = new TextEncoder().encode(await cell.gate.promise);
+            return new Response(new ReadableStream({ start(controller) { controller.enqueue(answer); } }));
+          },
+        });
+        function ended(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before its stream ended")));
+          });
+        }
+        (async () => {
+          const baseline = fileSinkInternals.liveCount();
+          await Promise.all(cells.map(async (cell, index) => {
+            const w = new Worker(join(__dirname, "worker.js"), { workerData: { url: server.url.href, cell: index, how: cell.how } });
+            // The exit event follows the worker's VM teardown.
+            const exited = new Promise(resolve => w.once("exit", resolve));
+            await ended(w);
+            await w.terminate();
+            await exited;
+          }));
+          const leakedFileSinks = fileSinkInternals.liveCount() - baseline;
+          // A leaked sink holds its child's stdin open, and that child would wait for EOF for ever.
+          for (const cell of cells) cell.gate.resolve(leakedFileSinks === 0 ? "read" : "exit");
+          let childrenThatSawEOF = 0;
+          if (leakedFileSinks === 0) {
+            await Promise.all(cells.map(cell => cell.eof.promise));
+            childrenThatSawEOF = cells.length;
+          }
+          server.stop();
+          console.log(JSON.stringify({ leakedFileSinks, childrenThatSawEOF }));
+        })().catch(error => {
+          console.error(error);
+          process.exit(1);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", JSON.stringify(cells)],
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes. A child that inherits it is
+      // SIGKILLed when the thread that spawned it exits (PR_SET_PDEATHSIG), which is the worker
+      // this test terminates. These children must outlive their worker to report EOF, and each
+      // one exits on its own once its gate is answered or the parent is gone.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify({ leakedFileSinks: 0, childrenThatSawEOF: cells.length }) + "\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // A worker exiting with fetches that have both a streaming request body (whose sink cell holds the
 // FetchTasklet) and a JS-touched response.body (a ByteStream source owned by another cell): the VM's
 // last sweep destroys cells in no particular order, and the tasklet's teardown unhooked itself as the

@@ -68,8 +68,10 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
-    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
+    /// Armed for a file opened for a `Bun.ModuleGraph`'s script, and while an ended sink drains.
     abort_handle: bun_jsc::AbortHandle,
+    /// `close_with_vm` armed `abort_handle`: only VM teardown closes this sink.
+    closes_with_vm_only: Cell<bool>,
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -500,9 +502,31 @@ impl FileSink {
     pub(crate) fn close_with_graph(&self, context: &bun_jsc::ScriptExecutionContext) {
         if let Some(context) = self.js_vm().and_then(|vm| vm.as_graph_context(context)) {
             // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
-            unsafe {
-                bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);
+            unsafe { bun_jsc::AbortHandle::arm_owner(self.abort_owner(), context) };
+        }
+    }
+
+    /// The allocation's pointer (the handler frees through it); a JS-constructed sink has none.
+    fn abort_owner(&self) -> *mut FileSink {
+        let allocation = self.writer.get().parent;
+        if allocation.is_null() {
+            core::ptr::from_ref(self).cast_mut()
+        } else {
+            allocation
+        }
+    }
+
+    /// Not on Windows: its teardown closes the pipes itself and still drains a file sink's writes.
+    fn close_with_vm(&self) {
+        #[cfg(not(windows))]
+        {
+            let Some(vm) = self.js_vm() else { return };
+            if vm.stop_phase_has_begun() || self.abort_handle.context_id().is_some() {
+                return;
             }
+            // SAFETY: as in `close_with_graph`.
+            unsafe { bun_jsc::AbortHandle::arm_owner(self.abort_owner(), vm.root_context()) };
+            self.closes_with_vm_only.set(true);
         }
     }
 
@@ -515,6 +539,7 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             (*this).abort_handle.leave();
+            (*this).closes_with_vm_only.set(false);
             if (*this).js_global().is_some() {
                 if let Some(stream) = (*this).pipe.get().stream() {
                     stream.done();
@@ -1299,6 +1324,7 @@ impl FileSink {
                     self.ref_();
                 }
                 self.done.set(true);
+                self.close_with_vm();
                 sys::Result::Ok(())
             }
         }
@@ -1398,6 +1424,7 @@ impl FileSink {
                     self.ref_();
                 }
                 self.done.set(true);
+                self.close_with_vm();
                 self.pending.with_mut(|p| {
                     // A write already pending on this slot owns `consumed`; seed it
                     // only when `end()` is the call that opens the slot.
@@ -1630,17 +1657,27 @@ impl FileSink {
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
+            closes_with_vm_only: Cell::new(false),
         }
     }
 }
 
-bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     // What is buffered is dropped with the graph: the writer closes without draining (a reader
     // that never reads would keep it open for ever), and a parked write gives up its promise and
     // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
-    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
-    // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
+    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) and is what
+    // `abort_owner` armed with; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
+        // The realm `bun test --isolate` retired leaves its loop running, which drains the write.
+        if (*this).closes_with_vm_only.replace(false)
+            && !matches!(
+                cause,
+                bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
+            )
+        {
+            return;
+        }
         let _guard = RefPtr::init_ref(this);
         (*this).done.set(true);
         #[cfg(windows)]

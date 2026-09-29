@@ -109,6 +109,9 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
+  memoryLimitRoute: $newRustFunction("subprocess.rs", "TestingAPIs.memoryLimitRoute", 1) as (
+    subprocess: import("bun").Subprocess,
+  ) => "job" | "cgroup" | "sampler" | undefined,
 };
 
 export const iniInternals = {

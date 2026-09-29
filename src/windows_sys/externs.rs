@@ -1444,6 +1444,18 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
+
+    pub fn QueryInformationJobObject(
+        hJob: HANDLE,
+        JobObjectInformationClass: DWORD,
+        lpJobObjectInformation: LPVOID,
+        cbJobObjectInformationLength: DWORD,
+        lpReturnLength: LPDWORD,
+    ) -> BOOL;
+
+    pub fn TerminateJobObject(hJob: HANDLE, uExitCode: UINT) -> BOOL;
+
+    pub fn TerminateProcess(hProcess: HANDLE, uExitCode: UINT) -> BOOL;
 }
 
 unsafe extern "C" {
@@ -1459,6 +1471,38 @@ unsafe extern "C" {
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
 /// `JOBOBJECTINFOCLASS::JobObjectExtendedLimitInformation` (`winnt.h`).
 pub const JobObjectExtendedLimitInformation: DWORD = 9;
+/// `JOBOBJECTINFOCLASS::JobObjectNotificationLimitInformation` (`winnt.h`, Windows 8+).
+pub const JobObjectNotificationLimitInformation: DWORD = 12;
+/// `JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION.LimitFlags` bit that arms `JobMemoryLimit`.
+pub const JOB_OBJECT_LIMIT_JOB_MEMORY: DWORD = 0x0000_0200;
+/// Completion port message: the last process in the job exited.
+pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: DWORD = 4;
+/// Completion port message: the job crossed a notification limit. Nothing fails inside the job.
+pub const JOB_OBJECT_MSG_NOTIFICATION_LIMIT: DWORD = 11;
+
+/// `JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION` (`winnt.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION {
+    pub IoReadBytesLimit: u64,
+    pub IoWriteBytesLimit: u64,
+    pub PerJobUserTimeLimit: i64,
+    pub JobMemoryLimit: u64,
+    pub RateControlTolerance: DWORD,
+    pub RateControlToleranceInterval: DWORD,
+    pub LimitFlags: DWORD,
+}
+
+/// `JOBOBJECTINFOCLASS::JobObjectMemoryUsageInformation` (`winnt.h`, Windows 10 1607+).
+pub const JobObjectMemoryUsageInformation: DWORD = 28;
+
+/// `JOBOBJECT_MEMORY_USAGE_INFORMATION` (`winnt.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct JOBOBJECT_MEMORY_USAGE_INFORMATION {
+    pub JobMemory: u64,
+    pub PeakJobMemoryUsed: u64,
+}
 
 /// `WAITORTIMERCALLBACK` (`winnt.h`) — thread-pool callback for
 /// `RegisterWaitForSingleObject`. `TimerOrWaitFired` is `TRUE` on timeout.

@@ -19,6 +19,7 @@
 /// Ctrl+C handling for a process acting as a shell for foreground children.
 #[path = "ctrl_c.rs"]
 pub mod ctrl_c;
+pub mod memory_watcher;
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
 /// `Status` / `SpawnOptions` / `SpawnResult`.
 #[path = "process.rs"]

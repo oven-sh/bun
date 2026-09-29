@@ -159,6 +159,7 @@ function spawn(file, args, options) {
   const windowsBatchFileError = options.windowsBatchFileError;
   if (windowsBatchFileError) throw windowsBatchFileError;
   validateTimeout(options.timeout);
+  validateMaxMemory(options.maxMemory);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
   const child = new ChildProcess();
@@ -253,6 +254,7 @@ function execFile(file, args, options?, callback?) {
 
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
+  validateMaxMemory(options.maxMemory);
 
   // Validate maxBuffer, if present.
   validateMaxBuffer(maxBuffer);
@@ -267,6 +269,7 @@ function execFile(file, args, options?, callback?) {
     uid: options.uid,
     gid: options.gid,
     cgroup: options.cgroup,
+    maxMemory: options.maxMemory,
     windowsHide: options.windowsHide,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
@@ -553,6 +556,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
+  validateMaxMemory(options.maxMemory);
 
   // Validate maxBuffer, if present.
   validateMaxBuffer(maxBuffer);
@@ -583,6 +587,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       signalCode,
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
+      exitedDueToMaxMemory,
       pid,
     }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
       exitCode: number | null;
@@ -603,6 +608,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       uid: options.uid,
       gid: options.gid,
       cgroup: options.cgroup,
+      maxMemory: options.maxMemory,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -664,6 +670,15 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       "ETIMEDOUT",
     );
   }
+  if (exitedDueToMaxMemory && error == null) {
+    result.error = new SystemError(
+      "spawnSync " + options.file + " ENOMEM (process tree reached maxMemory limit)",
+      options.file,
+      "spawnSync " + options.file,
+      enomemErrorCode(),
+      "ENOMEM",
+    );
+  }
   if (exitedDueToMaxBuffer && error == null) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
@@ -684,6 +699,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const enomemErrorCode = $newRustFunction("node_util_binding.rs", "enomemErrorCode", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1473,6 +1489,8 @@ class ChildProcess extends EventEmitter {
         uid: options.uid,
         gid: options.gid,
         cgroup: options.cgroup,
+        maxMemory: options.maxMemory,
+        killSignal: options.maxMemory == null ? undefined : sanitizeKillSignal(options.killSignal),
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1936,6 +1954,12 @@ function validateArgumentNullCheck(arg, propName) {
 function validateArgumentsNullCheck(args, propName) {
   for (let i = 0; i < args.length; ++i) {
     validateArgumentNullCheck(args[i], `${propName}[${i}]`);
+  }
+}
+
+function validateMaxMemory(maxMemory) {
+  if (maxMemory != null && maxMemory !== Infinity && !(NumberIsInteger(maxMemory) && maxMemory >= 0)) {
+    throw $ERR_OUT_OF_RANGE("options.maxMemory", "a non-negative integer", maxMemory);
   }
 }
 

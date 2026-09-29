@@ -155,23 +155,22 @@ it("cpus", () => {
 const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
 
 // Compiles redirect-open.c. `path` is undefined where ptrace is not permitted.
-function buildRedirectOpen() {
+async function buildRedirectOpen() {
   const dir = tempDir("os-cpus-redirect-open", {});
   const path = join(String(dir), "redirect-open");
-  const compile = Bun.spawnSync({
-    cmd: [cc, "-O1", "-o", path, join(import.meta.dir, "redirect-open.c")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (compile.exitCode !== 0) {
-    return { dir, error: compile.stdout.toString() + compile.stderr.toString() };
-  }
-  // 126: the kernel or a sandbox refused PTRACE_TRACEME.
-  const probe = Bun.spawnSync({ cmd: [path, "/proc/stat", "--", "true"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const run = async cmd => {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { output: stdout + stderr, exitCode };
+  };
+  const compile = await run([cc, "-O1", "-o", path, join(import.meta.dir, "redirect-open.c")]);
+  if (compile.exitCode !== 0) return { dir, error: compile.output };
+  // 126: the kernel or a sandbox does not permit ptrace.
+  const probe = await run([path, "/proc/stat", "--", "true"]);
   return { dir, path: probe.exitCode === 126 ? undefined : path };
 }
-const redirectOpen = cc ? buildRedirectOpen() : undefined;
+// describe.skipIf needs the answer when the file loads, so this cannot wait for beforeAll.
+const redirectOpen = cc ? await buildRedirectOpen() : undefined;
 
 afterAll(() => {
   redirectOpen?.dir[Symbol.dispose]();

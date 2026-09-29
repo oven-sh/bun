@@ -429,7 +429,7 @@ private:
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpContextData->maxHeadersCount, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, httpContextData->hasPathSensitiveRoute, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
@@ -575,7 +575,7 @@ private:
 
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting(), httpRequest->getTargetMayNormalize())) {
                 /* We have to force close this socket as we have no handler for it.
                  * close() first sends the responses to earlier requests of this read. */
                 ((AsyncSocket<SSL> *) s)->close();
@@ -1204,6 +1204,7 @@ public:
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
+            user.httpRequest->setRoutedUrl(r->getRoutedUrl());
 
             if (!httpContextData->flags.usingCustomExpectHandler) {
                 /* Middleware? Automatically respond to expectations */
@@ -1221,6 +1222,9 @@ public:
             }
             return true;
         }, priority);
+        /* The parser scans the request-target for the router only once a route
+         * other than the catch-all exists on any router of this context. */
+        httpContextData->hasPathSensitiveRoute = httpContextData->hasPathSensitiveRoute || httpContextData->currentRouter->hasRouteOtherThanCatchAll();
     }
 
     /* Whether this context runs the node:http compat instantiation. The installed

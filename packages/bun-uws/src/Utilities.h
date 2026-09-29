@@ -24,7 +24,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#elif defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace uWS {
 
@@ -62,6 +68,129 @@ static inline bool validPseudoHeaderTarget(std::string_view method, std::string_
     if (!authority.empty() && !host.empty() && authority != host) return false;
     if (authority.find('@') != std::string_view::npos) return false;
     return true;
+}
+
+struct RequestTargetScan {
+    /* Index of the first '?' or '#', or the target's length when it has
+     * neither. The path is everything before it. */
+    unsigned int pathEnd;
+    /* The path has a byte that can change how the URL parser splits it into
+     * segments. */
+    bool pathMayNormalize;
+};
+
+/* Bit masks over one 16-byte block of a request-target. Each byte owns
+ * BITS_PER_BYTE bits, all set when the byte matches: 1 bit from SSE2's
+ * movemask, 4 bits from NEON's narrowing shift. */
+struct RequestTargetBlock {
+#if defined(__ARM_NEON) && !defined(__SSE2__)
+    static constexpr unsigned BITS_PER_BYTE = 4;
+#else
+    static constexpr unsigned BITS_PER_BYTE = 1;
+#endif
+    uint64_t queryOrHash, slash, dotOrPercent, backslash;
+
+    static RequestTargetBlock load(const char *p) {
+#if defined(__SSE2__)
+        __m128i v = _mm_loadu_si128((const __m128i *) p);
+        auto eq = [&](char c) { return _mm_cmpeq_epi8(v, _mm_set1_epi8(c)); };
+        auto mask = [](__m128i m) { return (uint64_t) (unsigned) _mm_movemask_epi8(m); };
+        return {
+            mask(_mm_or_si128(eq('?'), eq('#'))),
+            mask(eq('/')),
+            mask(_mm_or_si128(eq('.'), eq('%'))),
+            mask(eq('\\')),
+        };
+#elif defined(__ARM_NEON)
+        uint8x16_t v = vld1q_u8((const uint8_t *) p);
+        auto eq = [&](char c) { return vceqq_u8(v, vdupq_n_u8((uint8_t) c)); };
+        auto mask = [](uint8x16_t m) { return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0); };
+        return {
+            mask(vorrq_u8(eq('?'), eq('#'))),
+            mask(eq('/')),
+            mask(vorrq_u8(eq('.'), eq('%'))),
+            mask(eq('\\')),
+        };
+#else
+        RequestTargetBlock b = {};
+        for (unsigned i = 0; i < 16; i++) {
+            uint64_t bit = 1ULL << i;
+            switch (p[i]) {
+            case '?': case '#': b.queryOrHash |= bit; break;
+            case '/': b.slash |= bit; break;
+            case '.': case '%': b.dotOrPercent |= bit; break;
+            case '\\': b.backslash |= bit; break;
+            default: break;
+            }
+        }
+        return b;
+#endif
+    }
+};
+
+/* One pass over a request-target. The path ends at the first '?' or '#', as
+ * it does for the URL parser. pathMayNormalize is the router's reason to ask
+ * the URL parser for the pathname instead of matching the raw bytes: it is
+ * set for a '\\' (the parser reads it as '/') or a segment that starts with
+ * '.' or '%' ("." / ".." / "%2e" / "%2e%2e" collapse). Any other byte keeps
+ * its segment. The parser may percent-encode it, but the segment boundaries,
+ * and so the matched route, stay the same. */
+static inline RequestTargetScan scanRequestTarget(std::string_view target) {
+    const char *data = target.data();
+    const size_t length = target.length();
+    constexpr unsigned BITS = RequestTargetBlock::BITS_PER_BYTE;
+    uint64_t marks = 0;
+    /* The low bits are set when the byte before the block is '/'. */
+    uint64_t previousSlash = 0;
+    size_t i = 0;
+    bool last = false;
+    while (!last) {
+        RequestTargetBlock b;
+        /* All bits of the bytes this block scans for the first time. */
+        uint64_t valid = ~0ULL;
+        if (i + 16 <= length) {
+            b = RequestTargetBlock::load(data + i);
+            last = i + 16 == length;
+        } else if (i == length) {
+            break;
+        } else if (length >= 16) {
+            /* The last block overlaps the previous one: the transports do not
+             * promise readable bytes past the target. */
+            unsigned repeated = (unsigned) (i - (length - 16));
+            b = RequestTargetBlock::load(data + length - 16);
+            valid <<= repeated * BITS;
+            i = length - 16;
+            last = true;
+        } else {
+            last = true;
+            /* Shorter than a block: a zero padded copy, no byte of interest is NUL. */
+            alignas(16) char copy[16] = {};
+            if (length >= 8) {
+                memcpy(copy, data, 8);
+                memcpy(copy + length - 8, data + length - 8, 8);
+            } else if (length >= 4) {
+                memcpy(copy, data, 4);
+                memcpy(copy + length - 4, data + length - 4, 4);
+            } else {
+                copy[0] = data[0];
+                copy[length - 1] = data[length - 1];
+                copy[length / 2] = data[length / 2];
+            }
+            b = RequestTargetBlock::load(copy);
+        }
+        uint64_t blockMarks = (b.backslash | (((b.slash << BITS) | previousSlash) & b.dotOrPercent)) & valid;
+        uint64_t end = b.queryOrHash & valid;
+        if (end) {
+            /* Only the bytes before the first '?' or '#' are path. */
+            uint64_t first = end & (0 - end);
+            marks |= blockMarks & (first - 1);
+            return {(unsigned int) (i + __builtin_ctzll(end) / BITS), marks != 0};
+        }
+        marks |= blockMarks;
+        previousSlash = b.slash >> (15 * BITS);
+        i += 16;
+    }
+    return {(unsigned int) length, marks != 0};
 }
 
 static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {

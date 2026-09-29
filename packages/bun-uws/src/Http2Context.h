@@ -756,6 +756,7 @@ struct Http2Context {
             Http2Response *res = r->getUserData().httpResponse;
             req->setYield(false);
             req->setParameters(r->getParameters());
+            req->setRoutedUrl(r->getRoutedUrl());
             handler(res, req);
             return !req->getYield();
         }, method == "*" ? router.LOW_PRIORITY : router.MEDIUM_PRIORITY);
@@ -1723,7 +1724,7 @@ inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_qui
     }
     ctx->dispatchDepth++;
     ctx->router.getUserData() = {stream, &req};
-    bool routed = ctx->router.route(req.getMethod(), req.getUrl());
+    bool routed = ctx->router.route(req.getMethod(), req.getUrl(), req.getTargetMayNormalize());
     ctx->dispatchDepth--;
     if (closed) return false;
     if (!routed && !stream->dead) {

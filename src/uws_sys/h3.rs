@@ -57,6 +57,20 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
+    /// See `uws_sys::Request::routed_url`.
+    pub fn routed_url(&mut self) -> &[u8] {
+        let mut p: *const u8 = ptr::null();
+        let n = c::uws_h3_req_get_routed_url(self, &mut p);
+        // SAFETY: uws returns a pointer+len pair valid for the duration of the dispatch
+        unsafe { bun_core::ffi::slice(p, n) }
+    }
+    /// Everything from the `?` on, or empty.
+    pub fn raw_query(&mut self) -> &[u8] {
+        let mut p: *const u8 = ptr::null();
+        let n = c::uws_h3_req_get_raw_query(self, &mut p);
+        // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
+        unsafe { bun_core::ffi::slice(p, n) }
+    }
     pub fn method(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         let n = c::uws_h3_req_get_method(self, &mut p);
@@ -772,6 +786,14 @@ mod c {
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
         pub(super) safe fn uws_h3_req_get_url(req: &mut Request, out: &mut *const u8) -> usize;
+        pub(super) safe fn uws_h3_req_get_routed_url(
+            req: &mut Request,
+            out: &mut *const u8,
+        ) -> usize;
+        pub(super) safe fn uws_h3_req_get_raw_query(
+            req: &mut Request,
+            out: &mut *const u8,
+        ) -> usize;
         pub(super) safe fn uws_h3_req_get_method(req: &mut Request, out: &mut *const u8) -> usize;
         pub(super) fn uws_h3_req_get_header(
             req: *mut Request,

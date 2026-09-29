@@ -157,6 +157,30 @@ for (const secure of [true, false]) {
       expect(ranged.body.toString()).toBe("0123456789");
     });
 
+    test("routes match the pathname that request.url reports", async () => {
+      // node:http2 sends :path as written, so these reach the router raw.
+      const dots = await request(session, { ":path": "/api/42/../../hello" });
+      expect(dots.status).toBe(200);
+      expect(dots.body.toString()).toBe("hello");
+
+      const inner = await request(session, { ":path": "/api/42/../7" });
+      expect(inner.headers["x-route"]).toBe("api");
+      expect(inner.body.toString()).toBe("id=7");
+
+      const up = await request(session, { ":path": "/api/.." });
+      expect(up.status).toBe(404);
+      expect(up.body.toString()).toBe("not found: /");
+
+      const fragment = await request(session, { ":path": "/api/42#frag" });
+      expect(fragment.status).toBe(200);
+      expect(fragment.headers["x-route"]).toBe("api");
+      expect(fragment.body.toString()).toBe("id=42");
+
+      // request.url is built from the path the router matched.
+      const url = await request(session, { ":path": "/api/../headers?x=1#f", ":authority": "example.test:9" });
+      expect(JSON.parse(url.body.toString()).url).toBe(`${secure ? "https" : "http"}://example.test:9/headers?x=1#f`);
+    });
+
     test("request url and headers reach the handler; :authority becomes host", async () => {
       const res = await request(session, {
         ":path": "/headers?x=1",

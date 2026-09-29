@@ -282,6 +282,10 @@ trait ReqLike {
     fn has_transfer_encoding(&mut self) -> bool;
     fn method(&mut self) -> &[u8];
     fn url(&mut self) -> &[u8];
+    /// The path the router matched, without the query (`uws_sys::Request::routed_url`).
+    fn routed_url(&mut self) -> &[u8];
+    /// Everything from the `?` on, or empty.
+    fn raw_query(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
 }
 impl ReqLike for uws_sys::Request {
@@ -300,6 +304,14 @@ impl ReqLike for uws_sys::Request {
     #[inline]
     fn url(&mut self) -> &[u8] {
         uws_sys::Request::url(self)
+    }
+    #[inline]
+    fn routed_url(&mut self) -> &[u8] {
+        uws_sys::Request::routed_url(self)
+    }
+    #[inline]
+    fn raw_query(&mut self) -> &[u8] {
+        uws_sys::Request::raw_query(self)
     }
     #[inline]
     fn set_yield(&mut self, y: bool) {
@@ -325,6 +337,14 @@ impl ReqLike for uws_sys::h3::Request {
     #[inline]
     fn url(&mut self) -> &[u8] {
         uws_sys::h3::Request::url(self)
+    }
+    #[inline]
+    fn routed_url(&mut self) -> &[u8] {
+        uws_sys::h3::Request::routed_url(self)
+    }
+    #[inline]
+    fn raw_query(&mut self) -> &[u8] {
+        uws_sys::h3::Request::raw_query(self)
     }
     #[inline]
     fn set_yield(&mut self, y: bool) {
@@ -3051,10 +3071,17 @@ where
                     let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
                     s
                 });
-            let path = ReqLike::url(req);
-            if !path.is_empty() && path[0] == b'/' {
-                if let Some(mut s) = prefix {
-                    s.extend_from_slice(path);
+            // Same `(routed path, query)` pair as `Request::ensure_url` for HTTP/1.
+            let routed_is_origin_form = {
+                let routed = ReqLike::routed_url(req);
+                !routed.is_empty() && routed[0] == b'/'
+            };
+            if routed_is_origin_form {
+                let mut s = prefix.unwrap_or_default();
+                let had_prefix = !s.is_empty();
+                s.extend_from_slice(ReqLike::routed_url(req));
+                s.extend_from_slice(ReqLike::raw_query(req));
+                if had_prefix {
                     // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
                     let href = bun_url::href_from_string(&BunString::from_bytes(&s));
                     request_object.url.set(if href.is_empty() {
@@ -3065,9 +3092,10 @@ where
                         href
                     });
                 } else {
-                    request_object.url.set(BunString::clone_utf8(path));
+                    request_object.url.set(BunString::clone_utf8(&s));
                 }
             } else {
+                let path = ReqLike::url(req);
                 request_object.url.set(BunString::clone_utf8(path));
             }
             ctx.clear_req();

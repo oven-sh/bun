@@ -1428,6 +1428,22 @@ extern "C"
     return value.length();
   }
 
+  size_t uws_req_get_routed_url(uws_req_t *res, const char **dest)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    std::string_view value = uwsReq->getRoutedUrl();
+    *dest = value.data();
+    return value.length();
+  }
+
+  size_t uws_req_get_raw_query(uws_req_t *res, const char **dest)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    std::string_view value = uwsReq->getRawQuery();
+    *dest = value.data();
+    return value.length();
+  }
+
   size_t uws_req_get_method(uws_req_t *res, const char **dest)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;

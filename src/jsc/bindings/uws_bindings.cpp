@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "wtf/text/WTFString.h"
+#include <wtf/URL.h>
 #include <bun-uws/src/App.h>
 #include <span>
 #include <string_view>
@@ -44,4 +45,23 @@ extern "C" JSC::EncodedJSValue uws_ws_get_topics_as_js_array(int ssl, uws_websoc
   } else {
     return uws_ws_get_topics_as_js_array_impl<false>(ws, globalObject);
   }
+}
+
+// The pathname the URL parser gives an origin-form request-target (see uWS::HttpRouter::route).
+extern "C" void Bun__HTTP__normalizeRequestPath(const char *target, size_t length, std::string *out) {
+  out->clear();
+  if (length == 0 || target[0] != '/') {
+    return;
+  }
+  // Placeholder host: only the pathname is read.
+  auto input = WTF::makeString("http://h"_s, WTF::String::fromUTF8ReplacingInvalidSequences(std::span {
+    reinterpret_cast<const unsigned char*>(target),
+    length
+  }));
+  WTF::URL url(WTF::move(input));
+  if (!url.isValid()) {
+    return;
+  }
+  WTF::CString path = url.path().utf8();
+  out->assign(path.data(), path.length());
 }

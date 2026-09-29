@@ -263,6 +263,16 @@ size_t uws_h3_req_get_url(uws_h3_req_t* req, const char** dest)
     return ffi_sv(((Http3Request*)req)->getFullUrl(), dest);
 }
 
+size_t uws_h3_req_get_routed_url(uws_h3_req_t* req, const char** dest)
+{
+    return ffi_sv(((Http3Request*)req)->getRoutedUrl(), dest);
+}
+
+size_t uws_h3_req_get_raw_query(uws_h3_req_t* req, const char** dest)
+{
+    return ffi_sv(((Http3Request*)req)->getRawQuery(), dest);
+}
+
 size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
 {
     return ffi_sv(((Http3Request*)req)->getMethod(), dest);

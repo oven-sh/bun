@@ -3,7 +3,6 @@
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <wtf/text/MakeString.h>
 #include "BunClientData.h"
 #include "InternalModuleRegistry.h"
 #include "ZigGlobalObject.h"
@@ -42,26 +41,28 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__crea
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* structure = sqlErrorStructure(vm, defaultGlobalObject(globalObject), isMySQL);
+    auto* realm = defaultGlobalObject(globalObject);
+    auto* structure = sqlErrorStructure(vm, realm, isMySQL);
     RETURN_IF_EXCEPTION(scope, {});
 
-    ASCIILiteral name = isMySQL ? "MySQLError"_s : "PostgresError"_s;
     String message = messageLength
         ? Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(messagePtr), messageLength })
         : emptyString();
-    String stack = message.isEmpty() ? String(name) : tryMakeString(name, ": "_s, message);
-    if (message.isNull() || stack.isNull()) [[unlikely]] {
+    if (message.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
 
     auto* error = ErrorInstance::create(vm, structure, message, JSValue());
     // Filled now, so that a later fill cannot overwrite the server's `line` and `column`.
-    error->setErrorInfoForEmbedderError({}, {}, WTF::move(stack));
+    error->setErrorInfoForEmbedderError({}, {}, String(emptyString()));
+    error->setStackPropertyAlreadyMaterialized();
     error->materializeErrorInfoIfNeeded(vm);
     // The position of no source. The caller writes the server's `line` and `column`, if any.
     error->putDirect(vm, vm.propertyNames->line, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     error->putDirect(vm, vm.propertyNames->column, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    // The first read makes `stack`, in the code of the reader and not in the client.
+    error->putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
     // Own and enumerable, as `this.name = ...` in the constructor of the class makes it.
     auto& strings = commonStrings(vm);
     error->putDirect(vm, vm.propertyNames->name, isMySQL ? strings.mySQLErrorString() : strings.postgresErrorString(), 0);

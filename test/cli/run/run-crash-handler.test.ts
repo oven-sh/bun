@@ -168,12 +168,10 @@ test("the crash report lists the CPU features", async () => {
 // recursion that lost its stack, on any thread, died with the default action:
 // exit 139 and nothing on stderr.
 //
-// Under ASAN bun leaves SIGSEGV to the sanitizer, which chains behind JSC's
-// handler and prints its own stack-overflow report.
-describe.if(isPosix)("native stack overflow is reported", () => {
-  const expected = isASAN ? "AddressSanitizer: stack-overflow" : "Stack overflow";
-  // The one-line ASAN report is enough; symbolizing its frames takes seconds.
-  const env = { ...noReportEnv, ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") };
+// Not in an ASAN build: JSC's handler needs more than the alternate stack that
+// ASAN gives a thread, so it stays without SA_ONSTACK there.
+describe.if(isPosix && !isASAN)("native stack overflow is reported", () => {
+  const env = noReportEnv;
 
   // The CI agents run with `ulimit -s unlimited`, where the main thread's stack
   // grows until it exhausts memory instead of hitting a guard page. Give the
@@ -194,11 +192,8 @@ describe.if(isPosix)("native stack overflow is reported", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain(expected);
-    if (!isASAN) {
-      expect(stderr).toContain("panic(main thread): Stack overflow");
-      expect(proc.signalCode).toBe("SIGSEGV");
-    }
+    expect(stderr).toContain("panic(main thread): Stack overflow");
+    expect(proc.signalCode).toBe("SIGSEGV");
     expect(exitCode).not.toBe(0);
   });
 
@@ -220,11 +215,8 @@ describe.if(isPosix)("native stack overflow is reported", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain(expected);
-    if (!isASAN) {
-      expect(stderr).toContain("panic(deep): Stack overflow");
-      expect(proc.signalCode).toBe("SIGSEGV");
-    }
+    expect(stderr).toContain("panic(deep): Stack overflow");
+    expect(proc.signalCode).toBe("SIGSEGV");
     expect(exitCode).not.toBe(0);
   });
 
@@ -321,13 +313,10 @@ int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toContain(expected);
+      expect(stderr).toContain("panic(main thread): Stack overflow");
       // The bytecode is on disk, so its VM existed when the process exited.
       expect(existsSync(path.join(String(dir), "out", "entry.js.jsc"))).toBe(true);
-      if (!isASAN) {
-        expect(stderr).toContain("panic(main thread): Stack overflow");
-        expect(proc.signalCode).toBe("SIGSEGV");
-      }
+      expect(proc.signalCode).toBe("SIGSEGV");
       expect(exitCode).not.toBe(0);
     });
 
@@ -348,12 +337,9 @@ int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toContain(expected);
+      expect(stderr).toContain("panic(BunCompileCache): Stack overflow");
       expect(stdout).toBe("hello\n");
-      if (!isASAN) {
-        expect(stderr).toContain("panic(BunCompileCache): Stack overflow");
-        expect(proc.signalCode).toBe("SIGSEGV");
-      }
+      expect(proc.signalCode).toBe("SIGSEGV");
       expect(exitCode).not.toBe(0);
     });
   });
@@ -362,7 +348,7 @@ int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
   // is a data access in the frame being entered, so an instruction fetch and an
   // access above the frame pointer keep the segmentation fault report and its
   // address. Linux: the addresses come from /proc/self/maps.
-  describe.if(isLinux && !isASAN)("a fault near the stack pointer that is not an overflow keeps its address", () => {
+  describe.if(isLinux)("a fault near the stack pointer that is not an overflow keeps its address", () => {
     const prelude = `
       const { CFunction, read } = require("bun:ffi");
       const maps = require("fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(Boolean)
@@ -400,7 +386,7 @@ int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
 
 // JSC turns an out-of-bounds WebAssembly access into a RuntimeError in its
 // SIGSEGV/SIGBUS handler. On a thread that has an alternate signal stack, that
-// handler runs on it.
+// handler runs on it, except in an ASAN build.
 describe("an out-of-bounds WebAssembly access throws", () => {
   const fixture = `
     // (module (memory 1) (func (export "load") (param i32) (result i32) local.get 0 i32.load))

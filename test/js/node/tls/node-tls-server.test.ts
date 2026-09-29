@@ -3216,13 +3216,16 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
     });
   });
 
-  // A write to the net.Socket under the TLS socket goes out raw. It fails like any other write,
-  // and the pair closes. The write repeats because the loopback of macOS can deliver the reset a
-  // moment after the peer's close.
+  // A write to the net.Socket under the TLS socket goes out raw. It fails like any other write and
+  // closes the connection. The TLS socket keeps what it holds unread, and closes once that is read.
+  // The write repeats because the loopback of macOS can deliver the reset a moment after the
+  // peer's close.
   it("tls.connect({ socket }) fails a write to its net.Socket after the reset", async () => {
     using t = await pausedClientOverNetSocket();
     await fillThenReset(t.socket, t.peer, t.peerClosed);
     expect(t.events).toEqual([]);
+    const connClosed = Promise.withResolvers<boolean>();
+    t.conn.on("close", connClosed.resolve);
     const failed = Promise.withResolvers<string>();
     (function writeUntilItFails() {
       t.conn.write("x", (error?: NodeJS.ErrnoException | null) => {
@@ -3231,10 +3234,9 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
       });
     })();
     expect(await failed.promise).toBe(`${isLinux ? "ECONNRESET" : "EPIPE"} write`);
-    // The TLS socket closes too. It also reports the reset where the failed send leaves the
-    // socket error in place (the BSDs). On Linux that send takes it.
+    expect(await connClosed.promise).toBe(true);
+    t.socket.resume();
     await t.closed;
-    expect(t.events).toEqual(isLinux ? ["close hadError=false"] : ["error ECONNRESET", "close hadError=true"]);
   });
 
   // Like a net write, the send that fails on the reset fails the write. After the peer's FIN the

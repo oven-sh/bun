@@ -16,8 +16,8 @@ pub enum Error {
     SourceMapTooLarge,
     #[error("embedded module graph would exceed 4 GiB (its offsets are 32-bit)")]
     ModuleGraphTooLarge,
-    #[error("an embedded shared library is malformed")]
-    MalformedEmbeddedLibrary,
+    #[error("an embedded shared library cannot be mirrored")]
+    UnusableEmbeddedLibrary,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -52,7 +52,7 @@ impl Error {
             Self::ModuleGraphTooLarge => {
                 "embedded module graph would exceed 4 GiB (its offsets are 32-bit)"
             }
-            Self::MalformedEmbeddedLibrary => "an embedded shared library is malformed",
+            Self::UnusableEmbeddedLibrary => "an embedded shared library cannot be mirrored",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Http(e) => e.name(),

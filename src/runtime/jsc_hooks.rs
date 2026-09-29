@@ -4548,6 +4548,9 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
     let rel = native_libs::mirror_relative_path(target.name, 0, &mut rel_buf[..])?;
     let facts = native_libs::loader_facts(bytes, bun_core::strings::count_char(rel, b'/')).ok()?;
     let pad = facts.map_or(0, |facts| facts.climb);
+    if pad > NativeLibrarySet::MAX_PAD {
+        return None;
+    }
     let single = MirrorSet {
         hash: native_libs::hash_set(pad, [(target.display_name(), bun_wyhash::hash(bytes))]),
         pad,

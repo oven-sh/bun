@@ -1559,6 +1559,9 @@ struct Candidate<'a> {
     alias_index: u32,
     climb: u32,
     needed: Vec<&'a [u8]>,
+    /// A PE image names the DLLs it imports and no place to find them: the
+    /// Windows loader looks in the image's own directory.
+    needs_its_directory: bool,
 }
 
 fn collect_native_library_set<'a>(
@@ -1601,6 +1604,7 @@ fn collect_native_library_set<'a>(
             alias_index: NativeLibrarySet::NO_ALIAS,
             climb: 0,
             needed: Vec::new(),
+            needs_its_directory: false,
         });
     }
     for i in 0..candidates.len() {
@@ -1632,19 +1636,27 @@ fn collect_native_library_set<'a>(
             .value
             .as_slice();
         match native_libs::loader_facts(bytes, depth) {
+            Ok(Some(facts)) if facts.climb > NativeLibrarySet::MAX_PAD => {
+                bun_core::pretty_errorln!(
+                    "<red>error<r>: embedded shared library <b>{}<r> has a search path that climbs {} directories above the embedded files (at most {})",
+                    bun_core::fmt::quote(candidates[index].rel_name),
+                    facts.climb,
+                    NativeLibrarySet::MAX_PAD,
+                );
+                return Err(crate::Error::UnusableEmbeddedLibrary);
+            }
             Ok(Some(facts)) => {
                 candidates[index].climb = facts.climb;
                 candidates[index].needed = facts.needed;
             }
-            // A file that only looks like a library by its name declares nothing.
-            Ok(None) => {}
+            Ok(None) => candidates[index].needs_its_directory = bytes.starts_with(b"MZ"),
             Err(reason) => {
                 bun_core::pretty_errorln!(
                     "<red>error<r>: embedded shared library <b>{}<r> is malformed: {}",
                     bun_core::fmt::quote(candidates[index].rel_name),
                     reason,
                 );
-                return Err(crate::Error::MalformedEmbeddedLibrary);
+                return Err(crate::Error::UnusableEmbeddedLibrary);
             }
         }
     }
@@ -1659,20 +1671,26 @@ fn collect_native_library_set<'a>(
     };
     let mut edges: Vec<u32> = Vec::new();
     let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(candidates.len());
-    for candidate in &candidates {
-        let start = edges.len() as u32;
-        for &name in &candidate.needed {
-            for found in needed_members(&candidates, candidate, name) {
-                let Some(found) = position_of(candidates[found].file_index) else {
-                    continue;
-                };
-                let found = found as u32;
-                if !edges[start as usize..].contains(&found) {
-                    edges.push(found);
-                }
+    for (index, candidate) in candidates.iter().enumerate() {
+        let start = edges.len();
+        let beside = candidates.iter().enumerate().filter(|&(other, c)| {
+            candidate.needs_its_directory
+                && other != index
+                && path::dirname(&c.mirror_path) == path::dirname(&candidate.mirror_path)
+        });
+        let named = candidate
+            .needed
+            .iter()
+            .flat_map(|name| needed_members(&candidates, candidate, name));
+        for found in beside.map(|(other, _)| other).chain(named) {
+            let Some(found) = position_of(candidates[found].file_index) else {
+                continue;
+            };
+            if found != index && !edges[start..].contains(&(found as u32)) {
+                edges.push(found as u32);
             }
         }
-        ranges.push((start, edges.len() as u32 - start));
+        ranges.push((start as u32, (edges.len() - start) as u32));
     }
     Ok(NativeLibrarySet {
         members: candidates

@@ -47,10 +47,9 @@ pub struct NativeLibrarySet {
 
 impl NativeLibrarySet {
     pub const NO_ALIAS: u32 = u32::MAX;
-    /// A climb past this is not padded: the path leaves the temp directory
-    /// itself, where a deeper mirror changes nothing. `PATH_MAX` bounds the
-    /// mirror, and 32 levels of `$ORIGIN/..` is already past any real layout
-    /// (sharp's deepest entry climbs 5).
+    /// The deepest nesting. Each level is two bytes of every mirrored path,
+    /// and macOS allows 1024. A library that climbs further is refused, at
+    /// build time and at load: a smaller pad would let its search path out.
     pub const MAX_PAD: u32 = 32;
 
     pub fn is_empty(&self) -> bool {
@@ -171,41 +170,42 @@ pub fn mirror_relative_path<'a>(name: &[u8], pad: u32, buf: &'a mut [u8]) -> Opt
     (len > 0).then(|| &buf[..len])
 }
 
+/// The tokens that mean "the directory of this library". Not
+/// `@executable_path`: that is the directory of the Bun executable, which the
+/// mirror does not move.
+const ORIGIN_TOKENS: [&[u8]; 3] = [b"${ORIGIN}", b"$ORIGIN", b"@loader_path"];
+
 /// How many directory levels a loader search path reaches above the embedded
 /// root, from a library whose own directory is `depth` levels below it. 0 when
 /// the path stays inside, or does not start at the library.
 ///
 /// Only a path that STARTS with the token is relative to the library: the
 /// loaders expand the token anywhere, but a path with anything before it is
-/// rooted there instead (`/opt/$ORIGIN/..` is under `/opt`), which this
-/// directory cannot move. The walk takes the highest point the path reaches,
-/// not its end: once a path leaves the root, a later segment re-enters the
-/// directory it left, not the root.
+/// rooted there instead (`/opt/$ORIGIN/..` is under `/opt`), which the mirror
+/// cannot move. What follows the token up to the first `/` only renames the
+/// library's directory (`$ORIGIN.old/x` is a sibling of it): glibc wants a
+/// non-identifier character there and musl takes any, so every prefix counts.
+/// The walk takes the highest point the path reaches, not its end: once a
+/// path leaves the root, a later segment re-enters the directory it left.
 pub fn origin_climb(path: &[u8], depth: usize) -> u32 {
-    // Not `@executable_path`: that is the directory of the Bun executable,
-    // which this mirror does not move.
-    const TOKENS: [&[u8]; 3] = [b"$ORIGIN", b"${ORIGIN}", b"@loader_path"];
-    let Some(rest) = TOKENS.iter().find_map(|token| path.strip_prefix(*token)) else {
+    let Some(rest) = ORIGIN_TOKENS
+        .iter()
+        .find_map(|token| path.strip_prefix(*token))
+    else {
         return 0;
     };
-    // `$ORIGINAL/x` is not the token.
-    if !matches!(rest.first(), None | Some(b'/')) {
-        return 0;
-    }
-    let mut level = depth as i64;
+    let mut level = i64::try_from(depth).unwrap_or(i64::MAX);
     let mut highest = level;
-    for segment in strings::split(rest, b"/") {
+    for segment in strings::split(rest, b"/").skip(1) {
         match segment {
             b"" | b"." => continue,
-            // `$LIB` and `$PLATFORM` expand to one directory name.
             b".." => level -= 1,
+            // A name, or a token that expands to one or more names.
             _ => level += 1,
         }
         highest = highest.min(level);
     }
-    u32::try_from(-highest)
-        .unwrap_or(0)
-        .min(NativeLibrarySet::MAX_PAD)
+    u32::try_from(-highest).unwrap_or(if highest < 0 { u32::MAX } else { 0 })
 }
 
 /// Where a load name that carries a path of its own lands inside the mirror:
@@ -214,8 +214,9 @@ pub fn origin_climb(path: &[u8], depth: usize) -> u32 {
 /// relative to the carrier (a bare soname, `@rpath`, an absolute path) or
 /// reaches outside the root, where no member can answer it.
 pub fn needed_relative_path<'a>(dir: &[u8], name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    const TOKENS: [&[u8]; 3] = [b"$ORIGIN", b"${ORIGIN}", b"@loader_path"];
-    let rest = TOKENS.iter().find_map(|token| name.strip_prefix(*token))?;
+    let rest = ORIGIN_TOKENS
+        .iter()
+        .find_map(|token| name.strip_prefix(*token))?;
     if !matches!(rest.first(), Some(b'/')) {
         return None;
     }
@@ -270,9 +271,12 @@ pub fn loader_facts(
     let mut facts = LoaderFacts::default();
     for entry in entries {
         match entry.kind {
-            // ELF search paths are colon-separated, Mach-O's are one each.
+            // An ELF entry is a list. glibc splits it at `:`, musl at `:` and
+            // at a newline, so a path counts in both readings.
             Kind::ElfRpath | Kind::ElfRunpath => {
-                for path in strings::split(entry.value, b":") {
+                let paths = strings::split(entry.value, b":")
+                    .chain(strings::split_any(entry.value, b":\n"));
+                for path in paths {
                     facts.climb = facts.climb.max(origin_climb(path, depth));
                 }
             }
@@ -396,14 +400,101 @@ mod tests {
         // Not relative to the library.
         assert_eq!(origin_climb(b"/opt/lib", 0), 0);
         assert_eq!(origin_climb(b"lib", 0), 0);
+        assert_eq!(origin_climb(b"", 0), 0);
         assert_eq!(origin_climb(b"@executable_path/../lib", 0), 0);
-        assert_eq!(origin_climb(b"$ORIGINAL/../lib", 0), 0);
         assert_eq!(origin_climb(b"/opt/$ORIGIN/../..", 0), 0);
-        // A path that climbs out of the temp directory is not padded further.
+        // What follows the token renames the library's directory: a sibling,
+        // at the same level. musl reads `$ORIGINAL` that way too.
+        assert_eq!(origin_climb(b"$ORIGIN.old/lib", 0), 0);
+        assert_eq!(origin_climb(b"$ORIGIN.old/../lib", 0), 1);
+        assert_eq!(origin_climb(b"${ORIGIN}old/../../lib", 1), 1);
+        assert_eq!(origin_climb(b"$ORIGINAL/../lib", 0), 1);
+        assert_eq!(origin_climb(b"@loader_pathx/../..", 0), 2);
+        // `$LIB` and `$PLATFORM` are names.
+        assert_eq!(origin_climb(b"$ORIGIN/$LIB/../../x", 0), 1);
+        // The true number, however large: the caller refuses what it cannot nest.
         assert_eq!(
-            origin_climb(&[&b"$ORIGIN"[..], &b"/..".repeat(64)].concat(), 0),
-            NativeLibrarySet::MAX_PAD
+            origin_climb(&[&b"$ORIGIN"[..], &b"/..".repeat(64)].concat(), 3),
+            61
         );
+    }
+
+    /// A 64-bit little-endian ELF image with one `PT_LOAD` over the whole
+    /// file and these dynamic strings.
+    fn elf_with(entries: &[(i64, &[u8])]) -> Vec<u8> {
+        const EHDR: usize = 64;
+        const PHDR: usize = 56;
+        const VADDR: u64 = 0x1000;
+        let mut strtab = vec![0u8];
+        let mut dynamic: Vec<(i64, u64)> = Vec::new();
+        for (tag, value) in entries {
+            dynamic.push((*tag, strtab.len() as u64));
+            strtab.extend_from_slice(value);
+            strtab.push(0);
+        }
+        let dynamic_at = EHDR + 2 * PHDR;
+        let strtab_at = dynamic_at + (dynamic.len() + 3) * 16;
+        dynamic.push((5, VADDR + strtab_at as u64));
+        dynamic.push((10, strtab.len() as u64));
+        dynamic.push((0, 0));
+        let mut image = vec![0u8; strtab_at + strtab.len()];
+        image[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        image[32..40].copy_from_slice(&(EHDR as u64).to_le_bytes());
+        image[54..56].copy_from_slice(&(PHDR as u16).to_le_bytes());
+        image[56..58].copy_from_slice(&2u16.to_le_bytes());
+        let total = image.len() as u64;
+        let mut phdr = |index: usize, kind: u32, offset: u64, size: u64| {
+            let at = EHDR + index * PHDR;
+            image[at..at + 4].copy_from_slice(&kind.to_le_bytes());
+            image[at + 8..at + 16].copy_from_slice(&offset.to_le_bytes());
+            image[at + 16..at + 24].copy_from_slice(&(VADDR + offset).to_le_bytes());
+            image[at + 32..at + 40].copy_from_slice(&size.to_le_bytes());
+        };
+        phdr(0, 1, 0, total);
+        phdr(1, 2, dynamic_at as u64, (dynamic.len() * 16) as u64);
+        for (index, (tag, value)) in dynamic.iter().enumerate() {
+            let at = dynamic_at + index * 16;
+            image[at..at + 8].copy_from_slice(&tag.to_le_bytes());
+            image[at + 8..at + 16].copy_from_slice(&value.to_le_bytes());
+        }
+        image[strtab_at..].copy_from_slice(&strtab);
+        image
+    }
+
+    #[test]
+    fn loader_facts_of_a_library() {
+        const DT_NEEDED: i64 = 1;
+        const DT_RPATH: i64 = 15;
+        const DT_RUNPATH: i64 = 29;
+
+        // The deepest entry of a list decides, and a name the loader opens is kept as written.
+        let image = elf_with(&[
+            (DT_NEEDED, b"libfoo.so.1"),
+            (DT_RUNPATH, b"$ORIGIN:$ORIGIN/../../lib:/usr/lib"),
+        ]);
+        let facts = loader_facts(&image, 1).unwrap().unwrap();
+        assert_eq!(facts.climb, 1);
+        assert_eq!(facts.needed, [&b"libfoo.so.1"[..]]);
+
+        // A path inside a load name counts like a search path.
+        let image = elf_with(&[(DT_NEEDED, b"$ORIGIN/../../lib/libdep.so")]);
+        assert_eq!(loader_facts(&image, 0).unwrap().unwrap().climb, 2);
+
+        // musl ends a path at a newline too.
+        let image = elf_with(&[(DT_RPATH, b"lib\n$ORIGIN/../..")]);
+        assert_eq!(loader_facts(&image, 0).unwrap().unwrap().climb, 2);
+        // glibc does not: the whole piece is one path that starts at the library.
+        let image = elf_with(&[(DT_RPATH, b"$ORIGIN/a\nb/../../..")]);
+        assert_eq!(loader_facts(&image, 0).unwrap().unwrap().climb, 2);
+
+        assert!(
+            loader_facts(b"MZ\x90\0not an image bun reads", 0)
+                .unwrap()
+                .is_none()
+        );
+        let mut cut = elf_with(&[(DT_NEEDED, b"libfoo.so.1")]);
+        cut.truncate(cut.len() - 4);
+        assert!(loader_facts(&cut, 0).is_err());
     }
 
     #[test]

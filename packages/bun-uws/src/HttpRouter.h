@@ -30,6 +30,11 @@
 
 #include "MoveOnlyFunction.h"
 
+/* Writes the URL parser's pathname for an origin-form request-target to `out`,
+ * or clears `out` when the target is not origin-form or does not parse.
+ * Defined in src/jsc/bindings/uws_bindings.cpp. */
+extern "C" void Bun__HTTP__normalizeRequestPath(const char *target, size_t length, std::string *out);
+
 namespace uWS {
 
 template <typename UserDataType>
@@ -51,6 +56,14 @@ private:
     std::string_view currentUrl = {};
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
+
+    /* The URL parser's pathname for the request being routed. Filled only
+     * when the transport flagged the target (scanRequestTarget) and a route
+     * other than the catch-all exists. Parameters of that request point into it. */
+    std::string normalizedUrl = {};
+    /* Set by add() for any pattern other than the catch-all. A router that
+     * holds only the catch-all matches every path as is, so it never asks the parser. */
+    bool hasPathSensitiveRoute = false;
 
     /* The matching tree */
     struct Node {
@@ -251,8 +264,17 @@ public:
         return userData;
     }
 
-    /* Fast path */
-    bool route(std::string_view method, std::string_view url) {
+    /* Fast path. mayNormalize is the transport's verdict that the raw path
+     * and the URL parser's pathname can differ in segments; then the match
+     * runs on the parser's pathname, the same one request.url reports. */
+    bool route(std::string_view method, std::string_view url, bool mayNormalize) {
+        if (mayNormalize && hasPathSensitiveRoute) [[unlikely]] {
+            Bun__HTTP__normalizeRequestPath(url.data(), url.length(), &normalizedUrl);
+            if (!normalizedUrl.empty()) {
+                url = normalizedUrl;
+            }
+        }
+
         /* Reset url parsing cache */
         setUrl(url);
         routeParameters.reset();
@@ -280,6 +302,10 @@ public:
     void add(std::span<const std::string_view> methods, std::string_view pattern, MoveOnlyFunction<bool(HttpRouter *)> &&handler, uint32_t priority = MEDIUM_PRIORITY) {
         /* First remove existing handler */
         remove(methods[0], pattern, priority);
+
+        if (pattern != "/*") {
+            hasPathSensitiveRoute = true;
+        }
 
         for (const std::string_view method : methods) {
             /* Lookup method */

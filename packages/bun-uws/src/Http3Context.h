@@ -37,7 +37,7 @@ struct Http3Context {
             Http3Request req(s);
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
-            if (!cd->router.route(req.getMethod(), req.getUrl())) {
+            if (!cd->router.route(req.getMethod(), req.getUrl(), req.getTargetMayNormalize())) {
                 res->writeStatus("404 Not Found")->end();
             }
         });

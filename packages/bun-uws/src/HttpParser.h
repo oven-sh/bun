@@ -39,6 +39,7 @@
 
 #include "BloomFilter.h"
 #include "QueryParser.h"
+#include "Utilities.h"
 #include "HttpErrors.h"
 
 #if defined(_WIN32)
@@ -198,6 +199,8 @@ struct HttpResponseData;
         bool didYield;
         /* Written right before the request handler runs; see getHasTransferEncoding(). */
         bool hasTransferEncoding;
+        /* See scanRequestTarget(). */
+        bool targetMayNormalize;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
@@ -230,6 +233,13 @@ struct HttpResponseData;
         bool getHasTransferEncoding()
         {
             return hasTransferEncoding;
+        }
+
+        /* The path may not equal the URL parser's pathname, so the router has
+         * to ask the parser before it matches (see scanRequestTarget()). */
+        bool getTargetMayNormalize()
+        {
+            return targetMayNormalize;
         }
 
         /* Iteration over headers (key, value) */
@@ -1408,9 +1418,10 @@ struct HttpResponseData;
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
-            /* Parse query */
-            const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
-            req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+            /* Parse query, and note whether the path needs the URL parser before routing */
+            RequestTargetScan targetScan = scanRequestTarget(req->headers->value);
+            req->querySeparator = targetScan.querySeparator;
+            req->targetMayNormalize = targetScan.pathMayNormalize;
 
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {

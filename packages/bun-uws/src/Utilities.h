@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 namespace uWS {
@@ -62,6 +63,54 @@ static inline bool validPseudoHeaderTarget(std::string_view method, std::string_
     if (!authority.empty() && !host.empty() && authority != host) return false;
     if (authority.find('@') != std::string_view::npos) return false;
     return true;
+}
+
+struct RequestTargetScan {
+    /* Index of the first '?', or the target's length when it has none. */
+    unsigned int querySeparator;
+    /* The path before the query has a byte that can change how the URL parser
+     * splits it into segments. */
+    bool pathMayNormalize;
+};
+
+/* One pass over a request-target, eight bytes at a time. The query separator
+ * is what every request needs. pathMayNormalize is the router's reason to ask
+ * the URL parser for the pathname instead of matching the raw bytes: it is set
+ * for a '#' (ends the path), a '\\' (the parser reads it as '/'), or a segment
+ * that starts with '.' or '%' ("." / ".." / "%2e" / "%2e%2e" collapse). Any
+ * other byte keeps its segment. The parser may percent-encode it, but the
+ * segment boundaries, and so the matched route, stay the same. */
+static inline RequestTargetScan scanRequestTarget(std::string_view target) {
+    constexpr uint64_t ONES = 0x0101010101010101ULL;
+    constexpr uint64_t LOW7 = 0x7f7f7f7f7f7f7f7fULL;
+    /* 0x80 in every byte of `w` that is zero, and nowhere else. */
+    auto zeroBytes = [](uint64_t w) { return ~(((w & LOW7) + LOW7) | w | LOW7); };
+
+    const char *data = target.data();
+    const size_t length = target.length();
+    uint64_t marks = 0;
+    /* Bit 7 is set when the previous word ended with '/'. */
+    uint64_t previousSlash = 0;
+    for (size_t i = 0; i < length; i += 8) {
+        uint64_t word = 0;
+        /* The tail is zero padded: no byte this scan looks for is NUL, and
+         * neither transport delivers a NUL inside the target. */
+        memcpy(&word, data + i, length - i < 8 ? length - i : 8);
+        uint64_t slash = zeroBytes(word ^ (ONES * '/'));
+        uint64_t wordMarks = zeroBytes(word ^ (ONES * '#'))
+            | zeroBytes(word ^ (ONES * '\\'))
+            | (((slash << 8) | previousSlash) & (zeroBytes(word ^ (ONES * '.')) | zeroBytes(word ^ (ONES * '%'))));
+        uint64_t query = zeroBytes(word ^ (ONES * '?'));
+        if (query) {
+            /* Only the bytes before the first '?' are path. */
+            uint64_t firstQuery = query & (0 - query);
+            marks |= wordMarks & (firstQuery - 1);
+            return {(unsigned int) (i + (__builtin_ctzll(query) >> 3)), marks != 0};
+        }
+        marks |= wordMarks;
+        previousSlash = slash >> 56;
+    }
+    return {(unsigned int) length, marks != 0};
 }
 
 static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {

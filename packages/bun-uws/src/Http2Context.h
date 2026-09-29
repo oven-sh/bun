@@ -1723,7 +1723,7 @@ inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_qui
     }
     ctx->dispatchDepth++;
     ctx->router.getUserData() = {stream, &req};
-    bool routed = ctx->router.route(req.getMethod(), req.getUrl());
+    bool routed = ctx->router.route(req.getMethod(), req.getUrl(), req.getTargetMayNormalize());
     ctx->dispatchDepth--;
     if (closed) return false;
     if (!routed && !stream->dead) {

@@ -1107,3 +1107,100 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+describe("route matching on the path that request.url reports", () => {
+  // fetch() normalizes the path before it sends the request, so these are
+  // written to a raw socket. The router must pick the same route for the
+  // pathname that the handler sees in request.url: dot segments resolve,
+  // a "\" is a "/", and a "#" ends the path.
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      routes: {
+        "/public/:file": req =>
+          Response.json({
+            route: "/public/:file",
+            params: req.params,
+            pathname: new URL(req.url).pathname,
+            search: new URL(req.url).search,
+          }),
+        "/admin": () => Response.json({ route: "/admin" }),
+        "/static": new Response("static"),
+        "/.well-known/:name": req => Response.json({ route: "/.well-known/:name", params: req.params }),
+      },
+      fetch: req => Response.json({ route: "fetch", pathname: new URL(req.url).pathname }),
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  async function rawGet(target: string): Promise<{ status: number; body: string }> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));
+    const response = await promise;
+    const sep = response.indexOf("\r\n\r\n");
+    return { status: Number(response.split(" ")[1]), body: response.slice(sep + 4) };
+  }
+
+  test.each([
+    ["/public/..", { route: "fetch", pathname: "/" }],
+    ["/public/%2e%2e", { route: "fetch", pathname: "/" }],
+    ["/public/%2E%2E/", { route: "fetch", pathname: "/" }],
+    ["/public/../admin", { route: "/admin" }],
+    ["/public/./../admin", { route: "/admin" }],
+    ["/x/y/../../admin", { route: "/admin" }],
+    ["/admin#section", { route: "/admin" }],
+    ["/admin/.", { route: "fetch", pathname: "/admin/" }],
+  ])("%s matches the route for the resolved path", async (target, expected) => {
+    const { status, body } = await rawGet(target);
+    expect(JSON.parse(body)).toEqual(expected);
+    expect(status).toBe(200);
+  });
+
+  test("a static Response route matches the resolved path", async () => {
+    const { status, body } = await rawGet("/public/../static");
+    expect(body).toBe("static");
+    expect(status).toBe(200);
+  });
+
+  test.each([
+    ["/public/a.txt#frag", "a.txt", "/public/a.txt", ""],
+    ["/public/a.txt#frag?x=1", "a.txt", "/public/a.txt", ""],
+    ["/public\\a.txt", "a.txt", "/public/a.txt", ""],
+    ["/public/b/../a.txt?x=1", "a.txt", "/public/a.txt", "?x=1"],
+    ["/public/a%2Fb.txt", "a/b.txt", "/public/a%2Fb.txt", ""],
+    ["/public/.hidden", ".hidden", "/public/.hidden", ""],
+    ["/public/a..b", "a..b", "/public/a..b", ""],
+  ])("%s gives the parameter that request.url holds", async (target, file, pathname, search) => {
+    const { status, body } = await rawGet(target);
+    expect(JSON.parse(body)).toEqual({ route: "/public/:file", params: { file }, pathname, search });
+    expect(status).toBe(200);
+  });
+
+  test("a dot-file segment that the parser keeps still matches its route", async () => {
+    const { status, body } = await rawGet("/.well-known/acme");
+    expect(JSON.parse(body)).toEqual({ route: "/.well-known/:name", params: { name: "acme" } });
+    expect(status).toBe(200);
+  });
+
+  test("a path with no special byte still routes the raw bytes", async () => {
+    const { status, body } = await rawGet("/public/caf%C3%A9.txt?q=1");
+    expect(JSON.parse(body)).toEqual({
+      route: "/public/:file",
+      params: { file: "café.txt" },
+      pathname: "/public/caf%C3%A9.txt",
+      search: "?q=1",
+    });
+    expect(status).toBe(200);
+  });
+});

@@ -572,7 +572,7 @@ private:
 
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting(), httpRequest->getTargetMayNormalize())) {
                 /* We have to force close this socket as we have no handler for it.
                  * close() first sends the responses to earlier requests of this read. */
                 ((AsyncSocket<SSL> *) s)->close();

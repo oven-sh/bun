@@ -1824,6 +1824,32 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  test("routes match the pathname that request.url reports", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: {
+        "/api/:id": req => new Response("id=" + req.params.id),
+        "/admin": () => new Response("admin"),
+      },
+      fetch(req) {
+        return new Response("fetch " + new URL(req.url).pathname);
+      },
+    });
+
+    const results: Record<string, string> = {};
+    for (const path of ["/api/..", "/api/42/../../admin", "/api/42#frag", "/api/a%2e%2e"]) {
+      results[path] = await h3Exchange(server.port, requestHeaders(path));
+    }
+    expect(results).toEqual({
+      "/api/..": "200 fetch /",
+      "/api/42/../../admin": "200 admin",
+      "/api/42#frag": "200 id=42",
+      "/api/a%2e%2e": "200 id=a..",
+    });
+  });
+
   test("request.url falls back to the :path when :authority is not a valid host", async () => {
     await using server = Bun.serve({
       port: 0,

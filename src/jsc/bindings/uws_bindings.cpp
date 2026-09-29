@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "wtf/text/WTFString.h"
+#include <wtf/URL.h>
 #include <bun-uws/src/App.h>
 #include <span>
 #include <string_view>
@@ -44,4 +45,26 @@ extern "C" JSC::EncodedJSValue uws_ws_get_topics_as_js_array(int ssl, uws_websoc
   } else {
     return uws_ws_get_topics_as_js_array_impl<false>(ws, globalObject);
   }
+}
+
+// HttpRouter::route() calls this for a request-target whose raw segments can
+// differ from the URL parser's pathname (uWS::scanRequestTarget). The router
+// then matches the pathname, which is the one request.url reports.
+extern "C" void Bun__HTTP__normalizeRequestPath(const char *target, size_t length, std::string *out) {
+  out->clear();
+  if (length == 0 || target[0] != '/') {
+    return;
+  }
+  // The parser wants an absolute URL. The host is a placeholder: it has no
+  // effect on the pathname, and only the pathname is read.
+  auto input = WTF::makeString("http://h"_s, WTF::String::fromUTF8ReplacingInvalidSequences(std::span {
+    reinterpret_cast<const unsigned char*>(target),
+    length
+  }));
+  WTF::URL url(WTF::move(input));
+  if (!url.isValid()) {
+    return;
+  }
+  WTF::CString path = url.path().utf8();
+  out->assign(path.data(), path.length());
 }

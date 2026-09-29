@@ -1315,6 +1315,8 @@ impl EntryPoint {
 pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
+    /// (index in `parts_in_chunk_in_order`, wrapped file): the chunk starts the file ahead of that part range, behind the last one when the index is the length. Ascending.
+    pub(crate) starts_in_chunk_order: Box<[(u32, IndexInt)]>,
 
     // for code splitting
     /// The other chunks with top-level side effects that the walk ordering

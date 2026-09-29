@@ -125,10 +125,12 @@ pub(crate) fn find_imported_parts_in_js_order(
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
     let runs: &[PartRun] = &order.runs_of_chunk[chunk_index as usize];
+    let marks = order.starts_of_chunk(chunk_index);
 
     let mut layout = ChunkLayout {
         c: this,
         files: Vec::with_capacity(chunk.files_with_parts_in_chunk.count()),
+        closed_ranges: Vec::new(),
         part_ranges: Vec::new(),
         parts_prefix: Vec::new(),
         chunk_index,
@@ -145,22 +147,33 @@ pub(crate) fn find_imported_parts_in_js_order(
             end: u32::MAX,
         });
     }
-    for &run in runs {
-        if run.source_index != runtime {
-            layout.place(run);
-        }
+    let mut starts: Vec<(u32, IndexInt)> = Vec::with_capacity(marks.len());
+    let mut placed = 0;
+    for &(_, runs_ahead, wrapped) in marks {
+        debug_assert!(placed <= runs_ahead as usize && runs_ahead as usize <= runs.len());
+        let until = (runs_ahead as usize).clamp(placed, runs.len());
+        layout.place_runs(&runs[placed..until]);
+        placed = until;
+        starts.push((layout.close_ranges(), wrapped));
     }
+    layout.place_runs(&runs[placed..]);
 
     let ChunkLayout {
         files,
+        closed_ranges,
         part_ranges,
         parts_prefix,
         ..
     } = layout;
     let mut parts_in_chunk_order: Vec<PartRange> =
-        Vec::with_capacity(part_ranges.len() + parts_prefix.len());
+        Vec::with_capacity(parts_prefix.len() + closed_ranges.len() + part_ranges.len());
     parts_in_chunk_order.extend_from_slice(&parts_prefix);
+    parts_in_chunk_order.extend_from_slice(&closed_ranges);
     parts_in_chunk_order.extend_from_slice(&part_ranges);
+    // `close_ranges` counts from the first range behind `parts_prefix`.
+    for (index, _) in &mut starts {
+        *index += parts_prefix.len() as u32;
+    }
 
     let reached_chunks = if this.graph.code_splitting {
         reached_chunks_in_order(this, chunk, chunk_index, chunk_of_file, order, chunks_len)?
@@ -172,6 +185,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         chunk::Content::Javascript(js) => {
             js.files_in_chunk_order = files.into_boxed_slice();
             js.parts_in_chunk_in_order = parts_in_chunk_order.into_boxed_slice();
+            js.starts_in_chunk_order = starts.into_boxed_slice();
             js.reached_chunks_in_order = reached_chunks.into_boxed_slice();
         }
         // Caller only invokes this for `.javascript` chunks (see
@@ -195,6 +209,8 @@ pub(crate) struct WalkOrder {
     runs_of_chunk: Vec<Vec<PartRun>>,
     /// With code splitting, per file: when its walk entered it (`u32::MAX`: never).
     entered: Vec<u32>,
+    /// Per wrapped file that a chunk starts: (chunk, how many of its runs the walk had placed, file). By chunk, then as the walk met them.
+    starts: Vec<(u32, u32, IndexInt)>,
 }
 
 impl WalkOrder {
@@ -202,8 +218,13 @@ impl WalkOrder {
         let mut order = WalkOrder {
             runs_of_chunk: vec![Vec::new(); chunks_len],
             entered: vec![u32::MAX; c.graph.files.len()],
+            starts: Vec::new(),
         };
         for walk in walks {
+            for &(slot, runs_len, wrapped) in &walk.starts {
+                let chunk_index = walk.owned[slot as usize].chunk_index;
+                order.starts.push((chunk_index, runs_len, wrapped));
+            }
             for owned in walk.owned {
                 order.runs_of_chunk[owned.chunk_index as usize] = owned.runs;
             }
@@ -211,7 +232,15 @@ impl WalkOrder {
                 order.entered[source_index as usize] = tick as u32;
             }
         }
+        // A chunk has one owner, and a stable sort keeps the order of its walk.
+        order.starts.sort_by_key(|&(chunk_index, ..)| chunk_index);
         order
+    }
+
+    fn starts_of_chunk(&self, chunk_index: u32) -> &[(u32, u32, IndexInt)] {
+        let starts = self.starts.as_slice();
+        let starts = &starts[starts.partition_point(|&(chunk, ..)| chunk < chunk_index)..];
+        &starts[..starts.partition_point(|&(chunk, ..)| chunk == chunk_index)]
     }
 }
 
@@ -305,6 +334,7 @@ impl WalkPlan {
                     entry_id: owner,
                     owned: Vec::new(),
                     entered: Vec::new(),
+                    starts: Vec::new(),
                 });
             }
             let walk = &mut walks[*walk_index as usize];
@@ -499,6 +529,8 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
 enum WalkFrame {
     /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
     Enter { source_index: IndexInt, loader: u32 },
+    /// `Enter` in a walk that marks: the import that leads here starts `source_index` from the entry point's chunk.
+    Start { source_index: IndexInt, loader: u32 },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
     /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
@@ -517,15 +549,92 @@ struct EntryWalk {
     owned: Vec<OwnedChunk>,
     /// With code splitting: the files placed, in the order the walk entered them.
     entered: Vec<IndexInt>,
+    /// Per wrapped file that an owned chunk starts: (slot, the length of `owned[slot].runs` then, file), as the walk met them.
+    starts: Vec<(u32, u32, IndexInt)>,
+}
+
+/// The starts that `merge_small_chunks` recorded for the entry point of a walk. The walk marks where each one goes.
+struct Marks {
+    /// Per wrapped file without a mark: the slot of the parent chunk, which starts it.
+    pending: HashMap<IndexInt, u32>,
+    /// The slot of the entry point's chunk.
+    entry_slot: u32,
+}
+
+impl Marks {
+    fn of_walk(walk: &EntryWalk, c: &LinkerContext, plan: &WalkPlan, chunks: &[Chunk]) -> Marks {
+        let mut marks = Marks {
+            pending: HashMap::default(),
+            entry_slot: u32::MAX,
+        };
+        let starts = c.starts_in_parent_chunk.as_deref().unwrap_or_default();
+        let first = starts.partition_point(|start| start.entry_id < walk.entry_id);
+        for start in starts[first..]
+            .iter()
+            .take_while(|start| start.entry_id == walk.entry_id)
+        {
+            let chunk_index = plan
+                .chunk_of_file
+                .get(start.parent_file as usize)
+                .map_or(u32::MAX, |&chunk_index| chunk_index);
+            let owns = chunk_index != u32::MAX
+                && plan.owner_of_chunk[chunk_index as usize] == walk.entry_id;
+            debug_assert!(owns);
+            if owns && !marks.pending.contains(&start.wrapped) {
+                let slot = plan.slot_of_chunk[chunk_index as usize];
+                bun_core::handle_oom(marks.pending.put(start.wrapped, slot));
+            }
+        }
+        if !marks.pending.is_empty() {
+            let entry_slot = walk.owned.iter().position(|owned| {
+                let entry_point = chunks[owned.chunk_index as usize].entry_point;
+                entry_point.is_entry_point() && entry_point.entry_point_id() == walk.entry_id
+            });
+            marks.entry_slot = entry_slot.map_or(u32::MAX, |slot| slot as u32);
+        }
+        marks
+    }
+
+    /// A live part of `importer` prints the `require_x()` / `init_x()` of `wrapped`.
+    fn part_starts(
+        c: &LinkerContext,
+        importer: IndexInt,
+        part_index: u32,
+        wrapped: IndexInt,
+    ) -> bool {
+        let records = c.graph.ast.items_import_records()[importer as usize].as_slice();
+        let parts = c.graph.ast.items_parts()[importer as usize].as_slice();
+        parts.get(part_index as usize).is_some_and(|part| {
+            c.graph.parts_live[importer as usize].is_set(part_index as usize)
+                && part.import_record_indices.slice().iter().any(|&record| {
+                    c.wrapped_file_started_by(importer, &records[record as usize]) == Some(wrapped)
+                })
+        })
+    }
 }
 
 impl EntryWalk {
     fn run(&mut self, c: &LinkerContext, plan: &WalkPlan, chunks: &[Chunk]) {
+        let mut marks = Marks::of_walk(self, c, plan, chunks);
+        if marks.pending.is_empty() {
+            self.walk_roots::<false>(c, plan, chunks, &mut marks);
+        } else {
+            self.walk_roots::<true>(c, plan, chunks, &mut marks);
+        }
+    }
+
+    fn walk_roots<const MARKS: bool>(
+        &mut self,
+        c: &LinkerContext,
+        plan: &WalkPlan,
+        chunks: &[Chunk],
+        marks: &mut Marks,
+    ) {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
         let mut css_placed: HashMap<u64, ()> = HashMap::default();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
-        self.walk(c, plan, &mut seen, &mut stack, &mut css_placed, root);
+        self.walk::<MARKS>(c, plan, &mut seen, &mut stack, &mut css_placed, marks, root);
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
@@ -533,12 +642,13 @@ impl EntryWalk {
             let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
-                    self.walk(
+                    self.walk::<MARKS>(
                         c,
                         plan,
                         &mut seen,
                         &mut stack,
                         &mut css_placed,
+                        marks,
                         source_index,
                     );
                 }
@@ -547,13 +657,14 @@ impl EntryWalk {
     }
 
     /// Depth first along every `import` statement, also through dropped files; places the files of the owned chunks.
-    fn walk(
+    fn walk<const MARKS: bool>(
         &mut self,
         c: &LinkerContext,
         plan: &WalkPlan,
         seen: &mut AutoBitSet,
         stack: &mut Vec<WalkFrame>,
         css_placed: &mut HashMap<u64, ()>,
+        marks: &mut Marks,
         root: IndexInt,
     ) {
         let entry_id = self.entry_id;
@@ -603,8 +714,20 @@ impl EntryWalk {
                 WalkFrame::Enter {
                     source_index,
                     loader,
+                }
+                | WalkFrame::Start {
+                    source_index,
+                    loader,
                 } => (source_index, loader),
             };
+            // The first start in evaluation order counts: the parent chunk starts the file behind the runs it has by now.
+            if MARKS
+                && matches!(frame, WalkFrame::Start { .. })
+                && let Some(slot) = marks.pending.remove(&source_index)
+            {
+                let runs_len = self.owned[slot as usize].runs.len() as u32;
+                self.starts.push((slot, runs_len, source_index));
+            }
             if seen.is_set(source_index as usize) {
                 continue;
             }
@@ -621,10 +744,23 @@ impl EntryWalk {
             let splits = slot.is_some() && flags[source_index as usize].wrap == Wrap::None;
             let mut begin = 0;
             let mark = stack.len();
+            let in_entry_chunk = MARKS && slot == Some(marks.entry_slot);
 
             // The parts ahead of the one that imports `other` print before `other` does.
             let mut import = |part_index: u32, other: IndexInt, loader: u32| {
-                if other == Index::RUNTIME.value() || seen.is_set(other as usize) {
+                if other == Index::RUNTIME.value() {
+                    return;
+                }
+                let starts = in_entry_chunk
+                    && marks.pending.contains(&other)
+                    && Marks::part_starts(c, source_index, part_index, other);
+                if seen.is_set(other as usize) {
+                    if starts {
+                        stack.push(WalkFrame::Start {
+                            source_index: other,
+                            loader,
+                        });
+                    }
                     return;
                 }
                 let is_css = css[other as usize].is_some();
@@ -666,6 +802,10 @@ impl EntryWalk {
                         source_index: other,
                         slot,
                     },
+                    _ if starts => WalkFrame::Start {
+                        source_index: other,
+                        loader,
+                    },
                     _ => WalkFrame::Enter {
                         source_index: other,
                         loader,
@@ -698,6 +838,8 @@ impl EntryWalk {
 struct ChunkLayout<'a, 'ctx> {
     c: &'a LinkerContext<'ctx>,
     files: Vec<IndexInt>,
+    /// The ranges ahead of the last start. They go before `part_ranges` and none of them grows.
+    closed_ranges: Vec<PartRange>,
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,
     chunk_index: u32,
@@ -706,6 +848,21 @@ struct ChunkLayout<'a, 'ctx> {
 }
 
 impl ChunkLayout<'_, '_> {
+    fn place_runs(&mut self, runs: &[PartRun]) {
+        let runtime = Index::RUNTIME.value();
+        for &run in runs {
+            if run.source_index != runtime {
+                self.place(run);
+            }
+        }
+    }
+
+    /// A start goes here: the next part opens a range. Returns how many ranges outside `parts_prefix` are ahead of it.
+    fn close_ranges(&mut self) -> u32 {
+        self.closed_ranges.append(&mut self.part_ranges);
+        self.closed_ranges.len() as u32
+    }
+
     fn append_or_extend_range(
         &mut self,
         in_prefix: bool,

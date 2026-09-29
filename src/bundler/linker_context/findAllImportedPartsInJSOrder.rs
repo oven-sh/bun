@@ -591,8 +591,11 @@ impl Marks {
                 .get(start.parent_file as usize)
                 .copied()
                 .unwrap_or(u32::MAX);
-            let owns = chunk_index != u32::MAX
-                && plan.owner_of_chunk[chunk_index as usize] == walk.entry_id;
+            // The parent has no chunk when none of its files prints code. Nothing makes the start then.
+            if chunk_index == u32::MAX {
+                continue;
+            }
+            let owns = plan.owner_of_chunk[chunk_index as usize] == walk.entry_id;
             debug_assert!(owns);
             if owns && !marks.pending.contains(&start.wrapped) {
                 let slot = plan.slot_of_chunk[chunk_index as usize];
@@ -765,7 +768,9 @@ impl EntryWalk {
                 if other == Index::RUNTIME.value() {
                     return;
                 }
-                let starts = in_entry_chunk
+                // `MARKS` again: the closure is not inlined, and its code folds only where it names the const.
+                let starts = MARKS
+                    && in_entry_chunk
                     && marks.pending.contains(&other)
                     && Marks::part_starts(c, source_index, part_index, other);
                 if seen.is_set(other as usize) {

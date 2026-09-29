@@ -74,7 +74,7 @@ pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in
 pub(crate) struct ParentChunkStart {
     pub(crate) entry_id: u32,
     pub(crate) wrapped: u32,
-    /// A file of the parent chunk.
+    /// A file keyed like the parent chunk. When no file with that key prints code, there is no such chunk and nothing makes the start.
     pub(crate) parent_file: u32,
 }
 

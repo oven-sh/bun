@@ -265,8 +265,7 @@ Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* glob
 #else
 #define WEBKIT_BYTECODE_CACHE_HASH_KEY BUN_WEBKIT_VERSION
 #endif
-// Set when the environment carries BUN_JSC_numberOfGCMarkers. Then that count applies to every heap,
-// worker heaps included, the way it did before worker heaps stopped using the helper pool.
+// BUN_JSC_numberOfGCMarkers in the environment applies to every heap, worker heaps included.
 static bool gcMarkerCountSetByEnvironment = false;
 
 static consteval unsigned getWebKitBytecodeCacheVersion()
@@ -497,10 +496,8 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-    // Every heap in the process marks with the same helper thread pool, and a helper serves one heap
-    // for that heap's whole marking phase. With many workers collecting at once the pool is taken, and
-    // a worker's collector waits for it instead of marking (oven-sh/bun#44186). A worker heap marks
-    // on its own thread. The main heap keeps the pool.
+    // A worker heap marks on its own thread: the helper pool is one per process, and a helper stays
+    // with one heap for its whole marking phase (#44186). The main heap keeps the pool.
     auto marking = worker_ptr && !gcMarkerCountSetByEnvironment ? JSC::HeapMarking::SerialUnlessLarge : JSC::HeapMarking::Parallel;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize, nullptr, marking);
     if (!vmPtr) [[unlikely]] {

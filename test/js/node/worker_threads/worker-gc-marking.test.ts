@@ -13,7 +13,7 @@ setDefaultTimeout(isDebug ? 90_000 : 10_000);
 // more than one core: the pool has one helper per core, less one).
 //
 // The main thread runs one full collection before the worker exists, so the first heap in the
-// log is the main heap. The worker runs three. The thread-local bytecode cache VM can log too.
+// log is the main heap, and the worker's is the only other one. The worker runs three.
 // The two threads write the log to the same stderr, so one line in many can be cut by the other
 // heap's output. A heap is classified by the majority of its lines.
 const script = `
@@ -33,8 +33,7 @@ const script = `
   }
 `;
 
-// Classifies each heap that logged a collection by whether it marks with the pool: the main heap
-// first, then the others in the order they first logged.
+// Classifies the main heap and the worker heap by whether they mark with the pool.
 async function classifyHeaps(env: Record<string, string>, live = 0) {
   using dir = tempDir("worker-gc-marking", { "main.mjs": script });
   await using proc = Bun.spawn({
@@ -57,16 +56,16 @@ async function classifyHeaps(env: Record<string, string>, live = 0) {
     parallelColumns.includes("P1:") ? counts.withPool++ : counts.withoutPool++;
     heaps.set(heap, counts);
   }
-  const [main, ...others] = [...heaps.values()].map(({ withPool, withoutPool }) =>
+  const [main, worker, ...rest] = [...heaps.values()].map(({ withPool, withoutPool }) =>
     withPool > withoutPool ? "pool" : "own thread",
   );
-  expect(others.length).toBeGreaterThanOrEqual(1);
-  return { main, others };
+  expect(rest).toEqual([]);
+  return { main, worker };
 }
 
 test.concurrent("a worker heap marks on its own thread and the main heap keeps the helper pool", async () => {
-  const { main, others } = await classifyHeaps(bunEnv);
-  expect(others).toEqual(others.map(() => "own thread"));
+  const { main, worker } = await classifyHeaps(bunEnv);
+  expect(worker).toBe("own thread");
   if (availableParallelism() > 1) {
     expect(main).toBe("pool");
   }
@@ -74,18 +73,16 @@ test.concurrent("a worker heap marks on its own thread and the main heap keeps t
 
 test.concurrent("a large worker heap marks a full collection with the helper pool", async () => {
   // 50k small objects are a few MB live. The threshold is set below that.
-  const { main, others } = await classifyHeaps(
+  const { main, worker } = await classifyHeaps(
     { ...bunEnv, BUN_JSC_largeHeapSizeForSharedMarking: String(1024 * 1024) },
     50_000,
   );
   if (availableParallelism() > 1) {
-    expect(main).toBe("pool");
-    expect(others).toContain("pool");
+    expect({ main, worker }).toEqual({ main: "pool", worker: "pool" });
   }
 });
 
 test.concurrent("BUN_JSC_numberOfGCMarkers applies to worker heaps too", async () => {
-  const { main, others } = await classifyHeaps({ ...bunEnv, BUN_JSC_numberOfGCMarkers: "4" });
-  expect(main).toBe("pool");
-  expect(others).toEqual(others.map(() => "pool"));
+  const { main, worker } = await classifyHeaps({ ...bunEnv, BUN_JSC_numberOfGCMarkers: "4" });
+  expect({ main, worker }).toEqual({ main: "pool", worker: "pool" });
 });

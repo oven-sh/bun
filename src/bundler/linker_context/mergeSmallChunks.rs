@@ -889,6 +889,15 @@ enum RunPoint {
     Cut(u32),
 }
 
+/// An external import of an own file that runs behind the reach of the list. A later unit can still take the file: an import cycle moves as one. The list ends at the import when none does.
+#[derive(Clone, Copy)]
+struct OpenCut {
+    file: u32,
+    /// The lengths of `taken` and `repeated` at the start of the unit of the import.
+    taken: usize,
+    repeated: usize,
+}
+
 /// The files that run behind a start, up to the first one of the parent. The parent makes the call as it is when the first of them that lives in the parent makes it ahead of all that it runs.
 struct RunsBehindStart {
     /// The wrapped file of the last start, until a file of the parent runs behind it.
@@ -1427,6 +1436,7 @@ fn files_that_leave_entry_chunk(
                     if record.source_index.is_valid() {
                         edges_ahead += 1;
                     } else if record.kind == ImportKind::Stmt
+                        && !record.path.is_disabled
                         && !record.flags.intersects(
                             ImportRecordFlags::IS_UNUSED
                                 | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -1492,7 +1502,11 @@ fn files_that_leave_entry_chunk(
     };
     let mut position: ArrayHashMap<u32, usize> = ArrayHashMap::new();
     let mut repeated: Vec<(u32, u32)> = Vec::new();
+    // The files that the units moved, in the order of the units.
     let mut taken: Vec<u32> = Vec::new();
+    let mut open_cuts: Vec<OpenCut> = Vec::new();
+    // The first run point of the unit that the guard turned down.
+    let mut turned_down_from: Option<usize> = None;
     let mut pending: Vec<u32> = Vec::new();
     let mut later: Vec<u32> = Vec::new();
     let mut asked: Vec<u32> = Vec::new();
@@ -1503,7 +1517,7 @@ fn files_that_leave_entry_chunk(
         .unwrap_or(points.len());
     let mut next = 0;
     'list: while next < cut {
-        taken.clear();
+        let taken_before = taken.len();
         let repeated_before = repeated.len();
         let first = next;
         let mut end = next + 1;
@@ -1524,20 +1538,23 @@ fn files_that_leave_entry_chunk(
                 RunPoint::Parent(file) => debug_assert!(!own(file)),
                 RunPoint::Cut(file) if leaves.is_set(file as usize) => {}
                 RunPoint::Cut(file) => {
-                    let mut moves = file != entry_source
-                        && !leads_back.leads_back_to_entry(this, &own, file)?;
-                    if moves {
+                    if file == entry_source || leads_back.leads_back_to_entry(this, &own, file)? {
+                        stuck = true;
+                    } else {
                         index_own_files(&points, &mut position)?;
                         match position.get(&file) {
                             // The file moves with its `import` statement. The list goes as one up to it.
-                            Some(&index) if index < cut.max(end) => end = end.max(index + 1),
-                            _ => moves = false,
+                            Some(&index) if index < cut.max(end) => {
+                                end = end.max(index + 1);
+                                pending.push(file);
+                            }
+                            Some(_) => open_cuts.push(OpenCut {
+                                file,
+                                taken: taken_before,
+                                repeated: repeated_before,
+                            }),
+                            None => stuck = true,
                         }
-                    }
-                    if moves {
-                        pending.push(file);
-                    } else {
-                        stuck = true;
                     }
                 }
                 RunPoint::Start { importer, wrapped } => {
@@ -1634,19 +1651,35 @@ fn files_that_leave_entry_chunk(
             }
             // Behind the first run point that cannot go, nothing moves and the parent starts nothing.
             if stuck {
-                for &file in &taken {
+                for file in taken.drain(taken_before..) {
                     leaves.unset(file as usize);
                 }
                 repeated.truncate(repeated_before);
-                // A file of the parent behind the run point does not rank the parent again: a chunk that the walk reaches in between stays behind the parent.
                 if turned_down {
-                    for point in &points[first..] {
-                        if let RunPoint::Parent(file) = *point {
-                            guard.ranks_once.set(file as usize);
-                        }
-                    }
+                    turned_down_from = Some(first);
                 }
                 break 'list;
+            }
+        }
+    }
+    // The first external import of a file that no unit took ends the list. That puts back the files that the units behind it took, which can be the file of an earlier import.
+    while let Some(index) = open_cuts
+        .iter()
+        .position(|open| !leaves.is_set(open.file as usize))
+    {
+        let open = open_cuts[index];
+        for file in taken.drain(open.taken..) {
+            leaves.unset(file as usize);
+        }
+        repeated.truncate(open.repeated);
+        open_cuts.truncate(index);
+        turned_down_from = None;
+    }
+    // A file of the parent behind the run point does not rank the parent again: a chunk that the walk reaches in between stays behind the parent.
+    if let Some(first) = turned_down_from {
+        for point in &points[first..] {
+            if let RunPoint::Parent(file) = *point {
+                guard.ranks_once.set(file as usize);
             }
         }
     }

@@ -560,6 +560,7 @@ export {
   abortedSymbol,
   callCloseCallback,
   checkShouldUseProxy,
+  decideFraming,
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,
@@ -598,5 +599,4 @@ export {
   setServerMaxHeadersCount,
   tlsSymbol,
   utcDate,
-  decideFraming,
 };

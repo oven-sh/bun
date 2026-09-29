@@ -264,6 +264,11 @@ public:
         return userData;
     }
 
+    /* True once add() saw a pattern other than the catch-all. */
+    bool hasRouteOtherThanCatchAll() const {
+        return hasPathSensitiveRoute;
+    }
+
     /* Fast path. mayNormalize is the transport's verdict that the raw path
      * and the URL parser's pathname can differ in segments; then the match
      * runs on the parser's pathname, the same one request.url reports. */

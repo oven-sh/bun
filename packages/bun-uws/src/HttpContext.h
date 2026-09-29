@@ -1197,10 +1197,6 @@ public:
             return;
         }
 
-        if (pattern != "/*") {
-            httpContextData->hasPathSensitiveRoute = true;
-        }
-
         httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
@@ -1222,6 +1218,9 @@ public:
             }
             return true;
         }, priority);
+        /* The parser scans the request-target for the router only once a route
+         * other than the catch-all exists on any router of this context. */
+        httpContextData->hasPathSensitiveRoute = httpContextData->hasPathSensitiveRoute || httpContextData->currentRouter->hasRouteOtherThanCatchAll();
     }
 
     /* Whether this context runs the node:http compat instantiation. The installed

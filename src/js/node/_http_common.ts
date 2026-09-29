@@ -1,11 +1,6 @@
 // This is a port of Node.js's lib/_http_common.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
-const {
-  checkIsHttpToken,
-  checkInvalidHeaderChar,
-  validateHeaderName,
-  validateHeaderValue,
-} = require("internal/validators");
+const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 interface HTTPParserError extends Error {
   bytesParsed: number;
@@ -83,6 +78,46 @@ const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HT
 const incoming = require("node:_http_incoming");
 
 const { IncomingMessage, readStart, readStop } = incoming;
+
+const RegExpPrototypeExec = RegExp.prototype.exec;
+
+let strictHeaderCharRegex;
+let lenientHeaderCharRegex;
+
+/**
+ * True if val contains an invalid header value character.
+ * By default uses strict validation per RFC 7230:
+ *  field-value    = *( field-content / obs-fold )
+ *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+ *  field-vchar    = VCHAR / obs-text
+ * When lenient=true, uses relaxed validation per the Fetch spec
+ * (https://fetch.spec.whatwg.org/#header-value): only NUL, CR, LF and
+ * characters above 0xff are rejected.
+ */
+function checkInvalidHeaderChar(val: string, lenient: boolean = false) {
+  if (lenient) {
+    // eslint-disable-next-line no-control-regex
+    lenientHeaderCharRegex ??= /[\x00\x0a\x0d]|[^\x00-\xff]/;
+    return RegExpPrototypeExec.$call(lenientHeaderCharRegex, val) !== null;
+  }
+  strictHeaderCharRegex ??= /[^\t\x20-\x7e\x80-\xff]/;
+  return RegExpPrototypeExec.$call(strictHeaderCharRegex, val) !== null;
+}
+
+const validateHeaderName = (name, label?) => {
+  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
+    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
+  }
+};
+
+const validateHeaderValue = (name, value) => {
+  if (value === undefined) {
+    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+  }
+  if (checkInvalidHeaderChar(value)) {
+    throw $ERR_INVALID_CHAR("header content", name);
+  }
+};
 
 // Node's `getOptionValue('--insecure-http-parser')`. The flag is fixed during
 // CLI parsing, so reading it once here is equivalent.

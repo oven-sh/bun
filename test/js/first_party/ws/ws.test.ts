@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -656,7 +656,7 @@ describe("WebSocket finishRequest", () => {
 
   function authorize(req: any) {
     req.setHeader("authorization", "token");
-    return req.end();
+    req.end();
   }
 
   const later = [
@@ -725,12 +725,17 @@ describe("WebSocket finishRequest", () => {
     });
   });
 
-  it("does not send the handshake when req.end() is not called", async () => {
+  // main dials when finishRequest returns, so it sends the headers of the options past a finishRequest that holds them.
+  it.each([
+    ["returns", (req: any) => void req.setHeader("x-late", "1")],
+    ["waits for 'socket'", (req: any) => void req.on("socket", () => req.end())],
+    ["calls req.abort()", (req: any) => void req.abort()],
+  ])("sends no handshake when finishRequest %s and does not call req.end()", async (_label, finishRequest) => {
     const { server, upgrades, url } = serve();
     using _ = server;
 
     const events: string[] = [];
-    const ws = new WebSocket(url, { finishRequest: req => req.setHeader("authorization", "token") });
+    const ws = new WebSocket(url, { headers: { authorization: "secret" }, finishRequest });
     for (const event of ["open", "error", "close"]) ws.on(event, () => events.push(event));
     await laterClient(url);
 
@@ -772,20 +777,21 @@ describe("WebSocket finishRequest", () => {
     },
   );
 
-  it("sends one handshake when req.end() is called more than once, and req.end() returns the request", async () => {
+  it("sends one handshake when req.end() is called more than once", async () => {
     const { server, upgrades, url } = serve();
     using _ = server;
 
     let request: any;
     const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
     const message = firstMessage(ws);
-    const returned = [authorize(request) === request, request.end() === request];
+    authorize(request);
+    request.end();
     await message;
-    returned.push(request.end() === request);
+    request.end();
     await laterClient(url);
     ws.terminate();
 
-    expect({ returned, upgrades }).toEqual({ returned: [true, true, true], upgrades: ["token", null] });
+    expect(upgrades).toEqual(["token", null]);
   });
 
   // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L655-L673
@@ -808,71 +814,50 @@ describe("WebSocket finishRequest", () => {
     protocols.push("a");
     const message = firstMessage(ws);
     authorize(request);
-
-    expect({
+    const seen = {
       message: await message,
       readsInConstructor: readsInConstructor > 0,
       readsAtEnd: reads - readsInConstructor,
       protocol: ws.protocol,
       upgrades,
-    }).toEqual({
+    };
+    ws.terminate();
+
+    expect(seen).toEqual({
       message: "authorization=token",
       readsInConstructor: true,
       readsAtEnd: 0,
       protocol: "a",
       upgrades: ["token"],
     });
-    ws.terminate();
   });
 
-  // setHeader() accepted the value, so what is wrong with it at req.end() is a failed connection.
-  it("fails the client when a header throws at req.end(), and req.end() throws the same error", async () => {
+  // main makes the socket in req.end(), so its constructor throws there. The socket exists now, so it also fails.
+  it.each([
+    [
+      "that throws when it is read",
+      {
+        toString() {
+          throw new Error("from the header");
+        },
+      },
+      "Error",
+      "from the header",
+      "Invalid headers",
+    ],
+    [
+      "with a line break",
+      "a\r\nx-injected: 1",
+      "TypeError",
+      "Header 'x-late' has invalid value",
+      "Header 'x-late' has invalid value",
+    ],
+  ])("req.end() throws for a header %s, and the client fails", async (_label, value, errorClass, thrown, reason) => {
     const { server, upgrades, url } = serve();
     using _ = server;
 
-    const error = new Error("from the header");
-    let throws = false;
-    const value = {
-      toString() {
-        if (throws) throw error;
-        return "token";
-      },
-    };
     let request: any;
     const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
-    const events: string[] = [];
-    const closed = Promise.withResolvers<void>();
-    ws.on("open", () => events.push("open"));
-    ws.on("error", error => events.push("error: " + error.message));
-    ws.on("close", code => {
-      events.push("close " + code);
-      closed.resolve();
-    });
-    request.setHeader("authorization", value);
-    throws = true;
-    expect(() => request.end()).toThrow(error);
-    await closed.promise;
-    await laterClient(url);
-
-    expect({ events, readyState: ws.readyState, upgrades }).toEqual({
-      events: [`error: WebSocket connection to '${url}' failed: Invalid headers`, "close 1006"],
-      readyState: WebSocket.CLOSED,
-      upgrades: [null],
-    });
-  });
-
-  // The request has no socket to give, so a listener that waits for one cannot call req.end().
-  it("fails the client when finishRequest adds a 'socket' listener and does not call req.end()", async () => {
-    const { server, upgrades, url } = serve();
-    using _ = server;
-
-    let request: any;
-    const ws = new WebSocket(url, {
-      finishRequest(req) {
-        request = req;
-        req.on("socket", () => authorize(req));
-      },
-    });
     const events: string[] = [];
     const settled = Promise.withResolvers<void>();
     ws.on("open", () => {
@@ -884,19 +869,26 @@ describe("WebSocket finishRequest", () => {
       events.push("close " + code);
       settled.resolve();
     });
+    request.setHeader("x-late", value);
+    let caught: any;
+    try {
+      request.end();
+    } catch (error) {
+      caught = error;
+    }
     await settled.promise;
-    const returned = authorize(request) === request;
     await laterClient(url);
+    ws.terminate();
 
-    expect({ events, readyState: ws.readyState, returned, upgrades }).toEqual({
-      events: [
-        `error: WebSocket connection to '${url}' failed: finishRequest added a 'socket' listener to the request ` +
-          "and did not call request.end(). Bun does not emit 'socket'. " +
-          "Remove the listener and call request.end() without it.",
-        "close 1006",
-      ],
+    expect({
+      caught: [caught?.constructor.name, caught?.message],
+      events,
+      readyState: ws.readyState,
+      upgrades,
+    }).toEqual({
+      caught: [errorClass, thrown],
+      events: [`error: WebSocket connection to '${url}' failed: ${reason}`, "close 1006"],
       readyState: WebSocket.CLOSED,
-      returned: true,
       upgrades: [null],
     });
   });
@@ -964,81 +956,6 @@ describe("WebSocket finishRequest", () => {
     expect(upgrades).toEqual([null]);
   });
 
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L678-L685
-  it("req.setHeader() rejects what http.ClientRequest rejects, when it is called", () => {
-    let request: any;
-    new WebSocket("ws://127.0.0.1:1/", { finishRequest: req => void (request = req) });
-    const thrownBy = (...args: unknown[]) => {
-      try {
-        request.setHeader(...args);
-      } catch (error: any) {
-        return error.code;
-      }
-    };
-
-    expect({
-      "a name with a space": thrownBy("bad name", "1"),
-      "an empty name": thrownBy("", "1"),
-      "a name that is not a string": thrownBy(1, "1"),
-      "an undefined value": thrownBy("x-a", undefined),
-      "a value with a line break": thrownBy("x-a", "1\r\nx-b: 2"),
-      "a value outside latin1": thrownBy("x-a", "\u{1F600}"),
-      "a number": thrownBy("x-a", 1),
-      "an array": thrownBy("x-a", ["1", "2"]),
-      headers: request.getHeaders(),
-    }).toEqual({
-      "a name with a space": "ERR_INVALID_HTTP_TOKEN",
-      "an empty name": "ERR_INVALID_HTTP_TOKEN",
-      "a name that is not a string": "ERR_INVALID_HTTP_TOKEN",
-      "an undefined value": "ERR_HTTP_INVALID_HEADER_VALUE",
-      "a value with a line break": "ERR_INVALID_CHAR",
-      "a value outside latin1": "ERR_INVALID_CHAR",
-      "a number": undefined,
-      "an array": undefined,
-      headers: { "x-a": ["1", "2"] },
-    });
-  });
-
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L674-L677
-  it("req.setHeader() and req.removeHeader() throw after req.end(), and req.headersSent is true", async () => {
-    const { server, upgrades, url } = serve();
-    using _ = server;
-
-    let request: any;
-    const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
-    const message = firstMessage(ws);
-    const codeOf = (call: () => void) => {
-      try {
-        call();
-      } catch (error: any) {
-        return error.code;
-      }
-    };
-    const before = { headersSent: request.headersSent, finished: request.finished };
-    authorize(request);
-    const after = {
-      headersSent: request.headersSent,
-      finished: request.finished,
-      setHeader: codeOf(() => request.setHeader("authorization", "late")),
-      removeHeader: codeOf(() => request.removeHeader("authorization")),
-      getHeader: request.getHeader("authorization"),
-    };
-
-    expect({ before, after, message: await message, upgrades }).toEqual({
-      before: { headersSent: false, finished: false },
-      after: {
-        headersSent: true,
-        finished: true,
-        setHeader: "ERR_HTTP_HEADERS_SENT",
-        removeHeader: "ERR_HTTP_HEADERS_SENT",
-        getHeader: "token",
-      },
-      message: "authorization=token",
-      upgrades: ["token"],
-    });
-    ws.terminate();
-  });
-
   it("connects over TLS", async () => {
     const { server, upgrades } = serve({ tls });
     using _ = server;
@@ -1095,12 +1012,11 @@ describe("WebSocket finishRequest", () => {
       const ws: WebSocket = await graph.run(() => made.withoutEnd(url));
       const prepared = ws.readyState;
       graph.dispose();
-      const returned = authorize(made.requests[0]) === made.requests[0];
+      authorize(made.requests[0]);
       await laterClient(url);
 
-      expect({ prepared, returned, readyState: ws.readyState, upgrades }).toEqual({
+      expect({ prepared, readyState: ws.readyState, upgrades }).toEqual({
         prepared: WebSocket.CONNECTING,
-        returned: true,
         readyState: WebSocket.CLOSED,
         upgrades: [null],
       });
@@ -1199,17 +1115,31 @@ describe("WebSocket finishRequest", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Such a client gets no 'error' event, so stderr is the one place that reports the failure.
-  it.concurrent("prints the cause one time when clients that wait for 'socket' have no listener", async () => {
+  // ASAN keeps freed blocks in its quarantine, so the two cases give the same RSS there.
+  it.concurrent.skipIf(isASAN)("a client closed before req.end() does not keep its tls options", async () => {
     await using proc = spawn({
       cmd: [
         bunExe(),
+        "--smol",
         "-e",
         /* js */ `
           const { WebSocket } = require("ws");
-          for (let i = 0; i < 2; i++) {
-            new WebSocket("ws://127.0.0.1:1/", { finishRequest: req => req.on("socket", () => req.end()) });
-          }
+          // 256 KiB for each client that keeps its options: 200 clients keep about 50 MiB.
+          const tls = { ca: Buffer.alloc(256 * 1024, "A").toString(), rejectUnauthorized: false };
+          const make = () => {
+            const ws = new WebSocket("wss://127.0.0.1:1/", { tls, finishRequest() {} });
+            ws.on("error", () => {});
+            ws.terminate();
+            return ws;
+          };
+          const kept = [];
+          for (let i = 0; i < 20; i++) kept.push(make());
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 200; i++) kept.push(make());
+          Bun.gc(true);
+          const growthMiB = (process.memoryUsage.rss() - before) / (1024 * 1024);
+          console.log(JSON.stringify({ kept: kept.length, growthMiB }));
         `,
       ],
       env: bunEnv,
@@ -1218,13 +1148,10 @@ describe("WebSocket finishRequest", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, stderr }).toEqual({
-      stdout: "",
-      stderr:
-        "[bun] Warning: ws.WebSocket finishRequest added a 'socket' listener to the request " +
-        "and did not call request.end(). Bun does not emit 'socket'. " +
-        "Remove the listener and call request.end() without it.\n",
-    });
+    expect(stderr).toBe("");
+    const { kept, growthMiB } = JSON.parse(stdout);
+    expect(kept).toBe(220);
+    expect(growthMiB).toBeLessThan(25);
     expect(exitCode).toBe(0);
   });
 });

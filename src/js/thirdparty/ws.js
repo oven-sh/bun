@@ -157,7 +157,7 @@ function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 // `new WebSocket()` in two steps, for `finishRequest`: the socket exists before `request.end()` dials it.
-let prepareWebSocket, startWebSocket, failWebSocket;
+let prepareWebSocket, startWebSocket;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -243,13 +243,9 @@ class BunWebSocket extends EventEmitter {
         };
       }
       if (!prepareWebSocket) {
-        ({
-          0: prepareWebSocket,
-          1: startWebSocket,
-          2: failWebSocket,
-        } = $cpp("JSWebSocket.cpp", "createWebSocketPrepareBinding"));
+        ({ 0: prepareWebSocket, 1: startWebSocket } = $cpp("JSWebSocket.cpp", "createWebSocketPrepareBinding"));
       }
-      // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L1020-L1024
+      // deviation: npm ws connects here and writes the request at req.end(). This client connects at req.end().
       const ws = (this.#ws = prepareWebSocket(
         url,
         nativeOptions(protocols, headers, method, proxy, tlsOptions, disableDeflate),
@@ -260,11 +256,6 @@ class BunWebSocket extends EventEmitter {
       const nodeHttpClientRequestSimulated = {
         __proto__: Object.create(EventEmitter.prototype),
         setHeader: function (name, value) {
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L674-L685
-          if (didCallEnd) throw $ERR_HTTP_HEADERS_SENT("set");
-          const { validateHeaderName, validateHeaderValue } = require("internal/validators");
-          validateHeaderName(name);
-          validateHeaderValue(name, value);
           if (!headers) headers = Object.create(null);
           headers[name.toLowerCase()] = value;
         },
@@ -272,7 +263,6 @@ class BunWebSocket extends EventEmitter {
           return headers ? headers[name.toLowerCase()] : undefined;
         },
         removeHeader: function (name) {
-          if (didCallEnd) throw $ERR_HTTP_HEADERS_SENT("remove");
           if (headers) delete headers[name.toLowerCase()];
         },
         getHeaders: function () {
@@ -281,9 +271,7 @@ class BunWebSocket extends EventEmitter {
         hasHeader: function (name) {
           return headers ? name.toLowerCase() in headers : false;
         },
-        get headersSent() {
-          return didCallEnd;
-        },
+        headersSent: false,
         method: method,
         path: url,
         abort: function () {
@@ -292,10 +280,8 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            nodeHttpClientRequestSimulated.finished = true;
             startWebSocket(ws, headers);
           }
-          return nodeHttpClientRequestSimulated;
         },
         write() {},
         writeHead() {},
@@ -321,14 +307,8 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
+      // deviation: the request does not emit 'socket', so a finishRequest that waits for it sends no handshake.
       finishRequest(nodeHttpClientRequestSimulated, this);
-      if (!didCallEnd && EventEmitter.prototype.listenerCount.$call(nodeHttpClientRequestSimulated, "socket") > 0) {
-        const reason =
-          "finishRequest added a 'socket' listener to the request and did not call request.end(). Bun does not emit 'socket'. Remove the listener and call request.end() without it.";
-        // A client with no 'error' listener gets no event, so the cause also goes to stderr.
-        emitWarning("finishRequest-socket", "ws.WebSocket " + reason);
-        failWebSocket(ws, reason);
-      }
       return;
     }
 

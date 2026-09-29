@@ -3086,8 +3086,7 @@ unsafe extern "C" {
     ) -> *mut JSInternalPromise;
 }
 
-/// The process-wide time origin shared by every thread's `process.hrtime()`,
-/// `process.uptime()`, `Bun.nanoseconds()` and `performance`, as in node.
+/// One time origin for every thread, as node's `uv_hrtime()`.
 pub(crate) struct ProcessOrigin {
     pub(crate) monotonic: std::time::Instant,
     /// Wall-clock nanoseconds since Y2K (`ORIGIN_RELATIVE_EPOCH`), so that it fits in a u64.

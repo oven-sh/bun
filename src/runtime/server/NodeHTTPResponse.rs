@@ -635,8 +635,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        // raw_response.upgrade() copied the sec-websocket-* headers. The request's header
-        // views end with its dispatch, so nothing reads them through this context from here on.
+        // The request's header views end with its dispatch: this context must not read them later.
         self.upgrade_context.with_mut(|c| c.reset());
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.

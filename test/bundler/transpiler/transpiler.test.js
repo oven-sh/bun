@@ -2813,27 +2813,18 @@ export default class {
       ["default literal", ["default"], `export default 42;\nexport const keep = 1;\n`],
     ];
 
-    describe.each(hoistable)("hoistable %s", (_label, names, source) => {
-      it.concurrent("is eliminated without crashing", async () => {
-        const script = `
-          const out = new Bun.Transpiler({ loader: "ts", exports: { eliminate: ${JSON.stringify(names)} } })
-            .transformSync(${JSON.stringify(source)});
-          console.write(JSON.stringify(out));
-        `;
-
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-        // Surfaces the panic message instead of a JSON.parse error below.
-        if (exitCode !== 0) expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toBe("export const keep = 1;\n");
-        expect(exitCode).toBe(0);
+    // Each of these aborted the process, so they run in one subprocess.
+    it("eliminates a hoistable export", async () => {
+      const print = rows =>
+        rows.map(([, names, source]) =>
+          new Bun.Transpiler({ loader: "ts", exports: { eliminate: names } }).transformSync(source),
+        );
+      const result = await bunRun(["-e", `console.log(JSON.stringify((${print})(${JSON.stringify(hoistable)})))`]);
+      expect(result).toEqual({
+        stdout: JSON.stringify(hoistable.map(() => "export const keep = 1;\n")),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
       });
     });
 

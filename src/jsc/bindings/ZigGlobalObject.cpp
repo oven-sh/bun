@@ -265,6 +265,10 @@ Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* glob
 #else
 #define WEBKIT_BYTECODE_CACHE_HASH_KEY BUN_WEBKIT_VERSION
 #endif
+// Set when the environment carries BUN_JSC_numberOfGCMarkers. Then that count applies to every heap,
+// worker heaps included, the way it did before worker heaps stopped using the helper pool.
+static bool gcMarkerCountSetByEnvironment = false;
+
 static consteval unsigned getWebKitBytecodeCacheVersion()
 {
     return WTF::SuperFastHash::computeHash(WEBKIT_BYTECODE_CACHE_HASH_KEY);
@@ -379,6 +383,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                     if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }
+                    // setOption matched the name without regard to case.
+                    const char* optionName = env + 8;
+                    const char* equals = strchr(optionName, '=');
+                    if (equals && WTF::equalIgnoringASCIICase(StringView(std::span<const char>(optionName, equals - optionName)), "numberOfGCMarkers"_s))
+                        gcMarkerCountSetByEnvironment = true;
                 }
             }
             // $vm, which an engine built with assertions has, evaluates strings and makes global objects
@@ -488,7 +497,12 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize);
+    // Every heap in the process marks with the same helper thread pool, and a helper serves one heap
+    // for that heap's whole marking phase. With many workers collecting at once the pool is taken, and
+    // a worker's collector waits for it instead of marking (oven-sh/bun#44186). A worker heap marks
+    // on its own thread. The main heap keeps the pool.
+    auto marking = worker_ptr && !gcMarkerCountSetByEnvironment ? JSC::HeapMarking::SerialUnlessLarge : JSC::HeapMarking::Parallel;
+    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize, nullptr, marking);
     if (!vmPtr) [[unlikely]] {
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
     }

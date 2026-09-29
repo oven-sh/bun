@@ -118,8 +118,7 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     `);
   });
 
-  // Serial: a debug subprocess needs about 2 s of CPU. Four at once reach the
-  // default test timeout on a loaded machine.
+  // Serial: four debug subprocesses at once reach the default test timeout on a loaded machine.
   test.serial("when duplex.end() throws after a close that comes before StartTLS", async () => {
     // No SSL wrapper exists yet, so the queued .StartTLS task carries the
     // close out: TLSSocket.onClose frees the Handlers, then duplex.end()

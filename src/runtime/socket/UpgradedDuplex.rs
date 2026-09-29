@@ -57,9 +57,7 @@ pub(crate) struct UpgradedDuplex {
     /// forever, so stage them here and replay them from
     /// [`Self::drain_pending`] as soon as the engine is up.
     pub pending_data: JsCell<Vec<u8>>,
-    /// The transport's EOF, held behind the bytes in [`Self::pending_data`] so
-    /// that [`Self::drain_pending`] reports it after them. An EOF with nothing
-    /// staged ahead of it is reported when the transport ends.
+    /// The transport's EOF, held until the bytes in [`Self::pending_data`] are delivered.
     pub pending_end: Cell<bool>,
     /// The transport closed before the TLS engine existed (same window as
     /// [`Self::pending_data`]). Consumed by the queued `StartTLS` task.
@@ -214,8 +212,6 @@ impl UpgradedDuplex {
         unsafe { &*this }.finish_close();
     }
 
-    /// Carries out a close: the engine's close callback, and the queued
-    /// `StartTLS` task for a close that came before the engine existed.
     pub(super) fn finish_close(&self) {
         // Keep the wrapper (and so its visited `duplex*` slots) reachable
         // across `handlers.on_close`, which downgrades the socket's own strong
@@ -263,8 +259,7 @@ impl UpgradedDuplex {
                 // Best-effort probe: consume the exception and fall through.
                 Err(err) => drop(global.take_exception(err)),
             }
-            // `start_tls` is still queued: this close can be the answer to a
-            // transport that was destroyed, and node ends no destroyed stream.
+            // Node ends no destroyed stream. A close after the engine started is left as it is.
             if self.wrapper_ref().is_none() {
                 match duplex.get(&global, "destroyed") {
                     Ok(Some(destroyed)) if destroyed.to_boolean() => return,
@@ -770,8 +765,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             this.pending_end.set(true);
             return Ok(JSValue::UNDEFINED);
         }
-        // Node reports the EOF inside the transport's 'end':
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L82-L86
+        // Node's JSStreamSocket reports the EOF inside the transport's 'end' too.
         (this.handlers.on_end)(this.handlers.ctx);
     }
     Ok(JSValue::UNDEFINED)

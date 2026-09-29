@@ -2914,6 +2914,39 @@ console.log(<div {...obj} key="after" />);`),
     expect(browser.transformSync(`typeof require !== "undefined";`)).toBe("");
   });
 
+  it("bun build --no-bundle keeps a typeof require guard unless the target binds require", async () => {
+    const source = `export const r = typeof require !== "undefined" ? require : undefined;\n`;
+    using dir = tempDir("no-bundle-typeof-require", { "a.mjs": source });
+
+    const build = async (...targetArgs) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", ...targetArgs, "a.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const [node, browser, defaultTarget, bun] = await Promise.all([
+      build("--target=node"),
+      build("--target=browser"),
+      build(),
+      build("--target=bun"),
+    ]);
+
+    const kept = { stdout: source, stderr: "", exitCode: 0 };
+    expect({ node, browser, default: defaultTarget, bun }).toEqual({
+      node: kept,
+      browser: kept,
+      default: kept,
+      // target bun binds `require` from import.meta, so the fold stays.
+      bun: { stdout: `var {require}=import.meta;export const r = require;\n`, stderr: "", exitCode: 0 },
+    });
+  });
+
   it("CommonJS", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: false } });
 

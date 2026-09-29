@@ -272,8 +272,6 @@ pub struct VirtualMachine {
 
     pub argv: Vec<Box<[u8]>>,
 
-    pub origin_timer: std::time::Instant,
-    pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
     /// For fake timers: the wall-clock time (ms since the Unix epoch) that the
@@ -3088,13 +3086,30 @@ unsafe extern "C" {
     ) -> *mut JSInternalPromise;
 }
 
-fn get_origin_timestamp() -> u64 {
-    // Subtract the Y2K epoch so the timestamp fits in a u64 (nanoseconds).
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i128)
-        .unwrap_or(0);
-    (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
+/// The one time origin of the process. `process.hrtime()`, `process.uptime()`,
+/// `Bun.nanoseconds()`, `performance.now()` and `performance.timeOrigin` count
+/// from it on every thread, so a reading in a worker compares with one in the
+/// main thread (node reads one `uv_hrtime()` clock everywhere). The main
+/// thread's `VirtualMachine::init` captures it; a worker VM inherits it.
+pub(crate) struct ProcessOrigin {
+    pub(crate) monotonic: std::time::Instant,
+    /// Wall-clock nanoseconds since Y2K (`ORIGIN_RELATIVE_EPOCH`), so that it fits in a u64.
+    pub(crate) timestamp: u64,
+}
+
+pub(crate) fn process_origin() -> &'static ProcessOrigin {
+    static ORIGIN: std::sync::OnceLock<ProcessOrigin> = std::sync::OnceLock::new();
+    ORIGIN.get_or_init(|| {
+        let monotonic = std::time::Instant::now();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i128)
+            .unwrap_or(0);
+        ProcessOrigin {
+            monotonic,
+            timestamp: (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64,
+        }
+    })
 }
 
 impl VirtualMachine {
@@ -3120,7 +3135,7 @@ impl VirtualMachine {
         // thread; worker `destroy()` frees it explicitly).
         //
         // Note (validity): the zeroed bytes are NOT a valid
-        // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
+        // `VirtualMachine` — `on_unhandled_rejection:
         // fn(...)`, every `Vec`/`Box`/
         // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), `URL`
         // (`&[u8]` references), and `Option<bool>` (bool-niche → zero = Some)
@@ -3188,8 +3203,9 @@ impl VirtualMachine {
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
-            addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
-            addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            // Seed the process origin now: the main thread's VM is the first
+            // one, so `process.uptime()` keeps its start point.
+            let _ = process_origin();
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid

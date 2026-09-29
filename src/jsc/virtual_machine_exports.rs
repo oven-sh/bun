@@ -40,7 +40,10 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
-    vm.origin_timer.elapsed().as_nanos() as u64
+    crate::virtual_machine::process_origin()
+        .monotonic
+        .elapsed()
+        .as_nanos() as u64
 }
 
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
@@ -49,8 +52,9 @@ pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
     if let Some(overridden) = vm.overridden_time_origin {
         return overridden;
     }
-    // timespce to milliseconds
-    ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
+    // nanoseconds since the Unix epoch, in milliseconds
+    ((crate::virtual_machine::process_origin().timestamp as f64)
+        + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
         / 1_000_000.0
 }
 

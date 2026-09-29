@@ -417,26 +417,31 @@ describe.concurrent("socket", () => {
         setImmediate(turn);
       });
 
-      if (mode === "net") {
-        const socket = net.connect(Number(port), "127.0.0.1");
-        socket.on("data", received).on("close", closed).on("error", reject);
-        await done.finally(() => socket.destroy());
-      } else {
-        const socket = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: Number(port),
-          tls: mode === "tls" ? { rejectUnauthorized: false } : undefined,
-          socket: {
-            data(_socket, data) {
-              received(data);
+      try {
+        if (mode === "net") {
+          const socket = net.connect(Number(port), "127.0.0.1");
+          socket.on("data", received).on("close", closed).on("error", reject);
+          await done.finally(() => socket.destroy());
+        } else {
+          const socket = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: Number(port),
+            tls: mode === "tls" ? { rejectUnauthorized: false } : undefined,
+            socket: {
+              data(_socket, data) {
+                received(data);
+              },
+              close: closed,
+              error(_socket, error) {
+                reject(error);
+              },
             },
-            close: closed,
-            error(_socket, error) {
-              reject(error);
-            },
-          },
-        });
-        await done.finally(() => socket.terminate());
+          });
+          await done.finally(() => socket.terminate());
+        }
+      } finally {
+        // A run that failed has to end the setImmediate chain too.
+        finished = true;
       }
 
       // A TLS record that the turn before left incomplete counts in this one.

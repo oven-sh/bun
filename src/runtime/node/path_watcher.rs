@@ -500,8 +500,7 @@ pub(crate) fn watch(
     // is scheduled anyway.
     #[cfg(not(target_os = "macos"))]
     {
-        // The crawl of a recursive watch opens directories. It must not compete
-        // with the probe for the last free descriptor.
+        // The crawl needs a descriptor. It must not compete with the probe for the last one.
         drop(_close_probe);
         // SAFETY: watcher live under manager.mutex.
         if let Err(err) = Platform::add_watch(manager, unsafe { &mut *watcher }) {
@@ -568,18 +567,15 @@ pub(crate) fn watch(
 // Platform backends
 // ────────────────────────────────────────────────────────────────────────────────
 
-/// Buffers of one crawl, reused from one directory to the next. The inotify
-/// reader thread keeps one set for all of its crawls.
+/// Buffers of a crawl. The inotify reader thread keeps one set for all of its crawls.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Default)]
 struct WalkScratch {
-    /// Absolute path of the directory being read or of the entry handed to `cb`,
-    /// NUL-terminated.
+    /// Absolute path of the directory being read or of the entry for `cb`, NUL-terminated.
     abs: Vec<u8>,
     /// The same path relative to the root of the watch.
     rel: Vec<u8>,
-    /// Entries that were read and wait for their visit, one `[is_file][name][0]`
-    /// record each. The records of a directory follow those of its parent.
+    /// `[is_file][name][0]` records of entries not visited yet, innermost directory last.
     pending: Vec<u8>,
     /// The directories that have records in `pending`, outermost first.
     levels: Vec<WalkLevel>,
@@ -590,16 +586,15 @@ struct WalkLevel {
     /// Lengths of the directory's path in `abs` (without the NUL) and in `rel`.
     abs_len: usize,
     rel_len: usize,
-    /// The directory's records are `pending[start..]`. `next` is the first one
-    /// that the walk did not visit yet.
+    /// Start of the directory's records in `pending`.
     start: usize,
+    /// The first record that the walk did not visit yet.
     next: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 impl WalkScratch {
-    /// Makes `abs` and `rel` the paths of the entry `name` of the directory whose
-    /// paths are their first `abs_len` and `rel_len` bytes.
+    /// Appends `name` to the directory's paths, the first `abs_len` and `rel_len` bytes.
     fn set_entry(
         abs: &mut Vec<u8>,
         rel: &mut Vec<u8>,
@@ -621,18 +616,7 @@ impl WalkScratch {
         rel.extend_from_slice(name);
     }
 
-    /// Reads the directory at `self.abs` to its end and closes it. When the
-    /// directory has entries for the walk to visit, it becomes the innermost
-    /// level. The walk opens directories only here, so the walk itself holds one
-    /// directory descriptor and one `getdents` buffer, at any depth.
-    ///
-    /// Files that come before the first subdirectory go to `cb` as they are read.
-    /// The first subdirectory and every entry after it are recorded in
-    /// `self.pending`: the walk reads a subdirectory when it visits it, which needs
-    /// this directory closed, and `cb` gets the later entries after that visit.
-    ///
-    /// Best-effort: a directory that cannot be opened ends its branch, and a read
-    /// that fails ends the listing.
+    /// Reads the directory at `self.abs` to its end and closes it before the walk descends.
     #[inline(never)]
     fn read_dir<const DIRS_ONLY: bool>(&mut self, cb: &mut impl FnMut(&ZStr, &[u8], bool)) {
         let abs_len = self.abs.len() - 1;
@@ -643,6 +627,7 @@ impl WalkScratch {
             sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
             0,
         ) else {
+            // Best-effort: https://github.com/oven-sh/bun/issues/44246
             return;
         };
         let _close = sys::CloseOnDrop::new(dir);
@@ -656,10 +641,12 @@ impl WalkScratch {
             // The iterator caches the UTF-8 transcode and exposes it as `slice_u8()`.
             let name = entry.name.slice_u8();
             if is_file && !found_dir {
+                // In order and with no copy: no subdirectory came before this file.
                 Self::set_entry(&mut self.abs, &mut self.rel, abs_len, rel_len, name);
                 cb(ZStr::from_slice_with_nul(&self.abs), &self.rel, true);
                 continue;
             }
+            // Visited after this directory is closed, so the name is copied.
             found_dir = true;
             self.pending.push(u8::from(is_file));
             self.pending.extend_from_slice(name);
@@ -676,17 +663,7 @@ impl WalkScratch {
     }
 }
 
-/// Shared directory walk for Linux and Kqueue: calls `cb` with (abs, rel, is_file)
-/// for every entry below `abs_dir`. An entry comes before the contents of it, and
-/// the entries of one directory come in `getdents` order. `DIRS_ONLY` skips
-/// non-directories (inotify reports a file on the watch of its directory; kqueue
-/// needs a descriptor per file).
-///
-/// The walk reads a directory to its end and closes it before it visits a
-/// subdirectory, as node's crawl does with `readdirSync`:
-/// https://github.com/nodejs/node/blob/v26.10.0/lib/internal/fs/recursive_watch.js#L186-L221
-/// So a tree deeper than the number of free descriptors is walked to its end. The
-/// walk does not recurse: its native stack does not grow with the tree.
+/// Calls `cb` (abs, rel, is_file) for each entry below `abs_dir`, an entry before its contents.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
@@ -694,6 +671,7 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     scratch: &mut WalkScratch,
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
+    // Like node's #scanFolder: https://github.com/nodejs/node/blob/v26.10.0/lib/internal/fs/recursive_watch.js#L186-L221
     scratch.abs.clear();
     scratch.abs.extend_from_slice(abs_dir.as_bytes_with_nul());
     scratch.rel.clear();
@@ -725,8 +703,7 @@ fn walk_subtree<const DIRS_ONLY: bool>(
             is_file,
         );
         if !is_file {
-            // After `cb`: a directory is watched before it is read, so an entry
-            // that appears in it after the read has an event.
+            // After `cb`: the directory has its watch before the walk reads it.
             scratch.read_dir::<DIRS_ONLY>(cb);
         }
     }
@@ -923,7 +900,7 @@ impl Linux {
         Ok(())
     }
 
-    /// Best-effort directory walk. inotify watches are per-directory (events
+    /// Best-effort recursive directory walk. inotify watches are per-directory (events
     /// for files arrive on their parent's wd), so only descend into subdirectories.
     /// Returns the first `inotify_add_watch` failure without stopping the walk.
     fn walk_and_add(
@@ -998,7 +975,7 @@ impl Linux {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut rel_spill: Vec<u8> = Vec::new();
         let mut walk_scratch = WalkScratch::default();
-        // Capacity of `walk_scratch.pending` that stays allocated between crawls.
+        // A larger listing does not stay allocated in `walk_scratch.pending` between crawls.
         const PENDING_KEPT: usize = 64 * 1024;
 
         while running.load(Ordering::Acquire) {
@@ -1268,8 +1245,6 @@ impl Linux {
                                 }
                             },
                         );
-                        // The listing of one very large directory does not stay
-                        // allocated for the life of the thread.
                         if walk_scratch.pending.capacity() > PENDING_KEPT {
                             walk_scratch.pending = Vec::new();
                         }

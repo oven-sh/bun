@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 
 // Constants matching the upstream slice-ansi test suite
 const ESCAPE = "\u001B";
@@ -1598,6 +1600,136 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi(utf16, 6, 11)).toBe("world");
       expect(Bun.sliceAnsi(utf16)).toBe(utf16);
       expect(Bun.sliceAnsi(utf16, 0, 5, "\u2026")).toBe("hell\u2026");
+    });
+  });
+
+  // ======================================================================
+  // A result past the string length limit
+  // ======================================================================
+
+  // The result can be longer than the input: the slice reopens the active styles and the hyperlink, closes them
+  // at the end, and adds the ellipsis. Past the limit, sliceAnsi aborted the process inside the StringBuilder (or
+  // makeString on the ASCII fast path) instead of throwing.
+  describe("a result past the string length limit", () => {
+    const outOfMemory = "RangeError: Out of memory";
+
+    // A 64 KiB synthetic allocation limit: a result of more than 65,536 characters throws. The child builds the
+    // inputs with repeat(), which the limit does not check (Buffer.toString() does), and an input longer than the
+    // limit is fine: only the result is checked.
+    test("throws a RangeError", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const rep = (s, n) => s.repeat(n);
+          const red = "\\x1b[31m";
+          const ellipsis = "\\u2026" + rep("\\u200b", 10); // width 1, 11 characters
+          // Each entry is [input, start, end, ellipsis]. The result lengths are: an SGR input from column 1 is
+          // N + 9 (open and close code), the ASCII fast path with an ellipsis is N + 9 (one) or N + 18 (two),
+          // a hyperlink of N URI characters is N + 13 (ESC form) or N + 11 (C1 form).
+          const cases = {
+            sgrAtLimit: [red + rep("a", 65527), 1],
+            sgrPastLimit: [red + rep("a", 65528), 1],
+            wideSgrAtLimit: [red + rep("\\u3042", 65527), 2],
+            wideSgrPastLimit: [red + rep("\\u3042", 65528), 2],
+            ellipsisStartAtLimit: [rep("a", 65527), 1, undefined, ellipsis],
+            ellipsisStartPastLimit: [rep("a", 65528), 1, undefined, ellipsis],
+            ellipsisEndPastLimit: [rep("a", 65528), 0, 65527, ellipsis],
+            ellipsisBothAtLimit: [rep("a", 65518), 1, 65517, ellipsis],
+            ellipsisBothPastLimit: [rep("a", 65519), 1, 65518, ellipsis],
+            linkAtLimit: ["\\x1b]8;;" + rep("u", 65523) + "\\x07ab", 1],
+            linkPastLimit: ["\\x1b]8;;" + rep("u", 65524) + "\\x07ab", 1],
+            wideLinkPastLimit: ["\\x1b]8;;" + rep("\\u3042", 65524) + "\\x07ab", 1],
+            c1LinkAtLimit: ["\\x9d8;;" + rep("u", 65525) + "\\x9cab", 1],
+            c1LinkPastLimit: ["\\x9d8;;" + rep("u", 65526) + "\\x9cab", 1],
+            // The input is longer than the limit, and the result is not.
+            shortSliceOfLongInput: [red + rep("a", 70000), 0, 4, ellipsis],
+            shortSliceOfLongWideInput: [rep("\\u3042", 70000), 0, 4],
+          };
+          const results = {};
+          for (const [name, args] of Object.entries(cases)) {
+            try {
+              results[name] = Bun.sliceAnsi(...args).length;
+            } catch (e) {
+              results[name] = e.name + ": " + e.message;
+            }
+          }
+          console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: {
+          sgrAtLimit: 65536,
+          sgrPastLimit: outOfMemory,
+          wideSgrAtLimit: 65536,
+          wideSgrPastLimit: outOfMemory,
+          ellipsisStartAtLimit: 65536,
+          ellipsisStartPastLimit: outOfMemory,
+          ellipsisEndPastLimit: outOfMemory,
+          ellipsisBothAtLimit: 65536,
+          ellipsisBothPastLimit: outOfMemory,
+          linkAtLimit: 65536,
+          linkPastLimit: outOfMemory,
+          wideLinkPastLimit: outOfMemory,
+          c1LinkAtLimit: 65536,
+          c1LinkPastLimit: outOfMemory,
+          // red + "aaa" + ellipsis + close code
+          shortSliceOfLongInput: 5 + 3 + 11 + 5,
+          shortSliceOfLongWideInput: 2,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The output builder reserves the input length. The first 16-bit character doubles that reserve, and with an
+    // input of 2^30 code units or more the doubled reserve is longer than the longest 16-bit string: the builder
+    // failed for a result of a few characters. The child holds a flat string of 2 GiB, so this needs memory.
+    // repeat() doubles with memcpy and is quick here, also in a debug build.
+    const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+    describe.skipIf(memory < 8 * 1024 ** 3)("a short slice of an input of 2^30 code units", () => {
+      const cases = {
+        "16-bit input": {
+          expression: `Bun.sliceAnsi("\\u3042".repeat(2 ** 30), 0, 4)`,
+          result: "\u3042\u3042",
+        },
+        "8-bit input with a 16-bit ellipsis": {
+          expression: `Bun.sliceAnsi("\\x1b[31m" + "a".repeat(2 ** 30), 0, 4, "\\u2026")`,
+          result: "\x1b[31maaa\u2026\x1b[39m",
+        },
+      };
+      for (const [name, { expression, result }] of Object.entries(cases)) {
+        test(name, async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `let result;
+              try {
+                result = ${expression};
+              } catch (e) {
+                result = e.name + ": " + e.message;
+              }
+              console.log(JSON.stringify(result));`,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // One assertion: an abort shows its signal and its stderr next to the missing stdout.
+          expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+            stdout: result,
+            stderr: "",
+            exitCode: 0,
+            signalCode: null,
+          });
+        });
+      }
     });
   });
 });

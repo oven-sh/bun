@@ -943,6 +943,10 @@ declare module "bun" {
    * @param options Optional behavior flags (such as `ellipsis` for truncation)
    * @returns The sliced string with ANSI codes intact
    *
+   * @throws A `RangeError` (out of memory) when the result passes the maximum
+   * string length (2^31 - 1 characters). The result can be longer than the
+   * input, because the slice re-opens the active styles and adds the ellipsis.
+   *
    * @example
    * ```ts
    * import { sliceAnsi } from "bun";

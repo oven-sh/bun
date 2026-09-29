@@ -62,10 +62,12 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         );
     }
     let order = WalkOrder::collect(this, chunks.len(), walks);
+    let started_by = chunks_that_start_files(&order);
 
     struct Ctx<'a, 'f> {
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
+        started_by: &'f [(IndexInt, u32)],
         order: &'f WalkOrder,
     }
 
@@ -82,6 +84,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
+        started_by: &started_by,
         order: &order,
     };
     let chunks_len = chunks.len();
@@ -100,6 +103,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 chunk,
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
+                ctx.started_by,
                 ctx.order,
                 chunks_len,
             ));
@@ -121,6 +125,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     chunk: &mut Chunk,
     chunk_index: u32,
     chunk_of_file: &[u32],
+    started_by: &[(IndexInt, u32)],
     order: &WalkOrder,
     chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -176,7 +181,15 @@ pub(crate) fn find_imported_parts_in_js_order(
     }
 
     let reached_chunks = if this.graph.code_splitting {
-        reached_chunks_in_order(this, chunk, chunk_index, chunk_of_file, order, chunks_len)?
+        reached_chunks_in_order(
+            this,
+            chunk,
+            chunk_index,
+            chunk_of_file,
+            started_by,
+            order,
+            chunks_len,
+        )?
     } else {
         Vec::new()
     };
@@ -968,12 +981,24 @@ impl ChunkLayout<'_, '_> {
     }
 }
 
+/// Per wrapped file that a chunk starts: (file, chunk). By file.
+fn chunks_that_start_files(order: &WalkOrder) -> Vec<(IndexInt, u32)> {
+    let mut started_by: Vec<(IndexInt, u32)> = order
+        .starts
+        .iter()
+        .map(|&(chunk_index, _, wrapped)| (wrapped, chunk_index))
+        .collect();
+    started_by.sort_unstable();
+    started_by
+}
+
 /// Ranks the other chunks for this chunk's `import` statements; it does not order files.
 fn reached_chunks_in_order(
     c: &LinkerContext,
     chunk: &Chunk,
     chunk_index: u32,
     chunk_of_file: &[u32],
+    started_by: &[(IndexInt, u32)],
     order: &WalkOrder,
     chunks_len: usize,
 ) -> Result<Vec<u32>, bun_alloc::AllocError> {
@@ -1005,16 +1030,25 @@ fn reached_chunks_in_order(
                 Frame::Leave(source_index) => {
                     // Post-order: when the unbundled program would have run this file.
                     let other = chunk_of_file[source_index as usize];
-                    if other == u32::MAX || other == chunk_index {
-                        continue;
+                    if other != u32::MAX && other != chunk_index {
+                        let ranks_again = c
+                            .ranks_chunk_again
+                            .as_ref()
+                            .is_some_and(|files| files.is_set(source_index as usize));
+                        if ranks_again || !reached_set.is_set(other as usize) {
+                            reached_set.set(other as usize);
+                            reached.push(other);
+                        }
                     }
-                    let ranks_again = c
-                        .ranks_chunk_again
-                        .as_ref()
-                        .is_some_and(|files| files.is_set(source_index as usize));
-                    if ranks_again || !reached_set.is_set(other as usize) {
-                        reached_set.set(other as usize);
-                        reached.push(other);
+                    // A chunk that starts the file runs it here. That ranks the chunk again, never first.
+                    let first = started_by.partition_point(|&(file, _)| file < source_index);
+                    for &(file, starter) in &started_by[first..] {
+                        if file != source_index {
+                            break;
+                        }
+                        if starter != chunk_index && reached_set.is_set(starter as usize) {
+                            reached.push(starter);
+                        }
                     }
                     continue;
                 }

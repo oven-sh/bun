@@ -54,6 +54,15 @@ fn part_only_declares(part: &bun_ast::Part) -> bool {
 impl LinkerContext<'_> {
     /// `loading_file_has_no_side_effects` says what tree shaking may drop. This says that the load order cannot matter.
     fn loading_file_only_declares(&self, source_index: u32) -> bool {
+        self.file_only_declares(source_index, false)
+    }
+
+    /// The `require_x()` / `init_x()` calls at its top level are all that loading the file runs.
+    fn loading_file_only_starts(&self, source_index: u32) -> bool {
+        self.file_only_declares(source_index, true)
+    }
+
+    fn file_only_declares(&self, source_index: u32, or_starts: bool) -> bool {
         if source_index == Index::RUNTIME.value() {
             return true;
         }
@@ -81,13 +90,49 @@ impl LinkerContext<'_> {
                                         record.source_index.is_valid()
                                             && (wrapped
                                                 || flags[record.source_index.get() as usize].wrap
-                                                    == WrapKind::None)
+                                                    == WrapKind::None
+                                                || (or_starts
+                                                    && self
+                                                        .wrapped_file_started_by(
+                                                            source_index,
+                                                            record,
+                                                        )
+                                                        .is_some()))
                                     }
                                     ImportKind::Require => wrapped,
                                     _ => true,
                                 }
                         }))
             })
+    }
+
+    /// The bundled wrapped file whose `require_x()` / `init_x()` the printer puts at the top level of `importer` for this record.
+    pub(crate) fn wrapped_file_started_by(
+        &self,
+        importer: u32,
+        record: &bun_ast::ImportRecord,
+    ) -> Option<u32> {
+        if record.kind != ImportKind::Stmt
+            || record.flags.contains(ImportRecordFlags::IS_UNUSED)
+            || !record.source_index.is_valid()
+        {
+            return None;
+        }
+        let flags = self.graph.meta.items_flags();
+        let wrapped = record.source_index.get();
+        if wrapped == importer || flags[importer as usize].wrap != WrapKind::None {
+            return None;
+        }
+        let started = match flags[wrapped as usize].wrap {
+            WrapKind::None => false,
+            WrapKind::Cjs => true,
+            WrapKind::Esm => {
+                self.graph.files_live.is_set(wrapped as usize)
+                    && !self.graph.ast.items_wrapper_ref()[wrapped as usize].is_empty()
+                    && !flags[wrapped as usize].is_async_or_has_async_dependency
+            }
+        };
+        started.then_some(wrapped)
     }
 
     /// None of the file's live parts run anything at the top level:
@@ -782,28 +827,135 @@ fn entries_loaded_mid_evaluation(
 enum OrderFrame {
     Enter(u32),
     Leave(u32),
+    /// A live part of `importer` calls `require_x()` / `init_x()` of `wrapped` here.
+    Start {
+        importer: u32,
+        wrapped: u32,
+    },
 }
 
-/// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the entry point's own files that must run before a file of the parent.
+/// What runs while a pinned entry point loads and may have to run in the parent.
+#[derive(Clone, Copy)]
+enum RunPoint {
+    /// An own file that does more than declare.
+    Own(u32),
+    /// The first start of `wrapped`. `importer` is an own file.
+    Start { importer: u32, wrapped: u32 },
+}
+
+fn index_own_files(
+    points: &[RunPoint],
+    position: &mut ArrayHashMap<u32, usize>,
+) -> crate::Result<()> {
+    if position.count() == 0 {
+        for (index, point) in points.iter().enumerate() {
+            if let RunPoint::Own(file) = *point {
+                position.put(file, index)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The own files that load the entry point's file, directly or through own files. No chunk may import a pinned chunk, so they stay.
+struct LeadsBack {
+    entry_source: u32,
+    /// In the order the searches met the files.
+    known: ArrayHashMap<u32, bool>,
+    loaded: Vec<u32>,
+}
+
+impl LeadsBack {
+    fn leads_back_to_entry(
+        &mut self,
+        this: &LinkerContext,
+        own: &impl Fn(u32) -> bool,
+        file: u32,
+    ) -> crate::Result<bool> {
+        if let Some(&known) = self.known.get(&file) {
+            return Ok(known);
+        }
+        let css = this.graph.ast.items_css();
+        let first = self.known.count();
+        self.known.put(file, false)?;
+        let mut found = false;
+        let mut next = first;
+        while next < self.known.count() {
+            let from = self.known.keys()[next];
+            next += 1;
+            let loaded = &mut self.loaded;
+            loaded.clear();
+            this.for_each_file_loaded_by(from, |other| {
+                if own(other) && css[other as usize].is_none() {
+                    loaded.push(other);
+                }
+            });
+            for &other in &self.loaded {
+                if other == self.entry_source {
+                    found = true;
+                    continue;
+                }
+                match self.known.get(&other).copied() {
+                    Some(leads) => found |= leads,
+                    None => self.known.put(other, false)?,
+                }
+            }
+        }
+        // The verdict goes up from the files that load the entry point's file. The last files met are the deepest.
+        let mut changed = found;
+        while changed {
+            changed = false;
+            for index in (first..self.known.count()).rev() {
+                if self.known.values()[index] {
+                    continue;
+                }
+                let mut leads = false;
+                this.for_each_file_loaded_by(self.known.keys()[index], |other| {
+                    leads |= own(other)
+                        && css[other as usize].is_none()
+                        && (other == self.entry_source
+                            || self.known.get(&other).is_some_and(|&known| known));
+                });
+                if leads {
+                    self.known.values_mut()[index] = true;
+                    changed = true;
+                }
+            }
+        }
+        Ok(self.known.values()[first])
+    }
+}
+
+/// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the entry point's own files that must run before a file of the parent. `starts` gets (entry point id, wrapped file) per start that the parent must make for a file that stays.
 fn files_that_leave_entry_chunk(
     this: &LinkerContext,
     entry_id: usize,
     load_class: &mut impl FnMut(&AutoBitSet) -> crate::Result<AutoBitSet>,
     entered: &mut [u32],
     leaves: &mut AutoBitSet,
+    starts: &mut Vec<(u32, u32)>,
 ) -> crate::Result<()> {
     let entry_points_len = this.graph.entry_points.len();
     let entry_source = this.graph.entry_points.items_source_index()[entry_id];
     let bits = this.graph.files.items_entry_bits();
     let css = this.graph.ast.items_css();
+    let flags = this.graph.meta.items_flags();
+    let parts = this.graph.ast.items_parts();
+    let records = this.graph.ast.items_import_records();
     let live = |file: u32| this.graph.files_live.is_set(file as usize);
     let own = |file: u32| {
         live(file) && bits[file as usize].count() == 1 && bits[file as usize].is_set(entry_id)
     };
 
-    // The own files that do more than declare, in evaluation order. The first `cut` of them precede such a file of the parent.
-    let mut candidates: Vec<u32> = Vec::new();
+    // The run points in evaluation order. The first `cut` of them precede a file of the parent that does more than declare.
+    let mut points: Vec<RunPoint> = Vec::new();
     let mut cut = 0;
+    let mut started: ArrayHashMap<u32, ()> = ArrayHashMap::new();
+    // The own files that make a start, and those of them that run nothing else.
+    let mut makes_start: ArrayHashMap<u32, ()> = ArrayHashMap::new();
+    let mut only_starts: ArrayHashMap<u32, ()> = ArrayHashMap::new();
+    // The wrapped files of another class.
+    let mut outside: ArrayHashMap<u32, ()> = ArrayHashMap::new();
     let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
@@ -811,10 +963,20 @@ fn files_that_leave_entry_chunk(
             OrderFrame::Leave(file) => {
                 if live(file) && file != entry_source && !this.loading_file_only_declares(file) {
                     if own(file) {
-                        candidates.push(file);
+                        if makes_start.contains(&file) && this.loading_file_only_starts(file) {
+                            only_starts.put(file, ())?;
+                        }
+                        points.push(RunPoint::Own(file));
                     } else {
-                        cut = candidates.len();
+                        cut = points.len();
                     }
+                }
+                continue;
+            }
+            OrderFrame::Start { importer, wrapped } => {
+                if !started.contains(&wrapped) {
+                    started.put(wrapped, ())?;
+                    points.push(RunPoint::Start { importer, wrapped });
                 }
                 continue;
             }
@@ -838,39 +1000,112 @@ fn files_that_leave_entry_chunk(
             };
             // A chunk of another class runs before both, and so does what it imports.
             if !in_class {
+                if flags[file as usize].wrap != WrapKind::None {
+                    outside.put(file, ())?;
+                }
                 continue;
             }
         }
         stack.push(OrderFrame::Leave(file));
         let mark = stack.len();
-        for_each_edge(this, file, live(file), |_, edge| {
-            if let Edge::Import(other) = edge {
-                stack.push(OrderFrame::Enter(other));
+        let starts_here = own(file);
+        let mut made_start = false;
+        for_each_edge(this, file, live(file), |part_index, edge| {
+            let Edge::Import(other) = edge else {
+                return;
+            };
+            if starts_here
+                && flags[other as usize].wrap != WrapKind::None
+                && live(other)
+                && let Some(part) = parts[file as usize].as_slice().get(part_index as usize)
+                && this.graph.parts_live[file as usize].is_set(part_index as usize)
+                && part.import_record_indices.iter().any(|&record| {
+                    this.wrapped_file_started_by(file, &records[file as usize][record as usize])
+                        == Some(other)
+                })
+            {
+                made_start = true;
+                stack.push(OrderFrame::Start {
+                    importer: file,
+                    wrapped: other,
+                });
             }
+            stack.push(OrderFrame::Enter(other));
         });
         stack[mark..].reverse();
+        if made_start && file != entry_source {
+            makes_start.put(file, ())?;
+        }
     }
 
     // A file takes what it imports along. An import cycle imports a later file of the list: the list goes as one up to that file.
     // No chunk may import a pinned chunk, so the first file that cannot go ends the list.
+    let mut leads_back = LeadsBack {
+        entry_source,
+        known: ArrayHashMap::new(),
+        loaded: Vec::new(),
+    };
     let mut position: ArrayHashMap<u32, usize> = ArrayHashMap::new();
+    let mut repeated: Vec<(u32, u32)> = Vec::new();
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
     let mut later: Vec<u32> = Vec::new();
     let mut next = 0;
-    while next < cut {
+    'list: while next < cut {
         taken.clear();
+        let repeated_before = repeated.len();
         let mut end = next + 1;
         while next < end {
-            pending.push(candidates[next]);
+            let mut stuck = false;
+            match points[next] {
+                RunPoint::Own(file) => {
+                    // Such a file stays and the list goes on: the parent makes its calls.
+                    if !(only_starts.contains(&file)
+                        && leads_back.leads_back_to_entry(this, &own, file)?)
+                    {
+                        pending.push(file);
+                    }
+                }
+                RunPoint::Start { importer, wrapped } => {
+                    let mut stays = importer == entry_source;
+                    if !stays && !leaves.is_set(importer as usize) {
+                        stays = leads_back.leads_back_to_entry(this, &own, importer)?;
+                        if !stays {
+                            index_own_files(&points, &mut position)?;
+                            match position.get(&importer) {
+                                // The importer moves and makes the call there. The list goes as one up to it.
+                                Some(&index) if index < cut.max(end) => {
+                                    end = end.max(index + 1);
+                                    pending.push(importer);
+                                }
+                                _ => stays = true,
+                            }
+                        }
+                    }
+                    if stays {
+                        if !own(wrapped) {
+                            stuck = outside.contains(&wrapped);
+                        } else if leads_back.leads_back_to_entry(this, &own, wrapped)? {
+                            stuck = true;
+                        } else {
+                            pending.push(wrapped);
+                        }
+                        if !stuck {
+                            repeated.push((importer, wrapped));
+                        }
+                    }
+                }
+            }
             next += 1;
             while let Some(file) = pending.pop() {
+                if stuck {
+                    break;
+                }
                 if leaves.is_set(file as usize) {
                     continue;
                 }
                 leaves.set(file as usize);
                 taken.push(file);
-                let mut stuck = false;
                 this.for_each_file_loaded_by(file, |other| {
                     if !own(other) || css[other as usize].is_some() || leaves.is_set(other as usize)
                     {
@@ -884,24 +1119,31 @@ fn files_that_leave_entry_chunk(
                         later.push(other);
                     }
                 });
-                if !later.is_empty() && position.count() == 0 {
-                    for (index, &candidate) in candidates.iter().enumerate() {
-                        position.put(candidate, index)?;
-                    }
+                if !later.is_empty() {
+                    index_own_files(&points, &mut position)?;
                 }
                 for other in later.drain(..) {
+                    let stays = only_starts.contains(&other)
+                        && leads_back.leads_back_to_entry(this, &own, other)?;
                     match position.get(&other) {
-                        Some(&index) => end = end.max(index + 1),
-                        None => stuck = true,
+                        Some(&index) if index >= next && !stays => end = end.max(index + 1),
+                        _ => stuck = true,
                     }
-                }
-                if stuck {
-                    for &file in &taken {
-                        leaves.unset(file as usize);
-                    }
-                    return Ok(());
                 }
             }
+            // Behind the first run point that cannot go, nothing moves and the parent starts nothing.
+            if stuck {
+                for &file in &taken {
+                    leaves.unset(file as usize);
+                }
+                repeated.truncate(repeated_before);
+                break 'list;
+            }
+        }
+    }
+    for (importer, wrapped) in repeated {
+        if importer == entry_source || !leaves.is_set(importer as usize) {
+            starts.push((entry_id as u32, wrapped));
         }
     }
     Ok(())
@@ -1210,6 +1452,7 @@ pub(crate) fn merge_small_chunks(
             || !export_aliases[source_index].is_empty()
     };
     let mut leaves_entry_chunk = AutoBitSet::init_empty(files_len)?;
+    let mut starts_in_parent: Vec<(u32, u32)> = Vec::new();
     {
         // Only an entry point that precedes an `import()` target has a class with a parent.
         let mut precedes = AutoBitSet::init_empty(entry_points_len + 1)?;
@@ -1230,6 +1473,7 @@ pub(crate) fn merge_small_chunks(
                     &mut load_class,
                     entered,
                     &mut leaves_entry_chunk,
+                    &mut starts_in_parent,
                 )?;
             }
         }

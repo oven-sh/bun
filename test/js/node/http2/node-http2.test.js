@@ -6072,10 +6072,13 @@ describe.concurrent("session teardown when the peer never closes its side of the
     const { session, socket, peer } = await acceptH2c(server);
     try {
       const { closed } = recordTeardown(session, socket);
-      peer.destroy();
+      // A FIN, not an RST: peer.destroy() with unread inbound bytes resets the connection on
+      // macOS and Windows, and the session would then report that ECONNRESET as its 'error'.
+      peer.end();
       expect(await closed).toEqual([["close", true]]);
       expect(await connectionCount(server)).toBe(0);
     } finally {
+      peer.destroy();
       server.close();
     }
   });

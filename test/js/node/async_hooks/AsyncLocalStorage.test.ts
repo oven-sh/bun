@@ -1,7 +1,7 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -280,7 +280,10 @@ test("re-entering a storage inside run() does not grow the context", () => {
   };
   als.run(0, () => {
     const before = objects();
-    for (let i = 0; i < 100_000; i++) {
+    // A context that grows per re-entry adds at least one object per iteration, so 10k
+    // iterations still blow past the threshold. The full count is too slow under ASAN.
+    const iterations = isASAN || isDebug ? 10_000 : 100_000;
+    for (let i = 0; i < iterations; i++) {
       als.run(1, () => {
         using _ = als.withScope(2);
       });

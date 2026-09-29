@@ -1468,7 +1468,9 @@ describe("concurrent terminals on one Image", () => {
         console.log(JSON.stringify({ ok, rejected, carried }));
       `,
       ],
-      env: { ...bunEnv, WEBP_RACE_ROUNDS: "4" },
+      // A round is 32 decodes. An optimized build needs more of them to put a
+      // rewrite between the demuxer's two walks.
+      env: { ...bunEnv, WEBP_RACE_ROUNDS: isASAN || isDebug ? "8" : "32" },
       stdout: "pipe",
       stderr: "pipe",
     });

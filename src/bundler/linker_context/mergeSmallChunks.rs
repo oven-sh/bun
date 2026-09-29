@@ -135,6 +135,48 @@ impl LinkerContext<'_> {
         started.then_some(wrapped)
     }
 
+    /// The first thing that loading `file` runs is the `require_x()` / `init_x()` of `wrapped`: the parts ahead of that call only declare.
+    fn starts_first(&self, file: u32, wrapped: u32) -> bool {
+        let flags = self.graph.meta.items_flags();
+        let records = &self.graph.ast.items_import_records()[file as usize];
+        let parts_live = &self.graph.parts_live[file as usize];
+        let mut called = false;
+        for (part_index, part) in self.graph.ast.items_parts()[file as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if !parts_live.is_set(part_index) {
+                continue;
+            }
+            for &i in part.import_record_indices.iter() {
+                let record = &records[i as usize];
+                if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
+                    continue;
+                }
+                // `None` for an external module: its `import` stays a statement of the chunk, which runs ahead of all of the chunk's code.
+                let to = (record.kind == ImportKind::Stmt && record.source_index.is_valid())
+                    .then(|| flags[record.source_index.get() as usize].wrap);
+                if called {
+                    // The printer puts an `init_x()` ahead of the other calls of its part range.
+                    if to == Some(WrapKind::Esm) && record.source_index.get() != wrapped {
+                        return false;
+                    }
+                } else if self.wrapped_file_started_by(file, record) == Some(wrapped) {
+                    called = true;
+                } else if record.kind == ImportKind::Require
+                    || to.is_some_and(|wrap| wrap != WrapKind::None)
+                {
+                    return false;
+                }
+            }
+            if !called && !part_only_declares(part) {
+                return false;
+            }
+        }
+        called
+    }
+
     /// None of the file's live parts run anything at the top level:
     /// declarations only, `"sideEffects": false`, or a lazily initialized
     /// `__esm` / `__commonJS` wrapper. An entry point never qualifies (its
@@ -847,6 +889,80 @@ enum RunPoint {
     Cut(u32),
 }
 
+/// The files that run behind a start, up to the first one of the parent. The parent makes the call as it is when the first of them that lives in the parent makes it ahead of all that it runs.
+struct RunsBehindStart {
+    /// The wrapped file of the last start, until a file of the parent runs behind it.
+    open: Option<u32>,
+    /// The last of `files`, until it makes the call or the walk enters a file that runs.
+    caller: Option<u32>,
+    /// Each with whether it made the call of `open` ahead of all that ran since the walk entered it.
+    files: Vec<(u32, bool)>,
+    /// Per wrapped file: the `files` of its start, when one of them makes the call.
+    of_start: ArrayHashMap<u32, Box<[(u32, bool)]>>,
+}
+
+impl RunsBehindStart {
+    fn close(&mut self) -> crate::Result<()> {
+        if let Some(wrapped) = self.open.take()
+            && self.files.iter().any(|&(_, calls)| calls)
+        {
+            self.of_start.put(wrapped, self.files.as_slice().into())?;
+        }
+        self.caller = None;
+        self.files.clear();
+        Ok(())
+    }
+
+    /// An own file makes the first start of `wrapped`.
+    fn start(&mut self, wrapped: u32) -> crate::Result<()> {
+        self.close()?;
+        self.open = Some(wrapped);
+        Ok(())
+    }
+
+    /// The walk enters `file`, which is live.
+    fn enter(&mut self, this: &LinkerContext, file: u32, own: bool) -> crate::Result<()> {
+        let Some(wrapped) = self.open else {
+            return Ok(());
+        };
+        if this.loading_file_only_declares(file) {
+            return Ok(());
+        }
+        let calls = this.starts_first(file, wrapped);
+        self.caller = calls.then_some(file);
+        self.files.push((file, false));
+        if !own && !calls {
+            self.close()?;
+        }
+        Ok(())
+    }
+
+    /// A part of `importer` calls `wrapped`, which has started.
+    fn call(&mut self, importer: u32, wrapped: u32, own: bool) -> crate::Result<()> {
+        if self.open != Some(wrapped) || self.caller != Some(importer) {
+            return Ok(());
+        }
+        self.caller = None;
+        if let Some(last) = self.files.last_mut() {
+            last.1 = true;
+        }
+        if !own {
+            self.close()?;
+        }
+        Ok(())
+    }
+
+    /// The first file behind the start of `wrapped` that lives in the parent makes the same call.
+    fn parent_calls(&self, wrapped: u32, in_parent: &impl Fn(u32) -> bool) -> bool {
+        self.of_start.get(&wrapped).is_some_and(|files| {
+            files
+                .iter()
+                .find(|&&(file, _)| in_parent(file))
+                .is_some_and(|&(_, calls)| calls)
+        })
+    }
+}
+
 fn index_own_files(
     points: &[RunPoint],
     position: &mut ArrayHashMap<u32, usize>,
@@ -1227,6 +1343,12 @@ fn files_that_leave_entry_chunk(
     // The external imports of the file that the walk is in: (part, edges that the part makes ahead of the import).
     let mut externals: Vec<(u32, u32)> = Vec::new();
     let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
+    let mut behind = RunsBehindStart {
+        open: None,
+        caller: None,
+        files: Vec::new(),
+        of_start: ArrayHashMap::new(),
+    };
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
         let file = match frame {
@@ -1250,7 +1372,10 @@ fn files_that_leave_entry_chunk(
                     started.put(wrapped, ())?;
                     if own(importer) {
                         points.push(RunPoint::Start { importer, wrapped });
+                        behind.start(wrapped)?;
                     }
+                } else {
+                    behind.call(importer, wrapped, own(importer))?;
                 }
                 continue;
             }
@@ -1281,6 +1406,9 @@ fn files_that_leave_entry_chunk(
                 outside.put(file, points.len())?;
                 continue;
             }
+        }
+        if live(file) {
+            behind.enter(this, file, own(file))?;
         }
         stack.push(OrderFrame::Leave(file));
         let mark = stack.len();
@@ -1353,6 +1481,7 @@ fn files_that_leave_entry_chunk(
             makes_start.put(file, ())?;
         }
     }
+    behind.close()?;
 
     // A file takes what it imports along. An import cycle imports a later file of the list: the list goes as one up to that file.
     // No chunk may import a pinned chunk, so the first file that cannot go ends the list.
@@ -1521,8 +1650,11 @@ fn files_that_leave_entry_chunk(
             }
         }
     }
+    let in_parent = |file: u32| !own(file) || leaves.is_set(file as usize);
     for (importer, wrapped) in repeated {
-        if importer == entry_source || !leaves.is_set(importer as usize) {
+        if (importer == entry_source || !leaves.is_set(importer as usize))
+            && !behind.parent_calls(wrapped, &in_parent)
+        {
             starts.push((entry_id as u32, wrapped));
         }
     }

@@ -47,16 +47,13 @@ extern "C" JSC::EncodedJSValue uws_ws_get_topics_as_js_array(int ssl, uws_websoc
   }
 }
 
-// HttpRouter::route() calls this for a request-target whose raw segments can
-// differ from the URL parser's pathname (uWS::scanRequestTarget). The router
-// then matches the pathname, which is the one request.url reports.
+// The pathname the URL parser gives an origin-form request-target (see uWS::HttpRouter::route).
 extern "C" void Bun__HTTP__normalizeRequestPath(const char *target, size_t length, std::string *out) {
   out->clear();
   if (length == 0 || target[0] != '/') {
     return;
   }
-  // The parser wants an absolute URL. The host is a placeholder: it has no
-  // effect on the pathname, and only the pathname is read.
+  // Placeholder host: only the pathname is read.
   auto input = WTF::makeString("http://h"_s, WTF::String::fromUTF8ReplacingInvalidSequences(std::span {
     reinterpret_cast<const unsigned char*>(target),
     length

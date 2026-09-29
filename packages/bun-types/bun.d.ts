@@ -7201,7 +7201,8 @@ declare module "bun" {
   interface SocketHandler<Data = unknown, DataBinaryType extends BinaryType = "buffer"> {
     /**
      * Called when the socket connects. For TLS sockets with no `handshake`
-     * handler, this is called only after the handshake completes.
+     * handler, this is called when `handshake` would be: after the handshake
+     * completes or fails.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -7210,9 +7211,15 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
-     * Called when the TLS handshake completes.
-     * @param success Whether the server authorized the connection despite `authorizationError`
-     * @param authorizationError The certificate authorization error, or `null` if there was none
+     * Called when the TLS handshake completes or fails.
+     *
+     * A connection can close before its handshake completes with no call to
+     * `handshake`. Then `close` is the only call. This is the case when:
+     * - the peer resets the connection
+     * - the peer ends the connection after this socket called `shutdown()`
+     *
+     * @param success Whether the server authorized the connection despite `authorizationError`. `false` when the handshake failed.
+     * @param authorizationError The certificate authorization error or the reason the handshake failed, or `null` if there was none
      */
     handshake?(socket: Socket<Data>, success: boolean, authorizationError: Error | null): void;
 

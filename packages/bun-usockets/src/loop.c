@@ -912,7 +912,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
                 if (us_socket_is_shut_down(s)) {
-                    /* We got FIN back after sending it */
+                    /* We got FIN back after sending it. The peer starts this close, so it reports
+                     * no handshake that is still pending (see the recv-error branch above). */
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }

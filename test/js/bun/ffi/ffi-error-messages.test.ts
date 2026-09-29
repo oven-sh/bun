@@ -1,6 +1,6 @@
 import { CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { bunEnv, bunExe, isMusl } from "harness";
 
 // Not `toThrow()`: it also accepts an Error that the function returns, which is
 // what `toBuffer()` and `toArrayBuffer()` did with their TypeError before they
@@ -82,6 +82,150 @@ describe("CString argument errors", () => {
     const bytes = new TextEncoder().encode("hello\0");
     expect(`${new CString(ptr(bytes), 1, 4)}`).toBe("ello");
     expect(`${new CString(ptr(bytes))}`).toBe("hello");
+  });
+});
+
+// `new CString(ptr)` evaluates to a string primitive, which a constructor must not return. So CString is a
+// constructor to nothing but a `new CString()` expression: what asks IsConstructor first gets false.
+// Subprocess because a build where CString is a constructor crashes at most of these doors.
+describe("CString is not a constructor to anything that asks first", () => {
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { CString, ptr } from "bun:ffi";
+        const hello = Buffer.from("hello\\0");
+        globalThis.pinned = hello;
+        const p = ptr(hello);
+        class Species extends Array {
+          static get [Symbol.species]() {
+            return CString;
+          }
+        }
+        const reparent = X => (Object.setPrototypeOf(X, CString), X);
+        async function print(door) {
+          try {
+            return JSON.stringify(await door());
+          } catch (e) {
+            return e.name;
+          }
+        }
+        ${body}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    // IsConstructor is false, so these make a plain array.
+    ["Array.of", `Array.of.call(CString, 1, 2, 3)`, "[1,2,3]"],
+    ["Array.from", `Array.from.call(CString, [1, 2, 3])`, "[1,2,3]"],
+    // These need a constructor.
+    ["Symbol.species", `new Species(1, 2, 3).filter(() => true)`, "TypeError"],
+    ["Reflect.construct", `Reflect.construct(CString, [p])`, "TypeError"],
+  ])("%s", async (_, expression, printed) => {
+    expect(await run(`console.log(await print(() => ${expression}));`)).toEqual({
+      stdout: printed + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("every other door", async () => {
+    const doors = [
+      ["new of a bound CString", `new (CString.bind(null))(p)`, "TypeError"],
+      ["new of a Proxy of CString", `new (new Proxy(CString, {}))(p)`, "TypeError"],
+      ["extends", `new (class extends CString {})(p)`, "TypeError"],
+      // super() asks nothing. It gets to CString with the class as new.target.
+      ["super() of a re-parented class", `new (reparent(class extends Array { field = 1; }))()`, "TypeError"],
+      [
+        "super(validPointer) of a re-parented class",
+        `new (reparent(class extends Array { constructor() { super(p); } }))()`,
+        "TypeError",
+      ],
+      ["Array.of on a re-parented class", `Array.of.call(reparent(class extends Array {}), 1, 2, 3)`, "TypeError"],
+      ["Array.from on a re-parented class", `Array.from.call(reparent(class extends Array {}), [1])`, "TypeError"],
+      ["Array.of with no items", `Array.of.call(CString)`, "[]"],
+      ["Array.from an array-like", `Array.from.call(CString, { length: 2, 0: "a", 1: "b" })`, `["a","b"]`],
+      ["Array.fromAsync", `Array.fromAsync.call(CString, [1, 2])`, "[1,2]"],
+      ["Uint8Array.of", `Uint8Array.of.call(CString, 1)`, "TypeError"],
+      ["Symbol.species filter of an empty array", `new Species().filter(() => true)`, "TypeError"],
+      ["Symbol.species map", `new Species(1, 2, 3).map(x => x)`, "TypeError"],
+      ["Symbol.species slice", `new Species(1, 2, 3).slice()`, "TypeError"],
+      ["Symbol.species concat", `new Species(1, 2, 3).concat([4])`, "TypeError"],
+      [
+        "Symbol.species of an own constructor property",
+        `Object.assign([1, 2, 3], { constructor: { [Symbol.species]: CString } }).map(x => x)`,
+        "TypeError",
+      ],
+      [
+        "ArrayBuffer Symbol.species",
+        `new (class extends ArrayBuffer { static get [Symbol.species]() { return CString; } })(8).slice(0, 4)`,
+        "TypeError",
+      ],
+      ["Reflect.construct with no arguments", `Reflect.construct(CString, [])`, "TypeError"],
+      ["Reflect.construct with CString as new.target", `Reflect.construct(Object, [], CString)`, "TypeError"],
+    ];
+    // One line per door, printed when the door returns: a crash leaves the lines of the doors before it.
+    const body = doors.map(
+      ([door, expression]) => `console.log(${JSON.stringify(door + ": ")} + (await print(() => ${expression})));`,
+    );
+    expect(await run(body.join("\n"))).toEqual({
+      stdout: doors.map(([door, , printed]) => `${door}: ${printed}\n`).join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("new CString(ptr) and CString(ptr) return the string when the call site is hot", () => {
+    const bytes = new TextEncoder().encode("hello\0");
+    const address = ptr(bytes);
+    const args = [address];
+    function direct() {
+      return (
+        +(new CString(address) === "hello") +
+        +(new CString(...args) === "hello") +
+        +(new CString(address, 1, 3) === "ell") +
+        +(new CString(0 as any) === "") +
+        +(CString(address) === "hello") +
+        +(CString(...args) === "hello")
+      );
+    }
+    let wrong = 0;
+    for (let i = 0; i < 10_000; i++) if (direct() !== 6) wrong++;
+    expect({ wrong, byteLength: bytes.byteLength }).toEqual({ wrong: 0, byteLength: 6 });
+  });
+
+  test("a call through bind or a Proxy returns the string", () => {
+    const bytes = new TextEncoder().encode("hello\0");
+    expect([CString.bind(null, ptr(bytes))(), new Proxy(CString, {})(ptr(bytes))]).toEqual(["hello", "hello"]);
+  });
+
+  test("CString is a function with no prototype property", () => {
+    expect({ type: typeof CString, length: CString.length, hasPrototype: "prototype" in CString }).toEqual({
+      type: "function",
+      length: 3,
+      hasPrototype: false,
+    });
+  });
+
+  test("CString prints as a function", () => {
+    expect({ alone: Bun.inspect(CString), nested: Bun.inspect({ CString }) }).toEqual({
+      alone: "[Function: CString]",
+      nested: "{\n  CString: [Function: CString],\n}",
+    });
+    expect({ CString }).toMatchInlineSnapshot(`
+      {
+        "CString": [Function: CString],
+      }
+    `);
   });
 });
 

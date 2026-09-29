@@ -73,8 +73,18 @@ JSC_DEFINE_HOST_FUNCTION(callFFICString, (JSGlobalObject * globalObject, CallFra
     return transcodeCString(globalObject, callFrame);
 }
 
+static NEVER_INLINE EncodedJSValue throwForeignNewTarget(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return throwVMTypeError(globalObject, scope, "CString cannot be constructed with a new.target other than itself"_s);
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructFFICString, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    // CString reports no construct data (see JSFFICString.h), so only bytecode gets here: `new CString()`, and
+    // `super()` of a class whose [[Prototype]] was set to CString. That `super()` passes the class as new.target.
+    if (callFrame->newTarget() != JSValue(callFrame->jsCallee())) [[unlikely]]
+        return throwForeignNewTarget(globalObject);
     return transcodeCString(globalObject, callFrame);
 }
 

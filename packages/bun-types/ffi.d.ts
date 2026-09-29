@@ -1029,6 +1029,11 @@ declare module "bun:ffi" {
      * pointer, or reading past the end of the memory it points to, can crash
      * the program or cause undefined behavior.
      *
+     * `CString` is a constructor only in a `new CString()` expression:
+     * `Reflect.construct(CString, [ptr])`, `new` on `CString.bind()` or on a
+     * `Proxy` of `CString`, `class X extends CString`, and a `Symbol.species`
+     * that returns `CString` throw a `TypeError`.
+     *
      * @example
      * ```js
      * var ptr = lib.symbols.getVersion();

@@ -367,6 +367,8 @@ describe.concurrent("socket", () => {
   describe("a flooded socket reads a bounded amount per event loop turn", () => {
     const readLength = 512 * 1024; // LIBUS_RECV_BUFFER_LENGTH
     const nearFull = readLength - 24 * 1024; // a read this long makes the loop read again
+    // The read loop of Windows stops after 2 reads, the loop of the others after 4.
+    const readsPerEvent = isWindows ? 2 : 4;
 
     it.each(["tcp", "tls", "net"])("%s", async mode => {
       await using peer = Bun.spawn({
@@ -381,13 +383,14 @@ describe.concurrent("socket", () => {
         if (port.includes("\n")) break;
       }
 
-      // TLS hands over plaintext: 16384 bytes for each 16406-byte record.
-      const plaintext = (bytes: number) => (mode === "tls" ? Math.floor((bytes * 16384) / 16406) : bytes);
-      // Four near-full reads in one turn: the event read all that it may.
-      const budget = plaintext(4 * nearFull);
+      // TLS hands over whole records only: 16384 bytes for each 16406 bytes that it read.
+      const plaintext = (bytes: number) => (mode === "tls" ? Math.floor(bytes / 16406) * 16384 : bytes);
+      // This much in one turn: the event read as often as it may, and each read was near-full.
+      const budget = plaintext(readsPerEvent * nearFull);
       let turnBytes = 0;
       let maxPerTurn = 0;
       let turnsAtBudget = 0;
+      let largestRead = 0;
       let total = 0;
       let finished = false;
       const { promise: done, resolve, reject } = Promise.withResolvers<void>();
@@ -404,10 +407,12 @@ describe.concurrent("socket", () => {
         Bun.SHA256.hash(data);
         total += data.length;
         turnBytes += data.length;
+        largestRead = Math.max(largestRead, data.length);
         maxPerTurn = Math.max(maxPerTurn, turnBytes);
         // The run ends on a count of bytes, never on a timer: 16 reads in one
-        // turn (the loop did not turn), or 256 MiB in all.
-        if (turnBytes >= 16 * readLength || total >= 512 * readLength) finish();
+        // turn (the loop did not turn), or 128 MiB in all (32 MiB on Windows,
+        // where the second assertion below does not apply).
+        if (turnBytes >= 16 * readLength || total >= (isWindows ? 64 : 256) * readLength) finish();
       };
       // A setImmediate chain marks the loop turns.
       setImmediate(function turn() {
@@ -448,8 +453,10 @@ describe.concurrent("socket", () => {
       const limit = 4 * readLength + (mode === "tls" ? 16384 : 0);
       expect({
         maxPerTurn: maxPerTurn <= limit ? "within the limit" : maxPerTurn,
-        // The Windows read loop stops after 2 reads, so it never reads 4.
-        reachedTheLimit: isWindows || turnsAtBudget > 0,
+        // A run whose reads never filled the buffer proves nothing about the
+        // loop, so it fails, and shows what it saw. Not on Windows: no run
+        // has shown yet what a read returns there.
+        reachedTheLimit: isWindows || turnsAtBudget > 0 || { largestRead, maxPerTurn, total },
       }).toEqual({ maxPerTurn: "within the limit", reachedTheLimit: true });
     });
   });

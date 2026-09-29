@@ -2,15 +2,10 @@
  * A client request that ends with its HEADERS frame may declare a content-length. The client
  * sends it as given. The server compares the declared length with the body it received
  * (RFC 9113 section 8.1.1): 0 matches an empty body, any other value is a stream
- * PROTOCOL_ERROR from the server.
- *
- * Works with both:
- *   bun bd test test/js/node/http2/node-http2-request-content-length.test.ts
- *   node --test test/js/node/http2/node-http2-request-content-length.test.ts
+ * PROTOCOL_ERROR from the server. Node v26 behaves the same way.
  */
-import assert from "node:assert";
+import { expect, test } from "bun:test";
 import http2 from "node:http2";
-import { test } from "node:test";
 
 const { NGHTTP2_PROTOCOL_ERROR } = http2.constants;
 
@@ -44,15 +39,15 @@ test("a bodiless request that declares content-length is judged by the server", 
     ]);
 
   try {
-    assert.deepStrictEqual(await send("DELETE", "0"), { status: 200, code: undefined, rstCode: 0 });
-    assert.deepStrictEqual(await send("GET", "0"), { status: 200, code: undefined, rstCode: 0 });
-    assert.deepStrictEqual(await send("HEAD", "0"), { status: 200, code: undefined, rstCode: 0 });
-    assert.deepStrictEqual(await send("DELETE", "5"), {
+    expect(await send("DELETE", "0")).toEqual({ status: 200, code: undefined, rstCode: 0 });
+    expect(await send("GET", "0")).toEqual({ status: 200, code: undefined, rstCode: 0 });
+    expect(await send("HEAD", "0")).toEqual({ status: 200, code: undefined, rstCode: 0 });
+    expect(await send("DELETE", "5")).toEqual({
       status: undefined,
       code: "ERR_HTTP2_STREAM_ERROR",
       rstCode: NGHTTP2_PROTOCOL_ERROR,
     });
-    assert.deepStrictEqual(seen, [
+    expect(seen).toEqual([
       ["DELETE", "0"],
       ["GET", "0"],
       ["HEAD", "0"],

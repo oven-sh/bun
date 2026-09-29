@@ -4503,12 +4503,12 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// A library's dependencies resolve relative to its on-disk path (`$ORIGIN`,
 /// `@loader_path`, the DLL directory), so the whole embedded set
 /// (`NativeLibrarySet`, recorded at build time) is written once into
-/// `{tmpdir}/.bun-{euid}-{set_hash}/` with the embedded layout, `mirror_depth`
-/// levels down, and the requested file's path inside it is returned. The set
-/// hash dedupes across calls, Worker VMs, and restarts (#29585). The bundler's
-/// hoisted `[name]-[hash].node` resolves to its `--asset` copy (`alias_index`).
-/// A file the record does not list, or a set that cannot be written in full,
-/// is mirrored on its own, at the depth its own search paths ask for.
+/// `{tmpdir}/.bun-{euid}-{set_hash}/` with the embedded layout, and the
+/// requested file's path inside it is returned. The set hash dedupes across
+/// calls, Worker VMs, and restarts (#29585). The bundler's hoisted
+/// `[name]-[hash].node` resolves to its `--asset` copy (`alias_index`). A file
+/// the record does not list, or a set that cannot be written in full, is
+/// mirrored on its own.
 pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]) -> Option<usize> {
     if input_path.is_empty() {
         return None;
@@ -4576,7 +4576,7 @@ struct MirrorSet<'a> {
 }
 
 impl MirrorSet<'_> {
-    /// Writes `{tmpdir}/.bun-{uid}-{hash}/{depth levels}/{target's relative path}` into `out_buf`
+    /// Writes `{tmpdir}/.bun-{uid}-{hash}/{target's relative path}` into `out_buf`
     /// (leaving room for a NUL, which `FFI::open` writes at `out_buf[len]`) and
     /// returns the length once every member of the set is on disk there.
     fn materialise(

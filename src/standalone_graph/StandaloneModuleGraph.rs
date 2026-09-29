@@ -959,9 +959,9 @@ bitflags::bitflags! {
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
-        /// After the linked-payload record: `u64 set_hash`, `u32 count`, `u32 mirror_depth`, then `count` x
-        /// `{ u32 file_index, u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the
-        /// runtime can mirror the set to disk before `dlopen` without hashing or reading it first.
+        /// After the linked-payload record: `u64 set_hash`, `u32 count`, `u32 mirror_depth`, then `count` x `{ u32 file_index,
+        /// u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the runtime can mirror
+        /// the set to disk before `dlopen` without hashing it first.
         const HAS_NATIVE_LIBRARY_SET        = 1 << 14;
         // _padding: u17
     }
@@ -1530,7 +1530,6 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
 /// `[name]-[hash].node`, and the `--asset` tree carries the same file next to the
 /// libraries it links. The `--asset` copy (deepest, then first, if several) is the one
 /// the runtime loads, every other copy aliases it, and the executable stores the bytes once.
-/// The copies the runtime writes decide how deep their layout sits (`native_libs::mirror_depth`).
 fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
     struct Candidate<'a> {
         file_index: u32,

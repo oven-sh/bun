@@ -7,13 +7,6 @@
 //! directory that mirrors the embedded layout. The writer records the set and
 //! its hash once, at build time, so the runtime never has to page in and hash
 //! every embedded library to find out what to write and where.
-//!
-//! The directory has to hold every path a library searches relative to
-//! itself, too. Its parent is the temp directory, which other users can write
-//! on a shared machine, and a search path such as `$ORIGIN/../../lib` climbs
-//! out of the library's directory. So the layout sits as many levels below
-//! the mirror directory as the search paths of its libraries climb
-//! ([`mirror_depth`]).
 
 use bun_core::strings;
 use bun_exe_format::loader_search_climb::{self, SearchClimb, Unreadable};
@@ -40,8 +33,7 @@ pub struct NativeLibrarySet {
     /// the set into, so two executables with the same libraries at the same
     /// paths share one directory and any other difference gets its own.
     pub set_hash: u64,
-    /// [`mirror_depth`] of the members that are not an alias: how many levels
-    /// the layout sits below the mirror directory.
+    /// [`mirror_depth`] of the members that are not an alias.
     pub mirror_depth: u32,
 }
 
@@ -98,12 +90,11 @@ pub fn is_shared_library_name(name: &[u8]) -> bool {
     true
 }
 
-/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory:
-/// `depth` levels named `_`, then the path relative to the root, with no empty
-/// or `.` segment and every `..` segment rewritten to `_.._` (as `bun build`
-/// does for an asset name), so every member stays inside the directory and
-/// sibling relations hold. `None` when nothing is left of the name, or the path
-/// does not fit in `buf`.
+/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory: the
+/// path relative to the root, with no empty or `.` segment and every `..` segment
+/// rewritten to `_.._` (as `bun build` does for an asset name), so every member
+/// stays inside the directory and sibling relations hold. `None` when nothing is
+/// left of the name, or it does not fit in `buf`.
 pub fn mirror_relative_path<'a>(name: &[u8], depth: u32, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let mut len = 0;
     let mut push = |segment: &[u8]| -> Option<()> {
@@ -130,7 +121,7 @@ pub fn mirror_relative_path<'a>(name: &[u8], depth: u32, buf: &'a mut [u8]) -> O
     named.then(|| &buf[..len])
 }
 
-/// The name of one level above the layout.
+/// The name of each of the `depth` levels in front of the layout ([`mirror_depth`]).
 const MIRROR_LEVEL: &[u8] = b"_";
 
 /// The segments of `name` inside the layout.
@@ -154,8 +145,7 @@ pub struct MemberClimb {
 }
 
 impl MemberClimb {
-    /// For the library stored as `name`. `None` for a name that
-    /// [`mirror_relative_path`] has no place for.
+    /// `None` for a name that [`mirror_relative_path`] has no place for.
     pub fn of(name: &[u8], contents: &[u8]) -> Option<Self> {
         let directories = layout_segments(name).count().checked_sub(1)?;
         Some(Self {
@@ -164,8 +154,7 @@ impl MemberClimb {
         })
     }
 
-    /// False when the search paths of the library could not be read, and the
-    /// set gets [`UNREADABLE_MEMBER_DEPTH`] for it.
+    /// False for a library that gives its set [`UNREADABLE_MEMBER_DEPTH`].
     pub fn is_readable(&self) -> bool {
         self.climb.is_ok()
     }
@@ -174,11 +163,7 @@ impl MemberClimb {
 /// The depth a set gets for a library whose search paths cannot be read.
 pub const UNREADABLE_MEMBER_DEPTH: u32 = 8;
 
-/// How many levels the layout of `members` has to sit below the mirror
-/// directory, so that every search path a member declares relative to itself
-/// stays inside that directory: the most levels one of them climbs above the
-/// layout root. 0 for libraries that search next to or below themselves, which
-/// is most of them.
+/// Levels the layout sits below the mirror directory, whose parent is the shared temp directory, so that a search path of a member (`$ORIGIN/../../lib`) stays inside it.
 pub fn mirror_depth(members: &[MemberClimb]) -> u32 {
     let below_rpath = members
         .iter()
@@ -203,10 +188,9 @@ pub fn mirror_depth(members: &[MemberClimb]) -> u32 {
         .unwrap_or(0)
 }
 
-/// The set hash: the depth of the layout, then each member's relative name and
-/// content hash, in file-table order. The writer and the runtime's single-file
-/// fallback both use it, so the two never disagree on a directory name, and
-/// two layouts never share one directory.
+/// The set hash: each member's relative name and content hash, in file-table
+/// order. The writer and the runtime's single-file fallback both use it, so
+/// the two never disagree on a directory name.
 pub fn hash_set<'a>(mirror_depth: u32, members: impl IntoIterator<Item = (&'a [u8], u64)>) -> u64 {
     let mut hasher = bun_wyhash::Wyhash::init(0);
     hasher.update(&mirror_depth.to_le_bytes());

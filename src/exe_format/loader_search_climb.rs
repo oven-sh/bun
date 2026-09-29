@@ -1,15 +1,4 @@
-//! How far the search paths a shared library declares climb above the library.
-//!
-//! A compiled executable writes its embedded shared libraries into a directory
-//! of its own before it loads one (`bun_standalone_graph::native_libs`). The
-//! loader expands `$ORIGIN` (ELF) and `@loader_path` (Mach-O) to the directory
-//! the library sits in, and every `..` after the token is a step up from it.
-//! The standalone graph puts the libraries as many levels below their directory
-//! as these strings climb, so a declared search path never leaves it.
-//!
-//! The reader takes the bytes of a library of any target, on any host, and
-//! follows the loader: the dynamic section through the program headers on ELF,
-//! the load commands on Mach-O. A PE image carries no search path.
+//! How far the search paths of a shared library climb above it (`$ORIGIN/../..`), for `bun_standalone_graph::native_libs`.
 
 use core::mem::size_of;
 
@@ -24,16 +13,11 @@ use crate::read_struct;
 /// The `..` segments in the search strings of one library.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SearchClimb {
-    /// Most `..` segments in one string that starts at the library's directory:
-    /// an `$ORIGIN` entry of DT_RPATH or DT_RUNPATH, an `$ORIGIN` name in
-    /// DT_NEEDED, DT_AUXILIARY or DT_FILTER, an `@loader_path` install name.
+    /// Most `..` segments in one `$ORIGIN` runpath entry or library name, or in one `@loader_path` install name.
     pub direct: u32,
-    /// Most `..` segments in one `@loader_path` entry of LC_RPATH. `None` for a
-    /// library without such an entry.
+    /// Most `..` segments in one `@loader_path` entry of LC_RPATH, for a library that has one.
     pub rpath: Option<u32>,
-    /// Most `..` segments in one `@rpath/` install name. dyld appends such a
-    /// name to the LC_RPATH entries of every image that led to the load, so it
-    /// adds to the `rpath` of each of them.
+    /// Most `..` segments in one `@rpath/` install name: dyld joins it to the LC_RPATH entries of the whole load chain.
     pub below_rpath: u32,
 }
 
@@ -51,9 +35,7 @@ impl SearchClimb {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unreadable;
 
-/// The search strings of the library in `bytes`. All zero when `bytes` is not an
-/// ELF64 little-endian or a 64-bit Mach-O image (universal or not): no loader
-/// of a bun target takes a search path from it.
+/// All zero for bytes that are not an ELF64 little-endian or a 64-bit Mach-O image: no bun target loads them.
 pub fn scan(bytes: &[u8]) -> Result<SearchClimb, Unreadable> {
     if bytes.starts_with(b"\x7fELF") {
         return elf_climb(bytes).ok_or(Unreadable);
@@ -130,9 +112,7 @@ fn elf_climb(bytes: &[u8]) -> Option<SearchClimb> {
         )
     };
 
-    // The loader reads the dynamic section and its strings from the memory it
-    // mapped, and so does this: the file bytes behind `address`, to the end of
-    // their segment. A later segment maps over an earlier one.
+    // What the loader has at `address`: the file bytes of its segment from there on. A later segment maps over an earlier one.
     let mapped = |address: u64| -> Option<&[u8]> {
         let mut found = None;
         for index in 0..header.e_phnum {
@@ -221,8 +201,7 @@ const LC_REEXPORT_DYLIB: u32 = 0x1f | LC_REQ_DYLD;
 const LC_LAZY_LOAD_DYLIB: u32 = 0x20;
 const LC_LOAD_UPWARD_DYLIB: u32 = 0x23 | LC_REQ_DYLD;
 
-/// `rpath_command` and `dylib_command` both keep the offset of their string,
-/// from the start of the command, in the field after the command header.
+/// `rpath_command` and `dylib_command` keep the offset of their string in the field after the command header.
 const LC_STRING_OFFSET_AT: usize = size_of::<macho::load_command>();
 
 fn is_macho(bytes: &[u8]) -> bool {
@@ -271,8 +250,7 @@ fn macho_climb(bytes: &[u8]) -> Option<SearchClimb> {
     (read == header.ncmds).then_some(climb)
 }
 
-/// Where a `fat_arch` (32-bit fields) or a `fat_arch_64` keeps the offset and
-/// the size of its image.
+/// Where a `fat_arch` or a `fat_arch_64` keeps the offset and the size of its image.
 struct FatArch {
     size: usize,
     image_offset: fn(&[u8], usize) -> Option<u64>,
@@ -329,8 +307,7 @@ mod tests {
         out
     }
 
-    /// One segment maps the whole file at `BASE`. `front` bytes sit between the
-    /// dynamic section and the strings.
+    /// One segment maps the whole file at `BASE`, with `front` bytes between the dynamic section and the strings.
     fn elf_with(entries: &[(i64, &[u8])], front: usize) -> Vec<u8> {
         let dynamic_at = EHDR + 2 * PHDR;
         let dynamic_size = (entries.len() + 2) * 16;

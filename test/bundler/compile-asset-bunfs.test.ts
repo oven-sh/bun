@@ -658,9 +658,9 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
         link(root, dep, "dep.c"),
         link(root, join("planted", libraryFile("foo")), "planted-foo.c"),
         link(root, join("planted", libraryFile("dep")), "planted-dep.c"),
-        // More levels than a path has room for.
+        // More levels than a path has room for (two bytes each).
         link(root, "too-deep.bin", "alone.c", {
-          searches: ["$ORIGIN/" + Buffer.alloc(3 * 2100, "../").toString() + "lib"],
+          searches: ["$ORIGIN/" + Buffer.alloc(3 * (isMacOS ? 600 : 2100), "../").toString() + "lib"],
         }),
       ]);
       await Promise.all([

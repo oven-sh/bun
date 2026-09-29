@@ -16,6 +16,13 @@ const response = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:
 
 let requests = 0;
 
+// The head of a request can arrive in more than one chunk. The raw servers answer when it is
+// complete, as the HTTP servers do. `head` is null after the answer.
+function complete(head, chunk) {
+  head += chunk.toString("latin1");
+  return head.includes("\r\n\r\n") ? null : head;
+}
+
 switch (kind) {
   case "Bun.serve":
     Bun.serve({
@@ -31,7 +38,13 @@ switch (kind) {
       hostname: "0.0.0.0",
       port,
       socket: {
-        data(socket) {
+        open(socket) {
+          socket.data = "";
+        },
+        data(socket, chunk) {
+          if (socket.data === null) return;
+          socket.data = complete(socket.data, chunk);
+          if (socket.data !== null) return;
           requests++;
           socket.end(response);
         },
@@ -49,8 +62,12 @@ switch (kind) {
   case "node:net":
     net
       .createServer(socket => {
+        let head = "";
         socket.on("error", () => {});
-        socket.on("data", () => {
+        socket.on("data", chunk => {
+          if (head === null) return;
+          head = complete(head, chunk);
+          if (head !== null) return;
           requests++;
           socket.end(response);
         });

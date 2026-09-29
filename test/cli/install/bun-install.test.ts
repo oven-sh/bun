@@ -6,6 +6,8 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isASAN,
+  isDebug,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -11924,4 +11926,31 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+// The package.json cache used to copy the parsed manifest with a recursion that
+// had no stack guard. The depth is above the depth where that copy overflowed
+// and below the depth where the parser stops, for a release build and for a
+// debug or sanitizer build (which has larger frames).
+it.concurrent("installs with a deeply nested value in package.json", async () => {
+  const depth = isDebug || isASAN ? 750 : 10000;
+  const deep = Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString();
+  using dir = tempDir("bun-install-deep-package-json", {
+    "package.json": `{"name":"root","version":"1.0.0","deep":${deep},"dependencies":{"dep":"file:./dep"}}`,
+    "dep/package.json": `{"name":"dep","version":"1.0.0"}`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("+ dep@dep");
+  expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual(["dep"]);
+  expect(exitCode).toBe(0);
 });

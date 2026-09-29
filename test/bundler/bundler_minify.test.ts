@@ -62,6 +62,32 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "[]" },
   });
+  // The same reserved names without --minify. The parameter "require_dep"
+  // meets the wrapper of dep.cjs, which the function calls, so it is numbered.
+  // It cannot take "require_dep2", the `var` that the `with` body reads.
+  itBundled("minify/WithStatementPinnedNameNotReusedWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        const { read } = require("./sloppy.cjs");
+        console.log(JSON.stringify([read("arg", {}), read("arg", { require_dep2: 9 })]));
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports.read = function (require_dep, obj) {
+          var require_dep2 = 1;
+          var seen = require_dep + "," + require("./dep.cjs").value;
+          with (obj) {
+            return [seen, require_dep2];
+          }
+        };
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports.value = "dep";
+      `,
+    },
+    format: "cjs",
+    minifyIdentifiers: false,
+    run: { stdout: `[["arg,dep",1],["arg,dep",9]]` },
+  });
   // `bun build --no-bundle` keeps the export names. They were pinned after the
   // reserved names were computed, so a local in a nested function could take
   // one of them and shadow the export it reads.
@@ -1998,3 +2024,40 @@ test("runtime transpiler does not collapse single-return arrow bodies", async ()
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// `Bun.Transpiler` prints through the same path as `bun build --no-bundle`.
+// The exports keep their names and take every one-character name the minifier
+// can produce, so the import and the parameter each need a longer name.
+// `label(item)` printed as `function label(t) { return t(t.name) }`.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s gives no import or parameter the name of an export",
+  async method => {
+    const exportNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+      [
+        `import { imported } from "./imported.js";`,
+        ...exportNames.map(name => `export const ${name} = "${name}";`),
+        `export function label(item) { return t(item.name) + " #" + item.id + imported; }`,
+      ].join("\n"),
+    );
+    const [, importAlias] = output.match(/import \{ imported as ([\w$]+) \}/)!;
+    const [, parameter] = output.match(/function label\(([\w$]+)\)/)!;
+    expect({
+      importAlias: exportNames.includes(importAlias) ? `${importAlias} is an export` : "ok",
+      parameter: exportNames.includes(parameter) ? `${parameter} is an export` : "ok",
+      body: output.includes(`return t(${parameter}.name) + " #" + ${parameter}.id + ${importAlias};`),
+    }).toEqual({ importAlias: "ok", parameter: "ok", body: true });
+  },
+);
+
+// The second `var t` replaces the symbol of the export, which then links to
+// it, so the export is pinned only if the pin follows that link.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s keeps the name of an export that is declared again",
+  async method => {
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+      "export var t = 1;\nvar t = 2;\nexport function read() { return t; }\n",
+    );
+    expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
+  },
+);

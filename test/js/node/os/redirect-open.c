@@ -141,10 +141,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   if (child == 0) {
-    if (ptrace(PTRACE_TRACEME, 0, 0, 0) != 0) {
-      perror("PTRACE_TRACEME");
-      _exit(126);
-    }
+    // Wait here for the tracer.
     raise(SIGSTOP);
     execvp(cmd[0], cmd);
     perror("execvp");
@@ -152,22 +149,23 @@ int main(int argc, char **argv) {
   }
 
   int st;
-  if (waitpid(child, &st, 0) < 0) {
+  if (waitpid(child, &st, WUNTRACED) < 0) {
     perror("waitpid");
     return 2;
   }
-  // 126: the child could not ask for a tracer.
-  if (WIFEXITED(st)) return WEXITSTATUS(st);
+  // PTRACE_SEIZE and not PTRACE_TRACEME: only a seized command can stay stopped
+  // after a stopping signal (PTRACE_LISTEN below).
   long opts = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACECLONE | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
               PTRACE_O_TRACEEXEC | PTRACE_O_EXITKILL;
-  if (ptrace(PTRACE_SETOPTIONS, child, 0, opts) != 0) {
-    perror("PTRACE_SETOPTIONS");
-    return 2;
+  if (ptrace(PTRACE_SEIZE, child, 0, opts) != 0) {
+    // 126: the kernel or a sandbox does not permit ptrace.
+    int code = errno == EPERM || errno == EACCES ? 126 : 2;
+    perror("PTRACE_SEIZE");
+    kill(child, SIGKILL);
+    waitpid(child, &st, 0);
+    return code;
   }
-  if (ptrace(PTRACE_SYSCALL, child, 0, 0) != 0) {
-    perror("PTRACE_SYSCALL");
-    return 2;
-  }
+  kill(child, SIGCONT);
 
   long redirected = 0;
   int exit_code = -1;
@@ -191,6 +189,13 @@ int main(int argc, char **argv) {
     unsigned ev = (unsigned)(st >> 16);
     if (ev == PTRACE_EVENT_CLONE || ev == PTRACE_EVENT_FORK || ev == PTRACE_EVENT_VFORK) {
       ptrace(PTRACE_SYSCALL, t, 0, 0);
+      continue;
+    }
+    if (ev == PTRACE_EVENT_STOP) {
+      // A group-stop after a stopping signal. Keep the thread stopped until SIGCONT.
+      // Every other stop of this kind is the first stop of a new thread or process.
+      int stopping = sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU;
+      if (!stopping || ptrace(PTRACE_LISTEN, t, 0, 0) != 0) ptrace(PTRACE_SYSCALL, t, 0, 0);
       continue;
     }
     if (ev == PTRACE_EVENT_EXEC) {
@@ -225,9 +230,7 @@ int main(int argc, char **argv) {
       ptrace(PTRACE_SYSCALL, t, 0, 0);
       continue;
     }
-    // A new thread starts with a SIGSTOP from ptrace. Every other signal belongs to the
-    // command. That includes SIGTRAP: the syscall and exec stops do not arrive as one here.
-    if (sig == SIGSTOP) sig = 0;
+    // Every signal here belongs to the command. No ptrace stop arrives as a plain signal.
     ptrace(PTRACE_SYSCALL, t, 0, (void *)(long)sig);
   }
 

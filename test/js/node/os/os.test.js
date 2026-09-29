@@ -152,27 +152,37 @@ it("cpus", () => {
 // Runs the real os.cpus() in a child whose opens of /proc/stat, /proc/cpuinfo and
 // /sys/devices/system/cpu/ go to staged files. Each staged file gives every CPU id
 // its own value, so an entry that is filled from the wrong id fails.
-const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
 
-describe.skipIf(!isLinux || !cc)("cpus on staged /proc and /sys files", () => {
-  let build;
-  let redirectOpen;
-
-  beforeAll(async () => {
-    build = tempDir("os-cpus-redirect-open", {});
-    redirectOpen = join(String(build), "redirect-open");
-    await using proc = Bun.spawn({
-      cmd: [cc, "-O1", "-o", redirectOpen, join(import.meta.dir, "redirect-open.c")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ output: stdout + stderr, exitCode }).toEqual({ output: "", exitCode: 0 });
+// Compiles redirect-open.c. `path` is undefined where ptrace is not permitted.
+function buildRedirectOpen() {
+  const dir = tempDir("os-cpus-redirect-open", {});
+  const path = join(String(dir), "redirect-open");
+  const compile = Bun.spawnSync({
+    cmd: [cc, "-O1", "-o", path, join(import.meta.dir, "redirect-open.c")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  if (compile.exitCode !== 0) {
+    return { dir, error: compile.stdout.toString() + compile.stderr.toString() };
+  }
+  // 126: the kernel or a sandbox refused PTRACE_TRACEME.
+  const probe = Bun.spawnSync({ cmd: [path, "/proc/stat", "--", "true"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  return { dir, path: probe.exitCode === 126 ? undefined : path };
+}
+const redirectOpen = cc ? buildRedirectOpen() : undefined;
 
-  afterAll(() => {
-    build?.[Symbol.dispose]();
+afterAll(() => {
+  redirectOpen?.dir[Symbol.dispose]();
+});
+
+// A compile error fails the tests below. Only a host that cannot run the supervisor skips them.
+const canRedirectOpen = redirectOpen?.path !== undefined || redirectOpen?.error !== undefined;
+
+describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
+  beforeAll(() => {
+    expect(redirectOpen.error).toBeUndefined();
   });
 
   const statFile = lines =>
@@ -207,13 +217,13 @@ describe.skipIf(!isLinux || !cc)("cpus on staged /proc and /sys files", () => {
     const asanOptions = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
     await using proc = Bun.spawn({
       cmd: [
-        redirectOpen,
+        redirectOpen.path,
         "/proc/stat",
         "/proc/cpuinfo",
         "/sys/devices/system/cpu/",
         "--",
         bunExe(),
-        join(import.meta.dir, "cpus-fixture.js"),
+        join(import.meta.dir, "cpus-fixture.ts"),
         ...Object.keys(layouts).map(name => join(String(root), name)),
       ],
       env: { ...bunEnv, ASAN_OPTIONS: asanOptions, LSAN_OPTIONS: "detect_leaks=0" },

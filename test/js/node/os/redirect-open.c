@@ -81,17 +81,22 @@ static void drop(pid_t t) {
 }
 
 // Copies the NUL-terminated string at `addr` in the tracee. Returns 0 when the
-// string does not end within `cap` bytes or the memory cannot be read.
+// string does not end within `cap` bytes or the memory cannot be read. It reads
+// aligned words, so a read never goes into the page after the one with the NUL.
 static int read_string(pid_t t, uint64_t addr, char *out, size_t cap) {
+  uint64_t word_addr = addr & ~(uint64_t)(sizeof(long) - 1);
+  size_t skip = (size_t)(addr - word_addr);
   size_t n = 0;
   while (n < cap) {
     errno = 0;
-    long word = ptrace(PTRACE_PEEKDATA, t, (void *)(uintptr_t)(addr + n), 0);
+    long word = ptrace(PTRACE_PEEKDATA, t, (void *)(uintptr_t)word_addr, 0);
     if (word == -1 && errno != 0) return 0;
-    for (size_t i = 0; i < sizeof(word) && n < cap; i++, n++) {
+    for (size_t i = skip; i < sizeof(word) && n < cap; i++, n++) {
       out[n] = (char)((unsigned long)word >> (8 * i));
       if (out[n] == 0) return 1;
     }
+    skip = 0;
+    word_addr += sizeof(long);
   }
   return 0;
 }
@@ -151,6 +156,8 @@ int main(int argc, char **argv) {
     perror("waitpid");
     return 2;
   }
+  // 126: the child could not ask for a tracer.
+  if (WIFEXITED(st)) return WEXITSTATUS(st);
   long opts = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACECLONE | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
               PTRACE_O_TRACEEXEC | PTRACE_O_EXITKILL;
   if (ptrace(PTRACE_SETOPTIONS, child, 0, opts) != 0) {
@@ -218,8 +225,9 @@ int main(int argc, char **argv) {
       ptrace(PTRACE_SYSCALL, t, 0, 0);
       continue;
     }
-    // SIGTRAP and SIGSTOP here come from ptrace. Every other signal belongs to the command.
-    if (sig == SIGTRAP || sig == SIGSTOP) sig = 0;
+    // A new thread starts with a SIGSTOP from ptrace. Every other signal belongs to the
+    // command. That includes SIGTRAP: the syscall and exec stops do not arrive as one here.
+    if (sig == SIGSTOP) sig = 0;
     ptrace(PTRACE_SYSCALL, t, 0, (void *)(long)sig);
   }
 

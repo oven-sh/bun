@@ -91,6 +91,14 @@ export const enum NodeHTTPHeaderState {
   sent,
 }
 
+/** What `decideFraming` decided for a message that has no Content-Length and no Transfer-Encoding line of its own. */
+export const enum NodeHTTPFraming {
+  contentLength = 1 << 0,
+  transferEncodingChunked = 1 << 1,
+  closeDelimited = 1 << 2,
+  trailerInvalid = 1 << 3,
+}
+
 function emitErrorNextTickIfErrorListenerNT(self, err, cb) {
   process.nextTick(emitErrorNextTickIfErrorListener, self, err, cb);
 }
@@ -383,6 +391,31 @@ function utcDate() {
   return utcCache;
 }
 
+// The framing that Node's _storeHeader decides after it matched the header lines: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L481-L557
+function decideFraming(msg, hasContentLength, hasTransferEncoding, hasTrailer) {
+  if (msg.chunkedEncoding && (msg.statusCode === 204 || msg.statusCode === 304)) {
+    msg.chunkedEncoding = false;
+    msg.shouldKeepAlive = false;
+  }
+  let framing = 0;
+  if (!hasContentLength && !hasTransferEncoding) {
+    if (!msg._hasBody) {
+      msg.chunkedEncoding = false;
+    } else if (!msg.useChunkedEncodingByDefault) {
+      framing = NodeHTTPFraming.closeDelimited;
+    } else if (!hasTrailer && !msg._removedContLen && typeof msg._contentLength === "number") {
+      framing = NodeHTTPFraming.contentLength;
+    } else if (!msg._removedTE) {
+      framing = NodeHTTPFraming.transferEncodingChunked;
+      msg.chunkedEncoding = true;
+    } else {
+      framing = NodeHTTPFraming.closeDelimited;
+    }
+  }
+  if (msg.chunkedEncoding !== true && hasTrailer) framing |= NodeHTTPFraming.trailerInvalid;
+  return framing;
+}
+
 function ipToInt(ip) {
   const octets = ip.split(".");
   let result = 0;
@@ -565,4 +598,5 @@ export {
   setServerMaxHeadersCount,
   tlsSymbol,
   utcDate,
+  decideFraming,
 };

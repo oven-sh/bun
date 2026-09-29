@@ -106,11 +106,45 @@ pub(crate) struct StartOptions {
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
-    /// Maximum bytes to send; `None` reads to EOF. For regular files this
-    /// should be `stat.size - offset` (after Range/slice clamping).
-    pub length: Option<u64>,
+    pub length: BodyLength,
     pub idle_timeout: u8,
     pub owner: StreamOwner,
+}
+
+/// How many bytes of the file the response sends. Only `Exact` is a length that the producer wrote as `Content-Length`, so a decision about the framing reads `exact()`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum BodyLength {
+    /// The producer wrote this `Content-Length`. For regular files this is `stat.size - offset` (after Range/slice clamping).
+    Exact(u64),
+    /// The producer wrote no `Content-Length`: the body runs to EOF.
+    ToEof,
+    /// As `ToEof`, and not more than this count of bytes: the window of a slice.
+    UpTo(u64),
+}
+
+impl BodyLength {
+    /// For the window of a `Blob` that the producer did not frame. A window that reaches the largest size of a `Blob` is no slice.
+    pub(crate) fn unframed(offset: u64, window: u64) -> Self {
+        if offset.saturating_add(window) >= crate::webcore::blob::MAX_SIZE {
+            Self::ToEof
+        } else {
+            Self::UpTo(window)
+        }
+    }
+
+    pub(crate) fn exact(self) -> Option<u64> {
+        match self {
+            Self::Exact(len) => Some(len),
+            Self::ToEof | Self::UpTo(_) => None,
+        }
+    }
+
+    fn limit(self) -> Option<usize> {
+        match self {
+            Self::Exact(len) | Self::UpTo(len) => Some(len as usize),
+            Self::ToEof => None,
+        }
+    }
 }
 
 /// Who hears about the end of the stream. Exactly one of complete / abort /
@@ -214,7 +248,7 @@ impl FileResponseStream {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 socket_fd: opts.resp.get_native_handle(),
                 offset: opts.offset,
-                remain: opts.length.expect("can_sendfile gates None"),
+                remain: opts.length.exact().expect("can_sendfile gates non-Exact"),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 has_set_on_writable: false,
             });
@@ -235,7 +269,7 @@ impl FileResponseStream {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
             // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
-            reader.set_limit(opts.length.map(|len| len as usize));
+            reader.set_limit(opts.length.limit());
             reader.set_parent(this.cast::<c_void>());
         });
 
@@ -655,7 +689,17 @@ impl Drop for FileResponseStream {
     }
 }
 
-fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {
+/// Whether the platform has procfs and cgroupfs, where a regular file reports an `st_size` of 0 and makes its content at `read`.
+pub(crate) const HAS_PROCFS: bool = cfg!(any(target_os = "linux", target_os = "android"));
+
+/// Whether a regular file whose `st_size` is 0 has content in the window. One `pread` of one byte tells such a file from an empty file, which keeps the answers of its `stat`.
+#[cold]
+pub(crate) fn zero_size_file_has_content(fd: Fd, offset: u64, window: u64) -> bool {
+    let mut byte = [0u8; 1];
+    HAS_PROCFS && window > 0 && matches!(sys::pread(fd, &mut byte, offset as i64), Ok(1))
+}
+
+fn can_sendfile(resp: AnyResponse, file_type: FileType, length: BodyLength) -> bool {
     // Matches the cfg on `on_sendfile`. macOS is excluded: XNU's sendfile can
     // sleep uninterruptibly under mbuf pressure, leaving the process unkillable;
     // the BufferedReader path stays non-blocking.
@@ -674,7 +718,9 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
         if file_type != FileType::File {
             return false;
         }
-        let Some(len) = length else { return false };
+        let Some(len) = length.exact() else {
+            return false;
+        };
         // Below ~1MB the syscall + dual-readiness overhead doesn't pay off.
         len >= (1 << 20)
     }

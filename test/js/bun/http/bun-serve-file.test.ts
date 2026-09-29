@@ -1,8 +1,20 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isLinux,
+  isMacOS,
+  isWindows,
+  rmScope,
+  rss,
+  tempDir,
+  tempDirWithFiles,
+  tls,
+} from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { open as fsOpen } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -778,6 +790,29 @@ describe("Bun.file in serve routes", () => {
       }
     });
 
+    // The stat of an empty file gives its validators and its ranges.
+    it("answers a conditional request and a Range request for an empty file from its stat", async () => {
+      const url = new URL(`/empty.txt`, server.url);
+      const answers: Record<string, unknown> = {};
+      for (const method of ["GET", "HEAD"]) {
+        const plain = await fetch(url, { method });
+        const notModified = await fetch(url, {
+          method,
+          headers: { "if-modified-since": "Fri, 01 Jan 2100 00:00:00 GMT" },
+        });
+        const range = await fetch(url, { method, headers: { range: "bytes=0-9" } });
+        answers[method] = {
+          lastModified: plain.headers.has("last-modified"),
+          ifModifiedSince: notModified.status,
+          range: range.status,
+          contentRange: range.headers.get("content-range"),
+        };
+        for (const res of [plain, notModified, range]) await res.text();
+      }
+      const fromStat = { lastModified: true, ifModifiedSince: 304, range: 416, contentRange: "bytes */0" };
+      expect(answers).toEqual({ GET: fromStat, HEAD: fromStat });
+    });
+
     it("returns 200 for empty files served from the fetch handler, for GET and HEAD alike", async () => {
       const emptyPath = join(tempDir, "empty.txt");
       using handlerServer = Bun.serve({
@@ -1318,36 +1353,55 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
 // Linux-only: on macOS, kqueue never wakes a FIFO reader parked on an empty
 // pipe when the last writer closes (data events deliver, that EOF does not),
 // so the completion path under test is never reached there.
+// The first HTTP/1.1 response in `wire` (one character for each byte), or
+// null while `wire` does not hold a complete one. `length` counts the
+// characters of the response. A response to HEAD and a 204 or 304 end with the
+// head. Any other response must declare its end: a `Content-Length`, or chunks
+// up to a last chunk.
+function parseResponse(
+  wire: string,
+  method = "GET",
+): { status: string; head: Record<string, string | undefined>; body: string; length: number } | null {
+  const headEnd = wire.indexOf("\r\n\r\n");
+  if (headEnd === -1) return null;
+  const [status, ...lines] = wire.slice(0, headEnd).split("\r\n");
+  const head: Record<string, string | undefined> = Object.fromEntries(
+    lines.map(line => [line.slice(0, line.indexOf(":")).toLowerCase(), line.slice(line.indexOf(":") + 1).trim()]),
+  );
+  const start = headEnd + 4;
+  if (method === "HEAD" || /^HTTP\/1\.1 (204|304) /.test(status)) {
+    return { status, head, body: "", length: start };
+  }
+  const contentLength = head["content-length"];
+  if (contentLength !== undefined) {
+    const end = start + Number(contentLength);
+    return end <= wire.length ? { status, head, body: wire.slice(start, end), length: end } : null;
+  }
+  if (head["transfer-encoding"]?.toLowerCase() !== "chunked") return null;
+  let body = "";
+  for (let i = start; ; ) {
+    const sizeEnd = wire.indexOf("\r\n", i);
+    if (sizeEnd === -1) return null;
+    const sizeText = wire.slice(i, sizeEnd);
+    if (!/^[0-9a-f]+$/i.test(sizeText)) return null;
+    const size = parseInt(sizeText, 16);
+    i = sizeEnd + 2;
+    // A chunk and the last chunk are complete only with their final CRLF.
+    if (wire.slice(i + size, i + size + 2) !== "\r\n") return null;
+    if (size === 0) return { status, head, body, length: i + 2 };
+    body += wire.slice(i, i + size);
+    i += size + 2;
+  }
+}
+
 describe.skipIf(isWindows || isMacOS)("Response(Bun.file(FIFO)) ends the response when the pipe writer closes", () => {
   // Returns the decoded body, or null if the wire bytes do not form a
-  // complete HTTP/1.1 message (the failure mode under test).
+  // complete HTTP/1.1 message (the failure mode under test). Nothing may
+  // follow the message: a second terminator would be parsed as the next response.
   function decodeBody(wire: string): { status: string; body: string } | null {
-    const headEnd = wire.indexOf("\r\n\r\n");
-    if (headEnd === -1) return null;
-    const head = wire.slice(0, headEnd);
-    const status = head.split("\r\n")[0];
-    const body = wire.slice(headEnd + 4);
-    const contentLength = head.match(/^content-length:\s*(\d+)/im);
-    if (contentLength !== null) {
-      return body.length === Number(contentLength[1]) ? { status, body } : null;
-    }
-    if (!/^transfer-encoding:\s*chunked/im.test(head)) return null;
-    let out = "";
-    let i = 0;
-    while (true) {
-      const sizeEnd = body.indexOf("\r\n", i);
-      if (sizeEnd === -1) return null;
-      const sizeText = body.slice(i, sizeEnd);
-      if (!/^[0-9a-f]+$/i.test(sizeText)) return null;
-      const size = parseInt(sizeText, 16);
-      i = sizeEnd + 2;
-      // The last-chunk is complete only with its final CRLF, and nothing may
-      // follow it: a second terminator would be parsed as the next response.
-      if (size === 0) return body.slice(i) === "\r\n" ? { status, body: out } : null;
-      if (body.slice(i + size, i + size + 2) !== "\r\n") return null;
-      out += body.slice(i, i + size);
-      i += size + 2;
-    }
+    const response = parseResponse(wire);
+    if (response === null || response.length !== wire.length) return null;
+    return { status: response.status, body: response.body };
   }
 
   for (const [name, payload] of [
@@ -1903,4 +1957,451 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   const body = Buffer.from(await res.arrayBuffer());
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
+});
+
+// A regular file on procfs or cgroupfs reports a stat size of 0 and has
+// content. The server reads such a file to its end, as it reads a pipe: a
+// response framed from the stat size is `Content-Length: 0` with no bytes. An
+// empty file keeps the answers of its stat. fetch() hides the framing, so the
+// requests go over a raw socket.
+describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", () => {
+  const small = "/proc/version";
+  let server: Server<undefined>;
+  let dir: ReturnType<typeof tempDir>;
+  let smallBytes: string;
+  // The files of a stopped process do not change. `environ` takes several
+  // reads of the largest size. `maps` comes in reads of at most one page.
+  let child: Bun.Subprocess<"ignore", "pipe", "inherit">;
+  let large: string;
+  let largeBytes: string;
+  let mediumBytes: string;
+
+  beforeAll(async () => {
+    dir = tempDir("serve-unsized", {
+      "empty.txt": "",
+      // One line of `maps` for each file the child maps: more than one page of lines.
+      ...Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`mapped/${i}`, "x"])),
+    });
+    const empty = join(String(dir), "empty.txt");
+    smallBytes = readFileSync(small, "latin1");
+
+    child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { readdirSync } = require("node:fs");
+         const dir = process.env.UNSIZED_MAPPED;
+         globalThis.mapped = readdirSync(dir).map(name => Bun.mmap(dir + "/" + name));
+         process.stdout.write("ready");
+         process.kill(process.pid, "SIGSTOP");`,
+      ],
+      // Only these variables: the tests serve `environ` and compare it.
+      env: {
+        BUN_DEBUG_QUIET_LOGS: "1",
+        UNSIZED_MAPPED: join(String(dir), "mapped"),
+        ...Object.fromEntries(
+          Array.from({ length: 4 }, (_, i) => [`UNSIZED_${i}`, Buffer.alloc(120_000, "0123456789abcdef").toString()]),
+        ),
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const ready = await child.stdout.getReader().read();
+    expect(new TextDecoder().decode(ready.value)).toBe("ready");
+    const threadStates = () =>
+      readdirSync(`/proc/${child.pid}/task`).map(
+        tid => readFileSync(`/proc/${child.pid}/task/${tid}/stat`, "latin1").split(") ").pop()![0],
+      );
+    // "T": stopped. The stop reaches the threads one after the other.
+    while (!threadStates().every(state => state === "T")) await Bun.sleep(1);
+
+    large = `/proc/${child.pid}/environ`;
+    const medium = `/proc/${child.pid}/maps`;
+    largeBytes = readFileSync(large, "latin1");
+    mediumBytes = readFileSync(medium, "latin1");
+    expect({
+      large: largeBytes.length > 100 + 300_000,
+      medium: mediumBytes.length > 4096 && mediumBytes.length < 64 * 1024,
+    }).toEqual({ large: true, medium: true });
+
+    const forms: Record<string, () => Blob | ReadableStream> = {
+      "/whole": () => Bun.file(small),
+      "/slice-0-10": () => Bun.file(small).slice(0, 10),
+      "/slice-5-15": () => Bun.file(small).slice(5, 15),
+      "/slice-5": () => Bun.file(small).slice(5),
+      "/slice-0-0": () => Bun.file(small).slice(0, 0),
+      "/slice-0-neg-10": () => Bun.file(small).slice(0, -10),
+      "/slice-neg-10": () => Bun.file(small).slice(-10),
+      "/stream": () => Bun.file(small).stream(),
+      "/medium": () => Bun.file(medium),
+      "/large": () => Bun.file(large),
+      "/large-slice": () => Bun.file(large).slice(100, 100 + 300_000),
+      "/large-slice-past-end": () => Bun.file(large).slice(100, 100 + 64 * 1024 * 1024),
+      "/empty": () => Bun.file(empty),
+      // The first read of `mem` fails with EIO: address 0 of a process is not mapped.
+      "/unreadable": () => Bun.file("/proc/self/mem"),
+    };
+    // One BunFile for all the responses of a path.
+    const shared: Record<string, Blob> = {
+      "/shared/whole": Bun.file(small),
+      "/shared/slice-5-15": Bun.file(small).slice(5, 15),
+    };
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        ...Object.fromEntries(
+          Object.entries(forms).flatMap(([path, body]) => [
+            [`/static${path}`, new Response(body())],
+            [`/function${path}`, () => new Response(body())],
+          ]),
+        ),
+        "/bare/whole": Bun.file(small),
+        "/status/201": new Response(Bun.file(small), { status: 201 }),
+        "/status/204": new Response(Bun.file(small), { status: 204 }),
+        "/etag/whole": new Response(Bun.file(small), { headers: { etag: `"v1"` } }),
+        "/length/whole": new Response(Bun.file(small), { headers: { "content-length": "0" } }),
+      },
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/async/")) {
+          // The response starts in a later turn of the event loop, outside the cork of the request.
+          await new Promise(resolve => setImmediate(resolve));
+          return new Response(forms[pathname.slice("/async".length)]());
+        }
+        if (pathname === "/throws") throw new Error("to error()");
+        if (pathname in shared) return new Response(shared[pathname]);
+        return new Response(forms[pathname.slice("/sync".length)]());
+      },
+      error() {
+        return new Response(Bun.file(small));
+      },
+    });
+  });
+
+  afterAll(async () => {
+    server?.stop(true);
+    child?.kill("SIGKILL");
+    await child?.exited;
+    dir?.[Symbol.dispose]();
+  });
+
+  type Sent = { path: string; method?: string; headers?: string };
+  type Answer = NonNullable<ReturnType<typeof parseResponse>>;
+
+  // Sends the requests on one connection, each after the response to the one
+  // before it. The last request asks to close, so `leftover` counts the bytes
+  // the server sent that are not part of a response.
+  async function session(requests: Sent[], port = server.port!) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const answers: Answer[] = [];
+    let wire = "";
+    let parsed = 0;
+    const send = (socket: Bun.Socket) => {
+      const { path, method = "GET", headers = "" } = requests[answers.length];
+      const close = answers.length === requests.length - 1 ? "Connection: close\r\n" : "";
+      socket.write(`${method} ${path} HTTP/1.1\r\nHost: x\r\n${close}${headers}\r\n`);
+    };
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        open: send,
+        data(socket, chunk) {
+          wire += Buffer.from(chunk).toString("latin1");
+          while (answers.length < requests.length) {
+            const answer = parseResponse(wire.slice(parsed), requests[answers.length].method);
+            if (!answer) break;
+            parsed += answer.length;
+            answers.push(answer);
+            if (answers.length < requests.length) send(socket);
+          }
+        },
+        close: () => resolve(),
+        error: () => resolve(),
+      },
+    });
+    await promise;
+    return { answers, leftover: wire.length - parsed };
+  }
+
+  // One request on its own connection. `complete` is false when the bytes
+  // that the server sent are not one response.
+  async function wire(path: string, { method = "GET", headers = "", port = server.port! } = {}) {
+    const { answers, leftover } = await session([{ path, method, headers }], port);
+    const [answer] = answers;
+    return {
+      complete: answers.length === 1 && leftover === 0,
+      status: answer?.status ?? null,
+      head: answer?.head ?? {},
+      body: answer?.body ?? null,
+    };
+  }
+
+  type Wire = Awaited<ReturnType<typeof wire>>;
+  const framing = ({ head }: Wire) => ({
+    contentLength: head["content-length"] ?? null,
+    lastModified: head["last-modified"] === undefined ? null : "from the stat",
+    contentRange: head["content-range"] ?? null,
+  });
+  const noFraming = { contentLength: null, lastModified: null, contentRange: null };
+  const OK = "HTTP/1.1 200 OK";
+  // A body that comes in one fill of the reader has its length when the response starts.
+  const small_ = (answer: Wire) => ({
+    ...framing(answer),
+    complete: answer.complete,
+    status: answer.status,
+    body: answer.body,
+  });
+  const exactly = (bytes: string, status = OK) => ({
+    ...noFraming,
+    contentLength: String(bytes.length),
+    complete: true,
+    status,
+    body: bytes,
+  });
+  // A large body does not go into the output of a test that fails.
+  const large_ = ({ complete, status, body }: Wire, bytes: string) => ({
+    complete,
+    status,
+    bytes: body?.length,
+    same: body === bytes,
+  });
+  const whole = (bytes: string) => ({ complete: true, status: OK, bytes: bytes.length, same: true });
+
+  describe.each(["/sync", "/async", "/function", "/static"])("%s", producer => {
+    test.concurrent("GET sends the bytes with their length", async () => {
+      expect({
+        whole: small_(await wire(`${producer}/whole`)),
+        "slice(0, 10)": small_(await wire(`${producer}/slice-0-10`)),
+        "slice(5, 15)": small_(await wire(`${producer}/slice-5-15`)),
+        "slice(5)": small_(await wire(`${producer}/slice-5`)),
+        "stream()": small_(await wire(`${producer}/stream`)),
+        "several reads": small_(await wire(`${producer}/medium`)),
+      }).toEqual({
+        whole: exactly(smallBytes),
+        "slice(0, 10)": exactly(smallBytes.slice(0, 10)),
+        "slice(5, 15)": exactly(smallBytes.slice(5, 15)),
+        "slice(5)": exactly(smallBytes.slice(5)),
+        "stream()": exactly(smallBytes),
+        "several reads": exactly(mediumBytes),
+      });
+    });
+
+    test.concurrent("GET sends a large body to its end", async () => {
+      expect({
+        whole: large_(await wire(`${producer}/large`), largeBytes),
+        slice: large_(await wire(`${producer}/large-slice`), largeBytes.slice(100, 100 + 300_000)),
+        "slice past the end": large_(await wire(`${producer}/large-slice-past-end`), largeBytes.slice(100)),
+      }).toEqual({
+        whole: whole(largeBytes),
+        slice: whole(largeBytes.slice(100, 100 + 300_000)),
+        "slice past the end": whole(largeBytes.slice(100)),
+      });
+    });
+
+    // A negative index counts from the largest size that a Blob can have: https://github.com/oven-sh/bun/pull/41257
+    test.concurrent("a slice with a negative index sends the bytes that bytes() returns", async () => {
+      const bytes = async (blob: Blob) => Buffer.from(await blob.bytes()).toString("latin1");
+      expect({
+        "slice(0, -10)": small_(await wire(`${producer}/slice-0-neg-10`)),
+        "slice(-10)": small_(await wire(`${producer}/slice-neg-10`)).body,
+      }).toEqual({
+        "slice(0, -10)": exactly(await bytes(Bun.file(small).slice(0, -10))),
+        "slice(-10)": await bytes(Bun.file(small).slice(-10)),
+      });
+    });
+
+    // The size and the mtime of such a file do not describe its content.
+    test.concurrent("GET and HEAD agree, with no Range and no validator from the stat", async () => {
+      const head = { ...noFraming, complete: true, status: OK, body: "" };
+      expect({
+        get: small_(await wire(`${producer}/whole`)),
+        head: small_(await wire(`${producer}/whole`, { method: "HEAD" })),
+        "GET with Range": small_(await wire(`${producer}/whole`, { headers: "Range: bytes=0-9\r\n" })),
+        "HEAD with Range": small_(await wire(`${producer}/whole`, { method: "HEAD", headers: "Range: bytes=0-9\r\n" })),
+        "GET with If-Modified-Since": small_(
+          await wire(`${producer}/whole`, { headers: "If-Modified-Since: Fri, 01 Jan 2100 00:00:00 GMT\r\n" }),
+        ),
+        "HEAD with If-Modified-Since": small_(
+          await wire(`${producer}/whole`, {
+            method: "HEAD",
+            headers: "If-Modified-Since: Fri, 01 Jan 2100 00:00:00 GMT\r\n",
+          }),
+        ),
+      }).toEqual({
+        get: exactly(smallBytes),
+        head,
+        "GET with Range": exactly(smallBytes),
+        "HEAD with Range": head,
+        "GET with If-Modified-Since": exactly(smallBytes),
+        "HEAD with If-Modified-Since": head,
+      });
+    });
+
+    // One read of one byte tells these files from a file with content, and they
+    // keep the answers of the stat.
+    test.concurrent(
+      "an empty file, an empty window and a file that cannot be read stay `Content-Length: 0`",
+      async () => {
+        // Only a static route sends `Last-Modified`.
+        const empty = { ...exactly(""), lastModified: producer === "/static" ? "from the stat" : null };
+        const answer = async (path: string, method = "GET") => small_(await wire(`${producer}${path}`, { method }));
+        expect({
+          empty: await answer("/empty"),
+          "HEAD of empty": await answer("/empty", "HEAD"),
+          "slice(0, 0)": await answer("/slice-0-0"),
+          unreadable: await answer("/unreadable"),
+        }).toEqual({ empty, "HEAD of empty": empty, "slice(0, 0)": empty, unreadable: empty });
+      },
+    );
+  });
+
+  test.concurrent("a bare BunFile route, a route with a status, and error() send the bytes", async () => {
+    expect({
+      bare: small_(await wire("/bare/whole")),
+      status: small_(await wire("/status/201")),
+      error: small_(await wire("/throws")),
+    }).toEqual({
+      bare: exactly(smallBytes),
+      status: exactly(smallBytes, "HTTP/1.1 201 Created"),
+      error: exactly(smallBytes),
+    });
+  });
+
+  test.concurrent("a static route keeps the validators and the length that its headers give", async () => {
+    const answer = async (path: string, headers = "") => {
+      const response = await wire(path, { headers });
+      return { ...small_(response), etag: response.head["etag"] ?? null };
+    };
+    expect({
+      ifNoneMatch: await answer("/etag/whole", `If-None-Match: "v1"\r\n`),
+      ifMatch: await answer("/etag/whole", `If-Match: "v2"\r\n`),
+      // A route with no body and a route with a `Content-Length` of its own keep the answer of the stat.
+      noContent: await answer("/status/204"),
+      contentLength: await answer("/length/whole"),
+    }).toEqual({
+      ifNoneMatch: { ...noFraming, complete: true, status: "HTTP/1.1 304 Not Modified", body: "", etag: `"v1"` },
+      ifMatch: { ...exactly("", "HTTP/1.1 412 Precondition Failed"), etag: `"v1"` },
+      noContent: {
+        ...noFraming,
+        lastModified: "from the stat",
+        complete: true,
+        status: "HTTP/1.1 204 No Content",
+        body: "",
+        etag: null,
+      },
+      contentLength: { ...exactly(""), lastModified: "from the stat", etag: null },
+    });
+  });
+
+  test.concurrent("the responses on one connection follow each other with no other bytes", async () => {
+    const requests: (Sent & { body: string; status?: string })[] = [
+      { path: "/sync/whole", body: smallBytes },
+      { path: "/sync/whole", method: "HEAD", body: "" },
+      { path: "/sync/large", body: largeBytes },
+      { path: "/async/slice-5-15", body: smallBytes.slice(5, 15) },
+      { path: "/async/large-slice", body: largeBytes.slice(100, 100 + 300_000) },
+      { path: "/function/medium", body: mediumBytes },
+      { path: "/static/whole", body: smallBytes },
+      { path: "/static/whole", method: "HEAD", body: "" },
+      { path: "/static/large", body: largeBytes },
+      { path: "/static/whole", headers: "If-None-Match: *\r\n", body: "", status: "HTTP/1.1 304 Not Modified" },
+      { path: "/static/empty", body: "" },
+      { path: "/sync/empty", body: "" },
+      { path: "/sync/whole", body: smallBytes },
+    ];
+    const { answers, leftover } = await session(requests);
+    expect({
+      answers: answers.map(({ status, body }, i) => ({ status, bytes: body.length, same: body === requests[i].body })),
+      leftover,
+    }).toEqual({
+      answers: requests.map(({ status = OK, body }) => ({ status, bytes: body.length, same: true })),
+      leftover: 0,
+    });
+  });
+
+  // A response to HEAD stores the stat size of 0 in its own copy of the BunFile, not in the BunFile of the handler.
+  test.concurrent("a BunFile that several responses share sends its bytes each time", async () => {
+    const requests: (Sent & { body: string })[] = [
+      { path: "/shared/whole", body: smallBytes },
+      { path: "/shared/whole", method: "HEAD", body: "" },
+      { path: "/shared/whole", body: smallBytes },
+      { path: "/shared/slice-5-15", method: "HEAD", body: "" },
+      { path: "/shared/slice-5-15", body: smallBytes.slice(5, 15) },
+      { path: "/shared/slice-5-15", body: smallBytes.slice(5, 15) },
+    ];
+    const { answers, leftover } = await session(requests);
+    expect({ answers: answers.map(({ status, body }) => ({ status, body })), leftover }).toEqual({
+      answers: requests.map(({ body }) => ({ status: OK, body })),
+      leftover: 0,
+    });
+  });
+
+  test.concurrent("over TLS, with HTTP/1.1, HTTP/2 and HTTP/3", async () => {
+    await using secure = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http2: true,
+      http3: true,
+      routes: {
+        "/static/small": new Response(Bun.file(small)),
+        "/static/large": new Response(Bun.file(large)),
+      },
+      fetch: req => new Response(Bun.file(req.url.endsWith("/small") ? small : large)),
+    });
+    const results: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const protocol of ["http1.1", "http2", "http3"]) {
+      for (const path of ["/static/small", "/handler/small", "/static/large", "/handler/large"]) {
+        const res = await fetch(`https://127.0.0.1:${secure.port}${path}`, {
+          protocol,
+          tls: { rejectUnauthorized: false },
+        } as RequestInit);
+        const body = Buffer.from(await res.bytes()).toString("latin1");
+        const bytes = path.endsWith("/small") ? smallBytes : largeBytes;
+        results[`${protocol} ${path}`] = { status: res.status, bytes: body.length, same: body === bytes };
+        expected[`${protocol} ${path}`] = { status: 200, bytes: bytes.length, same: true };
+      }
+    }
+    expect(results).toEqual(expected);
+  });
+
+  // A read moves the position of a descriptor, so the server does not read the
+  // one of the caller.
+  test("Bun.file(fd) keeps its position and the answer of its stat", async () => {
+    const fd = openSync(small, "r");
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(fd)),
+      });
+      const answer = small_(await wire("/", { port: server.port! }));
+      const position = readFileSync(`/proc/self/fdinfo/${fd}`, "latin1").split("\n")[0];
+      expect({ answer, position }).toEqual({ answer: exactly(""), position: "pos:\t0" });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // Today the body is empty: `size` and `exists()` store the stat size of 0 as
+  // the window of the BunFile. https://github.com/oven-sh/bun/pull/43910
+  test.failing("a BunFile after `size` or `exists()` sends its bytes", async () => {
+    const afterSize = Bun.file(small);
+    void afterSize.size;
+    const afterExists = Bun.file(small);
+    await afterExists.exists();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => new Response(req.url.endsWith("/size") ? afterSize : afterExists),
+    });
+    expect({
+      size: small_(await wire("/size", { port: server.port! })),
+      exists: small_(await wire("/exists", { port: server.port! })),
+    }).toEqual({ size: exactly(smallBytes), exists: exactly(smallBytes) });
+  });
 });

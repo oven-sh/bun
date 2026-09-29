@@ -12,7 +12,9 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    BodyLength, StartOptions as FileResponseStreamOptions, StreamOwner,
+};
 use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
 use crate::server::jsc::{JSGlobalObject, JsResult};
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
@@ -252,7 +254,7 @@ impl DirectoryRoute {
             file_type: FileType::File,
             pollable: false,
             offset: body_offset,
-            length: Some(body_len),
+            length: BodyLength::Exact(body_len),
             idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });

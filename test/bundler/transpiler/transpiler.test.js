@@ -2903,6 +2903,10 @@ console.log(<div {...obj} key="after" />);`),
       const out = new Bun.Transpiler({ loader: "js", target }).transformSync(input);
       expect(out).toBe(`export const hasRequire = typeof require !== "undefined";\n`);
     }
+    // The macro target runs in bun, but the printer only binds `require`
+    // for target bun, so the guard must survive (minified) here too.
+    const macroOut = new Bun.Transpiler({ loader: "js", target: "bun_macro" }).transformSync(input);
+    expect(macroOut).toBe(`export const hasRequire = typeof require < "u";\n`);
     // target bun binds `require` from import.meta, so the fold stays.
     const bunOut = new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(input);
     expect(bunOut).toBe(`var {require}=import.meta;export const hasRequire = !0;\n`);

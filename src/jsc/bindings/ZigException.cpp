@@ -823,24 +823,29 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
     except.message = Bun::toStringRef(str);
 }
 
-// 1: an Error.prototype is in the prototype chain. 0: none is. 2: the chain is longer than the bound.
-extern "C" uint8_t JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0)
+extern "C" bool JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0)
 {
-    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    // Proxy targets and stored prototypes: no trap and no getter runs.
+    auto next = [](JSC::JSObject* object) -> JSC::JSObject* {
+        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object))
+            return proxy->target();
+        return object->getPrototypeDirect().getObject();
+    };
 
-    // Proxy targets and stored prototypes: no trap and no getter runs. A Proxy can close a cycle, hence the bound.
-    for (unsigned steps = 0; object; steps++) {
-        if (steps == 256)
-            return 2;
-        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
-            object = proxy->target();
-            continue;
-        }
+    // A Proxy can close a cycle. Brent's algorithm: `mark` waits while the walk takes `lap` steps, then moves up to it.
+    JSC::JSObject* mark = nullptr;
+    size_t lap = 1;
+    size_t steps = 0;
+    for (auto* object = JSC::JSValue::decode(JSValue0).getObject(); object && object != mark; object = next(object)) {
         if (object->inherits<JSC::ErrorPrototype>())
-            return 1;
-        object = object->getPrototypeDirect().getObject();
+            return true;
+        if (++steps == lap) {
+            mark = object;
+            lap *= 2;
+            steps = 0;
+        }
     }
-    return 0;
+    return false;
 }
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)

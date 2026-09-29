@@ -7188,6 +7188,8 @@ impl VirtualMachine {
             // An object that arrives inside the `JSC::Exception` it was thrown with is shown too.
             let error_instance =
                 Self::thrown_object_to_show(error_instance).unwrap_or(error_instance);
+            // `Formatter::new` leaves the stack check off; the value can nest deeper than the stack.
+            formatter.stack_check = bun_core::StackCheck::init();
             let tag = match Tag::get_advanced(
                 error_instance,
                 global_ref,
@@ -7277,8 +7279,8 @@ impl VirtualMachine {
         // A `BuildMessage` keeps its file, line and excerpt in the value, not in the message line.
         let is_build_message = thrown.js_type() == jsc::JSType::DOMWrapper
             && thrown.as_class_ref::<crate::BuildMessage>().is_some();
-        // Not shown: `instanceof Error` (util.inherits, DOMException, ResolveMessage), or a chain too long to tell.
-        if thrown.has_error_prototype() != Some(false) && !is_build_message {
+        // `instanceof Error` (util.inherits, a DOMException, a ResolveMessage): name and message say it all.
+        if thrown.has_error_prototype() && !is_build_message {
             return None;
         }
         Some(thrown)

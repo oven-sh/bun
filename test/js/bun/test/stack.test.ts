@@ -144,8 +144,13 @@ switch (entryPoint) {
   const files = {
     "fixture.js": fixture,
     "syntax-error.js": "const ok = 1;\nconst broken = ;\n",
-    "proxy-chain.js": `let value = { why: "details the user needs" };
-for (let i = 0; i < 1000; i++) value = new Proxy(value, {});
+    // A printer that recurses once per Proxy with no guard runs out of stack at about 10,000 layers in a debug
+    // build and 50,000 in a release build. A debug build is too slow to make 100,000 of them.
+    "proxy-chain.js": `const kind = process.argv[3];
+const slowBuild = Bun.version.includes("debug") || require("bun:internal-for-testing").isASANEnabled();
+let chain = kind === "error" ? new Error("behind the chain") : { why: "details the user needs" };
+for (let i = 0; i < (slowBuild ? 12_000 : 100_000); i++) chain = new Proxy(chain, {});
+const value = kind === "nested" ? { holder: chain } : chain;
 setTimeout(function thrower() {
   throw value;
 }, 1);
@@ -158,7 +163,7 @@ setTimeout(function thrower() {
   // The report without the columns (a property of the transpiled module, not of the printer), the frames
   // below the throwing function (they differ per entry point) and the trailer that names the build.
   async function report(dir: string, entryPoint: string, kind: string, file = "fixture.js") {
-    const { stdout, stderr, exitCode } = await bunRun([join(dir, file), entryPoint, kind], env);
+    const { stdout, stderr, exitCode, signalCode } = await bunRun([join(dir, file), entryPoint, kind], env);
     const output = stderr
       .replaceAll("\\", "/")
       .replaceAll(dir.replaceAll("\\", "/"), "<dir>")
@@ -168,7 +173,7 @@ setTimeout(function thrower() {
       .replace(/:(\d+):\d+(\)?)$/gm, ":$1:<col>$2")
       .replace(/^ +\^$/gm, "^")
       .trim();
-    return { stdout, output, exitCode };
+    return { stdout, output, exitCode, signalCode };
   }
 
   // The same report from every entry point; returns that report.
@@ -272,19 +277,28 @@ setTimeout(function thrower() {
     expect([proxyOfError.exitCode, proxyOfObject.exitCode]).toEqual([1, 1]);
   });
 
-  test.concurrent("a Proxy chain too long to classify is not shown", async () => {
+  // How much of the value a report shows depends on the stack the platform gives. That it ends with the frame
+  // of the throw and exit code 1, not with a signal, does not.
+  test.concurrent("a deep chain of Proxies is reported, around an Error and inside an object", async () => {
     using dir = tempDir("thrown-object", files);
-    const { output, exitCode } = await report(String(dir), "setTimeout", "", "proxy-chain.js");
-    expect(output).toMatchInlineSnapshot(`
-      "1 | let value = { why: "details the user needs" };
-      2 | for (let i = 0; i < 1000; i++) value = new Proxy(value, {});
-      3 | setTimeout(function thrower() {
-      4 |   throw value;
-      ^
-      error
-            at thrower (<dir>/proxy-chain.js:4:<col>)"
-    `);
-    expect(exitCode).toBe(1);
+    const reports = await Promise.all(
+      ["error", "nested"].map(kind => report(String(dir), "setTimeout", kind, "proxy-chain.js")),
+    );
+    expect(
+      reports.map(({ output, exitCode, signalCode }) => ({
+        message: /^error(: behind the chain)?$/m.test(output),
+        frames: framesOf(output),
+        exitCode,
+        signalCode,
+      })),
+    ).toEqual(
+      reports.map(() => ({
+        message: true,
+        frames: ["at thrower (<dir>/proxy-chain.js:7:<col>)"],
+        exitCode: 1,
+        signalCode: null,
+      })),
+    );
   });
 
   test.concurrent("a string, an Error, a ResolveMessage and a DOMException are still printed once", async () => {

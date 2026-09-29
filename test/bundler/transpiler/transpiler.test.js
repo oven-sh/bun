@@ -2361,21 +2361,44 @@ export default class {
       };
       const ns = `var NS;\n((NS) => {})(NS ||= {});\n`;
 
-      // `eliminate` aborted the process on these inputs, so they run in a subprocess.
+      // [options, source, printed module, exports that scan() reports]
+      const rowsThatEliminate = [
+        [eliminate(["A"]), `export let A`, ``, []],
+        [eliminate(["A"]), `export var A: number`, ``, []],
+        [eliminate(["A"], { loader: "js" }), `export let A; A = 1;`, `A = 1;\n`, []],
+        [eliminate(["A"]), `export let A, B = 1`, `export let B = 1;\n`, ["B"]],
+        [eliminate(["A", "B"], { treeShaking: false }), `export let A, B`, ``, []],
+        [eliminate(["A"], { deadCodeElimination: false }), `export let A`, ``, []],
+        [eliminate(["A"]), `namespace NS { export let A }`, ns, []],
+        [eliminate(["A"]), `namespace NS { export declare const A: number }`, ns, []],
+      ];
+      const sourcesAfterALoad = ["export let A", "export let A = 5", "export let B"];
+
+      // `eliminate` aborted the process, so these inputs run in one subprocess. It prints one line for each test.
+      let subprocess;
+      const run = () =>
+        (subprocess ??= (async () => {
+          using dir = tempDir("exports-no-initializer", {
+            "other.cjs": Array.from({ length: 50 }, (_, i) => `exports.v${i} = () => ["v", ${i}].join("-");`).join(
+              "\n",
+            ),
+          });
+          const script = async (print, rows, sources, other) => {
+            console.log(JSON.stringify(await print(rows)));
+
+            const transpiler = new Bun.Transpiler({ loader: "ts", exports: { replace: { A: "bar", B: 1 } } });
+            require(other);
+            console.log(JSON.stringify(sources.map(source => transpiler.transformSync(source))));
+          };
+          const args = [rowsThatEliminate, sourcesAfterALoad, join(String(dir), "other.cjs")];
+          return await bunRun(["-e", `await (${script})(${print}, ...${JSON.stringify(args)})`]);
+        })());
+
       it("eliminate", async () => {
-        // [options, source, printed module, exports that scan() reports]
-        const rows = [
-          [eliminate(["A"]), `export let A`, ``, []],
-          [eliminate(["A"]), `export var A: number`, ``, []],
-          [eliminate(["A"], { loader: "js" }), `export let A; A = 1;`, `A = 1;\n`, []],
-          [eliminate(["A"]), `export let A, B = 1`, `export let B = 1;\n`, ["B"]],
-          [eliminate(["A", "B"], { treeShaking: false }), `export let A, B`, ``, []],
-          [eliminate(["A"], { deadCodeElimination: false }), `export let A`, ``, []],
-          [eliminate(["A"]), `namespace NS { export let A }`, ns, []],
-          [eliminate(["A"]), `namespace NS { export declare const A: number }`, ns, []],
-        ];
-        const result = await bunRun(["-e", `console.log(JSON.stringify(await (${print})(${JSON.stringify(rows)})))`]);
-        expect(result).toEqual(printed(JSON.stringify(expected(rows))));
+        const result = await run();
+        expect({ ...result, stdout: result.stdout.split("\n")[0] }).toEqual(
+          printed(JSON.stringify(expected(rowsThatEliminate))),
+        );
       });
 
       it("replace", async () => {
@@ -2419,24 +2442,29 @@ export default class {
           [eliminate(["A"]), `namespace NS { export let A = 1 }`, member, []],
           [replace({ A: 2 }), `namespace NS { export let A = 1 }`, member, []],
           [replace({ A: ["N", 2] }), `namespace NS { export const A = 1 }`, member, []],
+          [
+            eliminate(["A"]),
+            `namespace NS { export function A() { return f() } }`,
+            `var NS;\n((NS) => {\n  function A() {\n    return f();\n  }\n  NS.A = A;\n})(NS ||= {});\n`,
+            [],
+          ],
+          [
+            replace({ K: 1 }),
+            `namespace NS { export class K { m() { return f() } } }`,
+            `var NS;\n((NS) => {\n\n  class K {\n    m() {\n      return f();\n    }\n  }\n  NS.K = K;\n})(NS ||= {});\n`,
+            [],
+          ],
           [eliminate(["A"]), `export namespace NS { export let A = 1 } export let A = 2`, `export ${member}`, ["NS"]],
         ];
         expect(await print(rows)).toEqual(expected(rows));
       });
 
       it("replace with a string, after the load of another module", async () => {
-        using dir = tempDir("exports-replace-no-initializer", {
-          "other.cjs": Array.from({ length: 50 }, (_, i) => `exports.v${i} = () => ["v", ${i}].join("-");`).join("\n"),
-        });
-        const result = await bunRun([
-          "-e",
-          `const transpiler = new Bun.Transpiler({ loader: "ts", exports: { replace: { A: "bar", B: 1 } } });
-          require(${JSON.stringify(join(String(dir), "other.cjs"))});
-          const sources = ["export let A", "export let A = 5", "export let B"];
-          console.log(JSON.stringify(sources.map(source => transpiler.transformSync(source))));`,
-        ]);
         const module = `export let A = "bar";\n`;
-        expect(result).toEqual(printed(JSON.stringify([module, module, `export let B = 1;\n`])));
+        const result = await run();
+        expect({ ...result, stdout: result.stdout.split("\n")[1] }).toEqual(
+          printed(JSON.stringify([module, module, `export let B = 1;\n`])),
+        );
       });
     });
 

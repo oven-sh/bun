@@ -890,6 +890,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.func.flags.contains(flags::Function::IsExport)
             && p.options.features.replace_exports.count() > 0
+            && p.enclosing_namespace_arg_ref.is_none()
             && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_);
         let original_is_dead = p.is_control_flow_dead;
 
@@ -1048,6 +1049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.is_export
             && p.options.features.replace_exports.count() > 0
+            && p.enclosing_namespace_arg_ref.is_none()
             && p.is_export_to_eliminate(
                 data.class
                     .class_name

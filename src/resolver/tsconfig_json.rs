@@ -132,10 +132,8 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
-/// What `strictNullChecks` means when a tsconfig sets neither it nor
-/// `strict`. This is the TypeScript 5 default. TypeScript 6 turned `strict`
-/// on by default, but Bun keeps the older default so projects that never set
-/// the keys keep the metadata they got before.
+/// `strictNullChecks` when a tsconfig sets neither it nor `strict`. This is
+/// the TypeScript 5 default. TypeScript 6 turned `strict` on by default.
 pub const STRICT_NULL_CHECKS_DEFAULT: bool = false;
 
 pub struct TSConfigJSON {
@@ -238,9 +236,7 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// The effective `strictNullChecks` value, the way tsc's
-    /// `getStrictOptionValue` computes it: an explicit `strictNullChecks`
-    /// wins, otherwise `strict` decides, otherwise it is off.
+    /// tsc's `getStrictOptionValue`: explicit `strictNullChecks`, else `strict`, else off.
     pub fn strict_null_checks(&self) -> bool {
         self.strict_null_checks
             .or(self.strict)

@@ -150,9 +150,8 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-/// How the parser emits `design:*` metadata for legacy decorators. This is
 /// tsconfig's `emitDecoratorMetadata` widened with the effective
-/// `strictNullChecks` value, because tsc's type serializer reads both.
+/// `strictNullChecks`, because tsc's type serializer reads both.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub enum DecoratorMetadata {
@@ -218,13 +217,10 @@ impl Metadata {
     // translated from:
     // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
     //
-    // `strict_null_checks` is tsc's `strictNullChecks`. With it off, `null` and
-    // `undefined` are elided from a union or intersection. With it on they
-    // serialize to `void 0` like `void` does, so `string | undefined` is two
-    // different constituents and becomes `Object`.
+    // With `strict_null_checks` off, `null` and `undefined` are elided. With it
+    // on they serialize to `void 0` like `void`, so `string | undefined` is `Object`.
 
-    /// Whether this constituent serializes to `void 0` when it is compared
-    /// with another constituent. `MNever` is handled before any comparison.
+    /// Serializes to `void 0`. `MNever` is handled before any comparison.
     fn is_void_like(&self) -> bool {
         matches!(
             self,
@@ -234,9 +230,8 @@ impl Metadata {
 
     /// Return the final union type if possible, or return None to continue merging.
     ///
-    /// If the current type is MNever (or MNull / MUndefined without strict null
-    /// checks) assign the current type to MNone and return None to ensure it's
-    /// always replaced by the next type.
+    /// MNever (and MNull / MUndefined without strict null checks) becomes MNone
+    /// so the next type replaces it.
     /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
     pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(
         &mut self,
@@ -304,9 +299,8 @@ impl Metadata {
 
     /// Return the final intersection type if possible, or return None to continue merging.
     ///
-    /// If the current type is MUnknown (or MNull / MUndefined without strict
-    /// null checks) assign the current type to MNone and return None to ensure
-    /// it's always replaced by the next type.
+    /// MUnknown (and MNull / MUndefined without strict null checks) becomes
+    /// MNone so the next type replaces it.
     pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(
         &mut self,
         strict_null_checks: bool,

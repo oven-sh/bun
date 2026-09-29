@@ -1586,8 +1586,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
-                // Only the primary path is parsed, so only its tsconfig decides
-                // how `design:*` metadata is serialized.
+                // Only the primary path is parsed.
                 if primary {
                     result
                         .flags

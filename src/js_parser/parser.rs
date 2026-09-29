@@ -359,9 +359,8 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            // One byte per option. `decorator_metadata` hashes as its `u8`
-            // value so `Off`/`Loose` keep the bytes the old bool produced and
-            // only `Strict` entries get a new key.
+            // `decorator_metadata as u8` keeps the bytes the old bool produced
+            // for `Off`/`Loose`, so only `Strict` entries get a new key.
             let bytes: [u8; 17] = [
                 self.top_level_await as u8,
                 self.auto_import_jsx as u8,

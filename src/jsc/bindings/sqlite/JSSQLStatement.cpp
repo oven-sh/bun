@@ -136,8 +136,7 @@ extern "C" void Bun__initializeSQLite()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        // Memory statistics put a process-wide mutex in every SQLite malloc/free.
-        // Node ships SQLITE_DEFAULT_MEMSTATUS=0 too.
+        // Off, SQLite skips its process-wide mutex in every malloc and free.
         int returnCode = sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0);
         ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to disable SQLite memory statistics");
         UNUSED_PARAM(returnCode);

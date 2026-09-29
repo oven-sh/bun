@@ -959,6 +959,74 @@ describe("fs.watch", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // Runs `fixture` in a child whose open-file limit a shell lowered first.
+  async function runWithOpenFileLimit(limit: number, fixture: string, env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -n ${limit}; exec "$0" "$@"`, bunExe(), "-e", fixture],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Fixture source. The first watcher of a process creates the inotify
+  // descriptor that every later watcher shares, so fixtures create one before
+  // they count descriptors.
+  const descriptorFixture = /* js */ `
+    const fs = require("fs"), path = require("path");
+    const root = process.env.WATCH_ROOT;
+    fs.watch(root, () => {}).close();
+
+    const held = [];
+    // Takes every descriptor the limit allows, then frees \`count\` of them.
+    function leaveFreeDescriptors(count) {
+      try {
+        for (;;) held.push(fs.openSync("/dev/null", "r"));
+      } catch (error) {
+        if (error.code !== "EMFILE") throw error;
+      }
+      for (let i = 0; i < count; i++) fs.closeSync(held.pop());
+    }
+  `;
+
+  // fs.watch() opens the path once to resolve it. It kept that descriptor open
+  // across the crawl of a recursive watch, so with one descriptor free the crawl
+  // could not open the watched directory and watched nothing below it.
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch with one free descriptor watches the directories in the root",
+    async () => {
+      using dir = tempDir("fs-watch-one-descriptor", { "d1": {} });
+
+      const fixture = /* js */ `
+        ${descriptorFixture}
+        leaveFreeDescriptors(1);
+
+        const seen = [], errors = [];
+        const watcher = fs.watch(root, { recursive: true }, (type, name) => {
+          seen.push(name);
+          // inotify queues events in the order they happen, so the event for
+          // d1/f.txt, when there is one, arrives before this one.
+          if (type === "rename" && name === "last.txt") {
+            watcher.close();
+            console.log(JSON.stringify({ seen: seen.includes(path.join("d1", "f.txt")), errors }));
+          }
+        });
+        watcher.on("error", error => errors.push(error.code));
+        fs.writeFileSync(path.join(root, "d1", "f.txt"), "x");
+        fs.writeFileSync(path.join(root, "last.txt"), "x");
+      `;
+
+      const { stdout, stderr, exitCode } = await runWithOpenFileLimit(64, fixture, { WATCH_ROOT: String(dir) });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ seen: true, errors: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {

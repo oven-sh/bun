@@ -447,7 +447,7 @@ pub(crate) fn watch(
             }
         }
     };
-    let _close_probe = sys::CloseOnDrop::new(probe_fd);
+    let close_probe = sys::CloseOnDrop::new(probe_fd);
     let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
         Err(_) => path, // fall back to the caller's path; best effort
         Ok(r) => {
@@ -457,6 +457,9 @@ pub(crate) fn watch(
             ZStr::from_buf(&resolve_buf[..], len)
         }
     };
+    // The crawl of a recursive watch opens directories. It must not compete with
+    // the probe for the last free descriptor.
+    drop(close_probe);
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);

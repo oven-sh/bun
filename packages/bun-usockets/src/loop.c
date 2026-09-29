@@ -334,6 +334,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
  * easier on CPU */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
 
+/* The handlers of an accepted socket run inside the accept loop, so a client they answer can be
+ * back in the queue before the next accept(). Without a bound the loop does not end while such
+ * clients keep coming, and nothing else on the event loop runs. The poll of the listener is
+ * level-triggered: it reports what is still queued on the next iteration. */
+static const int MAX_ACCEPTS_PER_READINESS_EVENT = 32;
+
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
     struct us_socket_t *s;
@@ -519,6 +525,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     /* Todo: stop timer if any */
 
+                    int accepted = 0;
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -578,7 +585,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    } while (++accepted < MAX_ACCEPTS_PER_READINESS_EVENT && (client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
                 }
             }
         break;

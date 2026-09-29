@@ -1,7 +1,13 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { getEventLoopStats } from "bun:internal-for-testing";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir, tls as cert } from "harness";
+import { once } from "node:events";
+import http from "node:http";
+import https from "node:https";
+import net from "node:net";
 import { join } from "node:path";
+import tls from "node:tls";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -311,4 +317,212 @@ it("should not leak memory", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
+});
+
+it("a TLS socket that waits in the low-priority queue times out", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tls-parked-timeout-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ opened: 20, timedOut: 20 }),
+    stderr: "",
+    exitCode: 0,
+  });
+}, 30_000); // The fixture blocks for the 4 s between two timeout sweeps.
+
+describe("one readiness event of a listener does not empty a long queue", () => {
+  // More than MAX_ACCEPTS_PER_READINESS_EVENT in packages/bun-usockets/src/loop.c.
+  const count = 100;
+  const request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+  // The first byte of a TLS handshake record. The server waits for the rest of the record.
+  const handshakeStart = "\x16";
+
+  type Arrived = (label?: string) => void;
+  type Listener = { target: object; first?: string; stop: () => unknown };
+
+  let clients: Worker;
+  let pending: PromiseWithResolvers<unknown>;
+  // The next message of the Worker. Call it before the loop runs again.
+  const reply = () => (pending = Promise.withResolvers()).promise;
+  beforeAll(async () => {
+    clients = new Worker(join(import.meta.dir, "accept-queue-clients-fixture.ts"));
+    clients.onmessage = event => pending.resolve(event.data);
+    clients.onerror = event => pending.reject(event);
+    expect(await reply()).toBe("ready");
+  });
+  afterAll(() => clients.terminate());
+
+  // No JS runs when an HTTP listener with TLS accepts, and its handshakes have a budget per
+  // iteration of their own. What an accept changes for JS to see is the number of polls of the
+  // loop, read once per iteration. The clients never finish their handshake.
+  function watchPolls(arrived: Arrived) {
+    let last = getEventLoopStats().numPolls;
+    let seen = 0;
+    (function sample() {
+      for (const { numPolls } = getEventLoopStats(); last < numPolls; last++, seen++) arrived();
+      if (seen < count) setImmediate(sample);
+    })();
+  }
+
+  async function nodeServer(server: net.Server, unix: string | undefined, first?: string): Promise<Listener> {
+    if (unix) server.listen(unix);
+    else server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      target: unix ? { unix } : { hostname: "127.0.0.1", port: (server.address() as net.AddressInfo).port },
+      first,
+      stop() {
+        server.close();
+        (server as http.Server).closeAllConnections?.();
+      },
+    };
+  }
+
+  function netServer(arrived: Arrived, unix?: string, options: net.ServerOpts = {}) {
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(options, socket => {
+      socket.on("error", () => {});
+      sockets.push(socket);
+      arrived(socket.isPaused() ? "paused" : "c");
+    });
+    server.on("drop", () => arrived("d"));
+    server.on("close", () => sockets.forEach(socket => socket.destroy()));
+    return { server, listening: nodeServer(server, unix) };
+  }
+
+  const address = (server: { port?: number }, unix?: string) =>
+    unix ? { unix } : { hostname: "127.0.0.1", port: server.port };
+
+  function serve(arrived: Arrived, unix?: string, secure = false): Listener {
+    const server = Bun.serve({
+      ...(unix ? { unix } : { port: 0, hostname: "127.0.0.1" }),
+      tls: secure ? cert : undefined,
+      fetch() {
+        arrived();
+        return new Response("hello");
+      },
+    });
+    return { target: address(server, unix), first: secure ? handshakeStart : request, stop: () => server.stop(true) };
+  }
+
+  function bunListen(arrived: Arrived, unix?: string, secure = false): Listener {
+    const server = Bun.listen({
+      ...(unix ? { unix } : { port: 0, hostname: "127.0.0.1" }),
+      tls: secure ? cert : undefined,
+      socket: {
+        // With TLS this is still the accept: `handshake` is what waits for the peer.
+        open: () => arrived(),
+        handshake() {},
+        data() {},
+        error() {},
+      },
+    });
+    return { target: address(server, unix), stop: () => server.stop(true) };
+  }
+
+  const kinds: Record<string, (arrived: Arrived, unix: string) => Listener | Promise<Listener>> = {
+    "Bun.serve": arrived => serve(arrived),
+    "Bun.serve unix": (arrived, unix) => serve(arrived, unix),
+    "Bun.serve tls": arrived => serve(arrived, undefined, true),
+    "Bun.listen": arrived => bunListen(arrived),
+    "Bun.listen unix": (arrived, unix) => bunListen(arrived, unix),
+    "Bun.listen tls": arrived => bunListen(arrived, undefined, true),
+    "node:http": arrived =>
+      nodeServer(
+        http.createServer((req, res) => (arrived(), res.end("hello"))),
+        undefined,
+        request,
+      ),
+    "node:http unix": (arrived, unix) =>
+      nodeServer(
+        http.createServer((req, res) => (arrived(), res.end("hello"))),
+        unix,
+        request,
+      ),
+    "node:https": arrived =>
+      nodeServer(
+        https.createServer(cert, (req, res) => (arrived(), res.end("hello"))).on("tlsClientError", () => {}),
+        undefined,
+        handshakeStart,
+      ),
+    "node:net": arrived => netServer(arrived).listening,
+    "node:net unix": (arrived, unix) => netServer(arrived, unix).listening,
+    "node:net pauseOnConnect": arrived => netServer(arrived, undefined, { pauseOnConnect: true }).listening,
+    // The first client holds the one connection the server allows: 'drop' for each of the rest.
+    "node:net maxConnections": arrived => {
+      const { server, listening } = netServer(arrived);
+      server.maxConnections = 1;
+      return listening;
+    },
+    // 'connection' is the accept of a tls.Server too. 'secureConnection' is the handshake.
+    "node:tls": arrived =>
+      nodeServer(
+        tls
+          .createServer(cert)
+          .on("tlsClientError", () => {})
+          .on("connection", socket => (socket.on("error", () => {}), arrived())),
+        undefined,
+        handshakeStart,
+      ),
+  };
+
+  // Starts a listener and puts `count` connections into its queue. Nothing accepts them before
+  // this returns: the thread of the listener is blocked while the Worker connects them.
+  async function queued(start: (typeof kinds)[string], arrived: Arrived) {
+    // Short names: the path of a unix socket has about 100 bytes.
+    const dir = tempDir("accept", {});
+    const listener = await start(arrived, join(String(dir), "s.sock"));
+    const signal = new Int32Array(new SharedArrayBuffer(4));
+    clients.postMessage({ target: listener.target, count, first: listener.first ?? "", signal: signal.buffer });
+    Atomics.wait(signal, 0, 0, 30_000);
+    return {
+      connected: Atomics.load(signal, 0) === 1,
+      async [Symbol.asyncDispose]() {
+        listener.stop();
+        clients.postMessage("close");
+        await reply();
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  // The handlers of these two run after a handshake, which the clients do not finish.
+  const acceptsWithoutJS = ["Bun.serve tls", "node:https"];
+  // On Windows a path is a named pipe, which has an accept of its own, and numPolls is the
+  // count of active libuv handles, not of the polls of the loop.
+  const skipped = (kind: string) => isWindows && (kind.endsWith("unix") || acceptsWithoutJS.includes(kind));
+
+  it.each(Object.keys(kinds).filter(kind => !skipped(kind)))("%s", async kind => {
+    const order: string[] = [];
+    const { promise: done, resolve } = Promise.withResolvers<void>();
+    let accepted = 0;
+    const arrived: Arrived = (label = "c") => {
+      const id = ++accepted;
+      order.push(label + id);
+      setImmediate(() => {
+        order.push("i" + id);
+        if (id === count) resolve();
+      });
+    };
+    const watched = acceptsWithoutJS.includes(kind);
+
+    await using listener = await queued(kinds[kind], watched ? () => {} : arrived);
+    expect(listener.connected).toBe(true);
+    if (watched) watchPolls(arrived);
+    await done;
+
+    const label = (id: number) => {
+      if (kind === "node:net pauseOnConnect") return "paused" + id;
+      return (kind === "node:net maxConnections" && id > 1 ? "d" : "c") + id;
+    };
+    expect(order.filter(entry => !entry.startsWith("i"))).toEqual(
+      Array.from({ length: count }, (_, i) => label(i + 1)),
+    );
+    // The loop ran the immediate of the first connection before the listener took the last one.
+    expect(order.indexOf("i1")).toBeLessThan(order.indexOf(label(count)));
+  });
 });

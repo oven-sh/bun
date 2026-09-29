@@ -496,8 +496,7 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
-    // A worker heap marks on its own thread: the helper pool is one per process, and a helper stays
-    // with one heap for its whole marking phase (#44186). The main heap keeps the pool.
+    // A worker heap marks on its own thread: the helper pool is shared by every heap in the process (#44186).
     auto marking = worker_ptr && !gcMarkerCountSetByEnvironment ? JSC::HeapMarking::SerialUnlessLarge : JSC::HeapMarking::Parallel;
     RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(heapSize, nullptr, marking);
     if (!vmPtr) [[unlikely]] {

@@ -251,7 +251,7 @@ enum Pin {
     BesideEntry,
     /// Neither merged nor merged into.
     Entry,
-    /// The parent of a pinned entry point, another chunk, starts a wrapped file of the group. Rule 2 neither merges the group nor merges into it.
+    /// The parent of a pinned entry point starts a wrapped file of the group, or of a group that imports this one. Rule 2 neither merges it nor merges into it.
     Started,
 }
 

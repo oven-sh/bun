@@ -6716,7 +6716,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload, TagResult};
+        use crate::console_object::{self, Tag, TagPayload};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7175,7 +7175,7 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             ) {
                 Ok(tag) => tag,
-                Err(_) if allow_side_effects => TagResult {
+                Err(_) if allow_side_effects => crate::console_object::TagResult {
                     tag: TagPayload::NativeCode,
                     ..Default::default()
                 },

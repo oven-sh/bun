@@ -527,14 +527,14 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
     : JSC::JSDestructibleObject(vm, structure)
     , socket(socket)
     , is_ssl(is_ssl)
-    , currentResponseObject(response, JSC::WriteBarrierEarlyInit)
+    , m_currentResponse(response, JSC::WriteBarrierEarlyInit)
 {
 }
 
 void JSNodeHTTPServerSocket::detach()
 {
     this->m_duplex.clear();
-    this->currentResponseObject.clear();
+    this->m_currentResponse.clear();
     {
         Locker locker { m_pipelinedResponsesLock };
         this->m_pipelinedResponses.clear();
@@ -630,7 +630,7 @@ extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
 }
 
 template<bool SSL>
-static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose, bool hasMoreQueued)
+static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose)
 {
     /* node:http compat connections always carry the derived ext block. */
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
@@ -665,21 +665,19 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
         return false;
     }
 
-    bool hasMoreQueued = false;
     {
         Locker locker { m_pipelinedResponsesLock };
         m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
-        hasMoreQueued = !m_pipelinedResponses.isEmpty();
     }
 
     bool ok;
     if (is_ssl) {
-        ok = startPipelinedResponseImpl<true>(socket, isAncient, connectionClose, hasMoreQueued);
+        ok = startPipelinedResponseImpl<true>(socket, isAncient, connectionClose);
     } else {
-        ok = startPipelinedResponseImpl<false>(socket, isAncient, connectionClose, hasMoreQueued);
+        ok = startPipelinedResponseImpl<false>(socket, isAncient, connectionClose);
     }
     if (ok) {
-        currentResponseObject.set(vm, this, response);
+        setCurrentResponse(vm, response);
     }
     return ok;
 }
@@ -701,7 +699,7 @@ void JSNodeHTTPServerSocket::stopHTTPParsing()
 // list so a re-entrant close cannot deliver the notification twice.
 static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
 {
-    if (auto* res = socket->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = socket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
     }
     // Root every queued response across the onClose calls below: clearing
@@ -734,7 +732,7 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
     this->socket = nullptr;
     this->closeReadError = readError;
     this->peer_ended = peerEnded;
-    if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_setClosed(res->m_ctx);
     }
     {
@@ -799,7 +797,7 @@ void JSNodeHTTPServerSocket::flushResponseBytesAhead()
     if (upgraded || isClosed()) {
         return;
     }
-    if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_spillPendingWrite(res->m_ctx);
     }
     if (is_ssl) {
@@ -980,7 +978,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    visitor.append(fn->currentResponseObject);
+    visitor.append(fn->m_currentResponse);
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->functionToCallOnDrain);
     visitor.append(fn->functionToCallOnData);
@@ -1011,7 +1009,7 @@ static WebCore::JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket)
     if (!serverSocket) {
         return nullptr;
     }
-    return serverSocket->currentResponseObject.get();
+    return serverSocket->currentResponse();
 }
 
 extern "C" JSC::EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
@@ -1039,7 +1037,7 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     if (!serverSocket) {
         return;
     }
-    if (auto* res = serverSocket->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
     }
 }

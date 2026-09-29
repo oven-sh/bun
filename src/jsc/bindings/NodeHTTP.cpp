@@ -326,7 +326,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         if (isPipelinedDispatch) {
             thisSocket->appendPipelinedResponse(vm, nodeHTTPResponseObject);
         } else {
-            thisSocket->currentResponseObject.set(vm, thisSocket, nodeHTTPResponseObject);
+            thisSocket->setCurrentResponse(vm, nodeHTTPResponseObject);
         }
         args.append(thisSocket);
         args.append(jsBoolean(false));

@@ -637,11 +637,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObj
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    if (!thisObject->currentResponseObject) {
+    auto* response = thisObject->currentResponse();
+    if (!response) {
         return JSValue::encode(JSC::jsNull());
     }
 
-    return JSValue::encode(thisObject->currentResponseObject.get());
+    return JSValue::encode(response);
 }
 
 } // namespace Bun

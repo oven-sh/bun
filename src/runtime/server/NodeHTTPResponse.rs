@@ -1367,6 +1367,11 @@ impl NodeHTTPResponse {
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onReadParsed", no_catch)]
     pub(crate) fn on_read_parsed(&self) {
+        // Same test as notify_when_read_parsed: a TLS close that waits for spilled bytes leaves the socket open.
+        let flags = self.flags.get();
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return;
+        }
         let armed = self.armed_this_value.get();
         let this_value = if armed.is_empty() {
             self.get_this_value()

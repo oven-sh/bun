@@ -5695,19 +5695,25 @@ it("Http2SecureServer#close() leaves an allowHTTP1 connection that has sent part
     const accepted = new Promise(resolve => server.once("secureConnection", resolve));
     const client = await connectOverHttp1(port);
     clients.push(client);
-    return { client, serverSocket: await accepted };
+    const closed = new Promise(resolve => client.once("close", resolve));
+    return { client, closed, serverSocket: await accepted };
   }
   try {
     const fresh = await connect();
     const partial = await connect();
     const done = await connect();
-    const partialHeadArrived = new Promise(resolve => partial.serverSocket.once("data", resolve));
+    const partialHeadArrived = new Promise((resolve, reject) => {
+      partial.serverSocket.once("data", resolve);
+      partial.serverSocket.once("close", () => reject(new Error("the server closed the connection first")));
+    });
     partial.client.write("GET /partial HTTP/1.1\r\nHost: localhost\r\n");
     await partialHeadArrived;
     const doneResponse = readHttp1Response(done.client);
     done.client.write("GET /done HTTP/1.1\r\nHost: localhost\r\n\r\n");
     expect(await doneResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "served /done" });
 
+    const onServerClose = mock(() => {});
+    server.once("close", onServerClose);
     const serverClosed = new Promise(resolve => server.once("close", resolve));
     server.close();
     expect({
@@ -5715,6 +5721,11 @@ it("Http2SecureServer#close() leaves an allowHTTP1 connection that has sent part
       partial: partial.serverSocket.destroyed,
       done: done.serverSocket.destroyed,
     }).toEqual({ fresh: true, partial: false, done: true });
+
+    // One connection is still open, so the server has not emitted 'close'. The check is not after the
+    // last response: in Node the server emits 'close' before the client has that response.
+    await Promise.all([fresh.closed, done.closed]);
+    expect(onServerClose).not.toHaveBeenCalled();
 
     // Connection: close ends the connection after the response, and then the server emits 'close'.
     const partialResponse = readHttp1Response(partial.client);

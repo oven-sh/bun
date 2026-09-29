@@ -289,11 +289,13 @@ test("closeIdleConnections() with emit('connection'): closes a fresh and an idle
 });
 
 // Reads one Content-Length framed response from the client half of a duplexPair().
+// A destroy() of the server half arrives on the client half as 'end', not as 'close'.
 function readResponseBody(clientSide: Duplex): Promise<string> {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   let raw = "";
   function settle(body?: string, error?: Error) {
     clientSide.off("data", onData);
+    clientSide.off("end", onClose);
     clientSide.off("close", onClose);
     clientSide.off("error", onError);
     if (error) reject(error);
@@ -319,9 +321,22 @@ function readResponseBody(clientSide: Duplex): Promise<string> {
     settle(undefined, error);
   }
   clientSide.on("data", onData);
+  clientSide.on("end", onClose);
   clientSide.on("close", onClose);
   clientSide.on("error", onError);
   return promise;
+}
+
+// Settles like `promise`. Rejects when the server half of the connection closes first.
+async function beforeClose<T>(serverSide: Duplex, promise: Promise<T>): Promise<T> {
+  const closed = Promise.withResolvers<never>();
+  const onClose = () => closed.reject(new Error("the server closed the connection first"));
+  serverSide.once("close", onClose);
+  try {
+    return await Promise.race([promise, closed.promise]);
+  } finally {
+    serverSide.off("close", onClose);
+  }
 }
 
 // Like in Node 26.5: a connection is busy from the first byte of a request to the end of that request, and
@@ -354,18 +369,18 @@ test("closeIdleConnections() with emit('connection'): a connection in each state
   try {
     for (const name of names) server.emit("connection", pairs[name][1]);
 
-    const partialHeadArrived = once(pairs.partial[1], "data");
+    const partialHeadArrived = beforeClose(pairs.partial[1], once(pairs.partial[1], "data"));
     client("partial").write("GET /partial HTTP/1.1\r\nHost: x\r\n");
     await partialHeadArrived;
     const earlyBody = readResponseBody(client("body"));
     client("body").write("POST /body HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
     expect(await earlyBody).toBe("early");
     client("hold").write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
-    const held = await heldResponse.promise;
+    const held = await beforeClose(pairs.hold[1], heldResponse.promise);
     const reusedFirstBody = readResponseBody(client("reused"));
     client("reused").write("GET /reused-1 HTTP/1.1\r\nHost: x\r\n\r\n");
     expect(await reusedFirstBody).toBe("served /reused-1");
-    const reusedSecondHeadArrived = once(pairs.reused[1], "data");
+    const reusedSecondHeadArrived = beforeClose(pairs.reused[1], once(pairs.reused[1], "data"));
     client("reused").write("GET /reused-2 HTTP/1.1\r\n");
     await reusedSecondHeadArrived;
     const idleBody = readResponseBody(client("idle"));
@@ -428,7 +443,7 @@ test("closeIdleConnections() with emit('connection'): closes a connection in the
   try {
     server.emit("connection", serverSide);
     clientSide.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
-    const res = await heldResponse.promise;
+    const res = await beforeClose(serverSide, heldResponse.promise);
 
     server.closeIdleConnections();
     const keptWhileResponsePending = !serverSide.destroyed;
@@ -461,7 +476,7 @@ test("closeIdleConnections() with emit('connection'): called in the request list
   try {
     server.emit("connection", serverSide);
     clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-    const destroyedInsideHandler = await handled.promise;
+    const destroyedInsideHandler = await beforeClose(serverSide, handled.promise);
     expect({ destroyedInsideHandler, destroyedAfterHandler: serverSide.destroyed }).toEqual({
       destroyedInsideHandler: false,
       destroyedAfterHandler: false,
@@ -490,11 +505,11 @@ test("closeAllConnections() with emit('connection'): destroys a connection that 
   try {
     server.emit("connection", serverSide);
     server.emit("connection", upgradeServerSide);
-    const headArrived = once(serverSide, "data");
+    const headArrived = beforeClose(serverSide, once(serverSide, "data"));
     clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n");
     await headArrived;
     upgradeClientSide.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
-    await upgraded.promise;
+    await beforeClose(upgradeServerSide, upgraded.promise);
 
     server.closeIdleConnections();
     expect({ partial: serverSide.destroyed, upgraded: upgradeServerSide.destroyed }).toEqual({

@@ -12,25 +12,21 @@ export function asyncIterator(this: Console) {
   var value: Uint8Array[];
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
-  // The reader of the iterator that owns stdin.
-  var activeReader: ReturnType<typeof stream.getReader> | undefined;
+  // The reader that holds stdin, the read an iterator waits on, and how many iterators took the reader.
+  var activeReader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
+  var activeRead: Promise<Bun.ReadableStreamDefaultReadManyResult<Uint8Array<ArrayBuffer>>> | undefined;
+  var turns = 0;
 
   async function* ConsoleAsyncIterator() {
-    // Code that `--hot` replaced never releases its reader, so the newest iterator takes the lock.
-    const replaced = typeof $hotReloaded !== "undefined" ? activeReader : undefined;
-    if (replaced !== undefined) {
-      activeReader = undefined;
-      replaced.releaseLock();
-    }
-    var reader = stream.getReader();
+    // Code that `--hot` replaced never releases its reader, so the newest iterator takes it, with the read in flight.
+    const taken = typeof $hotReloaded !== "undefined" ? activeReader : undefined;
+    var reader = taken ?? stream.getReader();
     activeReader = reader;
-    if (replaced !== undefined) {
-      // releaseLock() unrefs the source, and a paused `process.stdin` stops it.
+    const turn = ++turns;
+    if (taken !== undefined) {
+      // A paused `process.stdin` stops the source that this reader shares with it.
       const source = stream.$bunNativePtr;
-      if ($isObject(source)) {
-        source.updateRef(true);
-        source.setFlowing?.(true);
-      }
+      if ($isObject(source)) source.setFlowing?.(true);
     }
     var deferredError: Error | undefined;
     try {
@@ -45,8 +41,8 @@ export function asyncIterator(this: Console) {
               process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
             ),
           );
-          // An iterator that lost the lock never settles: `done` would run the code after its loop.
-          if (reader !== activeReader) await $newPromise();
+          // An iterator that lost the reader never settles: `done` would run the code after its loop.
+          if (turn !== turns) await $newPromise();
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
@@ -70,7 +66,7 @@ export function asyncIterator(this: Console) {
                 process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
               ),
             );
-            if (reader !== activeReader) await $newPromise();
+            if (turn !== turns) await $newPromise();
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -82,9 +78,13 @@ export function asyncIterator(this: Console) {
       }
 
       while (true) {
-        const firstResult = reader.readMany();
+        const firstResult = activeRead ?? reader.readMany();
         if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
+          activeRead = firstResult;
+          const result = await firstResult;
+          if (turn !== turns) await $newPromise();
+          activeRead = undefined;
+          ({ done, value } = result);
         } else {
           ({ done, value } = firstResult);
         }
@@ -95,7 +95,7 @@ export function asyncIterator(this: Console) {
             const rest = pendingChunk;
             pendingChunk = undefined;
             yield decoder.decode(rest);
-            if (reader !== activeReader) await $newPromise();
+            if (turn !== turns) await $newPromise();
           }
           return;
         }
@@ -120,7 +120,7 @@ export function asyncIterator(this: Console) {
                 process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
               ),
             );
-            if (reader !== activeReader) await $newPromise();
+            if (turn !== turns) await $newPromise();
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -131,12 +131,11 @@ export function asyncIterator(this: Console) {
         actualChunk = undefined!;
       }
     } catch (e) {
-      // The takeover released this reader, which rejected the read it waited on.
-      if (reader !== activeReader) await $newPromise();
+      if (turn !== turns) await $newPromise();
       deferredError = e as Error;
     } finally {
-      if (reader === activeReader) {
-        activeReader = undefined;
+      if (turn === turns) {
+        activeReader = activeRead = undefined;
         reader.releaseLock();
       }
     }

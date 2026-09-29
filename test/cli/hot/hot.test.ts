@@ -1224,6 +1224,33 @@ describe.concurrent("stdin across a reload", () => {
     });
   });
 
+  it("every save reloads when each generation starts its loop after a GC", async () => {
+    // The timer runs after the load of the generation has settled. The GC then frees what the load left behind,
+    // and the loop allocates promises that stay pending.
+    const late = (generation: number) =>
+      start(generation) +
+      `setTimeout(() => {
+         Bun.gc(true);
+         console.log("generation ${generation} loop start");
+         ${loop(generation)}
+       }, 1);`;
+    using dir = tempDir("hot-stdin-saves", { "entry.ts": late(1) });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 loop start");
+    for (let generation = 2; generation <= 13; generation++) {
+      await hot.save(late(generation), `generation ${generation} loop start`);
+    }
+    hot.send("last\n");
+    await hot.line(/ got "last"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: ['generation 13 got "last"'],
+      stderr: [],
+    });
+  });
+
   it("a loop that the script keeps on globalThis stays the reader", async () => {
     const kept = (generation: number) => `
       console.log("generation ${generation} start");

@@ -106,6 +106,9 @@ struct HttpResponseData;
          * body. llhttp reports HPE_INVALID_CONTENT_LENGTH ("Content-Length can't
          * be present with Transfer-Encoding"). node:http compat only. */
         HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
+        /* RFC 9112 3.2: more than one Host header field line. Bun.serve only,
+         * node:http keeps llhttp's behaviour (first value wins). */
+        HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER = 18,
     };
 
 
@@ -1277,11 +1280,13 @@ struct HttpResponseData;
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
 
-            /* Add all headers to bloom filter */
+            /* Add all headers to bloom filter, and count Host lines in the same pass */
             req->bf.reset();
 
+            unsigned int hostHeaderCount = 0;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
+                hostHeaderCount += (h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4));
             }
             if (req->isAncient() || req->hasConnectionClose(IsNodeHttp)) {
                 sawConnectionClose = true;
@@ -1403,9 +1408,18 @@ struct HttpResponseData;
              * detected while llhttp parses the headers, whereas the Host requirement is a
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+            if (!req->ancientHttp && requireHostHeader && hostHeaderCount == 0
                 && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
+            }
+
+            /* RFC 9112 3.2: a request with more than one Host header field line MUST be
+             * answered with 400, whatever its version or method: two lines leave the
+             * request's authority ambiguous (request.url is built from the first, the
+             * Host header value is the join of all). node:http follows llhttp, which
+             * dispatches the request with the first value. */
+            if (!IsNodeHttp && hostHeaderCount > 1) [[unlikely]] {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER);
             }
 
             /* Parse query */

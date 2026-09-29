@@ -1317,6 +1317,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
   HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
   HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
+  HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER = 18,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through

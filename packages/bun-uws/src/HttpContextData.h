@@ -89,6 +89,7 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via
@@ -113,6 +114,8 @@ private:
 public:
     
     HttpFlags flags;
+
+    bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
 };
 
 }

@@ -3210,6 +3210,7 @@ declare module "bun" {
      * that absorbs a folded chunk exports the symbols other chunks import
      * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
      * builds, where every chunk is a request, 16384 is a good value.
+     * Nothing folds into an entry point without `[hash]` in its name.
      *
      * @default 0 (disabled)
      */
@@ -3745,6 +3746,22 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
+     *
+     * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`
+     * to record which functions it uses, then build again with that file. Bun places
+     * the bytecode the run used together at the front, so the executable starts faster
+     * and uses less memory. A profile from an older build of the app still applies.
+     *
+     * With several files, list the most common way of starting the app first.
+     * `false` and `null` mean no profile, so `bytecodeOrder: haveProfile && path` works.
+     *
+     * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/bundler/executables#profile-guided-bytecode-layout
+     */
+    bytecodeOrder?: string | string[] | false | null;
     /**
      * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
      * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up

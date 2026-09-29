@@ -750,10 +750,10 @@ const IS_UV_FS_COPYFILE_DISABLED =
       proc.stdin.write("hello world");
       proc.stdin.end();
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, copied: fs.readFileSync(dst).byteLength }).toEqual({
+      expect({ stdout, stderr, copied: fs.readFileSync(dst, "utf8") }).toEqual({
         stdout: "4",
         stderr: "",
-        copied: 4,
+        copied: "hell",
       });
       expect(exitCode).toBe(0);
     });
@@ -822,6 +822,18 @@ const IS_UV_FS_COPYFILE_DISABLED =
         size: end - start,
         identical: true,
       });
+    });
+
+    // On macOS the copy can be a clone. A clone has the mode of the source, so
+    // a clone of a read-only file cannot be cut to the window.
+    it.skipIf(isWindows)("a window at the start of a read-only file", async () => {
+      using dir = tempDir("bun-write-src-slice-readonly", { "src.txt": content });
+      const src = join(String(dir), "src.txt");
+      const dst = join(String(dir), "dst.txt");
+      fs.chmodSync(src, 0o444);
+
+      const written = await Bun.write(dst, Bun.file(src).slice(0, 5));
+      expect({ written, copied: fs.readFileSync(dst, "utf8") }).toEqual({ written: 5, copied: "abcde" });
     });
 
     it("a window of a file descriptor", async () => {

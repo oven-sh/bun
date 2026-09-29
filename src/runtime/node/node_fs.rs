@@ -4748,8 +4748,6 @@ impl NodeFS {
         Ok(())
     }
 
-    // since we use a 64 KB stack buffer, we should not let this function get inlined
-    #[inline(never)]
     #[cfg(not(windows))]
     pub(crate) fn copy_file_using_read_write_loop(
         src: &ZStr,
@@ -4757,6 +4755,30 @@ impl NodeFS {
         src_fd: FD,
         dest_fd: FD,
         stat_size: usize,
+        wrote: &mut u64,
+    ) -> Maybe<ret::CopyFile> {
+        Self::copy_file_using_read_write_loop_capped(
+            src,
+            dest,
+            src_fd,
+            dest_fd,
+            stat_size,
+            u64::MAX,
+            wrote,
+        )
+    }
+
+    /// Copies until EOF, or until `max_len` bytes are read. `stat_size` only sizes the buffer.
+    // since we use a 64 KB stack buffer, we should not let this function get inlined
+    #[inline(never)]
+    #[cfg(not(windows))]
+    pub(crate) fn copy_file_using_read_write_loop_capped(
+        src: &ZStr,
+        dest: &ZStr,
+        src_fd: FD,
+        dest_fd: FD,
+        stat_size: usize,
+        max_len: u64,
         wrote: &mut u64,
     ) -> Maybe<ret::CopyFile> {
         // Kernel-side fast paths have already bailed; double the readahead
@@ -4794,13 +4816,9 @@ impl NodeFS {
         }
         // buf_to_free dropped at scope exit
 
-        let mut remain = stat_size as u64;
-        // VERIFY-FIX(round1): the
-        // `if remain == 0` check below was wrong: `break 'toplevel` after
-        // `remain` had already saturated to 0 would still enter the else. Track
-        // an explicit `broke` flag instead.
-        let mut broke = false;
-        'toplevel: while remain > 0 {
+        // `stat_size` can be stale or unknown, so only EOF or `max_len` ends the copy.
+        let mut remain = max_len;
+        while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
             let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
                 Ok(result) => result,
@@ -4814,8 +4832,7 @@ impl NodeFS {
             };
             // 0 == EOF
             if amt == 0 {
-                broke = true;
-                break 'toplevel;
+                break;
             }
             *wrote += amt as u64;
             remain = remain.saturating_sub(amt as u64);
@@ -4833,48 +4850,9 @@ impl NodeFS {
                     }
                 };
                 if written == 0 {
-                    broke = true;
-                    break 'toplevel;
+                    return Ok(());
                 }
                 slice = &slice[written..];
-            }
-        }
-        if !broke {
-            'outer: loop {
-                let amt = match Syscall::read(src_fd, buf) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        return Err(if !src.is_empty() {
-                            err.with_path(src)
-                        } else {
-                            err
-                        });
-                    }
-                };
-                // we don't know the size
-                // so we just go forever until we get an EOF
-                if amt == 0 {
-                    break;
-                }
-                *wrote += amt as u64;
-
-                let mut slice = &buf[..amt];
-                while !slice.is_empty() {
-                    let written = match Syscall::write(dest_fd, slice) {
-                        Ok(result) => result,
-                        Err(err) => {
-                            return Err(if !dest.is_empty() {
-                                err.with_path(dest)
-                            } else {
-                                err
-                            });
-                        }
-                    };
-                    slice = &slice[written..];
-                    if written == 0 {
-                        break 'outer;
-                    }
-                }
             }
         }
 

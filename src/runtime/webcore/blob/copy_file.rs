@@ -680,18 +680,23 @@ impl CopyFile {
                                     SizeType::try_from(stat_.unwrap().st_size).expect("int cast");
                                 let copy_len = self.copy_length(stat_size);
                                 if copy_len < stat_size {
-                                    // If this fails...well, there's not much we can do about it.
+                                    let dest = self
+                                        .destination_file_store
+                                        .pathlike
+                                        .path()
+                                        .slice_z(&mut path_buf);
                                     // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                                    let _ = unsafe {
+                                    let rc = unsafe {
                                         bun_sys::c::truncate(
-                                            self.destination_file_store
-                                                .pathlike
-                                                .path()
-                                                .slice_z(&mut path_buf)
-                                                .as_ptr(),
+                                            dest.as_ptr(),
                                             i64::try_from(copy_len).expect("int cast"),
                                         )
                                     };
+                                    if rc != 0 {
+                                        // The clone has the mode of the source, so it can be read-only.
+                                        let _ = bun_sys::unlink(dest);
+                                        break 'do_clonefile;
+                                    }
                                 }
                                 self.read_len = copy_len;
                                 // Apply destination mode if specified (clonefile copies source permissions)
@@ -986,7 +991,6 @@ fn read_write_fallback(
     Ok(())
 }
 
-#[inline(never)] // 64 KB stack buffer
 #[cfg(not(windows))]
 fn read_write_loop_capped(
     src_fd: Fd,
@@ -994,48 +998,15 @@ fn read_write_loop_capped(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-    {
-        // SAFETY: `src_fd` is a valid open fd; `posix_fadvise` only reads it.
-        let _ = unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
-    }
-
-    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-    // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
-    let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
-    // A copy of more than 1 MB reads in chunks of up to 8 MB, as `NodeFS::copy_file_using_read_write_loop` does.
-    let mut heap_buf: Vec<u8> = Vec::new();
-    if cap != MAX_SIZE && cap > 16 * 64 * 1024 {
-        use bun_collections::vec_ext::VecExt as _;
-        if heap_buf
-            .try_reserve_exact((cap as usize).min(8 * 1024 * 1024))
-            .is_ok()
-        {
-            // SAFETY: `u8` has no validity invariant, and `read` fills the bytes before any are read back.
-            unsafe { heap_buf.expand_to_capacity() };
-            buf = &mut heap_buf[..];
-        }
-    }
-    let mut remaining = cap;
-    while remaining > 0 {
-        let want = (buf.len() as SizeType).min(remaining) as usize;
-        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
-        if amt == 0 {
-            break;
-        }
-        remaining -= amt as SizeType;
-        let mut slice = &buf[..amt];
-        while !slice.is_empty() {
-            match bun_sys::write(dest_fd, slice)? {
-                0 => return Ok(()),
-                n => {
-                    *total += n as u64;
-                    slice = &slice[n..];
-                }
-            }
-        }
-    }
-    Ok(())
+    node_fs::NodeFS::copy_file_using_read_write_loop_capped(
+        bun_core::ZStr::EMPTY,
+        bun_core::ZStr::EMPTY,
+        src_fd,
+        dest_fd,
+        if cap == MAX_SIZE { 0 } else { cap as usize },
+        cap,
+        total,
+    )
 }
 
 // Ownership is encoded in the types, so cleanup is all field `Drop`:

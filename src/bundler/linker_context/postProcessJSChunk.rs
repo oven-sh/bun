@@ -553,134 +553,164 @@ pub(crate) fn post_process_js_chunk(
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();
-    for (compile_result_index, compile_result) in compile_results.iter().enumerate() {
-        let source_index = compile_result.source_index();
-        let is_runtime = source_index == Index::RUNTIME.value();
+    let mut starts = chunk.content.javascript().starts_in_chunk_order.iter();
+    let mut results = compile_results.iter().enumerate();
+    loop {
+        let next_start = starts.next();
+        // The results ahead of the next start; every one that is left when there is none.
+        let ahead = next_start.map_or(usize::MAX, |&(index, _)| {
+            let joined = compile_results.len() - results.len();
+            debug_assert!(joined <= index as usize && index as usize <= compile_results.len());
+            (index as usize).saturating_sub(joined)
+        });
+        for (compile_result_index, compile_result) in results.by_ref().take(ahead) {
+            let source_index = compile_result.source_index();
+            let is_runtime = source_index == Index::RUNTIME.value();
 
-        if compile_result_index == preload_registration_index && !preload_registration.is_empty() {
-            newline_before_comment = true;
-            line_offset.advance(&preload_registration);
-            j.push_owned(core::mem::take(&mut preload_registration).into_boxed_slice());
-        }
-
-        // TODO: extracated legal comments
-
-        // Add a comment with the file path before the file contents
-        if show_comments
-            && source_index != prev_filename_comment
-            && !compile_result.code().is_empty()
-        {
-            prev_filename_comment = source_index;
-
-            if newline_before_comment {
-                j.push_static(b"\n");
-                line_offset.advance(b"\n");
-            }
-
-            // Make sure newlines in the path can't cause a syntax error.
-            enum CommentType {
-                Multiline,
-                Single,
-            }
-
-            let pretty = sources[source_index as usize].path.pretty;
-
-            // TODO: quote this. This is really janky.
-            let comment_type = if strings::index_of_newline_or_non_ascii(pretty, 0).is_some() {
-                CommentType::Multiline
-            } else {
-                CommentType::Single
-            };
-
-            if !c.options.minify_whitespace
-                && (output_format == options::OutputFormat::Iife
-                    || output_format == options::OutputFormat::InternalBakeDev)
+            if compile_result_index == preload_registration_index
+                && !preload_registration.is_empty()
             {
-                j.push_static(b"  ");
-                line_offset.advance(b"  ");
+                newline_before_comment = true;
+                line_offset.advance(&preload_registration);
+                j.push_owned(core::mem::take(&mut preload_registration).into_boxed_slice());
             }
 
-            match comment_type {
-                CommentType::Multiline => {
-                    j.push_static(b"/* ");
-                    line_offset.advance(b"/* ");
-                }
-                CommentType::Single => {
-                    j.push_static(b"// ");
-                    line_offset.advance(b"// ");
-                }
-            }
+            // TODO: extracated legal comments
 
-            // A `*/` in the path would terminate the block comment early and
-            // turn the rest of the path into generated JavaScript.
-            if matches!(comment_type, CommentType::Multiline) && strings::contains(pretty, b"*/") {
-                let mut sanitized = pretty.to_vec();
-                while let Some(i) = strings::index_of(&sanitized, b"*/") {
-                    sanitized[i + 1] = b'_';
-                }
-                line_offset.advance(&sanitized);
-                j.push_owned(sanitized.into_boxed_slice());
-            } else {
-                j.push_static(pretty);
-                line_offset.advance(pretty);
-            }
+            // Add a comment with the file path before the file contents
+            if show_comments
+                && source_index != prev_filename_comment
+                && !compile_result.code().is_empty()
+            {
+                prev_filename_comment = source_index;
 
-            if emit_targets_in_commands {
-                j.push_static(b" (");
-                line_offset.advance(b" (");
-                let target: &'static str =
-                    <&'static str>::from(targets[source_index as usize].bake_graph());
-                j.push_static(target.as_bytes());
-                line_offset.advance(target.as_bytes());
-                j.push_static(b")");
-                line_offset.advance(b")");
-            }
-
-            match comment_type {
-                CommentType::Multiline => {
-                    j.push_static(b" */\n");
-                    line_offset.advance(b" */\n");
-                }
-                CommentType::Single => {
+                if newline_before_comment {
                     j.push_static(b"\n");
                     line_offset.advance(b"\n");
                 }
-            }
-        }
 
-        if is_runtime {
-            if c.options.output_format != options::OutputFormat::InternalBakeDev {
-                line_offset.advance(compile_result.code());
-                j.push(compile_result.code());
-            }
-        } else {
-            j.push(compile_result.code());
-
-            if let Some(source_map_chunk) = compile_result.source_map_chunk() {
-                if c.options.source_maps != options::SourceMapOption::None {
-                    bun_core::handle_oom(compile_results_for_source_map.append(
-                        CompileResultForSourceMap {
-                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                            // (read-only and outlives this fn); slab-only MAL drop means
-                            // the alias is never freed — original keeps the single owner.
-                            source_map_chunk: unsafe { source_map_chunk.alias() },
-                            generated_offset: match line_offset {
-                                SourceMap::LineColumnOffsetOptional::Value(v) => v,
-                                SourceMap::LineColumnOffsetOptional::Null => Default::default(),
-                            },
-                            source_index: compile_result.source_index(),
-                        },
-                    ));
+                // Make sure newlines in the path can't cause a syntax error.
+                enum CommentType {
+                    Multiline,
+                    Single,
                 }
 
-                line_offset.reset();
-            } else {
-                line_offset.advance(compile_result.code());
-            }
-        }
+                let pretty = sources[source_index as usize].path.pretty;
 
-        // TODO: metafile
-        newline_before_comment = !compile_result.code().is_empty();
+                // TODO: quote this. This is really janky.
+                let comment_type = if strings::index_of_newline_or_non_ascii(pretty, 0).is_some() {
+                    CommentType::Multiline
+                } else {
+                    CommentType::Single
+                };
+
+                if !c.options.minify_whitespace
+                    && (output_format == options::OutputFormat::Iife
+                        || output_format == options::OutputFormat::InternalBakeDev)
+                {
+                    j.push_static(b"  ");
+                    line_offset.advance(b"  ");
+                }
+
+                match comment_type {
+                    CommentType::Multiline => {
+                        j.push_static(b"/* ");
+                        line_offset.advance(b"/* ");
+                    }
+                    CommentType::Single => {
+                        j.push_static(b"// ");
+                        line_offset.advance(b"// ");
+                    }
+                }
+
+                // A `*/` in the path would terminate the block comment early and
+                // turn the rest of the path into generated JavaScript.
+                if matches!(comment_type, CommentType::Multiline)
+                    && strings::contains(pretty, b"*/")
+                {
+                    let mut sanitized = pretty.to_vec();
+                    while let Some(i) = strings::index_of(&sanitized, b"*/") {
+                        sanitized[i + 1] = b'_';
+                    }
+                    line_offset.advance(&sanitized);
+                    j.push_owned(sanitized.into_boxed_slice());
+                } else {
+                    j.push_static(pretty);
+                    line_offset.advance(pretty);
+                }
+
+                if emit_targets_in_commands {
+                    j.push_static(b" (");
+                    line_offset.advance(b" (");
+                    let target: &'static str =
+                        <&'static str>::from(targets[source_index as usize].bake_graph());
+                    j.push_static(target.as_bytes());
+                    line_offset.advance(target.as_bytes());
+                    j.push_static(b")");
+                    line_offset.advance(b")");
+                }
+
+                match comment_type {
+                    CommentType::Multiline => {
+                        j.push_static(b" */\n");
+                        line_offset.advance(b" */\n");
+                    }
+                    CommentType::Single => {
+                        j.push_static(b"\n");
+                        line_offset.advance(b"\n");
+                    }
+                }
+            }
+
+            if is_runtime {
+                if c.options.output_format != options::OutputFormat::InternalBakeDev {
+                    line_offset.advance(compile_result.code());
+                    j.push(compile_result.code());
+                }
+            } else {
+                j.push(compile_result.code());
+
+                if let Some(source_map_chunk) = compile_result.source_map_chunk() {
+                    if c.options.source_maps != options::SourceMapOption::None {
+                        bun_core::handle_oom(compile_results_for_source_map.append(
+                            CompileResultForSourceMap {
+                                // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                                // (read-only and outlives this fn); slab-only MAL drop means
+                                // the alias is never freed — original keeps the single owner.
+                                source_map_chunk: unsafe { source_map_chunk.alias() },
+                                generated_offset: match line_offset {
+                                    SourceMap::LineColumnOffsetOptional::Value(v) => v,
+                                    SourceMap::LineColumnOffsetOptional::Null => Default::default(),
+                                },
+                                source_index: compile_result.source_index(),
+                            },
+                        ));
+                    }
+
+                    line_offset.reset();
+                } else {
+                    line_offset.advance(compile_result.code());
+                }
+            }
+
+            // TODO: metafile
+            newline_before_comment = !compile_result.code().is_empty();
+        }
+        let Some(&(_, wrapped)) = next_start else {
+            break;
+        };
+        // `require_x();` / `init_x();`, not a statement of a part: a part range prints its init calls ahead of its statements.
+        let wrapper_ref = c.graph.ast.items_wrapper_ref()[wrapped as usize];
+        let call_end: &[u8] = if c.options.minify_whitespace {
+            b"();"
+        } else {
+            b"();\n"
+        };
+        let mut renamer = chunk.renamer.as_renamer();
+        let call = [renamer.name_for_symbol(wrapper_ref), call_end].concat();
+        newline_before_comment = true;
+        line_offset.advance(&call);
+        j.push_owned(call.into_boxed_slice());
     }
     // An entry chunk whose code all lives in shared chunks has no compile results of its own.
     if !preload_registration.is_empty() {

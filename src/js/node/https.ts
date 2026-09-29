@@ -19,8 +19,16 @@ const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
 
-function request(...args) {
-  let options = {};
+type HttpsRequestOptions = import("node:https").RequestOptions & { _defaultAgent?: import("node:https").Agent };
+
+interface ProxyTunnelError extends Error {
+  code: "ERR_PROXY_TUNNEL";
+  statusCode?: number;
+  proxyTunnelTimeout?: number;
+}
+
+function request(...args: [input?: unknown, options?: unknown, cb?: unknown]) {
+  let options: HttpsRequestOptions = {};
 
   if (typeof args[0] === "string") {
     const urlStr = ArrayPrototypeShift.$call(args);
@@ -158,7 +166,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
       cleanup();
       const targetHost = proxyTunnelPayload.split("\r")[0].split(" ")[1];
       const message = `Failed to establish tunnel to ${targetHost} via ${agent[kProxyConfig].href}: ${statusLine}`;
-      const err = $ERR_PROXY_TUNNEL(message);
+      const err: ProxyTunnelError = $ERR_PROXY_TUNNEL(message);
       err.statusCode = parseInt(statusCode);
       afterSocket(err, socket);
     } else {
@@ -216,7 +224,9 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
   function onProxyTimeout() {
     $debug("onProxyTimeout", proxyTunnelTimeout);
     cleanup();
-    const err = $ERR_PROXY_TUNNEL(`Connection to establish proxy tunnel timed out after ${proxyTunnelTimeout}ms`);
+    const err: ProxyTunnelError = $ERR_PROXY_TUNNEL(
+      `Connection to establish proxy tunnel timed out after ${proxyTunnelTimeout}ms`,
+    );
     err.proxyTunnelTimeout = proxyTunnelTimeout;
     afterSocket(err, socket);
   }
@@ -290,7 +300,9 @@ function createConnection(...args) {
     }
     const proxyTunnelTimeout = tunnelConfig.requestOptions.timeout;
     function onTimeout() {
-      const err = $ERR_PROXY_TUNNEL(`Connection to establish proxy tunnel timed out after ${proxyTunnelTimeout}ms`);
+      const err: ProxyTunnelError = $ERR_PROXY_TUNNEL(
+        `Connection to establish proxy tunnel timed out after ${proxyTunnelTimeout}ms`,
+      );
       err.proxyTunnelTimeout = proxyTunnelTimeout;
       cleanupAndPropagate(err, socket);
     }
@@ -352,7 +364,7 @@ function onSocketClose(agentKey, err) {
   if (err) this._evictSession(agentKey);
 }
 
-function Agent(options) {
+function Agent(options): void {
   if (!(this instanceof Agent)) return new Agent(options);
 
   options = { __proto__: null, ...options };

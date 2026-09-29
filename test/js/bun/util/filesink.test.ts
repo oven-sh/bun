@@ -1067,6 +1067,41 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   });
 });
 
+// FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
+// on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
+// sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase
+// of a Windows worker closes the writer in this state (see worker-terminate-lifetime.test.ts), so the
+// hook does that close here, on every platform.
+it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not use the freed sink", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { subprocessInternals } = require("bun:internal-for-testing");
+        // The child lives until its stdin reaches EOF.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.on('data', () => {}).on('end', () => process.exit(0))"],
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const closed = subprocessInternals.closeStdinWriter(child);
+        console.log(JSON.stringify({ closed, stdin: typeof child.stdin, exitCode: await child.exited }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ closed: true, stdin: "undefined", exitCode: 0 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({
@@ -1145,4 +1180,51 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
   writer.write("ok");
   await writer.end();
   expect(await Bun.file(join(dir, "start-invalid.txt")).text()).toBe("ok");
+});
+
+// A write() to a backed-up sink returns the sink's one outstanding promise. A later write() that fails on the
+// spot, because the reader has hung up, used to return a second, already rejected promise: a script awaiting the
+// first one caught the error and still died of an unhandled rejection.
+//
+// The child blocks in a synchronous read of stdin between its two writes, so no event-loop turn can tell the sink
+// about the hang-up first: the second write() is the one that finds out, with the first still pending.
+it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const fs = require("node:fs");
+process.on("unhandledRejection", e => {
+  console.error("unhandledRejection " + e?.code);
+});
+const sink = Bun.stdout.writer();
+const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+fs.readSync(0, Buffer.alloc(1));
+const second = sink.write("tail");
+try {
+  await first;
+  console.error("resolved");
+} catch (e) {
+  console.error("caught " + e.code + ", same promise: " + (second === first));
+}
+`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // Take one chunk, close the read end while most of the first write is still pending, and only then let the
+  // child make its second write.
+  const reader = proc.stdout.getReader();
+  await reader.read();
+  await reader.cancel();
+  proc.stdin.write("x");
+  await proc.stdin.end();
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("caught EPIPE, same promise: true\n");
+  expect(exitCode).toBe(0);
 });

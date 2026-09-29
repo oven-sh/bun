@@ -101,7 +101,7 @@ pub(super) const SOCKADDR_IN6_LEN: usize = 28;
 /// so the buffer must carry sockaddr alignment, not `[u8; N]`'s align-1.
 #[repr(C, align(8))]
 #[derive(Copy, Clone)]
-pub struct StoredAddr {
+pub(crate) struct StoredAddr {
     bytes: [u8; SOCKADDR_IN6_LEN],
     len: u8,
 }
@@ -184,7 +184,7 @@ impl StoredAddr {
 /// into this struct, so the layout must stay in sync with what the JS layer
 /// reads (`src/js/internal/quic/state.ts`).
 #[repr(C)]
-pub struct SessionState {
+pub(crate) struct SessionState {
     pub(crate) listener_flags: u32,
     pub(crate) closing: u8,
     pub(crate) graceful_close: u8,
@@ -345,7 +345,7 @@ pub(super) enum SessionEvent {
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)conn_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicSession {
+pub(crate) struct QuicSession {
     /// MUST stay the first field — the C shim's thunks recover the vtable via
     /// `*(us_nq_vtable**)conn_ctx`.
     vtable: *const lsquic::NqVtable,

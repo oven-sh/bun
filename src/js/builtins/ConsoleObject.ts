@@ -115,7 +115,11 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
-export function write(this: Console, input) {
+interface ConsoleWriter extends Bun.FileSink {
+  flush(wait?: boolean): number | Promise<number>;
+}
+
+export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
   var writer = $getByIdDirectPrivate(this, "writer");
@@ -125,15 +129,23 @@ export function write(this: Console, input) {
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
-  var wrote = writer.write(input);
-
+  // A backed-up writer (FileSink) returns a Promise instead of a count: one Promise, the same for every write made
+  // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
+  // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
+  var wrote = 0;
+  var pending: Promise<number> | undefined;
   const count = $argumentCount();
-  for (var i = 1; i < count; i++) {
-    wrote += writer.write(arguments[i]);
-  }
+  var i = 0;
+  do {
+    const result = writer.write(arguments[i]);
+    if (typeof result === "number") wrote += result;
+    else pending = result;
+  } while (++i < count);
 
   writer.flush(true);
-  return wrote;
+  if (pending === undefined) return wrote;
+  if (wrote === 0) return pending;
+  return pending.then(n => wrote + n);
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.
@@ -258,6 +270,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kUseStderr = Symbol("kUseStderr");
 
   const optionsMap = new WeakMap<any, any>();
+  function Console(this: any, ...args: unknown[]): void;
   function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */): void {
     // We have to test new.target here to see if this function is called
     // with new, because we need to define a custom instanceof to accommodate
@@ -458,8 +471,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           if (
             e != null &&
             typeof e === "object" &&
-            e.name === "RangeError" &&
-            e.message === "Maximum call stack size exceeded."
+            (e as Partial<Error>).name === "RangeError" &&
+            (e as Partial<Error>).message === "Maximum call stack size exceeded."
           )
             throw e;
           // Sorry, there's no proper way to pass along the error here.

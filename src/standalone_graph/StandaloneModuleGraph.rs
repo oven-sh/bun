@@ -959,9 +959,11 @@ bitflags::bitflags! {
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
-        /// After the linked-payload record: `u64 set_hash`, `u32 count`, then `count` x `{ u32 file_index,
-        /// u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the runtime can mirror
-        /// the set to disk before `dlopen` without hashing it first.
+        /// After the linked-payload record: `u64 set_hash`, `u32 count`, `u32 pad`, then `count` x
+        /// `{ u32 file_index, u32 alias_index, u32 needed_start, u32 needed_count }`, then `u32 edge_count`
+        /// and that many `u32` member indexes (`NativeLibrarySet`): every embedded shared library, what each
+        /// one needs, and how deep the mirror nests. So the runtime can write what one `dlopen` needs,
+        /// where the loader looks for it, without parsing anything first.
         const HAS_NATIVE_LIBRARY_SET        = 1 << 14;
         // _padding: u17
     }
@@ -970,9 +972,9 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 /// `Flags::HAS_NATIVE_LIBRARY_SET` record: `u64 set_hash`, `u32 count`, then the members.
-const NATIVE_LIBRARY_SET_HEADER: usize = size_of::<u64>() + size_of::<u32>();
-/// One member: `u32 file_index`, `u32 alias_index`.
-const NATIVE_LIBRARY_MEMBER_SIZE: usize = 2 * size_of::<u32>();
+const NATIVE_LIBRARY_SET_HEADER: usize = size_of::<u64>() + 2 * size_of::<u32>();
+/// One member: `u32 file_index`, `u32 alias_index`, `u32 needed_start`, `u32 needed_count`.
+const NATIVE_LIBRARY_MEMBER_SIZE: usize = 4 * size_of::<u32>();
 
 unsafe extern "C" {
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
@@ -1216,31 +1218,52 @@ impl StandaloneModuleGraph {
             let set_hash =
                 u64::from(read_u32(record_at)) | (u64::from(read_u32(record_at + 4)) << 32);
             let count = read_u32(record_at + 8) as usize;
+            let pad = read_u32(record_at + 12);
             record_at += NATIVE_LIBRARY_SET_HEADER;
-            if count <= modules_list_count
-                && record_at + count * NATIVE_LIBRARY_MEMBER_SIZE <= raw_len
-            {
+            let members_end = record_at + count * NATIVE_LIBRARY_MEMBER_SIZE;
+            if count <= modules_list_count && members_end + size_of::<u32>() <= raw_len {
                 let members: Box<[NativeLibraryMember]> = (0..count)
                     .map(|i| {
                         let at = record_at + i * NATIVE_LIBRARY_MEMBER_SIZE;
                         NativeLibraryMember {
                             file_index: read_u32(at),
                             alias_index: read_u32(at + 4),
+                            needed_start: read_u32(at + 8),
+                            needed_count: read_u32(at + 12),
                         }
                     })
                     .collect();
-                record_at += count * NATIVE_LIBRARY_MEMBER_SIZE;
-                // An alias points at a member of this set that is not itself an alias.
-                let well_formed = members.iter().all(|m| {
-                    (m.file_index as usize) < modules_list_count
-                        && (m.alias_index == NativeLibrarySet::NO_ALIAS
-                            || members.iter().any(|target| {
-                                target.file_index == m.alias_index
-                                    && target.alias_index == NativeLibrarySet::NO_ALIAS
-                            }))
-                });
+                let edge_count = read_u32(members_end) as usize;
+                record_at = members_end + size_of::<u32>();
+                let edges: Box<[u32]> = if record_at + edge_count * size_of::<u32>() <= raw_len {
+                    (0..edge_count)
+                        .map(|i| read_u32(record_at + i * size_of::<u32>()))
+                        .collect()
+                } else {
+                    Box::from([])
+                };
+                record_at += edges.len() * size_of::<u32>();
+                // An alias points at a member of this set that is not itself an alias; every
+                // needed range lies inside the edges; every edge names a member.
+                let well_formed = pad <= NativeLibrarySet::MAX_PAD
+                    && edges.len() == edge_count
+                    && edges.iter().all(|&edge| (edge as usize) < count)
+                    && members.iter().all(|m| {
+                        (m.file_index as usize) < modules_list_count
+                            && m.needed_start as usize + m.needed_count as usize <= edges.len()
+                            && (m.alias_index == NativeLibrarySet::NO_ALIAS
+                                || members.iter().any(|target| {
+                                    target.file_index == m.alias_index
+                                        && target.alias_index == NativeLibrarySet::NO_ALIAS
+                                }))
+                    });
                 if well_formed {
-                    native_library_set = NativeLibrarySet { members, set_hash };
+                    native_library_set = NativeLibrarySet {
+                        members,
+                        edges,
+                        set_hash,
+                        pad,
+                    };
                 }
             }
         }
@@ -1522,17 +1545,25 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
 /// `[name]-[hash].node`, and the `--asset` tree carries the same file next to the
 /// libraries it links. The `--asset` copy (deepest, then first, if several) is the one
 /// the runtime loads, every other copy aliases it, and the executable stores the bytes once.
-fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
-    struct Candidate<'a> {
-        file_index: u32,
-        rel_name: &'a [u8],
-        real_path: Option<Vec<u8>>,
-        /// `--asset` copies rank above hoisted ones, then deeper above shallower,
-        /// then the first in table order.
-        rank: (bool, usize, core::cmp::Reverse<usize>),
-        content_hash: u64,
-        alias_index: u32,
-    }
+/// One shared library among the output files, while the set is collected.
+struct Candidate<'a> {
+    file_index: u32,
+    rel_name: &'a [u8],
+    /// [`native_libs::mirror_relative_path`] of `rel_name` at pad 0.
+    mirror_path: Vec<u8>,
+    real_path: Option<Vec<u8>>,
+    /// `--asset` copies rank above hoisted ones, then deeper above shallower,
+    /// then the first in table order.
+    rank: (bool, usize, core::cmp::Reverse<usize>),
+    content_hash: u64,
+    alias_index: u32,
+    climb: u32,
+    needed: Vec<&'a [u8]>,
+}
+
+fn collect_native_library_set<'a>(
+    module_files: &[&'a OutputFile],
+) -> crate::Result<NativeLibrarySet> {
     let mut candidates: Vec<Candidate> = Vec::new();
     for (i, output_file) in module_files.iter().enumerate() {
         let rel_name = module_dest_path(output_file);
@@ -1543,6 +1574,12 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
         if is_stored_as_string(output_file) || !is_library {
             continue;
         }
+        let mut mirror_buf = bun_paths::path_buffer_pool::get();
+        let Some(mirror_path) = native_libs::mirror_relative_path(rel_name, 0, &mut mirror_buf[..])
+        else {
+            continue;
+        };
+        let mirror_path = mirror_path.to_vec();
         let real_path = (!src_path.is_empty()).then(|| {
             let mut z_buf = bun_paths::path_buffer_pool::get();
             let mut real_buf = bun_paths::path_buffer_pool::get();
@@ -1556,11 +1593,14 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
             real_path: real_path.flatten(),
             rank: (
                 output_file.source_index.is_none(),
-                strings::count_char(rel_name, b'/'),
+                strings::count_char(&mirror_path, b'/'),
                 core::cmp::Reverse(i),
             ),
+            mirror_path,
             content_hash: bun_wyhash::hash(output_file.value.as_slice()),
             alias_index: NativeLibrarySet::NO_ALIAS,
+            climb: 0,
+            needed: Vec::new(),
         });
     }
     for i in 0..candidates.len() {
@@ -1581,17 +1621,106 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
             candidates[i].alias_index = candidates[best].file_index;
         }
     }
-    let set_hash = native_libs::hash_set(candidates.iter().map(|c| (c.rel_name, c.content_hash)));
-    NativeLibrarySet {
+    // What each loaded copy tells the loader. An alias is never written, so its
+    // own depth never decides the layout.
+    for index in 0..candidates.len() {
+        if candidates[index].alias_index != NativeLibrarySet::NO_ALIAS {
+            continue;
+        }
+        let depth = strings::count_char(&candidates[index].mirror_path, b'/');
+        let bytes = module_files[candidates[index].file_index as usize]
+            .value
+            .as_slice();
+        match native_libs::loader_facts(bytes, depth) {
+            Ok(Some(facts)) => {
+                candidates[index].climb = facts.climb;
+                candidates[index].needed = facts.needed;
+            }
+            // A file that only looks like a library by its name declares nothing.
+            Ok(None) => {}
+            Err(reason) => {
+                bun_core::pretty_errorln!(
+                    "<red>error<r>: embedded shared library <b>{}<r> is malformed: {}",
+                    bun_core::fmt::quote(candidates[index].rel_name),
+                    reason,
+                );
+                return Err(crate::Error::MalformedEmbeddedLibrary);
+            }
+        }
+    }
+    let pad = candidates.iter().map(|c| c.climb).max().unwrap_or(0);
+    // The member the runtime writes for `file_index`, following the alias.
+    let position_of = |file_index: u32| -> Option<usize> {
+        let index = candidates.iter().position(|c| c.file_index == file_index)?;
+        match candidates[index].alias_index {
+            NativeLibrarySet::NO_ALIAS => Some(index),
+            alias => candidates.iter().position(|c| c.file_index == alias),
+        }
+    };
+    let mut edges: Vec<u32> = Vec::new();
+    let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(candidates.len());
+    for candidate in &candidates {
+        let start = edges.len() as u32;
+        for &name in &candidate.needed {
+            for found in needed_members(&candidates, candidate, name) {
+                let Some(found) = position_of(candidates[found].file_index) else {
+                    continue;
+                };
+                let found = found as u32;
+                if !edges[start as usize..].contains(&found) {
+                    edges.push(found);
+                }
+            }
+        }
+        ranges.push((start, edges.len() as u32 - start));
+    }
+    Ok(NativeLibrarySet {
         members: candidates
             .iter()
-            .map(|c| NativeLibraryMember {
+            .zip(&ranges)
+            .map(|(c, &(needed_start, needed_count))| NativeLibraryMember {
                 file_index: c.file_index,
                 alias_index: c.alias_index,
+                needed_start,
+                needed_count,
             })
             .collect(),
-        set_hash,
+        edges: edges.into_boxed_slice(),
+        set_hash: native_libs::hash_set(
+            pad,
+            candidates.iter().map(|c| (c.rel_name, c.content_hash)),
+        ),
+        pad,
+    })
+}
+
+/// Which embedded libraries `name` (one `DT_NEEDED` or load command of
+/// `carrier`) can reach. A name with a path of its own resolves against the
+/// carrier's own directory, so only that member matches. A bare soname is
+/// matched by file name, the way the loader matches it along its search path,
+/// and every member with that name is a candidate: which one the loader picks
+/// depends on the order of search paths, so the runtime writes them all.
+fn needed_members<'a>(
+    candidates: &[Candidate<'a>],
+    carrier: &Candidate<'a>,
+    name: &[u8],
+) -> Vec<usize> {
+    let dir = path::dirname(&carrier.mirror_path).unwrap_or_default();
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if let Some(resolved) = native_libs::needed_relative_path(dir, name, &mut buf[..]) {
+        return candidates
+            .iter()
+            .position(|c| c.mirror_path == resolved)
+            .into_iter()
+            .collect();
     }
+    let base = path::basename(name);
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| path::basename(&c.mirror_path) == base)
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and
@@ -1675,8 +1804,9 @@ pub(crate) fn to_bytes(
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16 + 4 * size_of::<u32>();
     string_builder.cap += (2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>();
-    string_builder.cap +=
-        NATIVE_LIBRARY_SET_HEADER + NATIVE_LIBRARY_MEMBER_SIZE * output_files.len();
+    string_builder.cap += NATIVE_LIBRARY_SET_HEADER
+        + (NATIVE_LIBRARY_MEMBER_SIZE + size_of::<u32>()) * output_files.len()
+        + size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
@@ -1719,7 +1849,7 @@ pub(crate) fn to_bytes(
         .iter()
         .position(|f| core::ptr::eq(*f, entry_point_file))
         .unwrap();
-    let native_library_set = collect_native_library_set(&module_files);
+    let native_library_set = collect_native_library_set(&module_files)?;
 
     // The internal-module bytecode and the string table go right after the
     // last startup module's bytecode, so everything a cold start decodes
@@ -2077,13 +2207,22 @@ pub(crate) fn to_bytes(
     if !native_library_set.is_empty() {
         let members = &native_library_set.members;
         let mut record: Vec<u8> = Vec::with_capacity(
-            NATIVE_LIBRARY_SET_HEADER + NATIVE_LIBRARY_MEMBER_SIZE * members.len(),
+            NATIVE_LIBRARY_SET_HEADER
+                + NATIVE_LIBRARY_MEMBER_SIZE * members.len()
+                + size_of::<u32>() * (1 + native_library_set.edges.len()),
         );
         record.extend_from_slice(&native_library_set.set_hash.to_le_bytes());
         record.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        record.extend_from_slice(&native_library_set.pad.to_le_bytes());
         for member in members {
             record.extend_from_slice(&member.file_index.to_le_bytes());
             record.extend_from_slice(&member.alias_index.to_le_bytes());
+            record.extend_from_slice(&member.needed_start.to_le_bytes());
+            record.extend_from_slice(&member.needed_count.to_le_bytes());
+        }
+        record.extend_from_slice(&(native_library_set.edges.len() as u32).to_le_bytes());
+        for &edge in &native_library_set.edges {
+            record.extend_from_slice(&edge.to_le_bytes());
         }
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_NATIVE_LIBRARY_SET;

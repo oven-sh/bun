@@ -3,12 +3,14 @@
 //! `dlopen(2)` cannot read the virtual `/$bunfs/` filesystem, so the runtime
 //! writes an embedded library to disk before it loads it. A library's own
 //! dependencies resolve relative to that on-disk path (`$ORIGIN`,
-//! `@loader_path`, the DLL search path), so the whole set has to land in one
-//! directory that mirrors the embedded layout. The writer records the set and
-//! its hash once, at build time, so the runtime never has to page in and hash
-//! every embedded library to find out what to write and where.
+//! `@loader_path`, the DLL search path), so a library and the libraries it
+//! needs have to land in one directory that mirrors the embedded layout. The
+//! writer records the set, its hash, who needs whom, and how far the search
+//! paths climb, once, at build time. So the runtime never has to page in and
+//! parse every embedded library to find out what to write and where.
 
 use bun_core::strings;
+use bun_exe_format::loader_entries::{self, Kind};
 
 use crate::StandaloneModuleGraph::{BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX};
 
@@ -22,29 +24,69 @@ pub struct NativeLibraryMember {
     /// to `[name]-[hash].node` at the root, away from the `--asset` copy that
     /// sits next to its dependencies. The runtime loads the deeper copy.
     pub alias_index: u32,
+    /// Range in [`NativeLibrarySet::edges`]: the members this one needs.
+    pub needed_start: u32,
+    pub needed_count: u32,
 }
 
 /// Every embedded shared library, in file-table order.
 #[derive(Default)]
 pub struct NativeLibrarySet {
     pub members: Box<[NativeLibraryMember]>,
+    /// Indexes into `members`, in `needed_start` ranges.
+    pub edges: Box<[u32]>,
     /// [`hash_set`] over the members. Names the directory the runtime mirrors
     /// the set into, so two executables with the same libraries at the same
     /// paths share one directory and any other difference gets its own.
     pub set_hash: u64,
+    /// How many directory levels the members' own search paths climb above the
+    /// embedded root ([`origin_climb`]). The runtime nests the mirror that
+    /// deep, so a climb ends inside the directory it owns.
+    pub pad: u32,
 }
 
 impl NativeLibrarySet {
     pub const NO_ALIAS: u32 = u32::MAX;
+    /// A climb past this is not padded: the path leaves the temp directory
+    /// itself, where a deeper mirror changes nothing. `PATH_MAX` bounds the
+    /// mirror, and 32 levels of `$ORIGIN/..` is already past any real layout
+    /// (sharp's deepest entry climbs 5).
+    pub const MAX_PAD: u32 = 32;
 
     pub fn is_empty(&self) -> bool {
         self.members.is_empty()
     }
 
+    /// The position in `members` of file-table index `file_index`, if that file
+    /// is a shared library.
+    pub fn position(&self, file_index: usize) -> Option<usize> {
+        let index = u32::try_from(file_index).ok()?;
+        self.members.iter().position(|m| m.file_index == index)
+    }
+
     /// The member for file-table index `file_index`, if that file is a shared library.
     pub fn member(&self, file_index: usize) -> Option<&NativeLibraryMember> {
-        let index = u32::try_from(file_index).ok()?;
-        self.members.iter().find(|m| m.file_index == index)
+        self.members.get(self.position(file_index)?)
+    }
+
+    /// `from` and every member it needs, directly or through another member:
+    /// what the runtime has to write before the loader opens `from`. Positions
+    /// in `members`, `from` first.
+    pub fn closure(&self, from: usize) -> Vec<usize> {
+        let mut closure = vec![from];
+        let mut at = 0;
+        while at < closure.len() {
+            let member = &self.members[closure[at]];
+            at += 1;
+            let start = member.needed_start as usize;
+            for &edge in &self.edges[start..start + member.needed_count as usize] {
+                let edge = edge as usize;
+                if !closure.contains(&edge) {
+                    closure.push(edge);
+                }
+            }
+        }
+        closure
     }
 }
 
@@ -87,25 +129,111 @@ pub fn is_shared_library_name(name: &[u8]) -> bool {
     true
 }
 
-/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory: the
-/// path relative to the root, with no empty or `.` segment and every `..` segment
-/// rewritten to `_.._` (as `bun build` does for an asset name), so every member
-/// stays inside the directory and sibling relations hold. `None` when nothing is
+/// The name of each directory the mirror is nested in. One byte, so `pad`
+/// levels cost `pad * 2` bytes of every path the runtime hands to `dlopen`.
+const PAD_SEGMENT: u8 = b'_';
+
+/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory:
+/// `pad` nesting directories, then the path relative to the embedded root with
+/// no empty or `.` segment and every `..` segment rewritten to `_.._` (as
+/// `bun build` does for an asset name). So every member stays inside the
+/// directory, sibling relations hold, and a search path that climbs `pad`
+/// levels or fewer stays inside the directory Bun owns. `None` when nothing is
 /// left of the name, or it does not fit in `buf`.
-pub fn mirror_relative_path<'a>(name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+pub fn mirror_relative_path<'a>(name: &[u8], pad: u32, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let rel = name
         .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
         .or_else(|| name.strip_prefix(BASE_PUBLIC_PATH.as_bytes()))
         .unwrap_or(name);
     let mut len = 0;
+    let mut push = |segment: &[u8], len: &mut usize| -> Option<()> {
+        if *len + usize::from(*len > 0) + segment.len() >= buf.len() {
+            return None;
+        }
+        if *len > 0 {
+            buf[*len] = b'/';
+            *len += 1;
+        }
+        buf[*len..*len + segment.len()].copy_from_slice(segment);
+        *len += segment.len();
+        Some(())
+    };
+    for _ in 0..pad {
+        push(&[PAD_SEGMENT], &mut len)?;
+    }
     for segment in strings::split(rel, b"/") {
-        let segment = match segment {
+        match segment {
             b"" | b"." => continue,
-            b".." => b"_.._",
-            other => other,
-        };
-        let needed = len + usize::from(len > 0) + segment.len();
-        if needed >= buf.len() {
+            b".." => push(b"_.._", &mut len)?,
+            other => push(other, &mut len)?,
+        }
+    }
+    (len > 0).then(|| &buf[..len])
+}
+
+/// How many directory levels a loader search path reaches above the embedded
+/// root, from a library whose own directory is `depth` levels below it. 0 when
+/// the path stays inside, or does not start at the library.
+///
+/// Only a path that STARTS with the token is relative to the library: the
+/// loaders expand the token anywhere, but a path with anything before it is
+/// rooted there instead (`/opt/$ORIGIN/..` is under `/opt`), which this
+/// directory cannot move. The walk takes the highest point the path reaches,
+/// not its end: once a path leaves the root, a later segment re-enters the
+/// directory it left, not the root.
+pub fn origin_climb(path: &[u8], depth: usize) -> u32 {
+    // Not `@executable_path`: that is the directory of the Bun executable,
+    // which this mirror does not move.
+    const TOKENS: [&[u8]; 3] = [b"$ORIGIN", b"${ORIGIN}", b"@loader_path"];
+    let Some(rest) = TOKENS.iter().find_map(|token| path.strip_prefix(*token)) else {
+        return 0;
+    };
+    // `$ORIGINAL/x` is not the token.
+    if !matches!(rest.first(), None | Some(b'/')) {
+        return 0;
+    }
+    let mut level = depth as i64;
+    let mut highest = level;
+    for segment in strings::split(rest, b"/") {
+        match segment {
+            b"" | b"." => continue,
+            // `$LIB` and `$PLATFORM` expand to one directory name.
+            b".." => level -= 1,
+            _ => level += 1,
+        }
+        highest = highest.min(level);
+    }
+    u32::try_from(-highest)
+        .unwrap_or(0)
+        .min(NativeLibrarySet::MAX_PAD)
+}
+
+/// Where a load name that carries a path of its own lands inside the mirror:
+/// the path of the embedded library it names, relative to the embedded root.
+/// `dir` is the carrier's own directory there. `None` when the name is not
+/// relative to the carrier (a bare soname, `@rpath`, an absolute path) or
+/// reaches outside the root, where no member can answer it.
+pub fn needed_relative_path<'a>(dir: &[u8], name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    const TOKENS: [&[u8]; 3] = [b"$ORIGIN", b"${ORIGIN}", b"@loader_path"];
+    let rest = TOKENS.iter().find_map(|token| name.strip_prefix(*token))?;
+    if !matches!(rest.first(), Some(b'/')) {
+        return None;
+    }
+    let mut segments: Vec<&[u8]> = strings::split(dir, b"/")
+        .filter(|s| !s.is_empty())
+        .collect();
+    for segment in strings::split(rest, b"/") {
+        match segment {
+            b"" | b"." => {}
+            b".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other),
+        }
+    }
+    let mut len = 0;
+    for segment in segments {
+        if len + usize::from(len > 0) + segment.len() >= buf.len() {
             return None;
         }
         if len > 0 {
@@ -118,11 +246,57 @@ pub fn mirror_relative_path<'a>(name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u
     (len > 0).then(|| &buf[..len])
 }
 
-/// The set hash: each member's relative name and content hash, in file-table
-/// order. The writer and the runtime's single-file fallback both use it, so
-/// the two never disagree on a directory name.
-pub fn hash_set<'a>(members: impl IntoIterator<Item = (&'a [u8], u64)>) -> u64 {
+/// What one embedded shared library tells the dynamic loader.
+#[derive(Default)]
+pub struct LoaderFacts<'a> {
+    /// [`origin_climb`] over every search path it declares.
+    pub climb: u32,
+    /// The names it loads, as written: a soname (`libfoo.so.1`), or a path
+    /// that starts with `@rpath`, `@loader_path` or `$ORIGIN`.
+    pub needed: Vec<&'a [u8]>,
+}
+
+/// [`LoaderFacts`] of the library in `bytes`, which the mirror puts `depth`
+/// levels below its embedded root. `Ok(None)`: not a library image Bun loads
+/// (an `--asset` file that only looks like one by name, or a PE, which carries
+/// no search path). `Err`: a library image that contradicts itself.
+pub fn loader_facts(
+    bytes: &[u8],
+    depth: usize,
+) -> Result<Option<LoaderFacts<'_>>, loader_entries::Malformed> {
+    let Some(entries) = loader_entries::read(bytes)? else {
+        return Ok(None);
+    };
+    let mut facts = LoaderFacts::default();
+    for entry in entries {
+        match entry.kind {
+            // ELF search paths are colon-separated, Mach-O's are one each.
+            Kind::ElfRpath | Kind::ElfRunpath => {
+                for path in strings::split(entry.value, b":") {
+                    facts.climb = facts.climb.max(origin_climb(path, depth));
+                }
+            }
+            Kind::MachoRpath => facts.climb = facts.climb.max(origin_climb(entry.value, depth)),
+            // A load name can carry a path of its own, and the loaders expand
+            // the same tokens in it.
+            Kind::ElfNeeded | Kind::ElfAuxiliary | Kind::ElfFilter | Kind::MachoDylib => {
+                facts.climb = facts.climb.max(origin_climb(entry.value, depth));
+                facts.needed.push(entry.value);
+            }
+            Kind::ElfSoname | Kind::MachoId => {}
+        }
+    }
+    Ok(Some(facts))
+}
+
+/// The set hash: the pad and then each member's relative name and content
+/// hash, in file-table order. The writer and the runtime's single-file
+/// fallback both use it, so the two never disagree on a directory name, and
+/// the pad is in the name, so one layout of a set never has to be repaired
+/// into another.
+pub fn hash_set<'a>(pad: u32, members: impl IntoIterator<Item = (&'a [u8], u64)>) -> u64 {
     let mut hasher = bun_wyhash::Wyhash::init(0);
+    hasher.update(&pad.to_le_bytes());
     for (name, content_hash) in members {
         hasher.update(&(name.len() as u32).to_le_bytes());
         hasher.update(name);
@@ -163,30 +337,133 @@ mod tests {
 
     #[test]
     fn mirror_relative_paths() {
-        fn run(name: &[u8]) -> Option<Vec<u8>> {
+        fn run(name: &[u8], pad: u32) -> Option<Vec<u8>> {
             let mut buf = [0u8; 256];
-            mirror_relative_path(name, &mut buf).map(<[u8]>::to_vec)
+            mirror_relative_path(name, pad, &mut buf).map(<[u8]>::to_vec)
         }
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes().to_vec();
         assert_eq!(
-            run(&[&root[..], b"lib/addon.node"].concat()).unwrap(),
+            run(&[&root[..], b"lib/addon.node"].concat(), 0).unwrap(),
             b"lib/addon.node"
         );
         assert_eq!(
-            run(&[&root[..], b"../node_modules/a/x.node"].concat()).unwrap(),
-            b"_.._/node_modules/a/x.node"
+            run(&[&root[..], b"lib/addon.node"].concat(), 2).unwrap(),
+            b"_/_/lib/addon.node"
         );
-        assert_eq!(run(&[&root[..], b"./a//b.so"].concat()).unwrap(), b"a/b.so");
-        assert_eq!(run(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()), None);
-        assert_eq!(run(b"..").unwrap(), b"_.._");
+        assert_eq!(
+            run(&[&root[..], b"../node_modules/a/x.node"].concat(), 1).unwrap(),
+            b"_/_.._/node_modules/a/x.node"
+        );
+        assert_eq!(
+            run(&[&root[..], b"./a//b.so"].concat(), 0).unwrap(),
+            b"a/b.so"
+        );
+        assert_eq!(
+            run(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), 0),
+            None
+        );
+        assert_eq!(run(b"..", 0).unwrap(), b"_.._");
+        // The pad alone is not a path to a file.
+        assert_eq!(
+            run(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), 2).unwrap(),
+            b"_/_"
+        );
+        let mut small = [0u8; 8];
+        assert_eq!(mirror_relative_path(b"lib/addon.node", 0, &mut small), None);
     }
 
     #[test]
-    fn set_hash_depends_on_names_and_contents() {
-        let a = hash_set([(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]);
-        assert_eq!(a, hash_set([(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]));
-        assert_ne!(a, hash_set([(&b"lib/a.so"[..], 1), (b"lib/b.so", 3)]));
-        assert_ne!(a, hash_set([(&b"lib/a.so"[..], 1), (b"other/b.so", 2)]));
-        assert_ne!(a, hash_set([(&b"lib/a.so"[..], 1)]));
+    fn origin_climbs() {
+        // From the mirror's root, one level up leaves it.
+        assert_eq!(origin_climb(b"$ORIGIN", 0), 0);
+        assert_eq!(origin_climb(b"$ORIGIN/lib", 0), 0);
+        assert_eq!(origin_climb(b"$ORIGIN/../lib", 0), 1);
+        assert_eq!(origin_climb(b"${ORIGIN}/../lib", 0), 1);
+        assert_eq!(origin_climb(b"@loader_path/../../lib", 0), 2);
+        // One directory below the root absorbs one level.
+        assert_eq!(origin_climb(b"$ORIGIN/../lib", 1), 0);
+        assert_eq!(origin_climb(b"$ORIGIN/../../lib", 1), 1);
+        // sharp's fifth entry, from `node_modules/@img/sharp-linux-x64/lib`.
+        assert_eq!(
+            origin_climb(
+                b"$ORIGIN/../../../../../@img-sharp-libvips-linux-x64/node_modules/@img/sharp-libvips-linux-x64/lib",
+                4
+            ),
+            1
+        );
+        // The highest point counts, not the end.
+        assert_eq!(origin_climb(b"$ORIGIN/../../a/b", 0), 2);
+        // Not relative to the library.
+        assert_eq!(origin_climb(b"/opt/lib", 0), 0);
+        assert_eq!(origin_climb(b"lib", 0), 0);
+        assert_eq!(origin_climb(b"@executable_path/../lib", 0), 0);
+        assert_eq!(origin_climb(b"$ORIGINAL/../lib", 0), 0);
+        assert_eq!(origin_climb(b"/opt/$ORIGIN/../..", 0), 0);
+        // A path that climbs out of the temp directory is not padded further.
+        assert_eq!(
+            origin_climb(&[&b"$ORIGIN"[..], &b"/..".repeat(64)].concat(), 0),
+            NativeLibrarySet::MAX_PAD
+        );
+    }
+
+    #[test]
+    fn needed_relative_paths() {
+        fn run(dir: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+            let mut buf = [0u8; 256];
+            needed_relative_path(dir, name, &mut buf).map(<[u8]>::to_vec)
+        }
+        assert_eq!(run(b"lib", b"$ORIGIN/libfoo.so").unwrap(), b"lib/libfoo.so");
+        assert_eq!(
+            run(
+                b"node_modules/a/lib",
+                b"@loader_path/../../b/lib/libfoo.dylib"
+            )
+            .unwrap(),
+            b"node_modules/b/lib/libfoo.dylib"
+        );
+        assert_eq!(run(b"", b"${ORIGIN}/x/libfoo.so").unwrap(), b"x/libfoo.so");
+        // Outside the root: no member can answer it.
+        assert_eq!(run(b"lib", b"$ORIGIN/../../libfoo.so"), None);
+        // Not relative to the carrier.
+        assert_eq!(run(b"lib", b"libfoo.so.1"), None);
+        assert_eq!(run(b"lib", b"@rpath/libfoo.dylib"), None);
+        assert_eq!(run(b"lib", b"/usr/lib/libfoo.so"), None);
+        assert_eq!(run(b"lib", b"$ORIGINAL/libfoo.so"), None);
+    }
+
+    #[test]
+    fn set_hash_depends_on_names_contents_and_pad() {
+        let a = hash_set(0, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]);
+        assert_eq!(a, hash_set(0, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]));
+        assert_ne!(a, hash_set(0, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 3)]));
+        assert_ne!(a, hash_set(0, [(&b"lib/a.so"[..], 1), (b"other/b.so", 2)]));
+        assert_ne!(a, hash_set(0, [(&b"lib/a.so"[..], 1)]));
+        assert_ne!(a, hash_set(1, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]));
+    }
+
+    #[test]
+    fn closure_follows_needed_edges() {
+        let member = |file_index: u32, needed_start: u32, needed_count: u32| NativeLibraryMember {
+            file_index,
+            alias_index: NativeLibrarySet::NO_ALIAS,
+            needed_start,
+            needed_count,
+        };
+        // 0 needs 1, 1 needs 2 and 0 back, 3 needs nobody.
+        let set = NativeLibrarySet {
+            members: Box::from([
+                member(10, 0, 1),
+                member(11, 1, 2),
+                member(12, 0, 0),
+                member(13, 0, 0),
+            ]),
+            edges: Box::from([1u32, 2, 0]),
+            set_hash: 0,
+            pad: 0,
+        };
+        assert_eq!(set.closure(0), [0, 1, 2]);
+        assert_eq!(set.closure(3), [3]);
+        assert_eq!(set.position(12), Some(2));
+        assert_eq!(set.position(99), None);
     }
 }

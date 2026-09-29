@@ -517,16 +517,19 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
         if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
-            // The extracted file is content-hashed and shared across dlopens
-            // and restarts (#29587), so it is never deleted here.
+            // The mirror directory is shared across dlopens, Workers and
+            // restarts (#29587), so it is never deleted here.
             fromEmbedded = true;
         }
     }
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Handle known yet-to-be-working in Bun
-    {
+    // Handle known yet-to-be-working in Bun. The mirror keeps the embedded name
+    // (#44063), so match the name the caller gave, not the extracted path: an
+    // embedded addon that happens to end in this name is the developer's own
+    // file and loaded before #44063 too.
+    if (!fromEmbedded) {
         static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
         static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
         if (filename.endsWith(better_sqlite3_node)) {

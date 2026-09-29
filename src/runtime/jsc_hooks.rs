@@ -4519,20 +4519,38 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
     let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
     let uid = extract_owner_uid();
 
-    if member.is_some() {
+    if let Some(member) = member {
+        // The loaded copy, then every member it needs: the loader opens those
+        // and nothing else of the set.
+        let loaded_index = match member.alias_index {
+            NativeLibrarySet::NO_ALIAS => file_index,
+            alias => alias as usize,
+        };
+        let from = set.position(loaded_index)?;
         let recorded = MirrorSet {
             hash: set.set_hash,
-            members: MirrorMembers::Recorded { set, files },
+            pad: set.pad,
+            members: MirrorMembers::Recorded {
+                set,
+                files,
+                closure: set.closure(from),
+            },
         };
         if let Some(len) = recorded.materialise(&tmpdir, uid, target, out_buf) {
             return Some(len);
         }
     }
+    // No record (an executable an older bun wrote, or a name with a library
+    // extension that the record does not list): the one file, and its own
+    // search paths decide how deep the mirror nests.
+    let bytes = target.contents.as_bytes();
+    let mut rel_buf = bun_paths::path_buffer_pool::get();
+    let rel = native_libs::mirror_relative_path(target.name, 0, &mut rel_buf[..])?;
+    let facts = native_libs::loader_facts(bytes, bun_core::strings::count_char(rel, b'/')).ok()?;
+    let pad = facts.map_or(0, |facts| facts.climb);
     let single = MirrorSet {
-        hash: native_libs::hash_set([(
-            target.display_name(),
-            bun_wyhash::hash(target.contents.as_bytes()),
-        )]),
+        hash: native_libs::hash_set(pad, [(target.display_name(), bun_wyhash::hash(bytes))]),
+        pad,
         members: MirrorMembers::Single(target),
     };
     single.materialise(&tmpdir, uid, target, out_buf)
@@ -4542,19 +4560,23 @@ enum MirrorMembers<'a> {
     Recorded {
         set: &'a NativeLibrarySet,
         files: &'a [bun_standalone_graph::File],
+        /// Positions in `set.members`: the requested library and what it needs.
+        closure: Vec<usize>,
     },
     Single(&'a bun_standalone_graph::File),
 }
 
 impl MirrorMembers<'_> {
-    /// `f` over every file to write (an alias shares its target's bytes); stops at the first `false`.
+    /// `f` over every file to write; stops at the first `false`.
     fn all(&self, f: &mut dyn FnMut(&bun_standalone_graph::File) -> bool) -> bool {
-        match *self {
-            MirrorMembers::Recorded { set, files } => set
-                .members
+        match self {
+            MirrorMembers::Recorded {
+                set,
+                files,
+                closure,
+            } => closure
                 .iter()
-                .filter(|m| m.alias_index == NativeLibrarySet::NO_ALIAS)
-                .all(|m| f(&files[m.file_index as usize])),
+                .all(|&at| f(&files[set.members[at].file_index as usize])),
             MirrorMembers::Single(file) => f(file),
         }
     }
@@ -4562,6 +4584,7 @@ impl MirrorMembers<'_> {
 
 struct MirrorSet<'a> {
     hash: u64,
+    pad: u32,
     members: MirrorMembers<'a>,
 }
 
@@ -4583,7 +4606,7 @@ impl MirrorSet<'_> {
         )
         .ok()?;
         let mut rel_buf = bun_paths::path_buffer_pool::get();
-        let rel = native_libs::mirror_relative_path(target.name, &mut rel_buf[..])?;
+        let rel = native_libs::mirror_relative_path(target.name, self.pad, &mut rel_buf[..])?;
         let tmpdir_path = Fs::RealFS::tmpdir_path();
         let len =
             bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
@@ -4615,7 +4638,9 @@ impl MirrorSet<'_> {
         };
         let file_is_ours = |file: &bun_standalone_graph::File| -> bool {
             let mut rel_buf = bun_paths::path_buffer_pool::get();
-            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+            let Some(rel) =
+                native_libs::mirror_relative_path(file.name, self.pad, &mut rel_buf[..])
+            else {
                 return false;
             };
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -4641,16 +4666,16 @@ impl MirrorSet<'_> {
         // a rename in the same directory, so a reader never sees a partial file.
         let write_member = |dir: &bun_sys::Dir, file: &bun_standalone_graph::File| -> bool {
             let mut rel_buf = bun_paths::path_buffer_pool::get();
-            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+            let Some(rel) =
+                native_libs::mirror_relative_path(file.name, self.pad, &mut rel_buf[..])
+            else {
                 return false;
             };
             let parent_dir = match bun_paths::dirname(rel) {
-                Some(parent) => {
-                    match dir.make_open_path(parent, bun_sys::OpenDirOptions::default()) {
-                        Ok(parent) => Some(parent),
-                        Err(_) => return false,
-                    }
-                }
+                Some(parent) => match make_open_private_dir(dir, parent) {
+                    Some(parent) => Some(parent),
+                    None => return false,
+                },
                 None => None,
             };
             let parent = parent_dir.as_ref().map_or(dir.fd, |d| d.fd);
@@ -4735,6 +4760,33 @@ impl MirrorSet<'_> {
         }
         Some(len)
     }
+}
+
+/// `{dir}/{rel}`, with each directory of `rel` created 0700 if it is missing.
+/// 0700 so another user cannot put a library beside a mirrored one, and
+/// `O_NOFOLLOW` so a symlink someone planted is not followed into their tree.
+/// `None` when a step fails: the caller discards the mirror instead of handing
+/// `dlopen` a path whose directories it does not own.
+fn make_open_private_dir(dir: &bun_sys::Dir, rel: &[u8]) -> Option<bun_sys::Dir> {
+    let mut at: Option<bun_sys::Dir> = None;
+    for segment in bun_core::strings::split(rel, b"/") {
+        if segment.is_empty() {
+            continue;
+        }
+        let parent = at.as_ref().map_or(dir, |open| open);
+        let mut name_buf = bun_paths::path_buffer_pool::get();
+        let name = bun_paths::resolve_path::z(segment, &mut name_buf);
+        match bun_sys::mkdirat(parent, name, 0o700) {
+            Ok(()) => {}
+            Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
+            Err(_) => return None,
+        }
+        let opened = parent
+            .open_at_with(segment, bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW)
+            .ok()?;
+        at = Some(opened);
+    }
+    at
 }
 
 /// euid, not uid: `open(2)` sets the new file's owner to euid, so a

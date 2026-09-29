@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -1160,17 +1160,22 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   async function drain(fd: number) {
     const buffer = Buffer.alloc(64 * 1024);
     let total = 0;
+    let progressAt = performance.now();
     while (true) {
       let n: number;
       try {
         n = fs.readSync(fd, buffer);
       } catch (e: any) {
         if (e.code !== "EAGAIN") throw e;
+        if (performance.now() - progressAt > 10_000) {
+          throw new Error(`the writer holds the FIFO open and wrote nothing for 10 s, after ${total} bytes`);
+        }
         await Bun.sleep(1);
         continue;
       }
       if (n === 0) return total;
       total += n;
+      progressAt = performance.now();
     }
   }
 
@@ -1206,7 +1211,8 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
 
   // The test holds the read end from before the child opens the FIFO to write.
   it.concurrent.skipIf(!isPosix)("the same into a FIFO the sink opened itself", async () => {
-    const path = join(tmpdirSync(), "piped.fifo");
+    using dir = tempDir("filesink-piped-fifo", {});
+    const path = join(String(dir), "piped.fifo");
     mkfifo(path, 0o666);
     const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
     try {

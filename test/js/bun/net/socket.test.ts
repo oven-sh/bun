@@ -382,6 +382,9 @@ describe.concurrent("socket", () => {
         port += Buffer.from(part).toString();
         if (port.includes("\n")) break;
       }
+      if (!port.includes("\n")) {
+        throw new Error(`the peer exited with code ${await peer.exited} before it printed its port`);
+      }
 
       // TLS hands over whole records only: 16384 bytes for each 16406 bytes that it read.
       const plaintext = (bytes: number) => (mode === "tls" ? Math.floor(bytes / 16406) * 16384 : bytes);

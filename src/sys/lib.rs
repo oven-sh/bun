@@ -318,21 +318,16 @@ pub mod dir_iterator {
         }
     }
 
-    /// The record at `index` of the `end_index` bytes that the last refill reported.
+    /// The record at `index` of the `end_index` bytes that the last refill reported. `None` when it is malformed.
     #[cfg(unix)]
     #[inline]
-    fn record_at(
-        buf: &AlignedBuf,
-        index: usize,
-        end_index: usize,
-        syscall: Tag,
-    ) -> Result<dirent::Record<'_>> {
+    fn record_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<dirent::Record<'_>> {
         if end_index > BUF_SIZE {
-            return Err(dirent::malformed(syscall));
+            return None;
         }
         // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
         let filled = unsafe { buf.filled(end_index) };
-        dirent::parse::<dirent::Native>(filled, index).ok_or_else(|| dirent::malformed(syscall))
+        dirent::parse::<dirent::Native>(filled, index)
     }
 
     // ── Linux / Android ──────────────────────────────────────────────────
@@ -375,7 +370,9 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                let record = record_at(&self.buf, self.index, self.end_index, Tag::getdents64)?;
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
+                };
                 self.index = record.next;
                 let Some(entry) = record.entry else { continue };
 
@@ -453,8 +450,9 @@ pub mod dir_iterator {
                     let flag = u32::from_ne_bytes(flag);
                     self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
                 }
-                let record =
-                    record_at(&self.buf, self.index, self.end_index, Tag::getdirentries64)?;
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
+                };
                 self.index = record.next;
                 let Some(entry) = record.entry else { continue };
 
@@ -506,7 +504,9 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                let record = record_at(&self.buf, self.index, self.end_index, Tag::getdents64)?;
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
+                };
                 self.index = record.next;
                 let Some(entry) = record.entry else { continue };
 
@@ -757,6 +757,67 @@ pub mod dir_iterator {
                 dir,
                 state: State::new(),
             }
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+        use crate::E;
+        use dirent::{Layout, Native};
+
+        fn record(name: &[u8], reclen: u16) -> [u8; 32] {
+            let mut bytes = [0; 32];
+            bytes[0] = 1;
+            bytes[16..18].copy_from_slice(&reclen.to_ne_bytes());
+            if let Some(at) = Native::D_NAMLEN {
+                bytes[at..at + 2].copy_from_slice(&(name.len() as u16).to_ne_bytes());
+            }
+            bytes[Native::D_TYPE] = libc::DT_REG;
+            bytes[Native::D_NAME..][..name.len()].copy_from_slice(name);
+            bytes
+        }
+
+        /// A walker whose last refill reported `records`. Its fd is not open and Miri rejects the syscall, so a refill fails the test.
+        fn walker_of(records: &[u8]) -> WrappedIterator {
+            let mut walker = iterate(Fd::INVALID);
+            assert!(records.len() <= BUF_SIZE);
+            let buf = walker.state.buf.as_mut_ptr();
+            // SAFETY: `records` fits in the buffer and is not a part of it.
+            unsafe { core::ptr::copy_nonoverlapping(records.as_ptr(), buf, records.len()) };
+            walker.state.end_index = records.len();
+            walker
+        }
+
+        fn expect_eio_then_the_end(walker: &mut WrappedIterator) {
+            let Err(err) = walker.next() else {
+                panic!("a malformed record is an error");
+            };
+            assert_eq!(err.get_errno(), E::EIO);
+            for _ in 0..3 {
+                assert!(walker.next().unwrap().is_none());
+            }
+        }
+
+        #[test]
+        fn a_malformed_record_is_eio_then_the_end_of_the_directory() {
+            let mut records = record(b"a.txt", 32).to_vec();
+            records.extend(record(b"b.txt", 0));
+            records.extend(record(b"c.txt", 32));
+            let mut walker = walker_of(&records);
+
+            let first = walker.next().unwrap().unwrap();
+            assert_eq!(first.name.slice_u8(), b"a.txt");
+            assert_eq!(first.name.as_zstr().as_bytes(), b"a.txt");
+            assert!(matches!(first.kind, EntryKind::File));
+            expect_eio_then_the_end(&mut walker);
+        }
+
+        #[test]
+        fn a_byte_count_above_the_buffer_is_eio_then_the_end_of_the_directory() {
+            let mut walker = walker_of(&record(b"a.txt", 32));
+            walker.state.end_index = BUF_SIZE + 64;
+            expect_eio_then_the_end(&mut walker);
         }
     }
 }

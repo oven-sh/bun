@@ -106,7 +106,7 @@ mod platform {
             'start_over: loop {
                 // A refill that reports more bytes than the buffer holds is malformed.
                 let Some(filled) = self.buf.get(..self.end_index) else {
-                    return Err(dirent::malformed(Tag::getdirentries64));
+                    return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
                 };
                 if self.index >= filled.len() {
                     if self.received_eof {
@@ -150,7 +150,7 @@ mod platform {
                     continue 'start_over;
                 }
                 let Some(record) = dirent::parse::<dirent::Native>(filled, self.index) else {
-                    return Err(dirent::malformed(Tag::getdirentries64));
+                    return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
                 };
                 self.index = record.next;
                 let Some(entry) = record.entry else {
@@ -204,7 +204,7 @@ mod platform {
             'start_over: loop {
                 // A refill that reports more bytes than the buffer holds is malformed.
                 let Some(filled) = self.buf.get(..self.end_index) else {
-                    return Err(dirent::malformed(Tag::getdents64));
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
                 if self.index >= filled.len() {
                     // SAFETY: dir is a valid open fd; buf is writable for its length.
@@ -232,7 +232,7 @@ mod platform {
                     continue 'start_over;
                 }
                 let Some(record) = dirent::parse::<dirent::Native>(filled, self.index) else {
-                    return Err(dirent::malformed(Tag::getdents64));
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
                 self.index = record.next;
                 let Some(entry) = record.entry else {
@@ -282,7 +282,7 @@ mod platform {
             'start_over: loop {
                 // A refill that reports more bytes than the buffer holds is malformed.
                 let Some(filled) = self.buf.get(..self.end_index) else {
-                    return Err(dirent::malformed(Tag::getdents64));
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
                 if self.index >= filled.len() {
                     // glibc doesn't expose getdents64; go straight to the
@@ -310,7 +310,7 @@ mod platform {
                     continue 'start_over;
                 }
                 let Some(record) = dirent::parse::<dirent::Native>(filled, self.index) else {
-                    return Err(dirent::malformed(Tag::getdents64));
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
                 };
                 self.index = record.next;
                 let Some(entry) = record.entry else {

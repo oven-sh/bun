@@ -57,11 +57,11 @@ const MIRI_CRATES = [
   "bun_wyhash",
 ];
 
-// Crates where only some tests meet (c). The value is the test name filter
-// that selects them.
-const MIRI_TEST_FILTER: Record<string, string> = {
+// Crates where only some tests meet (c). The value is the test name filters
+// that select them.
+const MIRI_TEST_FILTERS: Record<string, string[]> = {
   // The other tests in bun_sys open files.
-  bun_sys: "dirent::",
+  bun_sys: ["dirent::", "dir_iterator::"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
@@ -124,8 +124,8 @@ function testCrate(crate: string): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
-    const filter = MIRI_TEST_FILTER[crate];
-    const args = ["miri", "test", "-p", crate, "--color", "always", ...(filter ? [filter] : [])];
+    const filters = MIRI_TEST_FILTERS[crate] ?? [];
+    const args = ["miri", "test", "-p", crate, "--color", "always", "--", ...filters];
     const child = spawn("cargo", args, { cwd: repo, env });
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));

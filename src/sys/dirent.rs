@@ -155,10 +155,18 @@ pub fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
     })
 }
 
-/// The kernel gives the same answer to a FUSE server that sends it a malformed entry.
+/// The `end_index` of a walk that a malformed record ended. It is above every cursor, so no refill follows, and above every buffer, so no record is read.
+const ENDED: usize = usize::MAX;
+
+/// Ends a walk at a malformed record: `EIO` for this call, as the kernel answers a FUSE server, then the end of the directory.
 #[cold]
-pub fn malformed(syscall: Tag) -> Error {
-    Error::from_code(E::EIO, syscall)
+#[inline(never)]
+pub fn end_walk<T>(end_index: &mut usize, syscall: Tag) -> Result<Option<T>, Error> {
+    if *end_index == ENDED {
+        return Ok(None);
+    }
+    *end_index = ENDED;
+    Err(Error::from_code(E::EIO, syscall))
 }
 
 #[cfg(test)]
@@ -469,6 +477,20 @@ mod tests {
         }
         check::<Darwin>();
         check::<FreeBsd>();
+    }
+
+    #[test]
+    fn a_malformed_record_ends_the_walk() {
+        // The byte count of a refill: above the buffer size, then inside it.
+        for mut end_index in [8192 + 64, 144] {
+            let first = end_walk::<()>(&mut end_index, Tag::getdents64);
+            assert_eq!(first.unwrap_err().get_errno(), E::EIO);
+            for _ in 0..3 {
+                assert_eq!(end_index, usize::MAX);
+                let later = end_walk::<()>(&mut end_index, Tag::getdents64);
+                assert!(matches!(later, Ok(None)));
+            }
+        }
     }
 
     #[test]

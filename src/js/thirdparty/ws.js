@@ -260,7 +260,8 @@ class BunWebSocket extends EventEmitter {
       const nodeHttpClientRequestSimulated = {
         __proto__: Object.create(EventEmitter.prototype),
         setHeader: function (name, value) {
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L678-L685
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L674-L685
+          if (didCallEnd) throw $ERR_HTTP_HEADERS_SENT("set");
           const { validateHeaderName, validateHeaderValue } = require("internal/validators");
           validateHeaderName(name);
           validateHeaderValue(name, value);
@@ -271,6 +272,7 @@ class BunWebSocket extends EventEmitter {
           return headers ? headers[name.toLowerCase()] : undefined;
         },
         removeHeader: function (name) {
+          if (didCallEnd) throw $ERR_HTTP_HEADERS_SENT("remove");
           if (headers) delete headers[name.toLowerCase()];
         },
         getHeaders: function () {
@@ -279,7 +281,9 @@ class BunWebSocket extends EventEmitter {
         hasHeader: function (name) {
           return headers ? name.toLowerCase() in headers : false;
         },
-        headersSent: false,
+        get headersSent() {
+          return didCallEnd;
+        },
         method: method,
         path: url,
         abort: function () {
@@ -318,10 +322,11 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated, this);
       if (!didCallEnd && EventEmitter.prototype.listenerCount.$call(nodeHttpClientRequestSimulated, "socket") > 0) {
-        failWebSocket(
-          ws,
-          "finishRequest added a 'socket' listener to the request and did not call request.end(). Bun does not emit 'socket'. Remove the listener and call request.end() without it.",
-        );
+        const reason =
+          "finishRequest added a 'socket' listener to the request and did not call request.end(). Bun does not emit 'socket'. Remove the listener and call request.end() without it.";
+        // A client with no 'error' listener gets no event, so the cause also goes to stderr.
+        emitWarning("finishRequest-socket", "ws.WebSocket " + reason);
+        failWebSocket(ws, reason);
       }
       return;
     }

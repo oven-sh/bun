@@ -999,6 +999,44 @@ describe("WebSocket finishRequest", () => {
     });
   });
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L674-L677
+  it("req.setHeader() and req.removeHeader() throw after req.end(), and req.headersSent is true", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    let request: any;
+    const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
+    const message = firstMessage(ws);
+    const codeOf = (call: () => void) => {
+      try {
+        call();
+      } catch (error: any) {
+        return error.code;
+      }
+    };
+    const before = request.headersSent;
+    authorize(request);
+    const after = {
+      headersSent: request.headersSent,
+      setHeader: codeOf(() => request.setHeader("authorization", "late")),
+      removeHeader: codeOf(() => request.removeHeader("authorization")),
+      getHeader: request.getHeader("authorization"),
+    };
+
+    expect({ before, after, message: await message, upgrades }).toEqual({
+      before: false,
+      after: {
+        headersSent: true,
+        setHeader: "ERR_HTTP_HEADERS_SENT",
+        removeHeader: "ERR_HTTP_HEADERS_SENT",
+        getHeader: "token",
+      },
+      message: "authorization=token",
+      upgrades: ["token"],
+    });
+    ws.terminate();
+  });
+
   it("connects over TLS", async () => {
     const { server, upgrades } = serve({ tls });
     using _ = server;
@@ -1099,6 +1137,35 @@ describe("WebSocket finishRequest", () => {
 
     expect(stderr).toBe("");
     expect(stdout).toBe('{"opened":20}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  // Such a client gets no 'error' event, so stderr is the one place that reports the failure.
+  it.concurrent("prints the cause one time when clients that wait for 'socket' have no listener", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { WebSocket } = require("ws");
+          for (let i = 0; i < 2; i++) {
+            new WebSocket("ws://127.0.0.1:1/", { finishRequest: req => req.on("socket", () => req.end()) });
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({
+      stdout: "",
+      stderr:
+        "[bun] Warning: ws.WebSocket finishRequest added a 'socket' listener to the request " +
+        "and did not call request.end(). Bun does not emit 'socket'. " +
+        "Remove the listener and call request.end() without it.\n",
+    });
     expect(exitCode).toBe(0);
   });
 });

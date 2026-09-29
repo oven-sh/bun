@@ -291,6 +291,19 @@ struct us_bun_verify_error_t {
     const char* reason;
 };
 
+/* Why the TLS engine gave up on a connection. Not a handshake result: us_dispatch_tls_error carries it. */
+enum us_tls_error_kind {
+    /* The peer asked for more renegotiations than the limit of the context allows. */
+    US_TLS_ERROR_RENEGOTIATION_LIMIT = 1,
+    /* SSL_renegotiate() refused. `ssl_error` is the packed BoringSSL error. */
+    US_TLS_ERROR_RENEGOTIATION_REFUSED = 2,
+};
+
+struct us_tls_error_t {
+    uint32_t kind;
+    uint32_t ssl_error;
+};
+
 /* Immutable callback table. ~20 instances total (one per kind), all static
  * const / .rodata. Nullable entries are skipped by dispatch. */
 struct us_socket_vtable_t {

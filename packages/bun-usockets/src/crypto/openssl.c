@@ -1950,14 +1950,14 @@ static inline int ssl_gone(struct us_socket_t *s) {
   return us_socket_is_closed(s) || s->ssl == NULL;
 }
 
-static int ssl_renegotiate(struct us_socket_t *s) {
+/* 0: the renegotiation runs. Otherwise the us_tls_error_kind of the refusal. */
+static uint32_t ssl_renegotiate(struct us_socket_t *s) {
   /* Server-forced renegotiation (HelloRequest -> SSL_ERROR_WANT_RENEGOTIATE).
    * Enforce the per-context policy (default 3 per 600s, Node's
    * CLIENT_RENEG_LIMIT/CLIENT_RENEG_WINDOW) before re-entering a full
    * handshake — otherwise a malicious server can pin a core with
    * back-to-back renegotiations. limit == 0 disables renegotiation; window
-   * == 0 means the per-connection counter never resets. Returning 0 makes
-   * the caller treat this as SSL_ERROR_SSL and close the connection. */
+   * == 0 means the per-connection counter never resets. */
   uint32_t limit, window;
   us_reneg_policy(s_ssl(s), &limit, &window);
   struct us_ssl_rare_t *st = us_ssl_rare_ensure(s_ssl(s));
@@ -1973,15 +1973,37 @@ static int ssl_renegotiate(struct us_socket_t *s) {
     st->reneg_count = 0;
   }
   if (st->reneg_count >= limit) {
-    ssl_trigger_handshake(s, 0);
-    return 0;
+    return US_TLS_ERROR_RENEGOTIATION_LIMIT;
   }
   st->reneg_count++;
   if (!SSL_renegotiate(s_ssl(s))) {
-    ssl_trigger_handshake(s, 0);
-    return 0;
+    return US_TLS_ERROR_RENEGOTIATION_REFUSED;
   }
-  return 1;
+  return 0;
+}
+
+/* A refusal is not the result of a handshake: the owner gets what this read
+ * decrypted, then the error, then the close. */
+static void ssl_refuse_renegotiation(struct us_socket_t *s, uint32_t kind, int read) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  /* Read before a dispatch runs JS: the error queue belongs to the thread. */
+  struct us_tls_error_t error = {
+      .kind = kind,
+      .ssl_error = kind == US_TLS_ERROR_RENEGOTIATION_REFUSED ? (uint32_t)ERR_peek_error() : 0};
+  ERR_clear_error();
+  /* The close below reports no handshake. */
+  s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  ssl_flush_pending_events(s);
+  if (ssl_gone(s)) return;
+  if (read) {
+    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+    if (!s || ssl_gone(s)) return;
+  }
+  /* After the data: a socket with a fatal error reports that it is shut down. */
+  s->ssl_fatal_error = 1;
+  us_dispatch_tls_error(s, error);
+  if (ssl_gone(s)) return;
+  us_internal_ssl_close(s, 0, NULL);
 }
 
 /* Returns 1 if shutdown is complete (or impossible) and the TCP socket may be
@@ -2480,7 +2502,14 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
-          if (ssl_renegotiate(s)) continue;
+          uint32_t refusal = ssl_renegotiate(s);
+          if (!refusal) continue;
+          if (!us_internal_ssl_is_shut_down(s)) {
+            ssl_refuse_renegotiation(s, refusal, read);
+            return NULL;
+          }
+          /* After our own close_notify or FIN the request has no answer. */
+          ssl_trigger_handshake(s, 0);
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {

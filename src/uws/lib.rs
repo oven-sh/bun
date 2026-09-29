@@ -92,7 +92,10 @@ pub use bun_uws_sys::{
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
 // (`createBunSocketErrorToJS` / `verifyErrorToJS`) live as extension traits
 // in the *_jsc crate.
-pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
+pub use bun_uws_sys::{
+    Opcode, SendStatus, TlsErrorKind, create_bun_socket_error_t, us_bun_verify_error_t,
+    us_tls_error_t,
+};
 
 /// Owned socket-address shape (boxed IP). Distinct from the sys type by
 /// design — that one stores the IP text inline as returned from
@@ -159,7 +162,7 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL,
+            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, ERR_get_error, OwnedSslCtx, SSL,
             SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
             SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
             SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
@@ -172,7 +175,7 @@ pub mod ssl_wrapper {
         };
     }
 
-    use crate::us_bun_verify_error_t;
+    use crate::{us_bun_verify_error_t, us_tls_error_t};
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
 
@@ -215,6 +218,37 @@ pub mod ssl_wrapper {
     const MAX_RENEGOTIATIONS: u8 = 3;
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
+
+    /// Answers a HelloRequest: `None` starts the renegotiation, `Some` refuses it.
+    /// The count resets each [`MAX_RENEGOTIATION_WINDOW`], like `us_reneg_policy`
+    /// in openssl.c. Not generic, so there is one copy for every owner type.
+    #[cold]
+    fn renegotiation_refusal(
+        count: &Cell<u8>,
+        window_start: &Cell<Option<std::time::Instant>>,
+        ssl: NonNull<boring_sys::SSL>,
+    ) -> Option<us_tls_error_t> {
+        let now = std::time::Instant::now();
+        match window_start.get() {
+            Some(start) if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
+            _ => {
+                window_start.set(Some(now));
+                count.set(0);
+            }
+        }
+        let allowed = count.get() < MAX_RENEGOTIATIONS;
+        count.set(count.get().saturating_add(1));
+        if !allowed {
+            return Some(us_tls_error_t::renegotiation_limit());
+        }
+        // SAFETY: the caller passes the live SSL* of its wrapper.
+        if unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0 {
+            return None;
+        }
+        let ssl_error = boring_sys::ERR_get_error();
+        boring_sys::ERR_clear_error();
+        Some(us_tls_error_t::renegotiation_refused(ssl_error))
+    }
 
     /// What BoringSSL's callbacks read and write. The `SSL` points at it: see `us_ssl_set_wrapper`.
     struct CallbackState {
@@ -263,9 +297,13 @@ pub mod ssl_wrapper {
         pub(crate) ctx: Cell<Option<boring_sys::OwnedSslCtx>>,
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
-        pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
+        pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
     }
+
+    // One allocation for each TLS connection over a Duplex, a pipe or a tunnel. 224 bytes is a size class of mimalloc.
+    #[cfg(target_pointer_width = "64")]
+    const _: () = assert!(core::mem::size_of::<Inner<*mut ()>>() == 224);
 
     /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -393,7 +431,7 @@ pub mod ssl_wrapper {
         InlineRejected,
         /// `SSL_do_handshake` failed.
         HandshakeError,
-        /// Closed before the handshake finished, or a renegotiation was refused.
+        /// Closed before the handshake finished, or a renegotiation was refused after our own close_notify.
         Aborted,
     }
 
@@ -406,6 +444,8 @@ pub mod ssl_wrapper {
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
+        /// The TLS engine gave up on the connection. `on_close` follows.
+        pub on_tls_error: fn(T, us_tls_error_t),
         /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
         /// - node's `'session'` event. `None` opts the SSL out of session
         /// parking entirely (fetch / WebSocket tunnels have no consumer).
@@ -951,6 +991,14 @@ pub mod ssl_wrapper {
             (handlers.on_handshake)(handlers.ctx, success, result);
         }
 
+        fn trigger_tls_error_callback(&self, error: us_tls_error_t) {
+            if self.flags.closed_notified() {
+                return;
+            }
+            let handlers = self.handlers.get();
+            (handlers.on_tls_error)(handlers.ctx, error);
+        }
+
         fn trigger_wanna_write_callback(&self, data: &[u8]) {
             if self.flags.closed_notified() {
                 return;
@@ -1148,38 +1196,41 @@ pub mod ssl_wrapper {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
-                            // An over-limit renegotiation request is treated
-                            // like a failed SSL_renegotiate(). The count
-                            // resets each MAX_RENEGOTIATION_WINDOW, matching
-                            // the C path's `us_reneg_policy`.
-                            let now = std::time::Instant::now();
-                            match self.renegotiation_window_start.get() {
-                                Some(start)
-                                    if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
-                                _ => {
-                                    self.renegotiation_window_start.set(Some(now));
-                                    self.renegotiation_count.set(0);
-                                }
-                            }
-                            let renegotiation_allowed =
-                                self.renegotiation_count.get() < MAX_RENEGOTIATIONS;
-                            self.renegotiation_count
-                                .set(self.renegotiation_count.get().saturating_add(1));
-                            // SAFETY: ssl is still valid.
-                            let renegotiated = renegotiation_allowed
-                                && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
-                            if !renegotiated {
-                                self.flags
-                                    .set_handshake_state(HandshakeState::HandshakeCompleted);
-                                // we failed to renegotiate
+                            let Some(refusal) = renegotiation_refusal(
+                                &self.renegotiation_count,
+                                &self.renegotiation_window_start,
+                                ssl,
+                            ) else {
+                                // ok, we are done here, we need to call SSL_read again
+                                // this dont mean that we are done with the handshake renegotiation
+                                // we need to call SSL_read again
+                                continue;
+                            };
+                            self.flags
+                                .set_handshake_state(HandshakeState::HandshakeCompleted);
+                            if self.is_shutdown() {
+                                // After our own close_notify the request has no answer.
                                 self.trigger_handshake_callback(HandshakeOutcome::Aborted);
                                 self.trigger_close_callback();
                                 return false;
                             }
-                            // ok, we are done here, we need to call SSL_read again
-                            // this dont mean that we are done with the handshake renegotiation
-                            // we need to call SSL_read again
-                            continue;
+                            // A refusal is not the result of a handshake: the owner gets
+                            // what this read decrypted, then the error, then the close.
+                            self.flush_pending_events();
+                            if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                return false;
+                            }
+                            if read > 0 {
+                                // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                                self.trigger_data_callback(unsafe { buffer.filled(read) });
+                                if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                    return false;
+                                }
+                            }
+                            self.flags.set_fatal_error(true);
+                            self.trigger_tls_error_callback(refusal);
+                            self.trigger_close_callback();
+                            return false;
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html

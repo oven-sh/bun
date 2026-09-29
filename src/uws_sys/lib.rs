@@ -104,6 +104,53 @@ impl us_bun_verify_error_t {
     }
 }
 
+/// `struct us_tls_error_t`: why the TLS engine gave up on a connection. The
+/// owner gets it through its TLS error report, never as a handshake result.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct us_tls_error_t {
+    /// A `US_TLS_ERROR_*` value. Read it through [`Self::kind`].
+    kind: u32,
+    /// The packed BoringSSL error of [`TlsErrorKind::RenegotiationRefused`], or 0.
+    pub ssl_error: u32,
+}
+
+const _: () = assert!(core::mem::size_of::<us_tls_error_t>() == 8);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TlsErrorKind {
+    /// The peer asked for more renegotiations than the limit allows.
+    RenegotiationLimit,
+    /// BoringSSL did not start the renegotiation.
+    RenegotiationRefused,
+}
+
+impl us_tls_error_t {
+    const RENEGOTIATION_LIMIT: u32 = 1;
+    const RENEGOTIATION_REFUSED: u32 = 2;
+
+    pub const fn renegotiation_limit() -> Self {
+        Self {
+            kind: Self::RENEGOTIATION_LIMIT,
+            ssl_error: 0,
+        }
+    }
+
+    pub const fn renegotiation_refused(ssl_error: u32) -> Self {
+        Self {
+            kind: Self::RENEGOTIATION_REFUSED,
+            ssl_error,
+        }
+    }
+
+    pub fn kind(&self) -> TlsErrorKind {
+        match self.kind {
+            Self::RENEGOTIATION_LIMIT => TlsErrorKind::RenegotiationLimit,
+            _ => TlsErrorKind::RenegotiationRefused,
+        }
+    }
+}
+
 /// `enum create_bun_socket_error_t` — out-param from `us_ssl_ctx_from_options`.
 #[repr(C)]
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]

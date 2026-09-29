@@ -154,18 +154,25 @@ it("cpus", () => {
 // its own value, so an entry that is filled from the wrong id fails.
 const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
 
-// Compiles redirect-open.c. `path` is undefined where ptrace is not permitted.
+// Compiles redirect-open.c. `path` is undefined on a host that cannot run it.
+// `error` is the compiler output when the file does not compile.
 async function buildRedirectOpen() {
   const dir = tempDir("os-cpus-redirect-open", {});
   const path = join(String(dir), "redirect-open");
   const run = async cmd => {
-    await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { output: stdout + stderr, exitCode };
+    try {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, exitCode };
+    } catch {
+      // The file cannot be executed, for example from a directory that is mounted noexec.
+      return { output: "", exitCode: 126 };
+    }
   };
   const compile = await run([cc, "-O1", "-o", path, join(import.meta.dir, "redirect-open.c")]);
+  if (compile.exitCode === 126) return { dir };
   if (compile.exitCode !== 0) return { dir, error: compile.output };
-  // 126: the kernel or a sandbox does not permit ptrace.
+  // redirect-open exits 126 when the kernel or a sandbox does not permit ptrace.
   const probe = await run([path, "/proc/stat", "--", "true"]);
   return { dir, path: probe.exitCode === 126 ? undefined : path };
 }

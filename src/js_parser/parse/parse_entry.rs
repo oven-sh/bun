@@ -82,7 +82,7 @@ impl<'a> ParsedOnly<'_, 'a> {
         self.starts()?.class_elements.get(&at.start).copied()
     }
     fn starts(&self) -> Option<&crate::p::StartsForParseOnly> {
-        self.p.starts_for_parse_only.as_ref()
+        self.p.starts_for_parse_only.as_deref()
     }
     pub fn import_path(&self, import_record_index: u32) -> &[u8] {
         self.p
@@ -442,7 +442,7 @@ impl<'a> Parser<'a> {
             self.bump, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
-        p.starts_for_parse_only = Some(Default::default());
+        p.starts_for_parse_only = Some(Box::default());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }

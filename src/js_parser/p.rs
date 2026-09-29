@@ -382,7 +382,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) stack_check: bun_core::StackCheck,
     /// `Parser::parse_only`: where what does not say so itself starts.
-    pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
+    pub(crate) starts_for_parse_only: Option<Box<StartsForParseOnly>>,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -728,6 +728,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 // `<'a, TYPESCRIPT, J, SCAN_ONLY>`). Wired in `prepare_for_visit_pass`.
 pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
+
+// Every parse holds one `P`. State that only one entry point reads goes behind a `Box`, as `starts_for_parse_only`
+// does, so that the other parses do not carry it.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<P<'static, true, false>>() <= 3888);
 
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {

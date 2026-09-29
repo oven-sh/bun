@@ -1156,13 +1156,14 @@ test.each(["GET", "POST"])("re-sends a %s once when the connection failed before
   }
 });
 
-// The origin can also end the stream itself after it acted on the request.
-// The connection stays up, so a second send reaches the same origin and its
-// handler runs again. Bun.serve does neither of these, so a node:quic server
-// is the origin here.
-describe("the origin read the request and ended the stream with no final response", () => {
+// The origin can also end the stream itself, with the connection still up. A
+// second send then reaches the same origin and its handler runs again. Only
+// H3_REQUEST_REJECTED says that the origin did not process the request
+// (RFC 9114 section 4.1.1). Bun.serve sends none of these, so a node:quic
+// server is the origin here.
+describe("the origin ended the stream with no final response", () => {
   const encoder = new TextEncoder();
-  const listenOrigin = (endWithoutResponse: (stream: any) => void, applied: string[]) =>
+  const listenOrigin = (endWithoutResponse: (stream: any) => void, received: string[]) =>
     listen(
       async (session: any) => {
         session.onstream = (stream: any) => stream.closed.catch(() => {});
@@ -1171,43 +1172,42 @@ describe("the origin read the request and ended the stream with no final respons
       {
         sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
         transportParams: { maxIdleTimeout: 5 },
-        async onheaders(this: any, received: Record<string, string>) {
+        async onheaders(this: any, headers: Record<string, string>) {
           for await (const _ of this);
-          applied.push(received[":method"]);
-          if (applied.length === 1) return endWithoutResponse(this);
+          received.push(headers[":method"]);
+          if (received.length === 1) return endWithoutResponse(this);
           this.sendHeaders({ ":status": "200" });
           this.writer.writeSync(encoder.encode("ok"));
           this.writer.endSync();
         },
       },
     );
+  const internalError = (stream: any) => stream.resetStream(0x102n);
+  const requestRejected = (stream: any) => stream.resetStream(0x10bn);
+  const interimOnly = (stream: any) => {
+    stream.sendInformationalHeaders({ ":status": "103" });
+    stream.writer.endSync();
+  };
 
-  describe.each([
-    ["RESET_STREAM(H3_INTERNAL_ERROR)", (stream: any) => stream.resetStream(0x102n)],
-    [
-      "a 103 and then the end of the stream",
-      (stream: any) => {
-        stream.sendInformationalHeaders({ ":status": "103" });
-        stream.writer.endSync();
-      },
-    ],
-  ])("with %s", (_name, endWithoutResponse) => {
-    test.each([
-      ["POST", { outcome: "HTTP3StreamReset", applied: ["POST"] }],
-      ["PUT", { outcome: "ok", applied: ["PUT", "PUT"] }],
-    ])("%s", async (method, expected) => {
-      const applied: string[] = [];
-      const origin = await listenOrigin(endWithoutResponse, applied);
-      try {
-        const outcome = await fetch(`https://127.0.0.1:${origin.address.port}/`, { ...h3, method, body: "one order" })
-          .then(r => r.text())
-          .catch(e => e.code);
-        expect({ outcome, applied }).toEqual(expected);
-      } finally {
-        // Not close(): it waits for the session that fetch() keeps in its pool.
-        await origin.destroy();
-      }
-    });
+  test.each([
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "POST", internalError, { outcome: "HTTP3StreamReset", received: ["POST"] }],
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "PUT", internalError, { outcome: "ok", received: ["PUT", "PUT"] }],
+    ["a 103 and the end of the stream", "POST", interimOnly, { outcome: "HTTP3StreamReset", received: ["POST"] }],
+    ["a 103 and the end of the stream", "PUT", interimOnly, { outcome: "ok", received: ["PUT", "PUT"] }],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "POST", requestRejected, { outcome: "ok", received: ["POST", "POST"] }],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "PUT", requestRejected, { outcome: "ok", received: ["PUT", "PUT"] }],
+  ])("%s: %s", async (_name, method, endWithoutResponse, expected) => {
+    const received: string[] = [];
+    const origin = await listenOrigin(endWithoutResponse, received);
+    try {
+      const outcome = await fetch(`https://127.0.0.1:${origin.address.port}/`, { ...h3, method, body: "one order" })
+        .then(r => r.text())
+        .catch(e => e.code);
+      expect({ outcome, received }).toEqual(expected);
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
+    }
   });
 });
 

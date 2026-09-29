@@ -271,7 +271,7 @@ impl ClientSession {
         // forming `&mut HTTPClient` across the `detach()` below.
         let client_ref = bun_ptr::ParentRef::from(client_ptr);
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
-        let replay_safe = !st.headers_sent || client_ref.method.is_idempotent();
+        let replay_safe = !st.headers_sent || st.peer_rejected || client_ref.method.is_idempotent();
         if client_ref.flags.h3_retried || st.is_streaming_body || !replay_safe {
             return self.fail(stream, err);
         }

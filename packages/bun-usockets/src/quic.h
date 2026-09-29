@@ -145,6 +145,9 @@ void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
+/* The application error code of the peer's RESET_STREAM or STOP_SENDING, or -1
+ * when the peer sent neither. */
+int64_t us_quic_stream_peer_reset_code(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);

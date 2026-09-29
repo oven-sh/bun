@@ -20,6 +20,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
     safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_peer_reset_code(s: &mut Stream) -> i64;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
@@ -54,6 +55,12 @@ impl Stream {
 
     pub fn reset(&mut self) {
         us_quic_stream_reset(self)
+    }
+
+    /// The application error code of the peer's RESET_STREAM or STOP_SENDING,
+    /// if it sent one.
+    pub fn peer_reset_code(&mut self) -> Option<u64> {
+        u64::try_from(us_quic_stream_peer_reset_code(self)).ok()
     }
 
     pub fn header_count(&mut self) -> c_uint {

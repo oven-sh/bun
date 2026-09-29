@@ -138,7 +138,14 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&&);
+    // Deferred makes the checks of Now and keeps the options. start() then dials.
+    enum class Dial : bool { Now,
+        Deferred };
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&&, Dial = Dial::Now);
+    // Dials a Deferred socket one time, with these headers. An exception also fails the connection.
+    ExceptionOr<void> start(std::optional<FetchHeaders::Init>&& headers);
+    // Fails a Deferred socket like a refused connection: error event, then close 1006.
+    void failToStart(String&& reason);
     ~WebSocket();
 
     enum State {
@@ -315,7 +322,8 @@ private:
     // ActiveDOMObject. Read from the GC thread; a stale answer keeps or drops the wrapper one
     // cycle early or late, as upstream tolerates.
     void stop() final;
-    bool virtualHasPendingActivity() const final { return m_state != CLOSED; }
+    // A Deferred socket has nothing that can call back, so only script keeps it alive until start().
+    bool virtualHasPendingActivity() const final { return m_state == CONNECTING ? !m_prepared : m_state != CLOSED; }
 
     explicit WebSocket(ScriptExecutionContext&);
 
@@ -328,10 +336,13 @@ private:
         bool isUnix;
         bool isSecure;
     };
+    struct Prepared;
     // Sets m_url, then checks it and the subprotocols. Dials nothing. A rejected socket is CLOSED.
     ExceptionOr<Transport> validate(const String& url, const Vector<String>& protocols);
     // Takes the options, then connects.
     ExceptionOr<void> dial(const String& url, WebSocketOptions&&, std::optional<struct ProxyConfig>&&);
+    // The Deferred form of dial(): checks what dial() would reject, then keeps the options.
+    ExceptionOr<void> prepare(const String& url, WebSocketOptions&&, std::optional<struct ProxyConfig>&&);
     // Reports a failure found before a socket exists like a refused connection: error event, then close 1006.
     void dispatchConnectFailure(String&& reason);
 
@@ -366,8 +377,11 @@ private:
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };
-    AnyWebSocket m_connectedWebSocket { nullptr };
+    // Before the union, in the padding after the flags, so that m_prepared adds no bytes.
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
+    AnyWebSocket m_connectedWebSocket { nullptr };
+    // The options of a Deferred socket until start(). Also read from the GC thread, like m_state.
+    std::unique_ptr<Prepared> m_prepared;
     // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or
     // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

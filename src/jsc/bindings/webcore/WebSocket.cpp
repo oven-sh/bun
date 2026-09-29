@@ -173,6 +173,23 @@ ASCIILiteral WebSocket::subprotocolSeparator()
     return ", "_s;
 }
 
+// The proxy of one dial. connect() consumes it.
+struct ProxyConfig {
+    String host;
+    uint16_t port { 0 };
+    String authorization;
+    Vector<std::pair<String, String>> headers;
+    bool isHTTPS { false };
+};
+
+// What dial() takes, but for the headers, of a Deferred socket. Defined before ~WebSocket(), which destroys it.
+struct WebSocket::Prepared {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Prepared);
+
+    WebSocketOptions options;
+    std::optional<ProxyConfig> proxy;
+};
+
 WebSocket::WebSocket(ScriptExecutionContext& context)
     : ActiveDOMObject(&context)
     , m_subprotocol(emptyString())
@@ -199,15 +216,6 @@ WebSocket::~WebSocket()
     }
     }
 }
-
-// Transient proxy configuration - used only during connect() and not stored as member fields
-struct ProxyConfig {
-    String host;
-    uint16_t port { 0 };
-    String authorization;
-    Vector<std::pair<String, String>> headers;
-    bool isHTTPS { false };
-};
 
 static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
 {
@@ -314,7 +322,23 @@ ALWAYS_INLINE ExceptionOr<void> WebSocket::dial(const String& url, WebSocketOpti
     return connect(url, options.protocols, WTF::move(options.headersInit), WTF::move(proxyConfig));
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, WebSocketOptions&& options)
+ALWAYS_INLINE ExceptionOr<void> WebSocket::prepare(const String& url, WebSocketOptions&& options, std::optional<ProxyConfig>&& proxyConfig)
+{
+    auto transport = validate(url, options.protocols);
+    if (transport.hasException())
+        return transport.releaseException();
+
+    auto headers = FetchHeaders::create(WTF::move(options.headersInit));
+    if (headers.hasException()) [[unlikely]] {
+        m_state = CLOSED;
+        return headers.releaseException();
+    }
+
+    m_prepared = makeUnique<Prepared>(Prepared { WTF::move(options), WTF::move(proxyConfig) });
+    return {};
+}
+
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, WebSocketOptions&& options, Dial when)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -329,11 +353,35 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     if (socket->m_state == CLOSED)
         return socket;
 
-    auto result = socket->dial(url, WTF::move(options), proxyConfigResult.releaseReturnValue());
+    auto result = when == Dial::Deferred
+        ? socket->prepare(url, WTF::move(options), proxyConfigResult.releaseReturnValue())
+        : socket->dial(url, WTF::move(options), proxyConfigResult.releaseReturnValue());
     if (result.hasException())
         return result.releaseException();
 
     return socket;
+}
+
+ExceptionOr<void> WebSocket::start(std::optional<FetchHeaders::Init>&& headersInit)
+{
+    auto prepared = std::exchange(m_prepared, nullptr);
+    if (!prepared || m_state != CONNECTING)
+        return {};
+
+    prepared->options.headersInit = WTF::move(headersInit);
+    // connect() assigns m_url, so it cannot take a reference to the string inside it.
+    String url = m_url.string();
+    auto result = dial(url, WTF::move(prepared->options), WTF::move(prepared->proxy));
+    if (result.hasException()) [[unlikely]]
+        dispatchConnectFailure(String { result.exception().message() });
+    return result;
+}
+
+void WebSocket::failToStart(String&& reason)
+{
+    if (!std::exchange(m_prepared, nullptr) || m_state != CONNECTING)
+        return;
+    dispatchConnectFailure(WTF::move(reason));
 }
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
@@ -644,7 +692,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     if (this->m_upgradeClient == nullptr) {
         dispatchConnectFailure("Failed to connect"_s);
-        // create() still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
+        // create() or the wrapper still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
         m_pendingActivity = nullptr;
         return {};
     }
@@ -800,6 +848,7 @@ void WebSocket::failConnectingWebSocket()
 {
     ASSERT(m_state == CONNECTING);
     m_state = CLOSING;
+    m_prepared = nullptr;
     cancelUpgradeClient();
 
     if (!scriptExecutionContext()) {
@@ -948,6 +997,7 @@ void WebSocket::cancelConnectedClient()
 void WebSocket::stop()
 {
     m_state = CLOSED;
+    m_prepared = nullptr;
     cancelUpgradeClient();
     switch (std::exchange(m_connectedWebSocketKind, ConnectedWebSocketKind::None)) {
     case ConnectedWebSocketKind::Client:

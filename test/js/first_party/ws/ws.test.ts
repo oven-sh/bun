@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -606,6 +606,554 @@ it("close event", async () => {
   );
 
   wss.close();
+});
+
+// https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L1020-L1024
+// https://github.com/websockets/ws/blob/8.18.3/doc/ws.md#new-websocketaddress-protocols-options
+describe("WebSocket finishRequest", () => {
+  // Records the authorization header of every upgrade request, and tells each client which one it got.
+  function serve(options: { tls?: typeof tls; unix?: string } = {}) {
+    const upgrades: (string | null)[] = [];
+    const server = Bun.serve({
+      ...(options.unix ? { unix: options.unix } : { port: 0, hostname: "127.0.0.1" }),
+      ...(options.tls ? { tls: options.tls } : {}),
+      fetch(req, server) {
+        const authorization = req.headers.get("authorization");
+        upgrades.push(authorization);
+        if (server.upgrade(req, { data: authorization })) return;
+        return new Response("upgrade failed", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("authorization=" + ws.data);
+        },
+        message() {},
+      },
+    });
+    return { server, upgrades, url: `ws://127.0.0.1:${server.port}/` };
+  }
+
+  // Resolves with the first message. A client that fails or closes first rejects.
+  function firstMessage(ws: WebSocket) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    ws.on("message", data => resolve(Buffer.from(data as Buffer).toString()));
+    ws.on("error", error => reject(new Error("error before a message: " + error.message)));
+    ws.on("close", code => reject(new Error(`close ${code} before a message`)));
+    return promise;
+  }
+
+  // A client with no finishRequest, up to its first message. Each connection reaches the server
+  // in the order of its dial, so when this resolves, the server has every upgrade request of a
+  // client that dialed before it.
+  async function laterClient(url: string) {
+    const ws = new WebSocket(url);
+    try {
+      await firstMessage(ws);
+    } finally {
+      ws.terminate();
+    }
+  }
+
+  function authorize(req: any) {
+    req.setHeader("authorization", "token");
+    req.end();
+  }
+
+  const later = [
+    ["in a microtask", (req: any) => queueMicrotask(() => authorize(req))],
+    ["in a later task", (req: any) => void setImmediate(() => authorize(req))],
+    [
+      "after an await",
+      async (req: any) => {
+        await Promise.resolve();
+        authorize(req);
+      },
+    ],
+  ] as const;
+
+  describe.each(later)("that calls req.end() %s", (_when, finishRequest) => {
+    it("opens one connection, with the headers set before req.end()", async () => {
+      const { server, upgrades, url } = serve();
+      using _ = server;
+
+      const ws = new WebSocket(url, { finishRequest });
+      const events: string[] = [];
+      ws.on("open", () => events.push("open"));
+      const message = await firstMessage(ws);
+      ws.terminate();
+
+      expect({ upgrades, events, message }).toEqual({
+        upgrades: ["token"],
+        events: ["open"],
+        message: "authorization=token",
+      });
+    });
+
+    it("gives the events of that connection to every listener added before req.end()", async () => {
+      const { server, upgrades, url } = serve();
+      using _ = server;
+
+      const ws = new WebSocket(url, ["a", "b"], { finishRequest });
+      const events: string[] = [];
+      ws.on("upgrade", response => events.push("upgrade " + response.statusCode));
+      ws.on("open", () => events.push("on open"));
+      ws.once("open", () => events.push("once open"));
+      ws.addEventListener("open", () => events.push("addEventListener open"));
+      ws.onopen = () => events.push("onopen");
+      ws.binaryType = "arraybuffer";
+      ws.onmessage = event => events.push("onmessage " + event.data);
+      ws.on("message", data => events.push(`on message ${shapeOf(data)} ${Buffer.from(data as Buffer)}`));
+      const before = { readyState: ws.readyState, protocol: ws.protocol, upgrades: [...upgrades] };
+      await firstMessage(ws);
+      const after = { readyState: ws.readyState, protocol: ws.protocol, binaryType: ws.binaryType };
+      ws.terminate();
+
+      expect({ before, upgrades, events, after }).toEqual({
+        before: { readyState: WebSocket.CONNECTING, protocol: "", upgrades: [] },
+        upgrades: ["token"],
+        events: [
+          "upgrade 101",
+          "on open",
+          "once open",
+          "addEventListener open",
+          "onopen",
+          "onmessage authorization=token",
+          "on message [object Uint8Array] authorization=token",
+        ],
+        after: { readyState: WebSocket.OPEN, protocol: "a", binaryType: "arraybuffer" },
+      });
+    });
+  });
+
+  // main dials when finishRequest returns, so it sends the headers of the options past a finishRequest that holds them.
+  it.each([
+    ["returns", (req: any) => void req.setHeader("x-late", "1")],
+    ["waits for 'socket'", (req: any) => void req.on("socket", () => req.end())],
+    ["calls req.abort()", (req: any) => void req.abort()],
+  ])("sends no handshake when finishRequest %s and does not call req.end()", async (_label, finishRequest) => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    const events: string[] = [];
+    const ws = new WebSocket(url, { headers: { authorization: "secret" }, finishRequest });
+    for (const event of ["open", "error", "close"]) ws.on(event, () => events.push(event));
+    await laterClient(url);
+
+    expect({ upgrades, events, readyState: ws.readyState }).toEqual({
+      upgrades: [null],
+      events: [],
+      readyState: WebSocket.CONNECTING,
+    });
+  });
+
+  it.each(["close", "terminate"] as const)(
+    "%s() before req.end() fails the client, and req.end() sends no handshake after it",
+    async method => {
+      const { server, upgrades, url } = serve();
+      using _ = server;
+
+      let request: any;
+      const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      ws.on("open", () => events.push("open"));
+      ws.on("error", () => events.push("error"));
+      ws.on("close", code => {
+        events.push("close " + code);
+        closed.resolve();
+      });
+      ws[method]();
+      const readyStateAfterCall = ws.readyState;
+      await closed.promise;
+      authorize(request);
+      await laterClient(url);
+
+      expect({ readyStateAfterCall, events, readyState: ws.readyState, upgrades }).toEqual({
+        readyStateAfterCall: WebSocket.CLOSING,
+        events: ["error", "close 1006"],
+        readyState: WebSocket.CLOSED,
+        upgrades: [null],
+      });
+    },
+  );
+
+  it("sends one handshake when req.end() is called more than once", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    let request: any;
+    const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
+    const message = firstMessage(ws);
+    authorize(request);
+    request.end();
+    await message;
+    request.end();
+    await laterClient(url);
+    ws.terminate();
+
+    expect(upgrades).toEqual(["token", null]);
+  });
+
+  // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L655-L673
+  it("reads the options in the constructor, and not again at req.end()", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    const protocols = ["a"];
+    let reads = 0;
+    const tlsOptions = {
+      get rejectUnauthorized() {
+        reads++;
+        return false;
+      },
+    };
+    let request: any;
+    const ws = new WebSocket(url, protocols, { tls: tlsOptions, finishRequest: req => void (request = req) });
+    const readsInConstructor = reads;
+    // A second read finds a duplicate, which is not a valid list.
+    protocols.push("a");
+    const message = firstMessage(ws);
+    authorize(request);
+    const seen = {
+      message: await message,
+      readsInConstructor: readsInConstructor > 0,
+      readsAtEnd: reads - readsInConstructor,
+      protocol: ws.protocol,
+      upgrades,
+    };
+    ws.terminate();
+
+    expect(seen).toEqual({
+      message: "authorization=token",
+      readsInConstructor: true,
+      readsAtEnd: 0,
+      protocol: "a",
+      upgrades: ["token"],
+    });
+  });
+
+  // main makes the socket in req.end(), so its constructor throws there. The socket exists now, so it also fails.
+  it.each([
+    [
+      "that throws when it is read",
+      {
+        toString() {
+          throw new Error("from the header");
+        },
+      },
+      "Error",
+      "from the header",
+      "Invalid headers",
+    ],
+    [
+      "with a line break",
+      "a\r\nx-injected: 1",
+      "TypeError",
+      "Header 'x-late' has invalid value",
+      "Header 'x-late' has invalid value",
+    ],
+  ])("req.end() throws for a header %s, and the client fails", async (_label, value, errorClass, thrown, reason) => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    let request: any;
+    const ws = new WebSocket(url, { finishRequest: req => void (request = req) });
+    const events: string[] = [];
+    const settled = Promise.withResolvers<void>();
+    ws.on("open", () => {
+      events.push("open");
+      settled.resolve();
+    });
+    ws.on("error", error => events.push("error: " + error.message));
+    ws.on("close", code => {
+      events.push("close " + code);
+      settled.resolve();
+    });
+    request.setHeader("x-late", value);
+    let caught: any;
+    try {
+      request.end();
+    } catch (error) {
+      caught = error;
+    }
+    await settled.promise;
+    await laterClient(url);
+    ws.terminate();
+
+    expect({
+      caught: [caught?.constructor.name, caught?.message],
+      events,
+      readyState: ws.readyState,
+      upgrades,
+    }).toEqual({
+      caught: [errorClass, thrown],
+      events: [`error: WebSocket connection to '${url}' failed: ${reason}`, "close 1006"],
+      readyState: WebSocket.CLOSED,
+      upgrades: [null],
+    });
+  });
+
+  it("connects when finishRequest adds a 'socket' listener and calls req.end()", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    const ws = new WebSocket(url, {
+      finishRequest(req) {
+        req.on("socket", () => {});
+        authorize(req);
+      },
+    });
+    const message = await firstMessage(ws);
+    ws.terminate();
+
+    expect({ upgrades, message }).toEqual({ upgrades: ["token"], message: "authorization=token" });
+  });
+
+  it("passes the WebSocket as the second argument", () => {
+    const args: unknown[] = [];
+    const ws = new WebSocket("ws://127.0.0.1:1/", { finishRequest: (...rest: unknown[]) => void args.push(...rest) });
+    expect(args).toEqual([expect.objectContaining({ end: expect.any(Function) }), ws]);
+  });
+
+  it.each([
+    ["an invalid URL", "not a url", [], {}, "SyntaxError"],
+    ["a URL with a fragment", "ws://127.0.0.1:1/#fragment", [], {}, "SyntaxError"],
+    ["a duplicate subprotocol", "ws://127.0.0.1:1/", ["a", "a"], {}, "SyntaxError"],
+    ["an invalid proxy URL", "ws://127.0.0.1:1/", [], { proxy: "not a url" }, "SyntaxError"],
+    [
+      "an invalid header name in options.headers",
+      "ws://127.0.0.1:1/",
+      [],
+      { headers: { "bad name": "1" } },
+      "TypeError",
+    ],
+    ["an invalid tls option", "wss://127.0.0.1:1/", [], { tls: { ca: 123 } }, "TypeError"],
+  ])("throws for %s before it calls finishRequest", (_label, address, protocols, options, errorClass) => {
+    let calls = 0;
+    let thrown: string | undefined;
+    try {
+      new WebSocket(address, protocols, { ...options, finishRequest: () => void calls++ } as any);
+    } catch (error: any) {
+      thrown = error.constructor.name;
+    }
+    expect({ thrown, calls }).toEqual({ thrown: errorClass, calls: 0 });
+  });
+
+  it("throws what finishRequest throws, and sends no handshake", async () => {
+    const { server, upgrades, url } = serve();
+    using _ = server;
+
+    const error = new Error("from finishRequest");
+    expect(() => {
+      new WebSocket(url, {
+        finishRequest() {
+          throw error;
+        },
+      });
+    }).toThrow(error);
+    await laterClient(url);
+
+    expect(upgrades).toEqual([null]);
+  });
+
+  it("connects over TLS", async () => {
+    const { server, upgrades } = serve({ tls });
+    using _ = server;
+
+    const ws = new WebSocket(`wss://localhost:${server.port}/`, { tls: { ca: tls.cert }, finishRequest: later[0][1] });
+    const message = await firstMessage(ws);
+    ws.terminate();
+
+    expect({ upgrades, message }).toEqual({ upgrades: ["token"], message: "authorization=token" });
+  });
+
+  describe("in a Bun.ModuleGraph", () => {
+    const clients = /* js */ `
+      import { WebSocket } from "ws";
+      export const requests = [];
+      export const withoutFinishRequest = url => new WebSocket(url);
+      export const withFinishRequest = url => new WebSocket(url, { finishRequest: req => req.end() });
+      export const withLateEnd = url =>
+        new WebSocket(url, { finishRequest: req => void queueMicrotask(() => req.end()) });
+      export const withoutEnd = url => new WebSocket(url, { finishRequest: req => void requests.push(req) });
+    `;
+
+    // What the code of a graph makes belongs to the graph, with or without finishRequest.
+    it("dispose() stops the client", async () => {
+      const { server, url } = serve();
+      using _ = server;
+      using dir = tempDir("ws-finish-request-graph", { "clients.mjs": clients });
+
+      const readyStates: Record<string, number[]> = {};
+      for (const kind of ["withoutFinishRequest", "withFinishRequest", "withLateEnd"]) {
+        using graph = new Bun.ModuleGraph();
+        const made = await graph.import(path.join(String(dir), "clients.mjs"));
+        const ws: WebSocket = await graph.run(() => made[kind](url));
+        await firstMessage(ws);
+        const open = ws.readyState;
+        graph.dispose();
+        readyStates[kind] = [open, ws.readyState];
+      }
+
+      expect(readyStates).toEqual({
+        withoutFinishRequest: [WebSocket.OPEN, WebSocket.CLOSING],
+        withFinishRequest: [WebSocket.OPEN, WebSocket.CLOSING],
+        withLateEnd: [WebSocket.OPEN, WebSocket.CLOSING],
+      });
+    });
+
+    it("req.end() after dispose() sends no handshake", async () => {
+      const { server, upgrades, url } = serve();
+      using _ = server;
+      using dir = tempDir("ws-finish-request-graph", { "clients.mjs": clients });
+
+      using graph = new Bun.ModuleGraph();
+      const made = await graph.import(path.join(String(dir), "clients.mjs"));
+      const ws: WebSocket = await graph.run(() => made.withoutEnd(url));
+      const prepared = ws.readyState;
+      graph.dispose();
+      authorize(made.requests[0]);
+      await laterClient(url);
+
+      expect({ prepared, readyState: ws.readyState, upgrades }).toEqual({
+        prepared: WebSocket.CONNECTING,
+        readyState: WebSocket.CLOSED,
+        upgrades: [null],
+      });
+    });
+  });
+
+  it.skipIf(isWindows)("connects over a unix socket", async () => {
+    using dir = tempDir("ws-finish-request", {});
+    const unix = path.join(String(dir), "ws.sock");
+    const { server, upgrades } = serve({ unix });
+    using _ = server;
+
+    const ws = new WebSocket(`ws+unix://${unix}`, { finishRequest: later[0][1] });
+    const message = await firstMessage(ws);
+    ws.terminate();
+
+    expect({ upgrades, message }).toEqual({ upgrades: ["token"], message: "authorization=token" });
+  });
+
+  it.concurrent("a client that did not call req.end() is collected when nothing refers to it", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { heapStats } = require("bun:jsc");
+          const { WebSocket } = require("ws");
+          const count = () => heapStats().objectTypeCounts.WebSocket ?? 0;
+
+          const before = count();
+          let clients = Array.from({ length: 100 }, () => new WebSocket("ws://127.0.0.1:1/", { finishRequest() {} }));
+          const made = count() - before;
+          clients = undefined;
+          Bun.gc(true);
+          console.log(JSON.stringify({ made, collected: made - (count() - before) }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    // A client that dialed stays until its connection ends, so none of them is collected here.
+    const { made, collected } = JSON.parse(stdout);
+    expect(made).toBeGreaterThanOrEqual(100);
+    expect(collected).toBeGreaterThanOrEqual(95);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a client that only its req.end() callback refers to connects after a collection", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { WebSocket } = require("ws");
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("upgrade failed", { status: 400 })),
+            websocket: { message() {} },
+          });
+
+          const total = 20;
+          let ended = 0;
+          let opened = 0;
+          for (let i = 0; i < total; i++) {
+            new WebSocket(server.url.href.replace("http", "ws"), {
+              finishRequest(req) {
+                setImmediate(() => {
+                  req.end();
+                  if (++ended === total) Bun.gc(true);
+                });
+              },
+            }).on("open", function () {
+              this.terminate();
+              if (++opened === total) {
+                console.log(JSON.stringify({ opened }));
+                server.stop(true);
+              }
+            });
+          }
+          Bun.gc(true);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe('{"opened":20}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  // ASAN keeps freed blocks in its quarantine, so the two cases give the same RSS there.
+  it.concurrent.skipIf(isASAN)("a client closed before req.end() does not keep its tls options", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        /* js */ `
+          const { WebSocket } = require("ws");
+          // 256 KiB for each client that keeps its options: 200 clients keep about 50 MiB.
+          const tls = { ca: Buffer.alloc(256 * 1024, "A").toString(), rejectUnauthorized: false };
+          const make = () => {
+            const ws = new WebSocket("wss://127.0.0.1:1/", { tls, finishRequest() {} });
+            ws.on("error", () => {});
+            ws.terminate();
+            return ws;
+          };
+          const kept = [];
+          for (let i = 0; i < 20; i++) kept.push(make());
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 200; i++) kept.push(make());
+          Bun.gc(true);
+          const growthMiB = (process.memoryUsage.rss() - before) / (1024 * 1024);
+          console.log(JSON.stringify({ kept: kept.length, growthMiB }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { kept, growthMiB } = JSON.parse(stdout);
+    expect(kept).toBe(220);
+    expect(growthMiB).toBeLessThan(25);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/14345

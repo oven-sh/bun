@@ -156,6 +156,8 @@ function nativeOptions(protocols, headers, method, proxy, tls, disableDeflate) {
 
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+// `new WebSocket()` in two steps, for `finishRequest`: the socket exists before `request.end()` dials it.
+let prepareWebSocket, startWebSocket;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -240,6 +242,15 @@ class BunWebSocket extends EventEmitter {
           ...headers,
         };
       }
+      if (!prepareWebSocket) {
+        ({ 0: prepareWebSocket, 1: startWebSocket } = $cpp("JSWebSocket.cpp", "createWebSocketPrepareBinding"));
+      }
+      // deviation: npm ws connects here and writes the request at req.end(). This client connects at req.end().
+      const ws = (this.#ws = prepareWebSocket(
+        url,
+        nativeOptions(protocols, headers, method, proxy, tlsOptions, disableDeflate),
+      ));
+      ws.binaryType = "nodebuffer";
       let lazyRawHeaders;
       let didCallEnd = false;
       const nodeHttpClientRequestSimulated = {
@@ -269,7 +280,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+            startWebSocket(ws, headers);
           }
         },
         write() {},
@@ -296,10 +307,8 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
-      finishRequest(nodeHttpClientRequestSimulated);
-      if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
-      }
+      // deviation: the request does not emit 'socket', so a finishRequest that waits for it sends no handshake.
+      finishRequest(nodeHttpClientRequestSimulated, this);
       return;
     }
 
@@ -307,6 +316,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+    $assert(this.#ws === undefined);
     let wsOptions;
     if (headers || proxy || tls || disableDeflate) {
       wsOptions = nativeOptions(protocols, headers, method, proxy, tls, disableDeflate);

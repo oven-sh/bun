@@ -149,6 +149,49 @@ describe("ws package through HTTP CONNECT proxy", () => {
     gc();
   });
 
+  // https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L1020-L1024
+  test("ws:// through HTTP proxy when finishRequest calls req.end() later", async () => {
+    using recorded = await startRecordingProxy();
+    const upgrades: (string | null)[] = [];
+    using target = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        upgrades.push(req.headers.get("authorization"));
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("connected");
+        },
+        message(ws, message) {
+          ws.send(message);
+        },
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${target.port}`, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      finishRequest(req) {
+        queueMicrotask(() => {
+          req.setHeader("authorization", "token");
+          req.end();
+        });
+      },
+    });
+    expect({
+      events: await wsEchoSession(ws, "hello after a late end"),
+      requests: recorded.requests,
+      connections: recorded.connections,
+      upgrades,
+    }).toEqual({
+      events: echoed("hello after a late end"),
+      requests: [connectRequest(target.port)],
+      connections: 1,
+      upgrades: ["token"],
+    });
+    gc();
+  });
+
   test("ws:// through HTTP proxy with auth", async () => {
     using recorded = await startRecordingProxy({ requireAuth: true });
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {

@@ -92,5 +92,7 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 };
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
+// [prepare(url, options), start(socket, headers)], for the `finishRequest` option of the ws module.
+JSC::JSValue createWebSocketPrepareBinding(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

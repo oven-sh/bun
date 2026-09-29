@@ -4236,8 +4236,10 @@ Reo=
 
 // shutdown(true) shuts down the read side. On Linux and macOS the socket then
 // sees the end of the stream: a socket with allowHalfOpen stays open for
-// writes, and a socket without it closes. On Windows the socket sees nothing
-// and stays open.
+// writes, and a socket without it closes. A TLS socket does the same when its
+// handshake is complete, and fails its handshake when it is not. On Windows a
+// TCP socket sees nothing and stays open. What a TLS socket does on Windows is
+// not measured.
 describe("shutdown(true)", () => {
   // A connection that the peer answers: the events that were due before it
   // have run by the time it resolves.
@@ -4250,81 +4252,118 @@ describe("shutdown(true)", () => {
     server.close();
   }
 
-  for (const role of ["connected", "accepted"] as const) {
-    for (const allowHalfOpen of [false, true]) {
-      it(`${role === "accepted" ? "an accepted" : "a connected"} socket with allowHalfOpen: ${allowHalfOpen}`, async () => {
-        const calls: string[] = [];
-        const closed = Promise.withResolvers<void>();
-        const opened = Promise.withResolvers<Socket>();
-        let peerGot = "";
-        const peerGotAll = { W1: Promise.withResolvers<void>(), W1W2: Promise.withResolvers<void>() };
-        const fail = (error: unknown) => {
-          opened.reject(error);
-          closed.reject(error);
-          peerGotAll.W1.reject(error);
-          peerGotAll.W1W2.reject(error);
-        };
-        const subject = {
-          open(socket: Socket) {
-            socket.shutdown(true);
-            calls.push(`write ${socket.write("W1")}`);
-            opened.resolve(socket);
-          },
-          data() {
-            calls.push("data");
-          },
-          end() {
-            calls.push("end");
-          },
-          close() {
-            calls.push("close");
-            closed.resolve();
-          },
-          error(_socket: Socket, error: Error) {
-            fail(error);
-          },
-        };
-        const peer = {
-          data(_socket: Socket, data: Buffer) {
-            peerGot += data;
-            if (peerGot === "W1") peerGotAll.W1.resolve();
-            if (peerGot === "W1W2") peerGotAll.W1W2.resolve();
-          },
-          error(_socket: Socket, error: Error) {
-            fail(error);
-          },
-        };
-        const accepts = role === "accepted";
-        using server = Bun.listen({
-          hostname: "127.0.0.1",
-          port: 0,
-          allowHalfOpen: accepts ? allowHalfOpen : true,
-          socket: accepts ? subject : peer,
+  type Role = "connected" | "accepted";
+  type Subject = { role: Role; allowHalfOpen: boolean; secure: boolean; handshakeDone: boolean };
+
+  // The subject calls shutdown(true), then writes "W1" and later "W2".
+  async function callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone }: Subject) {
+    const calls: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const shutDown = Promise.withResolvers<Socket>();
+    let peerGot = "";
+    const peerGotAll = { W1: Promise.withResolvers<void>(), W1W2: Promise.withResolvers<void>() };
+    const fail = (error: unknown) => {
+      shutDown.reject(error);
+      closed.reject(error);
+      peerGotAll.W1.reject(error);
+      peerGotAll.W1W2.reject(error);
+    };
+    const shutdownAndWrite = (socket: Socket) => {
+      socket.shutdown(true);
+      calls.push(`write ${socket.write("W1")}`);
+      shutDown.resolve(socket);
+    };
+    const subject = {
+      open(socket: Socket) {
+        if (!secure || !handshakeDone) shutdownAndWrite(socket);
+      },
+      handshake(socket: Socket, success: boolean, error: NodeJS.ErrnoException | null) {
+        if (!handshakeDone) calls.push(`handshake ${success} ${error?.code}`);
+        else if (success) shutdownAndWrite(socket);
+        else fail(error ?? new Error("the handshake failed"));
+      },
+      data() {
+        calls.push("data");
+      },
+      end() {
+        calls.push("end");
+      },
+      close() {
+        calls.push("close");
+        closed.resolve();
+      },
+      error(_socket: Socket, error: Error) {
+        fail(error);
+      },
+    };
+    const peer = {
+      data(_socket: Socket, data: Buffer) {
+        peerGot += data;
+        if (peerGot === "W1") peerGotAll.W1.resolve();
+        if (peerGot === "W1W2") peerGotAll.W1W2.resolve();
+      },
+      error(_socket: Socket, error: Error) {
+        fail(error);
+      },
+    };
+    const accepts = role === "accepted";
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: accepts ? allowHalfOpen : true,
+      ...(secure ? { tls } : {}),
+      socket: accepts ? subject : peer,
+    });
+    using _client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      allowHalfOpen: accepts ? true : allowHalfOpen,
+      ...(secure ? { tls: { rejectUnauthorized: false } } : {}),
+      socket: { ...(accepts ? peer : subject), connectError: (_socket, error) => fail(error) },
+    });
+    const socket = await shutDown.promise;
+    if (!handshakeDone) {
+      await closed.promise;
+      return { calls, peerGot };
+    }
+    await peerGotAll.W1.promise;
+    await pendingEventsDone();
+    const stayedOpen = !calls.includes("close");
+    calls.push(`write ${socket.write("W2")}`);
+    if (stayedOpen) {
+      await peerGotAll.W1W2.promise;
+      socket.end();
+      await closed.promise;
+    }
+    return { calls, peerGot };
+  }
+
+  for (const secure of [false, true]) {
+    for (const role of ["connected", "accepted"] as const) {
+      for (const allowHalfOpen of [false, true]) {
+        const socket = `${role === "accepted" ? "an accepted" : "a connected"}${secure ? " TLS" : ""} socket`;
+
+        it.skipIf(secure && isWindows)(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
+          expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: true })).toEqual(
+            isWindows
+              ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
+              : allowHalfOpen
+                ? { calls: ["write 2", "end", "write 2", "close"], peerGot: "W1W2" }
+                : { calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" },
+          );
         });
-        using _client = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: server.port,
-          allowHalfOpen: accepts ? true : allowHalfOpen,
-          socket: { ...(accepts ? peer : subject), connectError: (_socket, error) => fail(error) },
-        });
-        const socket = await opened.promise;
-        await peerGotAll.W1.promise;
-        await pendingEventsDone();
-        const stayedOpen = !calls.includes("close");
-        calls.push(`write ${socket.write("W2")}`);
-        if (stayedOpen) {
-          await peerGotAll.W1W2.promise;
-          socket.end();
-          await closed.promise;
-        }
-        expect({ calls, peerGot }).toEqual(
-          isWindows
-            ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
-            : allowHalfOpen
-              ? { calls: ["write 2", "end", "write 2", "close"], peerGot: "W1W2" }
-              : { calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" },
+
+        if (!secure) continue;
+        it.skipIf(isWindows)(
+          `${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`,
+          async () => {
+            expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
+              calls: ["write 0", "handshake false ECONNRESET", "close"],
+              peerGot: "",
+            });
+          },
         );
-      });
+      }
     }
   }
 });

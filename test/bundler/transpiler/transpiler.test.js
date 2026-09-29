@@ -2742,62 +2742,144 @@ export default class {
       expect(output.includes("localVarToRemove")).toBe(false);
     });
 
-    it("string replacement values survive other modules being loaded after the transpiler is created", async () => {
-      // Release builds only reuse the AST store slot after a few dozen string declarations.
-      const resetLines = [];
+    describe("string values", () => {
+      // other.cjs is much larger than entry.mjs. On a release build, its parse then
+      // reuses the memory that a node in the thread-local AST store had before.
+      const otherModule = [];
       for (let i = 0; i < 300; i++) {
-        resetLines.push(`const s${i} = "other string ${i}";`);
+        otherModule.push(`exports.v${i} = function v${i}(a, b) { return [a, b, ${i}, "v${i}"].join("-"); };`);
       }
-      resetLines.push("module.exports = { s0, s299 };");
 
-      using dir = tempDir("transpiler-replace-string-values", {
-        "reset.cjs": resetLines.join("\n"),
-        "reset.json": `{}`,
-        "entry.mjs": `
-          const transpiler = new Bun.Transpiler({
-            exports: {
-              replace: {
-                foo: "bar",
-                getStaticProps: ["__N_SSG", "ssg"],
-                default: "dflt",
-              },
-            },
-          });
-
-          require("./reset.cjs");
-          await import("./reset.json");
-
-          console.log(
-            JSON.stringify([
-              transpiler.transformSync("export const foo = 1;"),
-              transpiler.transformSync("export function getStaticProps() {}"),
-              transpiler.transformSync("export default 1;"),
-              await transpiler.transform("export const foo = 1;"),
-              await transpiler.transform("export function getStaticProps() {}"),
-              await transpiler.transform("export default 1;"),
-            ]),
-          );
+      const files = {
+        "other.cjs": otherModule.join("\n"),
+        "other.json": `{}`,
+        "small.cjs": `exports.small = 1;`,
+        "macro.ts": `
+          let transpiler;
+          export function replaced() {
+            transpiler ??= new Bun.Transpiler({ exports: { replace: { foo: "bar" } } });
+            return transpiler.transformSync("export const foo = 1;");
+          }
         `,
-      });
+        "entry.mjs": `
+          import { join } from "node:path";
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "entry.mjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([
+          const replace = {
+            foo: "bar",
+            getStaticProps: ["__N_SSG", "ssg"],
+            default: "dflt",
+            empty: "",
+            nonAscii: "héllo ✓",
+          };
+          const sources = [
+            "export const foo = 1;",
+            "export function getStaticProps() {}",
+            "export default 1;",
+            "export const empty = 1;",
+            "export const nonAscii = 1;",
+          ];
+
+          async function loadOtherModules() {
+            require("./other.cjs");
+            await import("./other.json");
+          }
+
+          const cases = {
+            async transformSync() {
+              const transpiler = new Bun.Transpiler({ exports: { replace } });
+              await loadOtherModules();
+              return sources.map(source => transpiler.transformSync(source));
+            },
+            async transform() {
+              const transpiler = new Bun.Transpiler({ exports: { replace } });
+              await loadOtherModules();
+              const outputs = [];
+              for (const source of sources) outputs.push(await transpiler.transform(source));
+              return outputs;
+            },
+            async concurrent() {
+              const transpiler = new Bun.Transpiler({ exports: { replace } });
+              await loadOtherModules();
+              const pending = [];
+              const sync = [];
+              for (let i = 0; i < 16; i++) {
+                pending.push(transpiler.transform(sources[i % sources.length]));
+                sync.push(transpiler.transformSync(sources[i % sources.length]));
+              }
+              return [...(await Promise.all(pending)), ...sync];
+            },
+            async getter() {
+              const values = { foo: "bar" };
+              Object.defineProperty(values, "later", {
+                enumerable: true,
+                get() {
+                  require("./other.cjs");
+                  return 1;
+                },
+              });
+              const transpiler = new Bun.Transpiler({ exports: { replace: values } });
+              return [transpiler.transformSync("export const foo = 1; export const later = 2;")];
+            },
+            async stringObject() {
+              const value = new String("ignored");
+              value.toString = () => {
+                require("./small.cjs");
+                return "bar";
+              };
+              const transpiler = new Bun.Transpiler({ exports: { replace: { foo: value } } });
+              require("./other.cjs");
+              return [transpiler.transformSync("export const foo = 1;")];
+            },
+            async macro() {
+              const outer = new Bun.Transpiler({ loader: "ts" });
+              const source =
+                "import { replaced } from " +
+                JSON.stringify(join(import.meta.dir, "macro.ts")) +
+                ' with { type: "macro" };\\nexport const a = replaced();';
+              return [outer.transformSync(source), outer.transformSync(source), outer.transformSync(source)];
+            },
+          };
+
+          process.stdout.write((await cases[process.argv[2]]()).join(""));
+        `,
+      };
+
+      const replaced = [
         'export const foo = "bar";\n',
         'export var __N_SSG = "ssg";\n',
         'export default "dflt";\n',
-        'export const foo = "bar";\n',
-        'export var __N_SSG = "ssg";\n',
-        'export default "dflt";\n',
-      ]);
-      expect(exitCode).toBe(0);
+        'export const empty = "";\n',
+        'export const nonAscii = "héllo ✓";\n',
+      ];
+      const sixteen = Array.from({ length: 16 }, (_, i) => replaced[i % replaced.length]).join("");
+      const fromMacro = 'export const a = `export const foo = "bar";\n`;\n';
+
+      const cases = [
+        ["transformSync() after other modules are loaded", "transformSync", replaced.join("")],
+        ["transform() after other modules are loaded", "transform", replaced.join("")],
+        ["transform() and transformSync() at the same time", "concurrent", sixteen + sixteen],
+        ["a getter of a later value loads a module", "getter", 'export const foo = "bar";\nexport const later = 1;\n'],
+        ["toString() of a String object loads a module", "stringObject", 'export const foo = "bar";\n'],
+        ["a transpiler that a macro creates", "macro", fromMacro + fromMacro + fromMacro],
+      ];
+
+      for (const [name, which, expected] of cases) {
+        it.concurrent(name, async () => {
+          using dir = tempDir("transpiler-replace-string-" + which, files);
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "entry.mjs", which],
+            // symbolize=0: symbolizing a failure report outlasts the test timeout.
+            env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "inherit",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          // A debug build prints this line to stdout for each macro call.
+          expect(stdout.replaceAll("[macro] call replaced\n", "")).toBe(expected);
+          expect(exitCode).toBe(0);
+        });
+      }
     });
   });
 

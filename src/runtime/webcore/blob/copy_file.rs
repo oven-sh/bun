@@ -614,11 +614,6 @@ impl CopyFile {
     }
 
     pub(crate) fn run_async(&mut self) {
-        #[cfg(target_os = "macos")]
-        let mut stat_: Option<Stat> = None;
-        #[cfg(not(target_os = "macos"))]
-        let stat_: Option<Stat> = None;
-
         if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
             self.destination_fd = *fd;
         }
@@ -648,15 +643,13 @@ impl CopyFile {
 
                         // stat the output file, make sure it:
                         // 1. Exists
-                        match bun_sys::stat(
+                        let stat_size = match bun_sys::stat(
                             self.source_file_store
                                 .pathlike
                                 .path()
                                 .slice_z(&mut path_buf),
                         ) {
                             bun_sys::Result::Ok(result) => {
-                                stat_ = Some(result);
-
                                 if bun_sys::S::ISDIR(result.st_mode as u32) {
                                     self.system_error = Some(unsupported_directory_error());
                                     return;
@@ -665,17 +658,18 @@ impl CopyFile {
                                 if !bun_sys::S::ISREG(result.st_mode as u32) {
                                     break 'do_clonefile;
                                 }
+
+                                result.st_size
                             }
                             bun_sys::Result::Err(err) => {
                                 // If we can't stat it, we also can't copy it.
                                 self.system_error = Some(err.to_system_error());
                                 return;
                             }
-                        }
+                        };
 
                         match self.do_clonefile() {
                             Ok(()) => {
-                                let stat_size = stat_.unwrap().st_size;
                                 if self.max_length != MAX_SIZE
                                     && self.max_length
                                         < SizeType::try_from(stat_size).expect("int cast")
@@ -722,8 +716,6 @@ impl CopyFile {
                                 // or if the output is not a directory
                                 // or if it's a network volume
                                 self.system_error = None;
-                                // The path can name another file by the time it is opened.
-                                stat_ = None;
                             }
                         }
                     }
@@ -763,16 +755,13 @@ impl CopyFile {
             // nothing to do for the Fd case
         }
 
-        let stat: Stat = match stat_ {
-            Some(s) => s,
-            None => match bun_sys::fstat(self.source_fd) {
-                bun_sys::Result::Ok(result) => result,
-                bun_sys::Result::Err(err) => {
-                    self.do_close();
-                    self.system_error = Some(err.to_system_error());
-                    return;
-                }
-            },
+        let stat: Stat = match bun_sys::fstat(self.source_fd) {
+            bun_sys::Result::Ok(result) => result,
+            bun_sys::Result::Err(err) => {
+                self.do_close();
+                self.system_error = Some(err.to_system_error());
+                return;
+            }
         };
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {

@@ -307,6 +307,16 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
+            // DFG/FTL code polls VMTraps at loop headers and function entries, as
+            // LLInt and the baseline JIT already do. With signal-based traps a helper
+            // thread suspends the JS thread to patch its code block and retries every
+            // 1 ms until it catches the PC inside JIT code. A loop that spends most of
+            // its time in a DFG operation that never checks traps (Date.now,
+            // performance.now, Math.random, string concatenation) then keeps running
+            // for tens to hundreds of ms after worker.terminate(), longer under load,
+            // and overshoots a node:vm timeout by the same amount.
+            // BUN_JSC_usePollingTraps=0 restores the signal-based traps.
+            JSC::Options::usePollingTraps() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;

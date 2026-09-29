@@ -592,6 +592,43 @@ describe("web worker", () => {
       }
     });
 
+    // terminate() stops optimized code at its next loop iteration, as in Node.
+    // The loop spends its time in a JIT operation (the rope resolve) that never
+    // checks for a termination request. With signal-based VM traps a helper
+    // thread had to catch the worker's PC inside JIT code and retried every
+    // 1 ms: the worker kept running for 100 ms to 1.7 s after terminate().
+    test("terminate() stops a worker busy in a JIT operation at its next loop iteration", async () => {
+      const src = `self.onmessage = e => {
+        const f64 = new Float64Array(e.data);
+        const big = Buffer.alloc(1 << 14, "x").toString();
+        let i = 0;
+        postMessage("spinning");
+        while (true) {
+          f64[0] = performance.timeOrigin + performance.now();
+          f64[1]++;
+          i = (big + i).charCodeAt(0);
+        }
+      };`;
+      const url = URL.createObjectURL(new Blob([src]));
+      const lagMs: number[] = [];
+      for (let r = 0; r < 2; r++) {
+        const sab = new SharedArrayBuffer(16);
+        const f64 = new Float64Array(sab);
+        const w = new Worker(url);
+        const spinning = once(w, "message");
+        w.postMessage(sab);
+        await spinning;
+        // Enough iterations for the loop to run in DFG/FTL code.
+        while (f64[1] < 4000) await Bun.sleep(1);
+        const terminatedAt = performance.timeOrigin + performance.now();
+        w.terminate();
+        await once(w, "close");
+        // The worker's last stamp, relative to the terminate() call.
+        lagMs.push(f64[0] - terminatedAt);
+      }
+      expect(lagMs.filter(lag => lag >= 10)).toEqual([]);
+    });
+
     // terminate() mid `import "node:*"`: the native module's export walk stops
     // at the termination instead of clearing it and reading on.
     test("terminate() while importing every builtin module", async () => {

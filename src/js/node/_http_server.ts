@@ -784,9 +784,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // of which would force the lazy header-object build even when user
         // code never touches headers). Copy to locals before any callback
         // can re-enter the dispatcher.
-        // HTTP/1.0 (ancient) responses never advertise keep-alive on this
-        // server; otherwise honor a Connection: close token from the request.
-        http_req[kReqShouldKeepAlive] = isAncientHTTP ? false : (dispatchBits & DISPATCH_CONN_CLOSE) === 0;
+        http_req[kReqShouldKeepAlive] = (dispatchBits & DISPATCH_CONN_CLOSE) === 0;
         if (server.joinDuplicateHeaders) {
           http_req.joinDuplicateHeaders = true;
         }
@@ -3089,6 +3087,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 // (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
 // lets the framework never materialize req.headers/req.rawHeaders unless
 // user code reads them.
+// The native parser's verdict on the request: the connection closes after its response.
 const DISPATCH_CONN_CLOSE = 1 << 0;
 const DISPATCH_CONN_UPGRADE = 1 << 1;
 const DISPATCH_HAS_UPGRADE = 1 << 2;

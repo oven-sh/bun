@@ -26,8 +26,7 @@ pub(crate) trait TypeSink {
         name: &'a [u8],
         find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
     ) -> Result<(), E>;
-    /// `.name` after a type. When `is_name` is false the lexer is not on a
-    /// name, has logged that, and `name` is the last name it read.
+    /// `.name` after a type. `is_name` is false when the lexer logged that it is not on a name.
     fn member<'a, E>(
         out: &mut Self::Out,
         name: &'a [u8],
@@ -36,8 +35,7 @@ pub(crate) trait TypeSink {
     ) -> Result<(), E>;
     /// `[]` or `[index]` after a type.
     fn index_or_array(out: &mut Self::Out, has_index: bool);
-    /// Left side of `|`, read before the right side is parsed. `load_name` is
-    /// `P::load_name_from_ref`.
+    /// Left side of `|`, before the right side is parsed. `load_name` is `P::load_name_from_ref`.
     fn union_left<'n>(
         out: &mut Self::Out,
         load_name: impl Fn(Ref) -> &'n [u8],
@@ -48,8 +46,7 @@ pub(crate) trait TypeSink {
         load_name: impl Fn(Ref) -> &'n [u8],
     ) -> Operand<Self::Out>;
     fn intersection_right(out: &mut Self::Out, left: Self::Out);
-    /// The type between "?" and ":" of a conditional type, read before the
-    /// type after ":" is parsed.
+    /// The type between "?" and ":" of a conditional type, before the type after ":" is parsed.
     fn conditional_true<'n>(
         out: &mut Self::Out,
         when_true: Self::Out,
@@ -62,9 +59,7 @@ pub(crate) trait TypeSink {
 pub(crate) enum Operand<T> {
     /// The result is final. The grammar reads the rest with `Discard`.
     Decided,
-    /// The grammar reads the right operand into the same `out`, then hands
-    /// `left` back. A right operand that keeps nothing (`infer T`,
-    /// `unique symbol`) leaves `out` as it was.
+    /// The right operand is read into the same `out`, which keeps the left value when that operand is `infer T`.
     Open(T),
 }
 

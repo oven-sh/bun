@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { dirname, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -119,6 +120,58 @@ describe("bundler", () => {
       expect(out).toContain("console.log(typeof load, !0)");
     },
     run: { stdout: "function true" },
+  });
+
+  // The value of a \`const\` that a fold made is not a specifier either. In a condition it is a value like any other.
+  itBundled("inline_calls/ImportSpecifierThroughAConst", {
+    files: {
+      "/entry.js": /* js */ `
+        import { loadForPlatform } from "./platform.js";
+        function useB() { return T; }
+        function off() { return F; }
+        function nil() { return F ? 1 : null; }
+        function load() {
+          const mod = useB() ? "./b-only-at-run-time.js" : "./a-only-at-run-time.js";
+          const flag = off();
+          const chained = flag ? "./c-only-at-run-time.js" : "./d-only-at-run-time.js";
+          const text = \`./\${off() ? "e" : "f"}-only-at-run-time.js\`;
+          const other = nil() ?? "./g-only-at-run-time.js";
+          return [
+            require(mod),
+            require(flag || "./h-only-at-run-time.js"),
+            require.resolve(chained),
+            import(text),
+            import(other),
+          ];
+        }
+        function main() {
+          const DEV = off();
+          if (DEV) require("./dev-only/does-not-exist");
+          return DEV ? "DROP" : "prod";
+        }
+        console.log(typeof load, typeof loadForPlatform, main());
+      `,
+      "/platform.js": /* js */ `
+        import { isWin } from "./env.js";
+        const name = isWin() ? "./win-only-at-run-time.js" : "./posix-only-at-run-time.js";
+        export const loadForPlatform = () => require(name);
+      `,
+      "/env.js": /* js */ `
+        export function isWin() { return F; }
+      `,
+    },
+    define,
+    minifySyntax,
+    dce: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("require(mod)");
+      expect(out).toContain('require(flag || "./h-only-at-run-time.js")');
+      expect(out).toContain("require(name)");
+      expect(out).not.toContain("isWin()");
+      expect(out).not.toContain("DEV");
+    },
+    run: { stdout: "function function prod" },
   });
 
   itBundled("inline_calls/FeatureFlag", {
@@ -253,6 +306,36 @@ describe("bundler", () => {
       },
     });
   }
+
+  // In a target that can become a property access the visitor gets the call, as on main. A function in the target is not a part of it.
+  itBundled("inline_calls/CallTargetKeepsTheCall", {
+    files: {
+      "/entry.js": /* js */ `
+        function off() { return F; }
+        const o = { m() { return this === o ? "o" : String(this); } };
+        function viaConst() {
+          const d = off();
+          return [(d || o.m)(), (d, o.m)(), d ? "DROP" : "kept"].join(" ");
+        }
+        console.log(
+          ([off()] ? o.m : 0)(),
+          ({ k: off() } ? o.m : 0)(),
+          ((off(), 1), o.m)(),
+          (off() ? 0 : o).m(),
+          viaConst(),
+        );
+        (function () { if (off()) console.log("DROP function"); })();
+        (() => { if (off()) console.log("DROP arrow"); })();
+      `,
+    },
+    define,
+    minifySyntax,
+    dce: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("(d || o.m)()");
+    },
+    run: { stdout: "undefined undefined undefined o undefined undefined kept" },
+  });
 
   itBundled("inline_calls/NotAConstantFunction", {
     files: {
@@ -401,6 +484,23 @@ describe("bundler", () => {
     run: { stdout: "true true\nrebound number" },
   });
 
+  // The same record of the assignment, read by the bundler in a build with no fold.
+  itBundled("inline_calls/AssignmentThroughADefineWithoutMinify", {
+    files: {
+      "/entry.mjs": /* js */ `
+        let { a, readA } = await import("./lib.mjs");
+        ALIAS = "replaced";
+        console.log(a, readA());
+      `,
+      "/lib.mjs": /* js */ `
+        export let a = "lib-a";
+        export function readA() { return a; }
+      `,
+    },
+    define: { ALIAS: "a" },
+    run: { stdout: "replaced lib-a" },
+  });
+
   itBundled("inline_calls/DirectEval", {
     files: {
       "/entry.js": /* js */ `
@@ -425,14 +525,17 @@ describe("bundler", () => {
           { var b = () => "var b"; }
           function last() { return F; }
           function last() { return T; }
-          return [a(), b(), last()].join(" ");
+          var c = () => "var c";
+          function c() { return T; }
+          function c() { return T; }
+          return [a(), b(), last(), c()].join(" ");
         }
         console.log(test());
       `,
     },
     define,
     minifySyntax,
-    run: { stdout: "var a var b true" },
+    run: { stdout: "var a var b true var c" },
   });
 
   // In sloppy mode a function declaration in a block also assigns the function-scope binding.
@@ -832,6 +935,7 @@ describe("bundler", () => {
         export { isDev as isDevelopment } from "./env";
         import { isDev } from "./env";
         export { isDev as viaImport };
+        if (isDev()) console.log("DROP barrel");
       `,
       "/env.js": /* js */ `
         function isDev() { return F; }
@@ -902,6 +1006,63 @@ describe("bundler", () => {
     minifySyntax,
     dce: true,
     run: { stdout: "app prod" },
+  });
+
+  // The bundler resolves the \`require()\` of a redirect as a \`require()\`, so the lookup does too.
+  itBundled("inline_calls/CrossModuleRedirectIsARequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isDev } from "./shim.js";
+        import { isPkg } from "./pkg-shim.js";
+        import { isPkg as direct } from "flags";
+        console.log(isDev() ? "cjs" : "esm", isPkg() ? "require" : "import", direct() ? "require" : "import");
+      `,
+      "/shim.js": `module.exports = require("./env");`,
+      "/env.cjs": `exports.isDev = function () { return true; };`,
+      "/env.mjs": `export function isDev() { return F; }`,
+      "/pkg-shim.js": `module.exports = require("flags");`,
+      "/node_modules/flags/package.json": JSON.stringify({
+        name: "flags",
+        exports: { ".": { import: "./esm.js", require: "./cjs.js" } },
+      }),
+      "/node_modules/flags/esm.js": `export function isPkg() { return F; }`,
+      "/node_modules/flags/cjs.js": `exports.isPkg = function () { return true; };`,
+    },
+    define,
+    minifySyntax,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("direct()");
+    },
+    run: { stdout: "cjs require import" },
+  });
+
+  // The imported file is parsed with the options of its parse task.
+  itBundled("inline_calls/CrossModuleParseOptions", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isDev } from "./env.js";
+        import { isEnvFile } from "./id.js";
+        import { withMark } from "./with-mark.js";
+        if (isDev()) console.log("dev"); else console.log("prod");
+        if (withMark()) require("./dev-only/does-not-exist");
+        console.log(isEnvFile() ? "same id" : "other id");
+      `,
+      "/env.js": /* js */ `
+        function bump() { console.log("bump ran"); }
+        export function isDev() { return (/* @__PURE__ */ bump(), F); }
+      `,
+      "/id.js": /* js */ `
+        export function isEnvFile() { return module.id === "id.js"; }
+      `,
+      "/with-mark.js": "\uFEFF#!/usr/bin/env node\nexport function withMark() { return F; }",
+    },
+    define,
+    minifySyntax,
+    ignoreDCEAnnotations: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("isEnvFile()");
+    },
+    run: { stdout: "bump ran\nprod\nsame id" },
   });
 
   itBundled("inline_calls/CrossModuleThroughAPackage", {
@@ -1326,5 +1487,63 @@ describe("bundler", () => {
       expect(out).not.toContain("isDev");
     },
     run: { stdout: "off\nprod" },
+  });
+
+  async function build(cwd: string, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--minify-syntax", "--target=node", "--outfile=out.js"],
+      env: { ...bunEnv, ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The lookup reads the directory of the imported file before the bundler does.
+  test.concurrent.each([
+    ["the value is a constant", "return false;"],
+    ["the value is not a constant", "return globalThis.on === true;"],
+  ])("inline_calls/CrossModuleKeepsResolverErrors, %s", async (_, body) => {
+    using dir = tempDir("inline-calls-resolver-errors", {
+      "entry.js": `
+        import { isOn } from "./src/flags.js";
+        import { isPkg } from "flags";
+        if (isOn()) console.log("on"); else console.log("off");
+        if (isPkg()) console.log("pkg on"); else console.log("pkg off");
+      `,
+      "src/flags.js": `export function isOn() { ${body} }`,
+      "src/package.json": `{ "name": "broken-inner",`,
+      "src/tsconfig.json": `{ "compilerOptions": { "paths":`,
+      "node_modules/flags/index.js": `export function isPkg() { ${body} }`,
+      "node_modules/flags/package.json": `{ "name": "flags", "main": "index.js",`,
+    });
+    const folded = await build(String(dir));
+    const kept = await build(String(dir), { BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING: "1" });
+    for (const file of ["src/package.json:1:", "src/tsconfig.json:1:", "flags/package.json:1:"]) {
+      expect(folded.stderr.replaceAll("\\", "/")).toContain(file);
+    }
+    expect(folded.stderr).toIncludeRepeated("error: ", 3);
+    expect(folded).toEqual(kept);
+    expect(folded.exitCode).toBe(1);
+  });
+
+  // The log is in debug builds only.
+  test.skipIf(!isDebug)("inline_calls/CrossModuleParsesTheImportedFileOneTime", async () => {
+    const importers = Array.from({ length: 64 }, (_, i) => i);
+    using dir = tempDir("inline-calls-one-parse", {
+      "entry.js": importers.map(i => `export { g${i} } from "./m${i}.js";`).join("\n"),
+      "env.js": `export function isDev() { return globalThis.dev === true; }`,
+      ...Object.fromEntries(
+        importers.map(i => [
+          `m${i}.js`,
+          `import { isDev } from "./env.js";\nexport function g${i}() { return isDev() ? "dev" : ${i}; }`,
+        ]),
+      ),
+    });
+    const { stdout, stderr, exitCode } = await build(String(dir), { BUN_DEBUG_const_call: "1" });
+    expect(stdout + stderr).toIncludeRepeated("env.js: 0 value(s)", 1);
+    expect(exitCode).toBe(0);
   });
 });

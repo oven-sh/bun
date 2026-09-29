@@ -87,36 +87,38 @@ pub fn is_shared_library_name(name: &[u8]) -> bool {
     true
 }
 
-/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory: the
-/// path relative to the root, with no empty or `.` segment and every `..` segment
-/// rewritten to `_.._` (as `bun build` does for an asset name), so every member
-/// stays inside the directory and sibling relations hold. `None` when nothing is
-/// left of the name, or it does not fit in `buf`.
+/// Where `name` (a `/$bunfs/root/...` key) lands inside the mirror directory:
+/// [`MIRROR_LEVELS`], then the path relative to the root, with no empty or `.`
+/// segment and every `..` segment rewritten to `_.._` (as `bun build` does for an
+/// asset name), so every member stays inside the directory and sibling relations
+/// hold. `None` when nothing is left of the name, or it does not fit in `buf`.
 pub fn mirror_relative_path<'a>(name: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let rel = name
         .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
         .or_else(|| name.strip_prefix(BASE_PUBLIC_PATH.as_bytes()))
         .unwrap_or(name);
-    let mut len = 0;
+    let mut len = MIRROR_LEVELS.len();
+    buf.get_mut(..len)?.copy_from_slice(MIRROR_LEVELS);
     for segment in strings::split(rel, b"/") {
         let segment = match segment {
             b"" | b"." => continue,
             b".." => b"_.._",
             other => other,
         };
-        let needed = len + usize::from(len > 0) + segment.len();
+        let needed = len + 1 + segment.len();
         if needed >= buf.len() {
             return None;
         }
-        if len > 0 {
-            buf[len] = b'/';
-            len += 1;
-        }
+        buf[len] = b'/';
+        len += 1;
         buf[len..len + segment.len()].copy_from_slice(segment);
         len += segment.len();
     }
-    (len > 0).then(|| &buf[..len])
+    (len > MIRROR_LEVELS.len()).then(|| &buf[..len])
 }
+
+/// Eight levels between the mirror directory and the layout. The temp directory above the mirror is shared, and a library steps out of its own directory with `..` (`$ORIGIN/../../lib`, or a path built in its code): eight steps above the layout stay in the mirror.
+const MIRROR_LEVELS: &[u8] = b"_/_/_/_/_/_/_/_";
 
 /// The set hash: each member's relative name and content hash, in file-table
 /// order. The writer and the runtime's single-file fallback both use it, so
@@ -167,18 +169,35 @@ mod tests {
             let mut buf = [0u8; 256];
             mirror_relative_path(name, &mut buf).map(<[u8]>::to_vec)
         }
+        fn below_the_levels(layout: &[u8]) -> Vec<u8> {
+            [&b"_/_/_/_/_/_/_/_/"[..], layout].concat()
+        }
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes().to_vec();
         assert_eq!(
             run(&[&root[..], b"lib/addon.node"].concat()).unwrap(),
-            b"lib/addon.node"
+            below_the_levels(b"lib/addon.node")
         );
         assert_eq!(
             run(&[&root[..], b"../node_modules/a/x.node"].concat()).unwrap(),
-            b"_.._/node_modules/a/x.node"
+            below_the_levels(b"_.._/node_modules/a/x.node")
         );
-        assert_eq!(run(&[&root[..], b"./a//b.so"].concat()).unwrap(), b"a/b.so");
+        assert_eq!(
+            run(&[&root[..], b"./a//b.so"].concat()).unwrap(),
+            below_the_levels(b"a/b.so")
+        );
         assert_eq!(run(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()), None);
-        assert_eq!(run(b"..").unwrap(), b"_.._");
+        assert_eq!(run(b"..").unwrap(), below_the_levels(b"_.._"));
+
+        let levels: Vec<&[u8]> = strings::split(MIRROR_LEVELS, b"/").collect();
+        assert_eq!(levels, [&b"_"[..]; 8]);
+
+        // A result is shorter than its buffer: `a.so` below the levels is 20 bytes.
+        assert_eq!(
+            mirror_relative_path(b"a.so", &mut [0u8; 21]).map(<[u8]>::len),
+            Some(20)
+        );
+        assert_eq!(mirror_relative_path(b"a.so", &mut [0u8; 20]), None);
+        assert_eq!(mirror_relative_path(b"a.so", &mut [0u8; 8]), None);
     }
 
     #[test]

@@ -2246,10 +2246,10 @@ impl PostgresSQLConnection {
                                     return;
                                 }
                                 StatementStatus::Parsing => {
-                                    // we are still parsing, lets wait for it to be prepared or failed
+                                    // Nothing is written past a request between its Parse and
+                                    // its Bind: replies go to the requests in queue order.
                                     self.note_request_pending();
-                                    offset += 1;
-                                    continue;
+                                    break;
                                 }
                             }
                         } else {
@@ -2427,7 +2427,7 @@ impl PostgresSQLConnection {
                         return Err(err);
                     }
                     let js_err = self.undecodable_row_error(err)?;
-                    request.on_undecodable_row(js_err, self.global());
+                    request.reject_in_flight(js_err, self.global());
                     return Ok(());
                 }
 
@@ -2451,7 +2451,7 @@ impl PostgresSQLConnection {
                     Ok(result) => result,
                     Err(err) => {
                         let js_err = self.undecodable_row_error(err)?;
-                        request.on_undecodable_row(js_err, self.global());
+                        request.reject_in_flight(js_err, self.global());
                         return Ok(());
                     }
                 };
@@ -2991,9 +2991,10 @@ impl PostgresSQLConnection {
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.
 
-                self.finish_request(&request);
+                // The `ReadyForQuery` of this request is still to come, so `finish_request`
+                // and the pop wait for it. A request that failed in its Parse stays `Pending`.
                 self.update_ref();
-                request.on_js_error(js_err, self.global());
+                request.reject_in_flight(js_err, self.global());
             }
             MessageType::PortalSuspended => {
                 reader.skip_message()?;

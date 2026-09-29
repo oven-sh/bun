@@ -10,6 +10,7 @@ import {
   expectMaxObjectTypeCount,
   getMaxFD,
   isLinux,
+  isMacOS,
   isWindows,
   libcPathForDlopen,
   tempDir,
@@ -4116,25 +4117,28 @@ Reo=
       };
       const allClosed = (sockets: Socket<Observed>[]) => Promise.all(sockets.map(socket => socket.data.closed.promise));
       // How many sockets saw each order of callbacks, and how many closed in
-      // each loop iteration from the first close on. A burst that the queue
-      // did not hold closes in fewer iterations.
+      // each loop iteration from the first close on.
       function tally(sockets: Socket<Observed>[]) {
         const outcomes: Record<string, number> = {};
         const first = Math.min(...sockets.map(socket => socket.data.closedIn));
-        const closesPerIteration: number[] = [];
+        const sparse: number[] = [];
         for (const { data } of sockets) {
           const outcome = `${data.events.join(", ")}, ${data.bytes} bytes`;
           outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
-          closesPerIteration[data.closedIn - first] = (closesPerIteration[data.closedIn - first] ?? 0) + 1;
+          sparse[data.closedIn - first] = (sparse[data.closedIn - first] ?? 0) + 1;
         }
-        return { outcomes, closesPerIteration: Array.from(closesPerIteration, count => count ?? 0) };
+        const closesPerIteration = Array.from(sparse, count => count ?? 0);
+        return { outcomes, mostClosesInOneIteration: Math.max(...closesPerIteration), closesPerIteration };
       }
-      const everyByte = {
+      // Every socket read all that its peer sent. A burst that the queue held
+      // closes at most BUDGET sockets per iteration, on every backend.
+      const everyByte = (mostClosesInOneIteration = BUDGET) => ({
         outcomes: { [`handshake success=true, data, close, ${PAYLOAD.length} bytes`]: CONNECTIONS },
-        // Measured on epoll only. kqueue and libuv report the end of a
-        // connection in other ways, and the split there is not known.
-        closesPerIteration: isLinux ? [BUDGET, BUDGET, BUDGET, 1] : expect.any(Array),
-      };
+        mostClosesInOneIteration,
+        // The exact split is measured on epoll only.
+        closesPerIteration:
+          isLinux && mostClosesInOneIteration === BUDGET ? [BUDGET, BUDGET, BUDGET, 1] : expect.any(Array),
+      });
 
       // step() rejects when a socket of the test reports a failure.
       function failures() {
@@ -4351,9 +4355,13 @@ Reo=
               async () => {
                 const { fail, step } = failures();
                 using connections = await burst(role, transport, fail);
-                await deliverToAll(connections, shutDown, shutDown ? "FIN" : "close", step);
+                // A unix socket that did not shut down hangs up when its peer closes.
+                const hangsUpOnClose = transport === "unix" && !shutDown;
+                await deliverToAll(connections, shutDown, hangsUpOnClose ? "close" : "FIN", step);
                 await step(allClosed(connections.sockets));
-                expect(tally(connections.sockets)).toEqual(everyByte);
+                // kqueue reports that close as an error to a socket that reads,
+                // and the error path reads every socket with no queue.
+                expect(tally(connections.sockets)).toEqual(everyByte(hangsUpOnClose && isMacOS ? CONNECTIONS : BUDGET));
               },
             );
           }

@@ -886,10 +886,7 @@ impl ServerWebSocket {
         self.handler().flags.contains(HandlerFlags::NODE_HTTP)
     }
 
-    /// The landing frame of each uWS callback: the context of the handlers, then what a handler left pending.
-    ///
-    /// # Safety
-    /// `this` is the live user-data slot of the socket.
+    /// The landing frame of each uWS callback. `this` is the live user-data slot of the socket.
     #[inline(always)]
     unsafe fn land(this: *mut Self, deliver: impl FnOnce(&Self) -> JsResult<()>) {
         // SAFETY: per the contract of this function.

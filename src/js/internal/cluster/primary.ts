@@ -47,7 +47,7 @@ const SCHED_RR = 2;
 
 export default cluster;
 
-const handles = new Map();
+const handles = new Map<string, any>();
 cluster.isWorker = false;
 cluster.isMaster = true; // Deprecated alias. Must be same as isPrimary.
 cluster.isPrimary = true;
@@ -248,7 +248,7 @@ function errnoOfFdQuery(message) {
   const isUdp = message.addressType === "udp4" || message.addressType === "udp6";
   let held = isUdp && (isFdOfDgramSocket ??= $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1))(fd);
   if (!held) {
-    handles.forEach(handle => {
+    handles.$forEach(handle => {
       if (handle.fd === fd) held = true;
     });
   }
@@ -292,15 +292,6 @@ function queryServer(worker, message) {
   }
 
   if (handle === undefined) {
-    // POSIX only: on Windows clusterValidateFd answers EINVAL, so a SharedHandle adopts no descriptor there.
-    if (process.platform !== "win32" && typeof message.fd === "number" && message.fd >= 0) {
-      const errno = errnoOfFdQuery(message);
-      if (errno !== 0) {
-        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
-        return;
-      }
-    }
-
     let address = message.address;
 
     // Find shortest path for unix sockets because of the ~100 byte limit
@@ -319,6 +310,13 @@ function queryServer(worker, message) {
       error.syscall = "write";
       worker.emit("error", error);
       return;
+    }
+    if (typeof message.fd === "number" && message.fd >= 0) {
+      const errno = errnoOfFdQuery(message);
+      if (errno !== 0) {
+        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
+        return;
+      }
     }
     if (
       schedulingPolicy !== SCHED_RR ||

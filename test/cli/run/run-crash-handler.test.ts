@@ -295,8 +295,8 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
   // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a JIT pool PC.
   // This is the smoke test for the hand-encoded UNWIND_INFO / .xdata bytes.
   // LLInt PCs are not covered here: LLInt lives in image .text and Windows
-  // only consults static .pdata for in-module PCs; that needs build-time
-  // .seh_* emission in offlineasm (follow-up).
+  // only consults static .pdata for in-module PCs, where JSC emits one record
+  // over the LLInt code.
   test("RtlLookupFunctionEntry resolves JSC JIT pool PCs", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -364,6 +364,25 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
 
     expect(stderr).toContain("Segmentation fault at address 0xE8");
     expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // With the JIT off there is no pool: the interpreter calls the host function
+  // itself, so the first JS frame SEH dispatch meets is an LLInt one. Without
+  // the LLInt .pdata record, dispatch derails there and the process exits
+  // 0xC0000005 with no report. This does not tell the record's handler from
+  // the UEF backstop: both need the record. bun:ffi needs the JIT, hence the
+  // fixture.
+  test("jitless: fault under an interpreted frame still crash-reports", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+      env: { ...noReportEnv, BUN_JSC_useJIT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
     expect(exitCode).not.toBe(0);
   });
 });

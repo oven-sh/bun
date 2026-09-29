@@ -803,4 +803,82 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
     },
     TIMEOUT,
   );
+
+  // `process.dlopen` refuses a path that ends in `better_sqlite3.node`. An
+  // embedded addon was extracted under a hash, so that never matched one. The
+  // mirror keeps the embedded name, and the addon still has to load.
+  test(
+    "an embedded addon named better_sqlite3.node loads",
+    async () => {
+      using dir = tempDir("bunfs-addon-name", {
+        "foo.c": FOO_C,
+        "addon.c": ADDON_C,
+        "lib/.keep": "",
+        "index.ts": /* ts */ `
+          const direct = { exports: {} as any };
+          process.dlopen(direct, "/$bunfs/root/lib/better_sqlite3.node");
+          console.log(JSON.stringify([require("./lib/better_sqlite3.node").answer, direct.exports.answer]));
+        `,
+      });
+      await buildLibs(String(dir), { "lib/better_sqlite3.node": "addon.c" });
+      await compile(String(dir), ["--asset", "lib"]);
+
+      using extractRoot = tempDir("bunfs-addon-name-extract", {});
+      const result = await runIsolated(String(dir), String(extractRoot));
+      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(result.stdout.trim()).toBe("[42,42]");
+      expect(result.code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  // Another user of the machine can create the mirror's name first. The
+  // process then loads from a copy under a name of its own: one copy, not one
+  // for each `dlopen` call.
+  test(
+    "dlopen calls share one copy when the mirror's name is taken",
+    async () => {
+      using dir = tempDir("bunfs-ffi-taken", {
+        "foo.c": FOO_C,
+        "bar.c": BAR_C,
+        "lib/.keep": "",
+        "index.ts": /* ts */ `
+          import { dlopen } from "bun:ffi";
+          const symbols = { bar: { args: [], returns: "int" } } as const;
+          const answers: number[] = [];
+          for (let i = 0; i < 3; i++) answers.push(dlopen("/$bunfs/root/lib/libbar.${soExt}", symbols).symbols.bar());
+          console.log(JSON.stringify(answers));
+        `,
+      });
+      await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
+      await compile(String(dir), ["--asset", "lib"]);
+
+      // The first run gives the name. A file at that name in a second temp
+      // directory stands for the other user's entry: the mirror cannot take it.
+      using named = tempDir("bunfs-ffi-taken-name", {});
+      expect((await runIsolated(String(dir), String(named))).stdout.trim()).toBe("[43,43,43]");
+      const name = readdirSync(String(named)).find(entry => entry.startsWith(".bun-"))!;
+      expect(name).toBeString();
+
+      using extractRoot = tempDir("bunfs-ffi-taken-extract", { [name]: "" });
+      const extractDir = String(extractRoot);
+      const result = await runIsolated(String(dir), extractDir);
+      expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(result.stdout.trim()).toBe("[43,43,43]");
+      expect(result.code).toBe(0);
+      expect(extracted(extractDir, "libbar." + soExt)).toHaveLength(1);
+
+      // The same when the mirror is this user's and cannot be completed: a
+      // directory sits where a library goes, and a rename does not replace it.
+      const library = join(String(named), extracted(String(named), "libbar." + soExt)[0]);
+      rmSync(library);
+      mkdirSync(join(library, "in-the-way"), { recursive: true });
+      const beside = await runIsolated(String(dir), String(named));
+      expect(beside.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(beside.stdout.trim()).toBe("[43,43,43]");
+      expect(beside.code).toBe(0);
+      expect(readdirSync(String(named))).toHaveLength(2);
+    },
+    TIMEOUT,
+  );
 });

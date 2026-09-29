@@ -4529,9 +4529,10 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
     if member.is_some() {
         let recorded = MirrorSet {
             hash: set.set_hash,
+            uid,
             members: MirrorMembers::Recorded { set, files },
         };
-        if let Some(len) = recorded.materialise(&tmpdir, uid, target, out_buf) {
+        if let Some(len) = recorded.materialise(&tmpdir, target, out_buf) {
             return Some(len);
         }
     }
@@ -4540,9 +4541,10 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
             target.display_name(),
             bun_wyhash::hash(target.contents.as_bytes()),
         )]),
+        uid,
         members: MirrorMembers::Single(target),
     };
-    single.materialise(&tmpdir, uid, target, out_buf)
+    single.materialise(&tmpdir, target, out_buf)
 }
 
 enum MirrorMembers<'a> {
@@ -4569,139 +4571,193 @@ impl MirrorMembers<'_> {
 
 struct MirrorSet<'a> {
     hash: u64,
+    /// The euid the mirror is for: part of its name, and the owner of everything in it.
+    uid: u32,
     members: MirrorMembers<'a>,
 }
 
-impl MirrorSet<'_> {
+/// The copies this process wrote under a name of its own, by set hash, because
+/// it could not have the canonical name. Later calls and Workers load from the
+/// same copy instead of writing one each. Its lock is held for every write of
+/// a mirror, so Workers that start together write it once between them.
+static OWN_COPIES: bun_threading::Guarded<Vec<(u64, bun_core::ZBox)>> =
+    bun_threading::Guarded::new(Vec::new());
+
+/// One directory under the temp directory that holds, or is to hold, a mirror.
+struct MirrorDir<'a> {
+    set: &'a MirrorSet<'a>,
+    tmpdir: &'a bun_sys::Dir,
+    name: &'a bun_core::ZStr,
+}
+
+impl MirrorDir<'_> {
+    /// A directory, not a symlink, owned by the euid: nobody else can swap an
+    /// entry under us before `dlopen`. Mode bits are not part of the rule, some
+    /// filesystems make them up.
+    fn is_ours(&self) -> bool {
+        bun_sys::lstatat(self.tmpdir, self.name).is_ok_and(|st| {
+            #[cfg(unix)]
+            {
+                bun_sys::S::ISDIR(st.st_mode as u32) && st.st_uid == self.set.uid
+            }
+            #[cfg(windows)]
+            {
+                let _ = st;
+                true
+            }
+        })
+    }
+
+    /// `file` is in it: a regular file of the euid with the right size.
+    fn has(&self, file: &bun_standalone_graph::File) -> bool {
+        let mut rel_buf = bun_paths::path_buffer_pool::get();
+        let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+            return false;
+        };
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
+            &mut path_buf[..],
+            &[self.name.as_bytes(), rel],
+        );
+        bun_sys::lstatat(self.tmpdir, path).is_ok_and(|st| {
+            let size_ok = st.st_size as usize == file.contents.len();
+            #[cfg(unix)]
+            let ours = st.st_uid == self.set.uid && bun_sys::S::ISREG(st.st_mode as u32);
+            #[cfg(windows)]
+            let ours = true;
+            size_ok && ours
+        })
+    }
+
+    fn is_complete(&self) -> bool {
+        self.is_ours() && self.set.members.all(&mut |file| self.has(file))
+    }
+
+    /// Our directory with a member missing or wrong (a temp sweeper took it):
+    /// put the member back in place. The directory itself is never removed,
+    /// so a process that is loading from it keeps what it sees.
+    fn repair(&self) -> bool {
+        let Ok(dir) = self.tmpdir.open_at_with(
+            self.name.as_bytes(),
+            bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+        ) else {
+            return false;
+        };
+        self.set
+            .members
+            .all(&mut |file| self.has(file) || self.set.write_member(&dir, file))
+            && self.is_complete()
+    }
+
+    /// `{tmpdir}/{name}/{rel}` into `out_buf`, leaving room for the NUL that
+    /// `FFI::open` writes at `out_buf[len]`.
+    fn path_of(&self, rel: &[u8], out_buf: &mut [u8]) -> Option<usize> {
+        let len =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                Fs::RealFS::tmpdir_path(),
+                out_buf,
+                &[self.name.as_bytes(), rel],
+            )?
+            .len();
+        (len + 1 < out_buf.len()).then_some(len)
+    }
+}
+
+impl<'a> MirrorSet<'a> {
+    fn dir(&'a self, tmpdir: &'a bun_sys::Dir, name: &'a bun_core::ZStr) -> MirrorDir<'a> {
+        MirrorDir {
+            set: self,
+            tmpdir,
+            name,
+        }
+    }
+
+    /// `file` written into `dir` at its relative path through a temp name and
+    /// a rename in the same directory, so a reader never sees a partial file.
+    fn write_member(&self, dir: &bun_sys::Dir, file: &bun_standalone_graph::File) -> bool {
+        let mut rel_buf = bun_paths::path_buffer_pool::get();
+        let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
+            return false;
+        };
+        let parent_dir = match bun_paths::dirname(rel) {
+            Some(parent) => match dir.make_open_path(parent, bun_sys::OpenDirOptions::default()) {
+                Ok(parent) => Some(parent),
+                Err(_) => return false,
+            },
+            None => None,
+        };
+        let parent = parent_dir.as_ref().map_or(dir.fd, |d| d.fd);
+        let mut tmp_buf = bun_paths::path_buffer_pool::get();
+        let Ok(tmp_name) = Fs::FileSystem::tmpname(b"tmp", &mut tmp_buf[..], self.hash) else {
+            return false;
+        };
+        let mut name_buf = bun_paths::path_buffer_pool::get();
+        let name = bun_paths::resolve_path::z(bun_paths::basename(rel), &mut name_buf);
+        let flags = bun_sys::O::WRONLY
+            | bun_sys::O::CREAT
+            | bun_sys::O::EXCL
+            | bun_sys::O::NOFOLLOW
+            | bun_sys::O::CLOEXEC;
+        let written = bun_sys::File::openat(parent, tmp_name.as_bytes(), flags, 0o600)
+            .and_then(|f| f.write_all(file.contents.as_bytes()))
+            .is_ok();
+        if written && bun_sys::renameat(parent, tmp_name, parent, name).is_ok() {
+            return true;
+        }
+        let _ = bun_sys::unlinkat(parent, tmp_name);
+        false
+    }
+
     /// Writes `{tmpdir}/.bun-{uid}-{hash}/{target's relative path}` into `out_buf`
-    /// (leaving room for a NUL, which `FFI::open` writes at `out_buf[len]`) and
-    /// returns the length once every member of the set is on disk there.
+    /// and returns the length once every member of the set is on disk there.
+    /// When that directory cannot be had, or cannot be completed, the path is
+    /// inside a copy under a name of this process's own.
     fn materialise(
-        &self,
-        tmpdir: &bun_sys::Dir,
-        uid: u32,
+        &'a self,
+        tmpdir: &'a bun_sys::Dir,
         target: &bun_standalone_graph::File,
         out_buf: &mut [u8],
     ) -> Option<usize> {
-        let mut dir_name_buf = [0u8; 64];
-        let dir_name = bun_core::fmt::buf_print_z(
-            &mut dir_name_buf,
-            format_args!(".bun-{}-{:x}", uid, self.hash),
+        let mut canonical_buf = [0u8; 64];
+        let canonical_name = bun_core::fmt::buf_print_z(
+            &mut canonical_buf,
+            format_args!(".bun-{}-{:x}", self.uid, self.hash),
         )
         .ok()?;
         let mut rel_buf = bun_paths::path_buffer_pool::get();
         let rel = native_libs::mirror_relative_path(target.name, &mut rel_buf[..])?;
-        let tmpdir_path = Fs::RealFS::tmpdir_path();
-        let len =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                tmpdir_path,
-                out_buf,
-                &[dir_name.as_bytes(), rel],
-            )?
-            .len();
-        if len + 1 >= out_buf.len() {
-            return None;
+
+        let canonical = self.dir(tmpdir, canonical_name);
+        // Nothing is written for a path the caller has no room for.
+        canonical.path_of(rel, out_buf)?;
+        if canonical.is_complete() {
+            return canonical.path_of(rel, out_buf);
         }
 
-        // The mirror is reusable when the directory is ours (a directory, not a
-        // symlink, owned by the euid: nobody else can swap an entry under us
-        // before `dlopen`; mode bits are not part of the rule, some filesystems
-        // make them up) and every member in it is ours with the right size.
-        let dir_is_ours = || -> bool {
-            bun_sys::lstatat(tmpdir, dir_name).is_ok_and(|st| {
-                #[cfg(unix)]
-                {
-                    bun_sys::S::ISDIR(st.st_mode as u32) && st.st_uid == uid
-                }
-                #[cfg(windows)]
-                {
-                    let _ = st;
-                    true
-                }
-            })
-        };
-        let file_is_ours = |file: &bun_standalone_graph::File| -> bool {
-            let mut rel_buf = bun_paths::path_buffer_pool::get();
-            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
-                return false;
-            };
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
-                &mut path_buf[..],
-                &[dir_name.as_bytes(), rel],
-            );
-            bun_sys::lstatat(tmpdir, path).is_ok_and(|st| {
-                let size_ok = st.st_size as usize == file.contents.len();
-                #[cfg(unix)]
-                let ours = st.st_uid == uid && bun_sys::S::ISREG(st.st_mode as u32);
-                #[cfg(windows)]
-                let ours = true;
-                size_ok && ours
-            })
-        };
-        let mirror_is_ours = || dir_is_ours() && self.members.all(&mut |file| file_is_ours(file));
-        if mirror_is_ours() {
-            return Some(len);
+        let mut own_copies = OWN_COPIES.lock();
+        let own = own_copies
+            .iter()
+            .find(|(hash, _)| *hash == self.hash)
+            .map(|(_, name)| self.dir(tmpdir, name.as_zstr()));
+        if let Some(own) = &own
+            && own.is_complete()
+        {
+            return own.path_of(rel, out_buf);
+        }
+        let canonical_was_ours = canonical.is_ours();
+        if canonical_was_ours && (canonical.is_complete() || canonical.repair()) {
+            return canonical.path_of(rel, out_buf);
+        }
+        if let Some(own) = &own
+            && own.is_ours()
+            && own.repair()
+        {
+            return own.path_of(rel, out_buf);
         }
 
-        // `file` written into `dir` at its relative path through a temp name and
-        // a rename in the same directory, so a reader never sees a partial file.
-        let write_member = |dir: &bun_sys::Dir, file: &bun_standalone_graph::File| -> bool {
-            let mut rel_buf = bun_paths::path_buffer_pool::get();
-            let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
-                return false;
-            };
-            let parent_dir = match bun_paths::dirname(rel) {
-                Some(parent) => {
-                    match dir.make_open_path(parent, bun_sys::OpenDirOptions::default()) {
-                        Ok(parent) => Some(parent),
-                        Err(_) => return false,
-                    }
-                }
-                None => None,
-            };
-            let parent = parent_dir.as_ref().map_or(dir.fd, |d| d.fd);
-            let mut tmp_buf = bun_paths::path_buffer_pool::get();
-            let Ok(tmp_name) = Fs::FileSystem::tmpname(b"tmp", &mut tmp_buf[..], self.hash) else {
-                return false;
-            };
-            let mut name_buf = bun_paths::path_buffer_pool::get();
-            let name = bun_paths::resolve_path::z(bun_paths::basename(rel), &mut name_buf);
-            let flags = bun_sys::O::WRONLY
-                | bun_sys::O::CREAT
-                | bun_sys::O::EXCL
-                | bun_sys::O::NOFOLLOW
-                | bun_sys::O::CLOEXEC;
-            let written = bun_sys::File::openat(parent, tmp_name.as_bytes(), flags, 0o600)
-                .and_then(|f| f.write_all(file.contents.as_bytes()))
-                .is_ok();
-            if written && bun_sys::renameat(parent, tmp_name, parent, name).is_ok() {
-                return true;
-            }
-            let _ = bun_sys::unlinkat(parent, tmp_name);
-            false
-        };
-        // Our directory with a member missing or wrong (a temp sweeper took it):
-        // put the member back in place. The directory itself is never removed,
-        // so a process that is loading from it keeps what it sees.
-        let repair = || -> bool {
-            let Ok(dir) = tmpdir.open_at_with(
-                dir_name.as_bytes(),
-                bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
-            ) else {
-                return false;
-            };
-            self.members
-                .all(&mut |file| file_is_ours(file) || write_member(&dir, file))
-                && mirror_is_ours()
-        };
-        if dir_is_ours() {
-            return repair().then_some(len);
-        }
-
-        // No mirror yet: write the whole set into a scratch directory, then
-        // rename it into place. A directory rename never replaces a non-empty
-        // directory, so the first Worker or process to finish owns the name.
+        // Write the whole set into a scratch directory, then rename it into
+        // place. A directory rename never replaces a non-empty directory, so
+        // the first process to finish owns the name.
         let mut scratch_buf = bun_paths::path_buffer_pool::get();
         let scratch_name = Fs::FileSystem::tmpname(b"tmp", &mut scratch_buf[..], self.hash).ok()?;
         bun_sys::mkdirat(tmpdir, scratch_name, 0o700).ok()?;
@@ -4715,31 +4771,36 @@ impl MirrorSet<'_> {
                 discard_scratch();
                 return None;
             };
-            self.members.all(&mut |file| write_member(&scratch, file))
+            self.members
+                .all(&mut |file| self.write_member(&scratch, file))
         };
         if !written {
             discard_scratch();
             return None;
         }
-        if bun_sys::renameat(tmpdir, scratch_name, tmpdir, dir_name).is_ok() {
-            return Some(len);
+        if bun_sys::renameat(tmpdir, scratch_name, tmpdir, canonical_name).is_ok() {
+            return canonical.path_of(rel, out_buf);
         }
-        if dir_is_ours() {
-            // Another Worker or process won the name.
+        if !canonical_was_ours
+            && canonical.is_ours()
+            && (canonical.is_complete() || canonical.repair())
+        {
+            // Another process won the name.
             discard_scratch();
-            return (mirror_is_ours() || repair()).then_some(len);
+            return canonical.path_of(rel, out_buf);
         }
-        // The name belongs to someone else on a sticky `/tmp`: use our own copy.
-        let len =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                tmpdir_path,
-                out_buf,
-                &[scratch_name.as_bytes(), rel],
-            )?
-            .len();
-        if len + 1 >= out_buf.len() {
+        // The name belongs to someone else on a sticky `/tmp`, or the
+        // directory under it is ours and cannot be completed: load from our
+        // own copy, this call and the later ones.
+        let Some(len) = self.dir(tmpdir, scratch_name).path_of(rel, out_buf) else {
+            discard_scratch();
             return None;
-        }
+        };
+        own_copies.retain(|(hash, _)| *hash != self.hash);
+        own_copies.push((
+            self.hash,
+            bun_core::ZBox::from_bytes(scratch_name.as_bytes()),
+        ));
         Some(len)
     }
 }

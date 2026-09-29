@@ -4234,9 +4234,10 @@ Reo=
   });
 });
 
-// shutdown(true) shuts down the read side, and the socket then sees the end of
-// the stream. A socket with allowHalfOpen stays open for writes. A socket
-// without it closes.
+// shutdown(true) shuts down the read side. On Linux and macOS the socket then
+// sees the end of the stream: a socket with allowHalfOpen stays open for
+// writes, and a socket without it closes. On Windows the socket sees nothing
+// and stays open.
 describe("shutdown(true)", () => {
   // A connection that the peer answers: the events that were due before it
   // have run by the time it resolves.
@@ -4309,17 +4310,20 @@ describe("shutdown(true)", () => {
         const socket = await opened.promise;
         await peerGotAll.W1.promise;
         await pendingEventsDone();
-        if (allowHalfOpen) {
-          expect(calls).toEqual(["write 2", "end"]);
-          calls.push(`write ${socket.write("W2")}`);
+        const stayedOpen = !calls.includes("close");
+        calls.push(`write ${socket.write("W2")}`);
+        if (stayedOpen) {
           await peerGotAll.W1W2.promise;
           socket.end();
           await closed.promise;
-          expect(calls).toEqual(["write 2", "end", "write 2", "close"]);
-        } else {
-          calls.push(`write ${socket.write("W2")}`);
-          expect({ calls, peerGot }).toEqual({ calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" });
         }
+        expect({ calls, peerGot }).toEqual(
+          isWindows
+            ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
+            : allowHalfOpen
+              ? { calls: ["write 2", "end", "write 2", "close"], peerGot: "W1W2" }
+              : { calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" },
+        );
       });
     }
   }

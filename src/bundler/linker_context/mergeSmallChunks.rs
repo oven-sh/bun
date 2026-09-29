@@ -234,14 +234,10 @@ impl LinkerContext<'_> {
                 continue;
             }
             for &i in part.import_record_indices.iter() {
-                let record = &records[i as usize];
-                if record.kind == ImportKind::Stmt
-                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                    && record.source_index.is_valid()
-                    && record.source_index.get() != source_index
-                    && flags[record.source_index.get() as usize].wrap != WrapKind::None
+                if let Some(wrapped) =
+                    self.wrapped_file_started_by(source_index, &records[i as usize])
                 {
-                    inits.push(record.source_index.get());
+                    inits.push(wrapped);
                 }
             }
         }

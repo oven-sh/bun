@@ -1221,7 +1221,7 @@ impl FileClasses {
 /// Says whether the parent chunk of a pinned entry point may load a file of another class. A chunk that runs something when it loads would run ahead of the whole parent chunk.
 struct ParentGuard {
     classes: Option<FileClasses>,
-    /// Files of a parent chunk behind a run point that the guard turned down. They do not rank their chunk again.
+    /// Files of a parent chunk behind a run point that the guard turned down. They do not rank their chunk again. A file that loads a chunk which has to run ahead of the parent chunk is not one of them.
     ranks_once: AutoBitSet,
     entry_id: usize,
     /// Per class, once asked: `FileClasses::is_inert`.
@@ -1315,6 +1315,17 @@ impl ParentGuard {
         let class = classes.of_file[file as usize];
         Ok(class != u32::MAX && ahead.is_set(class as usize))
     }
+}
+
+/// The files of `outside` that the walk met ahead of the first file of the parent that runs.
+fn met_ahead_of_parent(
+    outside: &ArrayHashMap<u32, usize>,
+    first_parent: usize,
+) -> impl Iterator<Item = u32> {
+    outside
+        .iter()
+        .filter(move |&(_, &ahead_of)| ahead_of <= first_parent)
+        .map(|(&met, _)| met)
 }
 
 /// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the entry point's own files that must run before a file of the parent. `starts` gets (entry point id, wrapped file) per start that the parent must make for a file that stays.
@@ -1524,8 +1535,6 @@ fn files_that_leave_entry_chunk(
         while next < end {
             let mut stuck = false;
             let mut turned_down = false;
-            // The files move for a start that the parent makes. The guard has to allow every file that they load.
-            let mut strict = false;
             match points[next] {
                 RunPoint::Own(file) => {
                     // Such a file stays and the list goes on: the parent makes its calls.
@@ -1576,12 +1585,16 @@ fn files_that_leave_entry_chunk(
                     if stays {
                         if !own(wrapped) {
                             turned_down = outside.contains(&wrapped)
-                                && !guard.allows(this, load_class, wrapped)?;
+                                && !guard.allows(this, load_class, wrapped)?
+                                && !guard.runs_ahead(
+                                    this,
+                                    met_ahead_of_parent(&outside, first_parent),
+                                    wrapped,
+                                )?;
                             stuck = turned_down;
                         } else if leads_back.leads_back_to_entry(this, &own, wrapped)? {
                             stuck = true;
                         } else {
-                            strict = true;
                             pending.push(wrapped);
                         }
                         if !stuck {
@@ -1602,8 +1615,9 @@ fn files_that_leave_entry_chunk(
                 taken.push(file);
                 this.for_each_file_loaded_by(file, |other| {
                     if !own(other) {
+                        // The chunk of a file that runs, met ahead of the parent, runs ahead of the parent as it is. A file that only declares does not say when its chunk runs.
                         if let Some(&ahead_of) = outside.get(&other)
-                            && (strict || ahead_of > first_parent)
+                            && (ahead_of > first_parent || this.loading_file_only_declares(other))
                         {
                             asked.push(other);
                         }
@@ -1623,15 +1637,11 @@ fn files_that_leave_entry_chunk(
                 for other in asked.drain(..) {
                     if !stuck
                         && !guard.allows(this, load_class, other)?
-                        && (strict
-                            || !guard.runs_ahead(
-                                this,
-                                outside
-                                    .iter()
-                                    .filter(|&(_, &ahead_of)| ahead_of <= first_parent)
-                                    .map(|(&met, _)| met),
-                                other,
-                            )?)
+                        && !guard.runs_ahead(
+                            this,
+                            met_ahead_of_parent(&outside, first_parent),
+                            other,
+                        )?
                     {
                         turned_down = true;
                         stuck = true;
@@ -1676,9 +1686,45 @@ fn files_that_leave_entry_chunk(
         turned_down_from = None;
     }
     // A file of the parent behind the run point does not rank the parent again: a chunk that the walk reaches in between stays behind the parent.
+    // It does when it loads, through files of the parent, a chunk that the guard keeps the parent from loading: the parent has to run behind that chunk.
     if let Some(first) = turned_down_from {
+        let mut loads: Vec<u32> = Vec::new();
+        let mut reached: ArrayHashMap<u32, ()> = ArrayHashMap::new();
         for point in &points[first..] {
-            if let RunPoint::Parent(file) = *point {
+            let RunPoint::Parent(file) = *point else {
+                continue;
+            };
+            reached.clear();
+            reached.put(file, ())?;
+            let mut ranks_again = false;
+            let mut walked = 0;
+            while !ranks_again && walked < reached.count() {
+                let from = reached.keys()[walked];
+                walked += 1;
+                loads.clear();
+                this.for_each_file_loaded_by(from, |other| loads.push(other));
+                for &other in &loads {
+                    if outside.contains(&other) {
+                        if !guard.allows(this, load_class, other)?
+                            && !guard.runs_ahead(
+                                this,
+                                met_ahead_of_parent(&outside, first_parent),
+                                other,
+                            )?
+                        {
+                            ranks_again = true;
+                            break;
+                        }
+                    } else if other != entry_source
+                        && live(other)
+                        && !own(other)
+                        && css[other as usize].is_none()
+                    {
+                        reached.put(other, ())?;
+                    }
+                }
+            }
+            if !ranks_again {
                 guard.ranks_once.set(file as usize);
             }
         }

@@ -81,12 +81,9 @@ const UTILS = [
 // WebPAnimEncoder) are omitted: they layer ON TOP of demux/mux, not the
 // reverse, and Bun has no animated-WebP support.
 //
-// Nothing calls demux. Its chunk lookups re-read the caller's buffer, so a JS
-// buffer rewritten mid-decode made `WebPDemuxGetChunk` dereference NULL, and
-// `codec_webp.rs` reads the ICCP chunk out of an input itself. The TU is still
-// compiled and the linker drops it. Taking it off this list is a follow-up:
-// the regression test for that crash builds the commit before the fix, whose
-// `codec_webp.rs` calls into it.
+// Nothing calls demux, and the linker drops it. Its chunk lookups re-read the
+// caller's buffer, which JS can rewrite mid-decode, so `codec_webp.rs` reads
+// the ICCP chunk out of an input itself.
 const DEMUX = ["demux"];
 const MUX = ["muxedit", "muxinternal", "muxread"];
 

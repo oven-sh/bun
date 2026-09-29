@@ -286,7 +286,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 
 const CHUNK_HEADER_SIZE: usize = 8;
 
-/// Reads each tag once. libwebp's demuxer re-reads them and dereferences NULL when one changed.
+/// Trusts no byte to read the same twice. libwebp's demuxer does, and can dereference NULL.
 fn iccp_chunk(bytes: &[u8]) -> Option<&[u8]> {
     const RIFF_HEADER_SIZE: usize = 12;
     const VP8X_CHUNK_SIZE: usize = 10;

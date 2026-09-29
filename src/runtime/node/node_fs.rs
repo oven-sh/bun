@@ -8666,6 +8666,7 @@ impl NodeFS {
                             dest.as_bytes(),
                         ) {
                             match err.get_errno() {
+                                E::EINTR => continue,
                                 // Cross-device, no syscall, or a filesystem without it (eCryptfs: EINVAL).
                                 E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                     if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
@@ -8703,6 +8704,7 @@ impl NodeFS {
                             dest.as_bytes(),
                         ) {
                             match err.get_errno() {
+                                E::EINTR => continue,
                                 // Cross-device, no syscall, or a filesystem without it (eCryptfs: EINVAL).
                                 E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                     if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {

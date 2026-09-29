@@ -80,7 +80,10 @@ static inline int lazyLoadSQLite()
 #define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
 #endif
 
-static std::atomic<int64_t> sqlite_malloc_amount = 0;
+// Per-thread so the malloc hooks do not write one shared cache line from
+// every Worker. The readers only want the delta across a synchronous call on
+// the current thread, which is what a thread-local gives them.
+static thread_local int64_t sqlite_malloc_amount = 0;
 
 static void enableFastMallocForSQLite()
 {
@@ -1740,8 +1743,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     sqlite3_stmt* statement = nullptr;
 
-    // This is inherently somewhat racy if using Worker
-    // but that should be okay.
     int64_t currentMemoryUsage = sqlite_malloc_amount;
 
     int rc = SQLITE_OK;

@@ -2896,12 +2896,15 @@ it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
 // on it. The only JS-visible effect of the setting is that the heap-limit
 // pragmas have nothing to count: with statistics on, a limit of 1 byte fails
 // the next allocation with SQLITE_NOMEM. Each case runs in its own process
-// because the limit is process-global.
+// because the limit is process-global. On macOS the system libsqlite3 already
+// ships DEFAULT_MEMSTATUS=0, so only the bundled build (Linux, Windows) can
+// fail this without the runtime config.
 describe.concurrent("memory statistics are off", () => {
   const inserts = `
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)");
     const insert = db.prepare("INSERT INTO t (s) VALUES (?)");
-    for (let i = 0; i < 200; i++) insert.run("x".repeat(4096));
+    const row = Buffer.alloc(4096, "x").toString();
+    for (let i = 0; i < 200; i++) insert.run(row);
     console.log(JSON.stringify(db.prepare("SELECT count(*) AS n FROM t").get()));
   `;
 

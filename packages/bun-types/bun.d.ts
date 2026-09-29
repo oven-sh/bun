@@ -3021,6 +3021,10 @@ declare module "bun" {
        *   `name`. The export has the value `value`, which is a string,
        *   number, boolean, `null` or `undefined`.
        *
+       * Write each key as an identifier or `default`, and each `name` as an
+       * identifier. The constructor throws a `TypeError` for a key or a
+       * `name` such as `a-b`.
+       *
        * The `default` key takes a value, and not a pair.
        *
        * @example

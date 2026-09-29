@@ -591,7 +591,6 @@ where
         // We cannot access the pointer after fail is called.
     }
 
-    /// The TLS engine gave up on the connection. The close of the socket follows.
     /// Takes `ThisPtr<Self>` because `fail` may free `this` / be re-entered.
     pub fn handle_tls_error(this: ThisPtr<Self>) {
         Self::fail(this, ErrorCode::TlsHandshakeFailed);

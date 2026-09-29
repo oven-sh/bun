@@ -268,9 +268,7 @@ impl Handlers {
         false
     }
 
-    /// An error that the TLS engine raised, for a socket that has an `error`
-    /// handler. The third argument says that the socket is still open: its
-    /// close follows.
+    /// The third argument marks an error of the TLS engine: the socket is still open, its close follows.
     pub(crate) fn call_tls_error_handler(
         &self,
         this_value: JSValue,

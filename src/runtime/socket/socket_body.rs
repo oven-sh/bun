@@ -353,8 +353,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) latest_session: Cell<Option<ptr::NonNull<boringssl_sys::SSL_SESSION>>>,
 }
 
-/// The TLS error that the `close` handler reports, for a socket with no
-/// `error` handler. 0 is none.
+/// The TLS error that `close` reports for a socket with no `error` handler. 0 is none.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PendingTlsError(u32);
 
@@ -1790,9 +1789,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// The TLS engine gave up on the connection. That is not the result of a
-    /// handshake, so neither `handshake` nor `open` runs. The close follows.
-    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
+    /// Not the result of a handshake: neither `handshake` nor `open` runs. The close follows.
     pub(crate) fn on_tls_error(
         this: bun_ptr::ThisPtr<Self>,
         s: SocketHandler<SSL>,

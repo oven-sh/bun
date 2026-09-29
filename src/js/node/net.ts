@@ -722,8 +722,7 @@ const SocketHandlers = {
       callback(error);
     }
 
-    // The TLS engine closes the socket next, so what the stream holds stays readable.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L465-L495
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
     if (tlsError && self._secureEstablished) return self._emitTLSError(error);
     self.emit("error", error);
   },
@@ -1612,8 +1611,7 @@ const SocketHandlers2 = {
       callback(error);
     }
 
-    // The TLS engine closes the socket next, so what the stream holds stays readable.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L465-L495
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
     if (tlsError && self._secureEstablished) return self._emitTLSError(error);
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },

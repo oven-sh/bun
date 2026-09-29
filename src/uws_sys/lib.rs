@@ -104,8 +104,7 @@ impl us_bun_verify_error_t {
     }
 }
 
-/// `struct us_tls_error_t`: why the TLS engine gave up on a connection. The
-/// owner gets it through its TLS error report, never as a handshake result.
+/// `struct us_tls_error_t`: why the TLS engine gave up on a connection. Never a handshake result.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct us_tls_error_t {

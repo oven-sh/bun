@@ -1982,8 +1982,7 @@ static uint32_t ssl_renegotiate(struct us_socket_t *s) {
   return 0;
 }
 
-/* A refusal is not the result of a handshake: the owner gets what this read
- * decrypted, then the error, then the close. */
+/* Not a handshake result: the owner gets the data of this read, the error, then the close. */
 static void ssl_refuse_renegotiation(struct us_socket_t *s, uint32_t kind, int read) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
   /* Read before a dispatch runs JS: the error queue belongs to the thread. */

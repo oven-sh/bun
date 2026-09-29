@@ -219,9 +219,7 @@ pub mod ssl_wrapper {
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
 
-    /// Answers a HelloRequest: `None` starts the renegotiation, `Some` refuses it.
-    /// The count resets each [`MAX_RENEGOTIATION_WINDOW`], like `us_reneg_policy`
-    /// in openssl.c. Not generic, so there is one copy for every owner type.
+    /// `None` starts the renegotiation, `Some` refuses it. Not generic: one copy for every owner type.
     #[cold]
     fn renegotiation_refusal(
         count: &Cell<u8>,
@@ -1201,9 +1199,7 @@ pub mod ssl_wrapper {
                                 &self.renegotiation_window_start,
                                 ssl,
                             ) else {
-                                // ok, we are done here, we need to call SSL_read again
-                                // this dont mean that we are done with the handshake renegotiation
-                                // we need to call SSL_read again
+                                // SSL_read continues the renegotiation.
                                 continue;
                             };
                             self.flags
@@ -1214,8 +1210,7 @@ pub mod ssl_wrapper {
                                 self.trigger_close_callback();
                                 return false;
                             }
-                            // A refusal is not the result of a handshake: the owner gets
-                            // what this read decrypted, then the error, then the close.
+                            // Not a handshake result: the data of this read, the error, then the close.
                             self.flush_pending_events();
                             if self.ssl.get().is_none() || self.flags.closed_notified() {
                                 return false;

@@ -296,9 +296,7 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     verdict as c_int
 }
 
-/// The TLS engine gave up on the connection of `s`. The owner fails what it
-/// has in flight, and openssl.c closes the socket when this returns. Only a
-/// TLS client can get here: a server refuses a renegotiation inside BoringSSL.
+/// The owner fails what it has in flight. openssl.c closes the socket when this returns.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_tls_error(s: *mut us_socket_t, error: us_tls_error_t) {
     use bun_uws_sys::thunk::ExtSlot;

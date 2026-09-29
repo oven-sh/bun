@@ -2726,7 +2726,9 @@ pub mod parse_worker {
                 get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
         // An error in a `package.json` or `tsconfig.json` that the lookup read first.
-        const_call_lookup_log.append_to_with_recycled(log, false);
+        if !const_call_lookup_log.msgs.is_empty() {
+            const_call_lookup_log.append_to_with_recycled(log, false);
+        }
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {

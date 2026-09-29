@@ -573,8 +573,8 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// Compiled binary, bare specifier: `load_node_modules` walks
-    /// `node_modules` from here first, then from the source directory.
+    /// Compiled binary, bare specifier: `load_node_modules` checks
+    /// `node_modules` in this directory before the walk from the source directory.
     pub(crate) standalone_exe_dir: Option<&'static [u8]>,
 }
 
@@ -2609,15 +2609,16 @@ impl<'a> Resolver<'a> {
         let mut any_node_modules_folder = false;
         let use_node_module_resolver = global_cache != GlobalCache::force;
 
-        // Compiled binary: walk up from the executable's directory first, but
-        // only through directories the walk from the source directory does
-        // not reach. Then walk from the source directory as usual.
-        let mut walking_from_exe_dir = false;
+        // Compiled binary: check `node_modules` next to the executable (that
+        // directory only, not its parents) before the walk from the source
+        // directory.
+        let mut at_exe_dir = false;
         if !is_self_reference
             && let Some(exe_dir) = self.standalone_exe_dir.take()
             && let Ok(Some(info)) = self.dir_info_cached(exe_dir)
+            && !strings::eql(info.abs_path, source_dir_info.abs_path)
         {
-            walking_from_exe_dir = true;
+            at_exe_dir = true;
             dir_info = info;
         }
 
@@ -2625,16 +2626,6 @@ impl<'a> Resolver<'a> {
         // or in the package root directory if it's a self-reference
         if use_node_module_resolver {
             loop {
-                if walking_from_exe_dir
-                    && ResolvePath::resolve_path::is_parent_or_equal(
-                        dir_info.abs_path,
-                        source_dir_info.abs_path,
-                    ) != ResolvePath::resolve_path::ParentEqual::Unrelated
-                {
-                    walking_from_exe_dir = false;
-                    dir_info = source_dir_info;
-                }
-
                 // Skip directories that are themselves called "node_modules", since we
                 // don't ever want to search for "node_modules/node_modules"
                 'node_modules: {
@@ -2844,13 +2835,13 @@ impl<'a> Resolver<'a> {
                     self.extension_order = prev_extension_order;
                 }
 
+                if at_exe_dir {
+                    at_exe_dir = false;
+                    dir_info = source_dir_info;
+                    continue;
+                }
                 match dir_info.get_parent() {
                     Some(p) => dir_info = p,
-                    // Another drive on Windows: the two chains never meet.
-                    None if walking_from_exe_dir => {
-                        walking_from_exe_dir = false;
-                        dir_info = source_dir_info;
-                    }
                     None => break,
                 }
             }

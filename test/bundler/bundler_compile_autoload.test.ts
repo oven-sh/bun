@@ -616,19 +616,21 @@ console.log("PRELOAD");
       autoloadTsconfig: true,
     },
     backend: "cli",
-    outfile: "../outside-44053-tsconfig/app",
+    outfile: "/bin/app",
     files: {
       "/entry.ts": /* ts */ `
+        import path from "node:path";
+        process.chdir(path.join(path.dirname(process.execPath), "..", "proj"));
         const modulePath = "@lib/" + "mymodule";
         const m = await import(modulePath);
         console.log(m.default);
       `,
     },
     runtimeFiles: {
-      "/tsconfig.json": JSON.stringify({
+      "/proj/tsconfig.json": JSON.stringify({
         compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["./lib/*"] } },
       }),
-      "/lib/mymodule.ts": `export default "mymodule-from-cwd-tsconfig";`,
+      "/proj/lib/mymodule.ts": `export default "mymodule-from-cwd-tsconfig";`,
     },
     run: {
       stdout: "mymodule-from-cwd-tsconfig",

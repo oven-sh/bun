@@ -126,6 +126,8 @@ Bun.serve({
 
 Bun automatically decodes percent-encoded route parameter values, including Unicode characters. Bun replaces invalid Unicode with the Unicode replacement character (`\uFFFD`).
 
+Routes match the pathname of `request.url`. A request-target that the URL parser rewrites (`.` or `..` segments, a `\`, or a `#`) is matched after that rewrite, so `GET /public/../admin` reaches the `/admin` route and a parameter never holds `..` or a fragment.
+
 ### Static responses
 
 Routes can also be `Response` objects (without the handler function). `Bun.serve()` optimizes them for zero-allocation dispatch, which suits health checks, redirects, and fixed content:

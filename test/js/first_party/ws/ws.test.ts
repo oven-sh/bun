@@ -1450,8 +1450,8 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
         .catch(done);
     },
     // Each test spawns its own echo-server subprocess; debug builds take
-    // well over 1s to spawn + connect on slow CI runners.
-    { timeout: timeout ?? (isDebug ? 10000 : 1000) },
+    // well over 1s to spawn + connect on slow CI runners, and so does a release build on a busy host.
+    { timeout: timeout ?? (isDebug ? 10000 : 5000) },
   );
 }
 

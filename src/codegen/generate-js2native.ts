@@ -46,6 +46,7 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
   "ipc.rs": "runtime/ipc_host.rs",
+  "ConsoleObject.rs": "jsc/ConsoleObject.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
   "JSBundler.rs": "runtime/api/JSBundler.rs",
@@ -87,6 +88,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "patch.rs": "patch/patch.rs",
   "postgres.rs": "sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
+  "runtime/hash_map_testing.rs": "runtime/hash_map_testing.rs",
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",

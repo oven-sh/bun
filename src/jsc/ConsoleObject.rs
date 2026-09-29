@@ -9,7 +9,7 @@ use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
+use crate::{CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
@@ -5917,6 +5917,38 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     }
     let _ = bun_io::Write::write_all(&mut writer, b"\n");
     let _ = bun_io::Write::flush(&mut writer);
+}
+
+/// `consoleTableSizes()` in `bun:internal-for-testing`: entries and slots of
+/// this thread's `console.time` table and of this VM's `console.count` table.
+pub fn table_sizes_for_testing(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let (timer_entries, timer_capacity) =
+        PENDING_TIME_LOGS.with_borrow(|map| (map.len(), map.capacity()));
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let counts = unsafe { &vm_console_mut(global).counts };
+    let sizes = JSValue::create_empty_object(global, 4);
+    sizes.put(
+        global,
+        b"timerEntries",
+        JSValue::js_number(timer_entries as f64),
+    );
+    sizes.put(
+        global,
+        b"timerCapacity",
+        JSValue::js_number(timer_capacity as f64),
+    );
+    sizes.put(
+        global,
+        b"countEntries",
+        JSValue::js_number(counts.len() as f64),
+    );
+    sizes.put(
+        global,
+        b"countCapacity",
+        JSValue::js_number(counts.capacity() as f64),
+    );
+    Ok(sizes)
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

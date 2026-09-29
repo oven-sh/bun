@@ -58,6 +58,9 @@ struct bsd_addr_t {
 
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
 
+/* The largest backlog usockets passes to listen(2). On Linux the accept queue holds one connection more. */
+#define LIBUS_LISTEN_BACKLOG 512
+
 #ifdef __APPLE__
 /*
  * Extended version for sendmsg_x() and recvmsg_x() calls

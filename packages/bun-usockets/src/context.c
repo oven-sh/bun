@@ -423,7 +423,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
     /* Validate with listen(2) before touching the descriptor's flags: on failure the caller keeps
      * the fd (it may be its stdio), and a non-socket must come back untouched. */
-    if (listen(fd, backlog > 0 ? backlog : 512)) {
+    if (listen(fd, backlog > 0 && backlog < LIBUS_LISTEN_BACKLOG ? backlog : LIBUS_LISTEN_BACKLOG)) {
         int listen_err = LIBUS_ERR;
         if (!bsd_socket_listen_error_is_benign(fd)) {
             *error = listen_err;

@@ -519,6 +519,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     /* Todo: stop timer if any */
 
+                    /* One readable event accepts at most what a Linux accept queue holds: the
+                     * connections that were waiting when the event fired. Later arrivals are the
+                     * next loop iteration's (the poll is level-triggered). Without the budget,
+                     * connections that arrive as fast as this loop completes them keep it from
+                     * ever returning. */
+                    int accept_budget = LIBUS_LISTEN_BACKLOG + 1;
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -578,7 +584,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    } while (--accept_budget && (client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
                 }
             }
         break;

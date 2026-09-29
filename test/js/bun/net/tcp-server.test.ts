@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -311,4 +311,34 @@ it("should not leak memory", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
+});
+
+describe("a listen socket whose accept queue never runs empty", () => {
+  // The client of the fixture refills the accept queue while the accept handler runs, so
+  // accept() does not fail with EAGAIN before the last connection. One readable event accepts
+  // what the accept queue can hold: the listen backlog of 512, and one more.
+  for (const kind of ["listen", "serve"]) {
+    for (const [count, perTurn] of [
+      [513, [513]],
+      [514, [513, 1]],
+    ] as const) {
+      // Bun.serve has no accept callback. Its request handler runs inside the accept loop
+      // only where the kernel defers the accept until the request arrives.
+      it.skipIf(kind === "serve" && !isLinux).concurrent(
+        `${kind}: ${count} connections are accepted in ${perTurn.length} event loop ${perTurn.length === 1 ? "turn" : "turns"}`,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), join(import.meta.dir, "accept-backlog-fixture.ts"), kind, String(count)],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual({ accepted: count, perTurn });
+          expect(exitCode).toBe(0);
+        },
+      );
+    }
+  }
 });

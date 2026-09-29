@@ -6228,6 +6228,57 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
   }
 });
 
+it("client sends a bodiless request that declares content-length and lets the server judge it", async () => {
+  // node's client does not reject content-length on a GET/DELETE/HEAD with END_STREAM. The
+  // server checks the declared length against the body it received: 0 matches an empty body
+  // and the request succeeds, any other value is a stream PROTOCOL_ERROR from the server.
+  const server = http2.createServer();
+  let client;
+  try {
+    const seen = [];
+    server.on("stream", (stream, headers) => {
+      seen.push([headers[":method"], headers["content-length"]]);
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    const sessionError = Promise.withResolvers();
+    client.on("error", sessionError.reject);
+
+    const send = (method, contentLength) =>
+      Promise.race([
+        sessionError.promise,
+        new Promise(resolve => {
+          const req = client.request({ ":method": method, ":path": "/x", "content-length": contentLength });
+          let status;
+          let code;
+          req.on("response", headers => (status = headers[":status"]));
+          req.on("error", err => (code = err.code));
+          req.on("close", () => resolve({ status, code, rstCode: req.rstCode }));
+          req.resume();
+        }),
+      ]);
+
+    expect(await send("DELETE", "0")).toEqual({ status: 200, code: undefined, rstCode: 0 });
+    expect(await send("GET", "0")).toEqual({ status: 200, code: undefined, rstCode: 0 });
+    expect(await send("HEAD", "0")).toEqual({ status: 200, code: undefined, rstCode: 0 });
+    expect(await send("DELETE", "5")).toEqual({
+      status: undefined,
+      code: "ERR_HTTP2_STREAM_ERROR",
+      rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+    });
+    expect(seen).toEqual([
+      ["DELETE", "0"],
+      ["GET", "0"],
+      ["HEAD", "0"],
+    ]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
 it("client connects over a user Duplex that already has a 'data' listener", async () => {
   // A 'data' listener attached before connect() puts the stream in flowing mode, so the
   // peer's first frames can arrive before the connect callback has run. The preface must

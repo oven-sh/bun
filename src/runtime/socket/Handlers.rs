@@ -102,6 +102,12 @@ impl Handlers {
         self.cell.root(global)
     }
 
+    /// The context of the script that gave these handlers.
+    #[inline]
+    pub(crate) fn context(&self) -> bun_jsc::ContextId {
+        self.context
+    }
+
     /// Records the listener that accepted these sockets (server mode only), or
     /// clears it as that listener frees itself.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {

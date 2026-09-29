@@ -3,8 +3,7 @@
 //! tls, ...)` host functions, through the per-VM `SSL_CTX*` cache lookup.
 
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
-    api::server_config::SSLConfig,
+    JSGlobalObject, JSValue, JsResult, VirtualMachine, api::server_config::SSLConfig,
 };
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_uws as uws;
@@ -42,7 +41,7 @@ pub(crate) struct ConnectionCtorArgs<M> {
     pub database_str: bun_core::String,
     pub ssl_mode: M,
     pub tls_config: SSLConfig,
-    /// Moves into the connection.
+    /// The `SSL_CTX` reference the connection will own.
     pub secure: Option<OwnedSslCtx>,
 }
 
@@ -51,7 +50,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
     /// already pending and the caller should `return Ok(JSValue::ZERO)`.
     pub(crate) fn parse(
         global_object: &JSGlobalObject,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         arguments: &[JSValue],
     ) -> JsResult<Option<Self>> {
         let hostname_str = arguments[0].to_bun_string(global_object)?;
@@ -73,7 +72,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
                 SSLConfig::default()
             } else if tls_object.is_object() {
-                match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
+                match SSLConfig::from_js(vm, global_object, tls_object) {
                     Ok(opt) => opt.unwrap_or_default(),
                     Err(_) => return Ok(None),
                 }
@@ -92,9 +91,10 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             // `SSLContextCache` shares one `SSL_CTX*` per distinct config
             // across pooled connections and reconnects.
             let mut err = uws::create_bun_socket_error_t::none;
-            secure = vm
-                .ssl_ctx_cache()
-                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
+            secure = vm.ssl_ctx_cache_get_or_create(
+                &tls_config.as_usockets_for_client_verification(),
+                &mut err,
+            );
             if secure.is_none() {
                 drop(tls_config);
                 return Err(

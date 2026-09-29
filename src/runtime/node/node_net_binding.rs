@@ -137,6 +137,8 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
         let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
+            io_ref: Cell::new(None),
+            named_pipe_ref: Cell::new(None),
             protos: JsCell::new(None),
             handlers: JsCell::new(None),
             local_binding: JsCell::new(None),
@@ -155,8 +157,10 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
-            latest_session: core::cell::Cell::new(None),
+            latest_session: JsCell::new(None),
         });
+        // The JS wrapper adopts the creation ref.
+        let socket = socket.into_this_ptr();
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
         let value = socket.to_js(global);
         socket.this_value.set(jsc::JsRef::init_weak(value));

@@ -1,14 +1,15 @@
+#![forbid(unsafe_code)]
+
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use crate::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
+use bun_ptr::{BackRef, RefPtr, ThisPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -32,7 +33,7 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // (`generated_classes.rs` calls the inherent methods below directly), so the
 // derive's placeholder shims would be redundant dead code.
 //
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self` or `ThisPtr<Self>`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
@@ -47,14 +48,14 @@ pub struct JSMySQLQuery {
     query: JsCell<MySQLQuery>,
 }
 
-impl JSMySQLQuery {
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
-    #[inline]
-    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
+// mimalloc rounds 81 bytes up to its 96-byte size class.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(core::mem::size_of::<JSMySQLQuery>() <= 80);
 
+// Intrusive refcount (`CellRefCounted`): held as `RefPtr` (request queue, JS
+// wrapper, guards); the last release drops the box (`Drop` below).
+
+impl JSMySQLQuery {
     pub fn estimated_size(&self) -> usize {
         core::mem::size_of::<Self>()
     }
@@ -68,6 +69,7 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
+    /// Runs before the JS wrapper's ref is dropped.
     pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
         self.this_value.with_mut(|v| v.finalize());
@@ -87,26 +89,21 @@ impl JSMySQLQuery {
             simple,
         } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
-        let this_ptr = bun_core::heap::into_raw(Box::new(Self {
+        // The initial ref is the one the JS wrapper adopts below.
+        let this: ThisPtr<Self> = RefPtr::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
-            // Stored with full write provenance for later `&mut *p` at use sites.
-            vm: BackRef::from(
-                NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
-            ),
+            vm: BackRef::new(global_this.bun_vm()),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(
                 query.to_bun_string(global_this)?,
                 bigint,
                 simple,
             )),
-        }));
-        // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
-        // until handed to the JS wrapper. R-2: every field is interior-mutable,
-        // so a shared `ParentRef` deref is sufficient even for the writes below.
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
+        })
+        .into_this_ptr();
 
-        let this_value = js::to_js(this_ptr, global_this);
+        let this_value = js::to_js(this.as_ptr(), global_this);
         this_value.ensure_still_alive();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
@@ -120,12 +117,12 @@ impl JSMySQLQuery {
     }
 
     pub fn do_run(
-        this: &Self,
+        this: ThisPtr<Self>,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         debug!("doRun");
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         let arguments = callframe.arguments();
         if arguments.len() < 2 {
@@ -158,7 +155,7 @@ impl JSMySQLQuery {
         this.set_target(target);
         if let Err(err) = this.run(connection) {
             // Nothing else completes this request: it never reaches the queue.
-            this.mark_as_failed();
+            Self::mark_as_failed(this);
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -168,7 +165,7 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.ref_guard());
+        connection.enqueue_request(this);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -228,58 +225,55 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn resolve(&self, queries_array: JSValue, result: &MySQLQueryResult) {
-        // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
+    pub(crate) fn resolve(this: ThisPtr<Self>, queries_array: JSValue, result: &MySQLQueryResult) {
+        // The guard brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
-        let _guard = self.ref_guard();
+        let _guard = RefPtr::from_this(this);
         let is_last_result = result.is_last_result;
-        // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
+        // R-2: `ThisPtr` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
-        let _downgrade = scopeguard::guard(self, move |s| {
+        let _downgrade = scopeguard::guard(this, move |s| {
             if s.this_value.get().is_not_empty() && is_last_result {
                 s.this_value.with_mut(|v| v.downgrade());
             }
         });
 
-        if !self.query.with_mut(|q| q.result(is_last_result)) {
+        if !this.query.with_mut(|q| q.result(is_last_result)) {
             return;
         }
 
-        let Some(target_value) = self.get_target() else {
+        let Some(target_value) = this.get_target() else {
             return;
         };
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = this.this_value.get().try_get() else {
             return;
         };
         this_value.ensure_still_alive();
         let tag = CommandTag::Select(result.result_count);
-        let Ok(js_tag) = tag.to_js_tag(self.global_object()) else {
+        let Ok(js_tag) = tag.to_js_tag(this.global_object()) else {
             debug_assert!(false, "in MySQLQuery Tag should always be a number");
             return;
         };
         js_tag.ensure_still_alive();
 
-        let Some(function) = self
-            .vm_mut()
-            .sql_state()
-            .mysql_context
-            .on_query_resolve_fn
-            .get()
+        let Some(function) = this
+            .vm()
+            .with_sql_state(|s| s.mysql_context.on_query_resolve_fn.get())
         else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
 
-        let pending_value = self.get_pending_value().unwrap_or(JSValue::UNDEFINED);
+        let pending_value = this.get_pending_value().unwrap_or(JSValue::UNDEFINED);
         pending_value.ensure_still_alive();
-        self.set_pending_value(JSValue::UNDEFINED);
+        this.set_pending_value(JSValue::UNDEFINED);
 
-        let event_loop = self.event_loop();
+        let event_loop = this.event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
-            self.global_object(),
+            this.global_object(),
             this_value,
             &[
                 target_value,
@@ -298,80 +292,77 @@ impl JSMySQLQuery {
         );
     }
 
-    pub(crate) fn mark_as_failed(&self) {
+    pub(crate) fn mark_as_failed(this: ThisPtr<Self>) {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
-        let _guard = self.ref_guard();
-        if self.this_value.get().is_not_empty() {
-            self.this_value.with_mut(|v| v.downgrade());
+        let _guard = RefPtr::from_this(this);
+        if this.this_value.get().is_not_empty() {
+            this.this_value.with_mut(|v| v.downgrade());
         }
-        let _ = self.query.with_mut(|q| q.fail());
+        let _ = this.query.with_mut(|q| q.fail());
     }
 
-    pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
-        if let Some(err_) = self.global_object().try_take_exception() {
-            self.reject_with_js_value(queries_array, err_);
+    pub(crate) fn reject(this: ThisPtr<Self>, queries_array: JSValue, err: AnyMySQLError::Error) {
+        if let Some(err_) = this.global_object().try_take_exception() {
+            Self::reject_with_js_value(this, queries_array, err_);
         } else {
-            let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
+            let instance = mysql_error_to_js(this.global_object(), "Failed to bind query", err);
             instance.ensure_still_alive();
-            self.reject_with_js_value(queries_array, instance);
+            Self::reject_with_js_value(this, queries_array, instance);
         }
     }
 
-    pub(crate) fn reject_with_js_value(&self, queries_array: JSValue, err: JSValue) {
-        // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
+    pub(crate) fn reject_with_js_value(this: ThisPtr<Self>, queries_array: JSValue, err: JSValue) {
+        // The guard brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
-        let _guard = self.ref_guard();
-        // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
+        let _guard = RefPtr::from_this(this);
+        // R-2: `ThisPtr` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
-        let _downgrade = scopeguard::guard(self, |s| {
+        let _downgrade = scopeguard::guard(this, |s| {
             if s.this_value.get().is_not_empty() {
                 s.this_value.with_mut(|v| v.downgrade());
             }
         });
 
-        if !self.query.with_mut(|q| q.fail()) {
+        if !this.query.with_mut(|q| q.fail()) {
             return;
         }
 
-        let Some(target_value) = self.get_target() else {
+        let Some(target_value) = this.get_target() else {
             return;
         };
 
         let mut js_error = err.to_error().unwrap_or(err);
         if js_error.is_empty() {
             js_error = mysql_error_to_js(
-                self.global_object(),
+                this.global_object(),
                 "Query failed",
                 AnyMySQLError::Error::UnknownError,
             );
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let Some(function) = self
-            .vm_mut()
-            .sql_state()
-            .mysql_context
-            .on_query_reject_fn
-            .get()
+        let Some(function) = this
+            .vm()
+            .with_sql_state(|s| s.mysql_context.on_query_reject_fn.get())
         else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        let event_loop = self.event_loop();
+        let event_loop = this.event_loop();
         let js_array = if queries_array.is_empty() {
             JSValue::UNDEFINED
         } else {
             queries_array
         };
         js_array.ensure_still_alive();
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = this.this_value.get().try_get() else {
             return;
         };
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
-            self.global_object(),
+            this.global_object(),
             this_value,
             &[target_value, js_error, js_array],
         );
@@ -459,12 +450,12 @@ impl JSMySQLQuery {
         self.query.get().get_result_mode()
     }
     // TODO: isolate statement modification away from the connection
-    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
+    pub(crate) fn get_statement(&self) -> Option<&MySQLStatement> {
         self.query.get().get_statement()
     }
 
     pub(crate) fn mark_as_prepared(&self) {
-        self.query.with_mut(|q| q.mark_as_prepared());
+        self.query.get().mark_as_prepared();
     }
 
     #[inline]
@@ -527,10 +518,6 @@ impl JSMySQLQuery {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
-    #[inline]
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
-    }
     /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
     /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap
     /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
@@ -542,6 +529,13 @@ impl JSMySQLQuery {
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()
+    }
+}
+
+/// Runs when the last ref is released (`CellRefCounted` reclaims the box).
+impl Drop for JSMySQLQuery {
+    fn drop(&mut self) {
+        self.query.get_mut_unique().cleanup();
     }
 }
 

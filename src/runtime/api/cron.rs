@@ -38,7 +38,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
 };
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, TimerRef};
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_io::pipe_reader::BufferedReaderParent;
@@ -60,7 +60,7 @@ fn vm_mut<'a>() -> &'a mut VirtualMachine {
     VirtualMachine::get_mut()
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
@@ -1467,12 +1467,8 @@ impl CronJob {
     fn tick_settled(this: ThisPtr<Self>) {
         this.tick_cell.set(JSValue::ZERO);
         this.maybe_downgrade();
-        // SAFETY: `this` is live: the claim being released is a ref on it.
-        unsafe {
-            <Self as bun_ptr::CellRefCounted>::deref_nn(core::ptr::NonNull::new_unchecked(
-                this.as_ptr(),
-            ))
-        };
+        // The claim being released is a ref on `this`.
+        <Self as bun_ptr::CellRefCounted>::deref_nn(this.into());
     }
 
     /// The tick's promise will not settle on this VM (it is going): take the claim back, so the
@@ -1501,11 +1497,16 @@ impl CronJob {
         <Self as bun_ptr::CellRefCounted>::deref_nn(this);
     }
 
+    #[inline]
+    fn timer_ref(&self) -> TimerRef {
+        TimerRef::new(self, |job| &job.event_loop_timer)
+    }
+
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(self.timer_ref());
         }
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         self.abort_handle.leave();
@@ -1564,12 +1565,13 @@ impl CronJob {
 
     /// May free `this`.
     fn remove_from_list(this: ThisPtr<Self>) {
-        let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
-            return;
-        };
-        if let Some(i) = jobs.iter().position(|j| j.as_ptr() == this.as_ptr()) {
-            drop(jobs.swap_remove(i));
-        }
+        let entry = crate::jsc_hooks::with_cron_jobs(|jobs| {
+            let i = jobs.iter().position(|j| j.as_ptr() == this.as_ptr())?;
+            Some(jobs.swap_remove(i))
+        })
+        .flatten();
+        // Released outside the list borrow: may free `this`.
+        drop(entry);
     }
 
     /// `.reload`: --hot — promises in flight will still settle on this VM, so
@@ -1579,10 +1581,10 @@ impl CronJob {
     pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the list borrow.
-        let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
+        let Some(jobs) = crate::jsc_hooks::with_cron_jobs(core::mem::take) else {
             return;
         };
-        for job in core::mem::take(jobs) {
+        for job in jobs {
             let this = job.this_ptr();
             this.stop_internal(vm);
             if MODE == ClearMode::Teardown {
@@ -1630,12 +1632,7 @@ impl CronJob {
         let Some(next_time) = this.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        timer_all().update(
-            this.event_loop_timer
-                .as_ptr()
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-            &next_time,
-        );
+        timer_all().update(this.timer_ref(), &next_time);
     }
 
     /// The tick's callback runs here as a top-level call (what it throws
@@ -1842,9 +1839,7 @@ impl CronJob {
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
         if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
-            if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
-                jobs.push(job.clone());
-            }
+            crate::jsc_hooks::with_cron_jobs(|jobs| jobs.push(job.clone()));
         }
 
         // `job`'s ref moves to the JS wrapper (released via `finalize`).
@@ -1861,12 +1856,7 @@ impl CronJob {
         job.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: heap-allocated (`RefPtr`); `stop_internal` leaves the context before the job is released.
         unsafe { bun_jsc::AbortHandle::arm_owner(job.as_ptr(), cx.context()) };
-        timer_all().update(
-            job.event_loop_timer
-                .as_ptr()
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>(),
-            &next_time,
-        );
+        timer_all().update(job.timer_ref(), &next_time);
 
         Ok(js_value)
     }

@@ -280,9 +280,11 @@ impl WindowsNamedPipeContext {
             socket
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
+            // `create()`'s ref, taken out first so a reconnect from the
+            // handler can install its own; released once the handler is done.
+            let ours = s.named_pipe_ref.take();
             let failed = NewSocket::handle_connect_error(s, errno, 0);
-            // Release the +1 ref taken in `create()`.
-            s.get().deref();
+            drop(ours);
             failed
         });
     }
@@ -305,9 +307,10 @@ impl WindowsNamedPipeContext {
             (socket, ptr::addr_of_mut!((*this).named_pipe))
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
+            // See `fail_connect`.
+            let ours = s.named_pipe_ref.take();
             let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
-            // Release the +1 ref taken in `create()`.
-            s.get().deref();
+            drop(ours);
             closed
         });
         // SAFETY: `this` is the live ctx pointer registered in create();
@@ -328,6 +331,26 @@ impl WindowsNamedPipeContext {
             }
             EventState::None => panic!("Invalid event state"),
         }
+    }
+
+    /// The socket of `pipe` connects again through another owner. Forget the
+    /// socket, release `create()`'s ref on it and close the pipe: no event of
+    /// this pipe reaches the socket again. The caller holds its own ref on
+    /// the socket.
+    pub(crate) fn abandon(pipe: *mut WindowsNamedPipe) {
+        // SAFETY: the `InternalSocket::Pipe` of a socket is the `named_pipe` of
+        // the live context that `create()` pointed at it, and `handlers.ctx`
+        // of that pipe is the context (`create()`).
+        let this = unsafe { (*pipe).handlers.ctx.cast::<Self>() };
+        // SAFETY: see `on_open`.
+        let socket = unsafe { core::mem::replace(&mut (*this).socket, SocketType::None) };
+        match_socket!(socket, |s: NewSocket<SSL>| {
+            s.release_named_pipe_ref();
+            Ok(())
+        });
+        // SAFETY: `this` is live. The close ends in `on_close`, which finds no
+        // socket and releases the context.
+        unsafe { (*ptr::addr_of!((*this).named_pipe)).close_or_cancel_connect() };
     }
 
     /// Owns the freshly-`create()`d context until `disarm()`: on any early
@@ -413,7 +436,7 @@ impl WindowsNamedPipeContext {
 
         // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
         match_socket!(socket, |s: NewSocket<SSL>| {
-            s.ref_();
+            NewSocket::hold_named_pipe_ref(s);
             Ok(())
         });
 
@@ -497,7 +520,7 @@ impl Drop for WindowsNamedPipeContext {
             core::mem::replace(&mut self.socket, SocketType::None),
             // +1 ref taken in `create()`; this is the matching release.
             |s: NewSocket<SSL>| {
-                s.get().deref();
+                s.release_named_pipe_ref();
                 Ok(())
             }
         );

@@ -57,15 +57,17 @@ pub struct ScriptExecutionContext {
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
     dom_context: core::cell::Cell<*mut core::ffi::c_void>,
     /// The timers script of a graph's context set that have not been freed
-    /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
-    /// cancels exactly those. A VM's own contexts walk the timer heap.
+    /// (the `event_loop_timer` slot of a `Timeout` / `Immediate`, or an
+    /// `AbortSignal` `Timeout`), so stopping it cancels exactly those. A VM's
+    /// own contexts walk the timer heap.
     timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
 }
 
 /// What a pointer in a graph context's timer set points at.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ContextTimer {
-    /// `bun_runtime::timer::TimerObjectInternals` (setTimeout / setInterval / setImmediate).
+    /// The `event_loop_timer` slot of a `bun_runtime::timer::TimeoutObject` or
+    /// `ImmediateObject` (setTimeout / setInterval / setImmediate).
     Object,
     /// [`crate::abort_signal::Timeout`] (`AbortSignal.timeout`).
     AbortSignal,

@@ -250,10 +250,5 @@
   },
   "src/runtime/webcore/s3/simple_request.rs": {
     "HTTPThread::schedule": 1
-  },
-  "src/sql_jsc/jsc.rs": {
-    "unsafe impl Send": [
-      "SSLConfig"
-    ]
   }
 }

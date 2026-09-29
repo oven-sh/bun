@@ -163,7 +163,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // Last, where Node's _storeHeader puts them — after Connection/Keep-Alive.
     if (autoContentLength !== null) {
       out += `Content-Length: ${autoContentLength}\r\n`;
-    } else if (autoChunked || (chunkedFromAutoBits && chunked)) {
+    } else if (autoChunked || chunkedFromAutoBits) {
       out += "Transfer-Encoding: chunked\r\n";
     }
     out += "\r\n";

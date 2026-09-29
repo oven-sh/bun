@@ -5578,6 +5578,25 @@ describe("http2 allowHTTP1 fallback frames the body by the value of Transfer-Enc
       "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n",
     ],
     [
+      "writeHead() with no framing header, then chunkedEncoding = false",
+      res => {
+        res.writeHead(200);
+        res.chunkedEncoding = false;
+        res.write("o");
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nok",
+    ],
+    [
+      "chunked in writeHead(), then chunkedEncoding = false",
+      res => {
+        res.writeHead(200, { "Transfer-Encoding": "chunked" });
+        res.chunkedEncoding = false;
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
       "identity in writeHead(), then chunkedEncoding = true",
       res => {
         res.writeHead(200, { "Transfer-Encoding": "identity" });

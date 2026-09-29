@@ -233,16 +233,18 @@ mod _impl {
                         super::worker_option_string(wtf).into_js(global_object)
                     })?;
                 // `=strict` is the process's and no Worker runs without it, so a Worker reads it
-                // here whatever `execArgv` it was given (which cannot contain it: the Worker
-                // constructor throws). Node.js's flag is not added: in Node.js a Worker's
-                // `process.execArgv` is what it was given.
+                // here whatever `execArgv` it was given. Node.js's flag is not added: in Node.js a
+                // Worker's `process.execArgv` is what it was given.
+                const STRICT: &str = "--disallow-code-generation-from-strings=strict";
                 if bun_core::code_generation_from_strings()
                     == bun_core::CodeGenerationFromStrings::Disallowed
+                    && !exec_argv
+                        .iter()
+                        .any(|&wtf| super::worker_option_string(wtf).eq_ascii(STRICT.as_bytes()))
                 {
                     array.push(
                         global_object,
-                        BunString::static_("--disallow-code-generation-from-strings=strict")
-                            .into_js(global_object)?,
+                        BunString::static_(STRICT).into_js(global_object)?,
                     )?;
                 }
                 return Ok(array);

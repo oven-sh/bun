@@ -329,30 +329,49 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
     expect(exitCode).toBe(1);
   });
 
-  // The flag is the process's. As in Node.js, a Worker cannot be given it.
-  test.each([flag, strict])("a Worker's execArgv with %s throws", async given => {
+  // The level is the process's. A Worker cannot raise it, and may be given what is already in force,
+  // so that `execArgv: process.execArgv` works, in a Worker of a Worker too.
+  test.each([
+    ["no flag", [], { [flag]: "TypeError", [strict]: "TypeError", [flag + "=other"]: "TypeError" }],
+    ["the flag", [flag], { [flag]: [flag], [strict]: "TypeError", [flag + "=other"]: "TypeError" }],
+    ["=strict", [strict], { [flag]: [flag, strict], [strict]: [strict], [flag + "=other"]: "TypeError" }],
+  ] as const)("a Worker's execArgv with the flag, in a process with %s", async (_, args, expected) => {
     using dir = tempDir("disallow-code-generation-worker", {
-      "worker.mjs": `postMessage("started")`,
+      "worker.mjs": `
+        import { Worker, parentPort, workerData } from "node:worker_threads";
+        import { start } from "./start.mjs";
+        // Its own process.execArgv, which a Worker of its own can be given.
+        parentPort.postMessage(workerData ? process.execArgv : await start(Worker, process.execArgv, true));
+      `,
+      "start.mjs": `
+        export const start = (Worker, execArgv, workerData) => new Promise(resolve => {
+          try {
+            const worker = new Worker(new URL("./worker.mjs", import.meta.url), { execArgv, workerData });
+            worker.on("message", resolve);
+            worker.on("error", error => resolve("error: " + error.message));
+          } catch (e) {
+            resolve(e.message === "Initiated Worker with invalid execArgv flags: ${flag}" ? e.name : e.message);
+          }
+        });
+      `,
       "main.mjs": `
-        import { Worker as NodeWorker } from "node:worker_threads";
-        const attempt = fn => { try { fn().terminate(); return "started"; } catch (e) { return [e.name, e.message]; } };
-        const execArgv = [process.argv[2]];
-        console.log(JSON.stringify([
-          attempt(() => new NodeWorker(new URL("./worker.mjs", import.meta.url), { execArgv })),
-          attempt(() => new Worker(new URL("./worker.mjs", import.meta.url).href, { execArgv })),
-        ]));
+        import { Worker } from "node:worker_threads";
+        import { start } from "./start.mjs";
+        const seen = {};
+        for (const given of JSON.parse(process.argv[2])) seen[given] = await start(Worker, [given]);
+        console.log(JSON.stringify(seen));
+        process.exit(0);
       `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.mjs", given],
+      cmd: [bunExe(), ...args, "main.mjs", JSON.stringify(Object.keys(expected))],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const error = ["TypeError", "Initiated Worker with invalid execArgv flags: " + flag];
-    expect(JSON.parse(stdout)).toEqual([error, error]);
+    expect(JSON.parse(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
   });
 

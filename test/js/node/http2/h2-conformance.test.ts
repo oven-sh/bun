@@ -1943,9 +1943,12 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   const calm = (f: Frame) => f.type === FrameType.GOAWAY && goawayErrorCode(f) === ErrorCode.ENHANCE_YOUR_CALM;
 
   function respondingServer(options: Record<string, unknown> = {}, rejectUploads = false) {
-    const state = { handlers: 0, sessionErrorCode: undefined as string | undefined };
+    // A promise, not a value sampled when the GOAWAY arrives: like node, the session reports its
+    // error once its socket has closed, which is after the GOAWAY has reached the peer.
+    const sessionError = Promise.withResolvers<string>();
+    const state = { handlers: 0, sessionErrorCode: sessionError.promise };
     const server = http2.createServer(options);
-    server.on("sessionError", (e: any) => (state.sessionErrorCode = e.code));
+    server.on("sessionError", (e: any) => sessionError.resolve(e.code));
     server.on("session", s => s.on("error", () => {}));
     server.on("stream", (stream: any, headers: any) => {
       state.handlers++;
@@ -1992,7 +1995,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
     // Like node, every request up to the bucket's edge still reaches the handler.
     expect(handlers).toBeGreaterThan(900);
-    expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    expect(await sessionErrorCode).toBe("ERR_HTTP2_ERROR");
   });
 
   test("streamResetBurst sets where the flood is detected", async () => {
@@ -2049,7 +2052,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
       expect(c.frames.filter(f => f.type === FrameType.RST_STREAM).length).toBeGreaterThanOrEqual(1000);
       expect(handlers).toBeGreaterThanOrEqual(1000);
-      expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+      expect(await sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
   }
 
@@ -2150,7 +2153,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       c.send(pairs(1200, 1, rstStream));
       const goaway = await c.waitFor(calm, 10_000);
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
-      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+      expect(await state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
   });
 
@@ -2164,7 +2167,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       c.send(Buffer.concat(ids.map(madeYouReset["WINDOW_UPDATE with a 0 increment"])));
       const goaway = await c.waitFor(calm, 10_000);
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
-      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+      expect(await state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
   });
 });

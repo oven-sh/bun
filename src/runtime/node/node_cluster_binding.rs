@@ -756,7 +756,7 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
         };
         let mut ty: libc::c_int = 0;
         let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
+        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len` is the size of `ty`.
         let rc = unsafe {
             libc::getsockopt(
                 fd,

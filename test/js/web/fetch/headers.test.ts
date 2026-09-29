@@ -3,6 +3,9 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
+import { bunEnv, bunExe, isDebug, withoutAggressiveGC } from "harness";
+import { type AddressInfo, connect, createServer } from "node:net";
+import { totalmem } from "node:os";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -258,9 +261,13 @@ describe("Headers", () => {
       expect(() => headers.append("expires")).toThrow(TypeError);
     });
 
-    // A name that repeats has one value: the values in the order of the calls,
-    // joined by ", ", or by "; " for Cookie. These cases pin that result for
-    // every way to reach the join, at a combined length under 4 KB and past it.
+    // Appending to a name that already has a value used to rebuild the whole
+    // combined value with makeString(), so N appends copied O(N^2) bytes:
+    // 200,000 appends took 1.8s and 400,000 took 9.4s on a release build, where
+    // Node takes 0.5s for 400,000. A combined value under 4 KB is still one
+    // exact-fit string. Past that, the header map keeps a builder for the value
+    // and the value grows in place. Every case below runs in both states, and
+    // the last one does an amount of work that only a linear join can finish.
     describe("with a name that repeats", () => {
       const COUNT = 100;
       describe.each([
@@ -354,8 +361,8 @@ describe("Headers", () => {
           });
         });
 
-        // A header that is gone, or that set() replaced, leaves nothing in the
-        // size that the object reports.
+        // The reported size counts the spare room of a value that grows. A
+        // header that is gone, or that set() replaced, must not leave any.
         test("delete() and set() release what the value held", () => {
           const size = (headers: Headers) => estimateShallowMemoryUsageOf(headers);
           const deleted = filled();
@@ -464,8 +471,127 @@ describe("Headers", () => {
         }
       });
 
-      // The order in which the names get their values does not change what
-      // each name holds, and it does not change the size that the object reports.
+      // This one needs no clock. A value that grows by append has a buffer with
+      // room for the next values, and the size that the object reports counts
+      // that room. The same value stored by one call has none.
+      test("a value that grew past 4 KB by append reports its spare room", () => {
+        const unit = Buffer.alloc(100, "v").toString();
+        const grown = new Headers();
+        for (let i = 0; i < 100; i++) grown.append("x-repeated", unit);
+        const value = grown.get("x-repeated")!;
+        const stored = estimateShallowMemoryUsageOf(new Headers([["x-repeated", value]]));
+        expect(estimateShallowMemoryUsageOf(grown)).toBeGreaterThan(stored);
+        expect(estimateShallowMemoryUsageOf(grown)).toBeLessThan(stored + value.length);
+      });
+
+      // A list hands over all its values in one call, so the object knows when
+      // the value is complete and keeps no room for more.
+      test("a value that a list joined past 4 KB keeps no spare room", () => {
+        const unit = Buffer.alloc(100, "v").toString();
+        const fromList = new Headers(Array.from({ length: 100 }, (): [string, string] => ["x-repeated", unit]));
+        const value = fromList.get("x-repeated")!;
+        expect(value).toBe(Array.from({ length: 100 }, () => unit).join(", "));
+        expect(estimateShallowMemoryUsageOf(fromList)).toBe(
+          estimateShallowMemoryUsageOf(new Headers([["x-repeated", value]])),
+        );
+        fromList.append("x-repeated", "next");
+        expect(fromList.get("x-repeated")).toBe(`${value}, next`);
+      });
+
+      // Bun.serve and fetch() build the Headers object from the fields on the
+      // wire, without a call to append(). Fields that repeat a name pass the
+      // same join, and the value they leave is complete too.
+      describe.each(["x-repeated", "accept", "cookie"])("%s fields that repeat on the wire", name => {
+        const unit = Buffer.alloc(200, "v").toString();
+        const fields = Array.from({ length: 60 }, (_, i) => `${name}: ${unit}${i}\r\n`).join("");
+        const expected = {
+          value: Array.from({ length: 60 }, (_, i) => `${unit}${i}`).join(name === "cookie" ? "; " : ", "),
+          spareRoom: 0,
+        };
+        // In the copy each name got its value by one call.
+        const report = (headers: Headers) => ({
+          value: headers.get(name),
+          spareRoom: estimateShallowMemoryUsageOf(headers) - estimateShallowMemoryUsageOf(new Headers([...headers])),
+        });
+
+        test("join in a request to Bun.serve", async () => {
+          let seen: ReturnType<typeof report> | undefined;
+          await using server = Bun.serve({
+            port: 0,
+            fetch(request) {
+              seen = report(request.headers);
+              return new Response("ok");
+            },
+          });
+          const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+          const socket = connect({ port: server.port, host: "127.0.0.1" }, () => {
+            socket.write(`GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n${fields}\r\n`);
+          });
+          socket.on("data", () => {});
+          socket.on("close", () => resolve());
+          socket.on("error", reject);
+          await closed;
+          expect(seen).toEqual(expected);
+        });
+
+        test("join in a response to fetch()", async () => {
+          const server = createServer(socket => {
+            socket.on("error", () => {});
+            socket.once("data", () => {
+              socket.end(`HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n${fields}\r\n`);
+            });
+          });
+          const { promise: listening, resolve } = Promise.withResolvers<void>();
+          server.listen(0, "127.0.0.1", () => resolve());
+          await listening;
+          try {
+            const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+            expect(report(response.headers)).toEqual(expected);
+          } finally {
+            server.close();
+          }
+        });
+      });
+
+      // A String holds at most 2 ** 31 - 1 characters. The join compares the
+      // lengths before it copies, so the child needs memory for the one string
+      // of 2 ** 30 characters and for nothing else. It is a child process
+      // because this join aborted. The timeout is for a debug build, which
+      // takes 4 s for each call to check 1 GiB of value for invalid characters.
+      test.skipIf(totalmem() < 8 * 1024 ** 3)(
+        "a join past the string length limit throws a RangeError",
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
+                const big = Buffer.alloc(2 ** 30, "v").toString();
+                const headers = new Headers();
+                headers.append("x-repeated", big);
+                let thrown;
+                try {
+                  headers.append("x-repeated", big);
+                } catch (error) {
+                  thrown = error.name + ": " + error.message;
+                }
+                console.log(JSON.stringify({ thrown, length: headers.get("x-repeated").length }));
+              `,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout || "{}")).toEqual({ thrown: "RangeError: Out of memory", length: 2 ** 30 });
+          expect(exitCode).toBe(0);
+        },
+        60_000,
+      );
+
+      // Also without a clock. Each name has a builder of its own, so names that
+      // grow in turn end in the same state as names that grow one after another.
       test("names that grow in turn end as names that grow one by one", () => {
         const unit = Buffer.alloc(100, "v").toString();
         const names = ["x-first", "accept", "x-second"];
@@ -479,6 +605,27 @@ describe("Headers", () => {
         }
         expect(inTurn.toJSON()).toEqual(oneByOne.toJSON());
         expect(estimateShallowMemoryUsageOf(inTurn)).toBe(estimateShallowMemoryUsageOf(oneByOne));
+      });
+
+      // For 8,000 appends of 4 KB the quadratic join copies 131 GB, which takes
+      // 17 s or more on a release build. The linear join copies about 130 MB in
+      // 15 ms. The limit is 300 times the one and a third of the other, so load
+      // on the machine does not move a result across it. The limit is in the
+      // test because CI runs with a timeout of 90 s. A debug build pays 60
+      // microseconds a call before it copies a byte, which leaves no such
+      // margin: it does half the appends and checks the result only. The cases
+      // without a clock catch a quadratic join there.
+      test("a long run of appends to one name takes linear time", () => {
+        const count = isDebug ? 4000 : 8000;
+        const value = Buffer.alloc(4096, "x").toString();
+        const headers = new Headers();
+        const started = performance.now();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < count; i++) headers.append("x-repeated", value);
+        });
+        const elapsed = performance.now() - started;
+        expect(headers.get("x-repeated")!.length).toBe(count * 4096 + (count - 1) * 2);
+        if (!isDebug) expect(elapsed).toBeLessThan(5000);
       });
     });
   });

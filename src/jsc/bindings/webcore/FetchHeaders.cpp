@@ -37,6 +37,10 @@ namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
+#if !CHECK_REF_COUNTED_LIFECYCLE
+static_assert(sizeof(FetchHeaders) == 104, "memoryCost() reports this size to the garbage collector for every Headers object");
+#endif
+
 // https://fetch.spec.whatwg.org/#concept-headers-remove-privileged-no-cors-request-headers
 static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
 {
@@ -104,7 +108,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
         if (!canWriteResult.releaseReturnValue())
             return {};
 
-        headers.add(headerName, normalizedValue);
+        if (headers.add(headerName, normalizedValue) == HTTPHeaderMap::AddResult::ValueTooLong)
+            return Exception { OutOfMemoryError };
         return {};
     }
 
@@ -114,7 +119,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    headers.addUncommonHeader(name, normalizedValue);
+    if (headers.addUncommonHeader(name, normalizedValue) == HTTPHeaderMap::AddResult::ValueTooLong)
+        return Exception { OutOfMemoryError };
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -131,10 +137,11 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    if (header.keyAsHTTPHeaderName)
-        headers.add(header.keyAsHTTPHeaderName.value(), header.value);
-    else
-        headers.add(header.key, header.value);
+    auto result = header.keyAsHTTPHeaderName
+        ? headers.add(header.keyAsHTTPHeaderName.value(), header.value)
+        : headers.add(header.key, header.value);
+    if (result == HTTPHeaderMap::AddResult::ValueTooLong)
+        return Exception { OutOfMemoryError };
 
     return {};
 }
@@ -160,6 +167,7 @@ static ExceptionOr<void> fillHeaderMap(HTTPHeaderMap& headers, const FetchHeader
         }
     }
 
+    headers.settle();
     return {};
 }
 
@@ -184,11 +192,7 @@ ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
     if (this->size() == 0) {
-        HTTPHeaderMap headers;
-        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
-        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
-        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
-        setInternalHeaders(WTF::move(headers));
+        m_headers.appendEntriesOf(otherHeaders.m_headers);
         m_updateCounter++;
         return {};
     }
@@ -199,6 +203,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
             return result.releaseException();
     }
 
+    m_headers.settle();
     return {};
 }
 

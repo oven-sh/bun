@@ -730,8 +730,10 @@ pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // Every parse holds one `P`. State that only one entry point reads goes behind a `Box`, as `starts_for_parse_only`
-// does, so that the other parses do not carry it.
-#[cfg(target_pointer_width = "64")]
+// does, so that the other parses do not carry it. The maps in `P` have one more field with debug assertions on.
+#[cfg(all(target_pointer_width = "64", not(debug_assertions)))]
+const _: () = assert!(core::mem::size_of::<P<'static, true, false>>() <= 3808);
+#[cfg(all(target_pointer_width = "64", debug_assertions))]
 const _: () = assert!(core::mem::size_of::<P<'static, true, false>>() <= 3888);
 
 // ═══════════════════════════════════════════════════════════════════════════

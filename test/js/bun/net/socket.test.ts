@@ -4234,6 +4234,97 @@ Reo=
   });
 });
 
+// shutdown(true) shuts down the read side, and the socket then sees the end of
+// the stream. A socket with allowHalfOpen stays open for writes. A socket
+// without it closes.
+describe("shutdown(true)", () => {
+  // A connection that the peer answers: the events that were due before it
+  // have run by the time it resolves.
+  async function pendingEventsDone() {
+    const server = net.createServer(socket => socket.end("x"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    await once(socket, "data");
+    socket.destroy();
+    server.close();
+  }
+
+  for (const role of ["connected", "accepted"] as const) {
+    for (const allowHalfOpen of [false, true]) {
+      it(`${role === "accepted" ? "an accepted" : "a connected"} socket with allowHalfOpen: ${allowHalfOpen}`, async () => {
+        const calls: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        const opened = Promise.withResolvers<Socket>();
+        let peerGot = "";
+        const peerGotAll = { W1: Promise.withResolvers<void>(), W1W2: Promise.withResolvers<void>() };
+        const fail = (error: unknown) => {
+          opened.reject(error);
+          closed.reject(error);
+          peerGotAll.W1.reject(error);
+          peerGotAll.W1W2.reject(error);
+        };
+        const subject = {
+          open(socket: Socket) {
+            socket.shutdown(true);
+            calls.push(`write ${socket.write("W1")}`);
+            opened.resolve(socket);
+          },
+          data() {
+            calls.push("data");
+          },
+          end() {
+            calls.push("end");
+          },
+          close() {
+            calls.push("close");
+            closed.resolve();
+          },
+          error(_socket: Socket, error: Error) {
+            fail(error);
+          },
+        };
+        const peer = {
+          data(_socket: Socket, data: Buffer) {
+            peerGot += data;
+            if (peerGot === "W1") peerGotAll.W1.resolve();
+            if (peerGot === "W1W2") peerGotAll.W1W2.resolve();
+          },
+          error(_socket: Socket, error: Error) {
+            fail(error);
+          },
+        };
+        const accepts = role === "accepted";
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          allowHalfOpen: accepts ? allowHalfOpen : true,
+          socket: accepts ? subject : peer,
+        });
+        using _client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          allowHalfOpen: accepts ? true : allowHalfOpen,
+          socket: { ...(accepts ? peer : subject), connectError: (_socket, error) => fail(error) },
+        });
+        const socket = await opened.promise;
+        await peerGotAll.W1.promise;
+        await pendingEventsDone();
+        if (allowHalfOpen) {
+          expect(calls).toEqual(["write 2", "end"]);
+          calls.push(`write ${socket.write("W2")}`);
+          await peerGotAll.W1W2.promise;
+          socket.end();
+          await closed.promise;
+          expect(calls).toEqual(["write 2", "end", "write 2", "close"]);
+        } else {
+          calls.push(`write ${socket.write("W2")}`);
+          expect({ calls, peerGot }).toEqual({ calls: ["write 2", "end", "close", "write -1"], peerGot: "W1" });
+        }
+      });
+    }
+  }
+});
+
 // Linux-only: uses /proc/self/fd to find and close the connected socket's fd
 // so getsockname()/getpeername() fail with EBADF.
 it.skipIf(!isLinux)(

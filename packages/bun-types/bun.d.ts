@@ -6779,7 +6779,8 @@ declare module "bun" {
      * Shuts down one half of the connection.
      * With no argument, the socket sends a FIN and enters a half-closed state where it can
      * still receive data but can no longer send data. With `true`, the socket stops
-     * receiving data and can still send data.
+     * receiving data and its `end` handler is called. A socket with `allowHalfOpen: true`
+     * can still send data after that. A socket without it (the default) closes.
      * Calls the `shutdown(2)` syscall internally.
      *
      * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
@@ -6788,7 +6789,7 @@ declare module "bun" {
      * // Stop sending data, but allow receiving
      * socket.shutdown();
      *
-     * // Stop receiving data, but allow sending
+     * // Stop receiving data, but allow sending. The socket needs `allowHalfOpen: true`.
      * socket.shutdown(true);
      * ```
      */

@@ -885,8 +885,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * us_internal_handle_low_priority_sockets is its resume(). */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
-            const int reads_are_off = eof_deferrable &&
-                (s->flags.is_paused || (s->flags.low_prio_state == 1 && !(events & LIBUS_SOCKET_READABLE)));
+            const int reads_are_off = eof_deferrable && (s->flags.is_paused || s->flags.low_prio_state == 1);
             if (reads_are_off && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in

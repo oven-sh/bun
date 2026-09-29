@@ -264,6 +264,14 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
             }
         }
 
+        if let chunk::Content::Javascript(js) = &chunk.content {
+            // `post_process_js_chunk` prints the call of a start. No part above uses the wrapper.
+            for &(_, wrapped) in js.starts_in_chunk_order.iter() {
+                let wrapper_ref = symbols.follow(deps.wrapper_refs[wrapped as usize]);
+                let _ = chunk_meta.imports.put(wrapper_ref, ()); // OOM-only Result
+            }
+        }
+
         // Include the exports if this is an entry point chunk
         if matches!(chunk.content, chunk::Content::Javascript(_)) {
             if chunk.entry_point.is_entry_point() {

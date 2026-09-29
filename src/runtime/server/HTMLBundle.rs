@@ -691,8 +691,6 @@ impl Route {
         }
     }
 
-    /// The response for a route in `State::Err`. The build log stays out of
-    /// the body so error details do not reach end users.
     fn end_build_failed(resp: AnyResponse) {
         resp.write_status(b"500 Build Failed");
         resp.write_header_int(b"Content-Length", 0);

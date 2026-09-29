@@ -5364,6 +5364,18 @@ it.each(["transformSync", "transform"])(
   },
 );
 
+// The second `var t` replaces the symbol of the export, which then links to
+// it, so the export is pinned only if the pin follows that link.
+it.each(["transformSync", "transform"])(
+  "minify.identifiers: %s keeps the name of an export that is declared again",
+  async method => {
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+      "export var t = 1;\nvar t = 2;\nexport function read() { return t; }\n",
+    );
+    expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
+  },
+);
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });

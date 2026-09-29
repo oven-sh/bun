@@ -146,6 +146,20 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "[]" },
   });
+  // The second `var t` replaces the symbol of the export, which then links to
+  // it. The pin has to follow that link: `export var t = 1; var t = 2` printed
+  // as `export var r = 1; var r = 2` exports no `t`.
+  itBundled("minify/NoBundleExportNameKeptWhenDeclaredAgain", {
+    files: {
+      "/entry.js": `export var t = 1;\nvar t = 2;\nexport function read() { return t; }`,
+    },
+    runtimeFiles: {
+      "/importer.js": `import { t, read } from "./out.js";\nconsole.log(t, read());`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { file: "/importer.js", stdout: "2 2" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

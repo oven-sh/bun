@@ -7723,16 +7723,17 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let stable_source_indices = [source.index.0];
     let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
         // Pinned before the reserved names are computed so no slot takes one of these names.
-        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
-        for ref_ in dont_break_the_code {
-            if let Some(symbol) = symbols.get_mut(ref_) {
+        let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref]
+            .into_iter()
+            .chain(tree.named_exports.values().iter().map(|export| export.ref_));
+        for mut ref_ in dont_break_the_code {
+            // `export var t; var t` exports a linked ref, and the renamer names the symbol it links to.
+            while let Some(symbol) = symbols.get_mut(ref_) {
                 symbol.set_must_not_be_renamed(true);
-            }
-        }
-
-        for named_export in tree.named_exports.values() {
-            if let Some(symbol) = symbols.get_mut(named_export.ref_) {
-                symbol.set_must_not_be_renamed(true);
+                if !symbol.has_link() {
+                    break;
+                }
+                ref_ = symbol.link.get();
             }
         }
 

@@ -279,6 +279,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
+        // A member of a namespace is not an export of the module.
+        let applies_entries =
+            IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -305,7 +308,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut replacement: Option<
                     bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if applies_entries {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
                         let name = self.load_name_from_ref(id_ref);
@@ -571,7 +574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if applies_entries {
                     self.is_control_flow_dead = orig_dead;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
@@ -598,7 +601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+            } else if applies_entries {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);

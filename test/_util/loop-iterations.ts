@@ -43,19 +43,26 @@ export async function iterateUntil(done: () => boolean, seconds = 10) {
 }
 
 /**
- * Runs `scenario` until a run is `usable`, at most `attempts` times, and
- * resolves to that run. A scenario that depends on what the kernel had queued
- * before the loop polled cannot promise it on every platform and under every
- * load, so a run that did not get there is set up again. When no run is
- * usable the last one is the result, for the test to fail on.
+ * Runs `scenario` until a run is `usable`, at most `attempts` times and within
+ * `seconds` in all, and resolves to that run. A scenario that depends on what
+ * the kernel had queued before the loop polled cannot promise it on every
+ * platform and under every load, so a run that did not get there is set up
+ * again. When no run is usable the last one is the result, for the test to
+ * fail on.
+ *
+ * The scenario gets the seconds that are left of the budget. It passes them to
+ * `iterateUntil`, so that a run whose datagrams never arrive ends with the
+ * budget and not 20 deadlines later.
  */
 export async function firstUsable<T extends object>(
-  scenario: () => Promise<T>,
+  scenario: (secondsLeft: number) => Promise<T>,
   usable: (run: T) => boolean,
-  attempts = 20,
+  { attempts = 20, seconds = 20 } = {},
 ) {
+  const deadline = performance.now() + seconds * 1000;
   for (let attempt = 1; ; attempt++) {
-    const run = await scenario();
-    if (usable(run) || attempt === attempts) return { ...run, attempt };
+    const secondsLeft = Math.max(1, (deadline - performance.now()) / 1000);
+    const run = await scenario(secondsLeft);
+    if (usable(run) || attempt === attempts || performance.now() > deadline) return { ...run, attempt };
   }
 }

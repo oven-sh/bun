@@ -4,8 +4,11 @@
 // prints one line of JSON.
 //
 // Spawned by udp_socket.test.ts and dgram.test.ts with the scenario name.
+import { exposedInternals } from "bun:internal-for-testing";
 import { createSocket, type Socket } from "node:dgram";
 import { firstUsable, iterateUntil, iterationCounter } from "../../../_util/loop-iterations";
+
+const { _createSocketHandle, kStateSymbol } = exposedInternals["internal/dgram"];
 
 const HOST = "127.0.0.1";
 const quiet = { data() {}, error() {} };
@@ -44,8 +47,7 @@ const reachedTheBound = (count: number) => (run: Run) => run.finished && run.tot
 // "adopted": a descriptor bun did not create has no IP_RECVERR, so the kernel
 // never queues a report. "full-buffer": a socket bun created, whose receive
 // buffer has no room left for the report.
-async function residual(kind: "adopted" | "full-buffer") {
-  const { _createSocketHandle, kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+async function residual(kind: "adopted" | "full-buffer", seconds: number) {
   const received = iterationCounter();
   let lastDelivery = 0;
   let tookTheError = false;
@@ -103,7 +105,7 @@ async function residual(kind: "adopted" | "full-buffer") {
   const finished = await iterateUntil(() => {
     if (native.closed || received.total === sent) return true;
     return kind === "full-buffer" && received.total > 0 && performance.now() - lastDelivery > 300;
-  });
+  }, seconds);
   const closed = native.closed;
   socket.close();
   first.close();
@@ -114,12 +116,12 @@ async function residual(kind: "adopted" | "full-buffer") {
 const scenarios = {
   // 100 datagrams queued on a Bun.udpSocket.
   backlog: () =>
-    firstUsable(async () => {
+    firstUsable(async seconds => {
       const received = iterationCounter();
       const receiver = await Bun.udpSocket({ hostname: HOST, port: 0, socket: { data: () => received.count() } });
       const sender = await Bun.udpSocket({ hostname: HOST, port: 0, socket: quiet });
       queue(sender, receiver.port, 100);
-      const finished = await iterateUntil(() => received.total === 100);
+      const finished = await iterateUntil(() => received.total === 100, seconds);
       receiver.close();
       sender.close();
       return { finished, ...received.summary() };
@@ -128,7 +130,7 @@ const scenarios = {
   // The handler of the first datagram queues 100 more on its own socket. The
   // event that has read 7 by then has 25 left: not 32, and not 4 more batches.
   refill: () =>
-    firstUsable(async () => {
+    firstUsable(async seconds => {
       const received = iterationCounter();
       const sender = await Bun.udpSocket({ hostname: HOST, port: 0, socket: quiet });
       const receiver = await Bun.udpSocket({
@@ -142,7 +144,7 @@ const scenarios = {
         },
       });
       queue(sender, receiver.port, 7);
-      const finished = await iterateUntil(() => received.total === 107);
+      const finished = await iterateUntil(() => received.total === 107, seconds);
       receiver.close();
       sender.close();
       return { finished, ...received.summary() };
@@ -150,14 +152,14 @@ const scenarios = {
 
   // 100 datagrams queued on a node:dgram socket.
   "dgram-backlog": () =>
-    firstUsable(async () => {
+    firstUsable(async seconds => {
       const received = iterationCounter();
       const receiver = createSocket("udp4");
       receiver.on("message", () => received.count());
       const port = await bound(receiver);
       const sender = await Bun.udpSocket({ hostname: HOST, port: 0, socket: quiet });
       queue(sender, port, 100);
-      const finished = await iterateUntil(() => received.total === 100);
+      const finished = await iterateUntil(() => received.total === 100, seconds);
       receiver.close();
       sender.close();
       return { finished, ...received.summary() };
@@ -167,7 +169,7 @@ const scenarios = {
   // deliver 32 each in the same iteration.
   "dgram-two-sockets": () =>
     firstUsable(
-      async () => {
+      async seconds => {
         const received = iterationCounter();
         const each = [iterationCounter(), iterationCounter()];
         const sender = await Bun.udpSocket({ hostname: HOST, port: 0, socket: quiet });
@@ -183,7 +185,7 @@ const scenarios = {
           ports.push(await bound(receiver));
         }
         for (const port of ports) queue(sender, port, 100);
-        const finished = await iterateUntil(() => received.total === 200);
+        const finished = await iterateUntil(() => received.total === 200, seconds);
         for (const receiver of receivers) receiver.close();
         sender.close();
         return { finished, maxOfEach: each.map(counter => counter.summary().max), ...received.summary() };
@@ -193,12 +195,12 @@ const scenarios = {
 
   "residual-adopted": () =>
     firstUsable(
-      () => residual("adopted"),
+      seconds => residual("adopted", seconds),
       run => run.residual && run.finished,
     ),
   "residual-full-buffer": () =>
     firstUsable(
-      () => residual("full-buffer"),
+      seconds => residual("full-buffer", seconds),
       run => run.residual && run.finished,
     ),
 };

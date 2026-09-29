@@ -270,7 +270,7 @@ describe.skipIf(isWindows)("cluster", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toMatchObject({ finished: true, total: 100, max: 32 });
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });
 
 describe("after close()", () => {

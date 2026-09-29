@@ -353,5 +353,5 @@ describe("a readable event of the endpoint's socket", () => {
     client.destroy();
 
     expect(run).toMatchObject({ stalled: true, max: 32 });
-  }, 30_000);
+  });
 });

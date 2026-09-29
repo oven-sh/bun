@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -6372,5 +6372,86 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// The define loader used to copy the parsed value with a recursion that had no
+// stack guard, so a value the parser accepted could end the process with a
+// signal. Each depth is above the depth where that copy overflowed and below
+// the depth where the parser stops, for a release build and for a debug or
+// sanitizer build (which has larger frames). The programs do not use DEEPX.
+describe.concurrent("a deeply nested define value", () => {
+  const small = isDebug || isASAN;
+  const mainThreadDepth = small ? 1000 : 12000;
+  const workerDepth = small ? 450 : 6000;
+  const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+  const nestedSource = `const nested = ${nested.toString()};`;
+
+  async function run(cmd, files) {
+    using dir = tempDir("deep-define", { "entry.js": `console.log("ran");`, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
+    return { stdout, stderr, exitCode };
+  }
+
+  it("loads in new Bun.Transpiler()", async () => {
+    const script = `${nestedSource}
+      const transpiler = new Bun.Transpiler({ define: { DEEPX: nested(${mainThreadDepth}), SHALLOW: '{"a":[1,"two"]}' } });
+      console.log(transpiler.transformSync("console.log(SHALLOW.a);"));`;
+    expect(await run(["-e", script])).toEqual({
+      stdout: 'console.log({ a: [1, "two"] }.a);\n\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("loads in new Bun.Transpiler() in a Worker", async () => {
+    const files = {
+      "worker.js": `${nestedSource}
+        const transpiler = new Bun.Transpiler({ define: { DEEPX: nested(${workerDepth}), SHALLOW: '{"a":[1,"two"]}' } });
+        postMessage(transpiler.transformSync("console.log(SHALLOW.a);"));`,
+      "main.js": `
+        const worker = new Worker("./worker.js");
+        worker.onerror = event => { console.log("error: " + event.message); worker.terminate(); };
+        worker.onmessage = event => { console.log(event.data); worker.terminate(); };`,
+    };
+    expect(await run(["main.js"], files)).toEqual({
+      stdout: 'console.log({ a: [1, "two"] }.a);\n\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Windows caps a command line at 32K characters. bunfig.toml covers it there.
+  it.skipIf(isWindows)("loads from --define", async () => {
+    expect(await run(["--define", `DEEPX=${nested(mainThreadDepth)}`, "entry.js"])).toEqual({
+      stdout: "ran\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("loads from bunfig.toml [define]", async () => {
+    const files = { "bunfig.toml": `[define]\n"DEEPX" = '${nested(mainThreadDepth)}'\n` };
+    expect(await run(["entry.js"], files)).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+  });
+
+  it("loads again in a Worker of a process that has it", async () => {
+    const files = {
+      "bunfig.toml": `[define]\n"DEEPX" = '${nested(workerDepth)}'\n`,
+      "worker.js": `postMessage("worker ran");`,
+      "main.js": `
+        const worker = new Worker("./worker.js");
+        worker.onerror = event => { console.log("error: " + event.message); worker.terminate(); };
+        worker.onmessage = event => { console.log(event.data); worker.terminate(); };`,
+    };
+    expect(await run(["main.js"], files)).toEqual({ stdout: "worker ran\n", stderr: "", exitCode: 0 });
   });
 });

@@ -441,10 +441,10 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
-// Node's emitClose. The frame is passed in: destroy() clears it off the session
-// before scheduling this, so a throwing listener on either event cannot leave a
-// retained session pinning the store.
-function emitSessionCloseNT(self: Http2Session, error: Error | undefined, frame) {
+// The frame is passed in: destroy() clears it off the session before emitting
+// 'error', so a throwing listener on either event cannot leave a retained
+// session pinning the store.
+function emitSessionCloseNT(self: Http2Session, error: Error | null | undefined, frame) {
   if (error) {
     runInFrame(frame, self.emit, self, "error", error);
   }
@@ -452,14 +452,8 @@ function emitSessionCloseNT(self: Http2Session, error: Error | undefined, frame)
     runInFrame(frame, self.emit, self, "close");
   }
 }
-// Node's finishSessionClose emits the session's 'error'/'close' from the socket's
-// own 'close' listener, so by the time a session reports itself closed its
-// connection is gone (a server's getConnections() no longer counts it). Only a
-// session whose socket is already down (or that never had one) emits on the next
-// tick; even then it is asynchronous, so a listener attached right after
-// close()/destroy() returns still observes it.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
-function emitSessionCloseAfterSocket(self: Http2Session, socket, error: Error | undefined, frame) {
+// Node's emitClose: the session reports 'error' and 'close' once its socket has closed.
+function emitSessionCloseAfterSocket(self: Http2Session, socket, error: Error | null | undefined, frame) {
   if (socket && !socket.destroyed) {
     socket.once("close", () => emitSessionCloseNT(self, error, frame));
   } else {
@@ -4878,25 +4872,11 @@ function destroySessionSocketDelayedNT(socket, error) {
     socket.destroy(error);
   }
 }
-// Node's finishSessionClose. Either way end() goes first, so the final GOAWAY
-// leaves behind a FIN instead of an abortive close.
-//
-// `graceful` is a session that was close()d (and is not dying with an error on
-// top of that): it has announced the shutdown and waits for the peer to hang
-// up, only resume()ing "so we can detect the peer closing" (unread inbound
-// bytes, e.g. the peer's own GOAWAY, would otherwise turn our eventual close
-// into an RST the peer reads as ECONNRESET).
-//
-// Everything else is a destroy(), and node hard-destroys the socket once the
-// FIN is out (a tick later, "to try to avoid ECONNRESET on Windows"). That
-// destroy is what releases the connection: destroy() is what timeouts and error
-// handling use against a peer that has stopped responding, and such a peer
-// does not answer the FIN either, so end() alone would keep the socket (and a
-// server's connection count) alive for as long as the peer cares to linger.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
-function closeSessionSocket(socket, graceful: boolean, error: Error | undefined) {
+// Node's finishSessionClose: end(), then destroy() unless close() asked for a graceful shutdown.
+function closeSessionSocket(socket, graceful: boolean, error: Error | null | undefined) {
   if (socket.destroyed) return;
   if (graceful) {
+    // Unread inbound bytes would turn the close into an RST.
     socket.resume();
     socket.end();
   } else {

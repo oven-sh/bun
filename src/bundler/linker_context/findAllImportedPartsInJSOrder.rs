@@ -529,7 +529,7 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
 enum WalkFrame {
     /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
     Enter { source_index: IndexInt, loader: u32 },
-    /// `Enter` in a walk that marks: the import that leads here starts `source_index` from the entry point's chunk.
+    /// `Enter` through an import of the entry point's chunk that starts `source_index`. Only a walk that marks pushes it.
     Start { source_index: IndexInt, loader: u32 },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
@@ -576,7 +576,8 @@ impl Marks {
             let chunk_index = plan
                 .chunk_of_file
                 .get(start.parent_file as usize)
-                .map_or(u32::MAX, |&chunk_index| chunk_index);
+                .copied()
+                .unwrap_or(u32::MAX);
             let owns = chunk_index != u32::MAX
                 && plan.owner_of_chunk[chunk_index as usize] == walk.entry_id;
             debug_assert!(owns);
@@ -656,7 +657,7 @@ impl EntryWalk {
         }
     }
 
-    /// Depth first along every `import` statement, also through dropped files; places the files of the owned chunks.
+    /// Depth first along every `import` statement, also through dropped files; places the files of the owned chunks. With `MARKS` it records in `starts` where the parent chunk starts the files of `marks`.
     fn walk<const MARKS: bool>(
         &mut self,
         c: &LinkerContext,

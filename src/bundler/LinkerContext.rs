@@ -70,6 +70,14 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
+/// The parent chunk of pinned entry point `entry_id` starts `wrapped` where a file of the entry point's chunk imports it.
+pub(crate) struct ParentChunkStart {
+    pub(crate) entry_id: u32,
+    pub(crate) wrapped: u32,
+    /// A file of the parent chunk.
+    pub(crate) parent_file: u32,
+}
+
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -141,6 +149,8 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The files that run something in a chunk that took the fold in place of a pinned entry point's chunk. Its rank among imports is that of the last one, not the first.
     pub(crate) ranks_chunk_again: Option<AutoBitSet>,
+    /// The wrapped files that the parent chunk of a pinned entry point starts. By entry point id, then in evaluation order.
+    pub(crate) starts_in_parent_chunk: Option<Box<[ParentChunkStart]>>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -183,6 +193,7 @@ impl<'a> Default for LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             ranks_chunk_again: None,
+            starts_in_parent_chunk: None,
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -571,6 +582,7 @@ impl<'a> LinkerContext<'a> {
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
         self.ranks_chunk_again = None;
+        self.starts_in_parent_chunk = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.

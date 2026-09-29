@@ -4593,7 +4593,8 @@ struct MirrorSet<'a> {
 
 /// The copies this process wrote under a name of its own, by set hash, because
 /// another user held the canonical name. Later calls and Workers load from the
-/// same copy instead of writing one each.
+/// same copy instead of writing one each. Its lock is held for every write of
+/// a mirror, so Workers that start together write it once between them.
 static OWN_COPIES: bun_core::Mutex<Vec<(u64, Box<[u8]>)>> = bun_core::Mutex::new(Vec::new());
 
 /// One directory under the temp directory that holds, or is to hold, a mirror.
@@ -4711,7 +4712,7 @@ impl<'a> MirrorSet<'a> {
             },
             None => None,
         };
-        let parent = parent_dir.as_ref().map_or(dir.fd, |d| d.fd);
+        let parent = parent_dir.as_ref().unwrap_or(dir);
         let mut tmp_buf = bun_paths::path_buffer_pool::get();
         let Ok(tmp_name) = Fs::FileSystem::tmpname(b"tmp", &mut tmp_buf[..], self.hash) else {
             return false;
@@ -4726,8 +4727,20 @@ impl<'a> MirrorSet<'a> {
         let written = bun_sys::File::openat(parent, tmp_name.as_bytes(), flags, 0o600)
             .and_then(|f| f.write_all(file.contents.as_bytes()))
             .is_ok();
-        if written && bun_sys::renameat(parent, tmp_name, parent, name).is_ok() {
-            return true;
+        if written {
+            if bun_sys::renameat(parent, tmp_name, parent, name).is_ok() {
+                return true;
+            }
+            // A rename does not replace a directory with a file. Only this
+            // user can have put one in a directory of its own.
+            let in_the_way =
+                bun_sys::lstatat(parent, name).is_ok_and(|st| bun_sys::S::ISDIR(st.st_mode as u32));
+            if in_the_way
+                && parent.delete_tree(name.as_bytes()).is_ok()
+                && bun_sys::renameat(parent, tmp_name, parent, name).is_ok()
+            {
+                return true;
+            }
         }
         let _ = bun_sys::unlinkat(parent, tmp_name);
         false
@@ -4756,18 +4769,13 @@ impl<'a> MirrorSet<'a> {
         if canonical.is_complete() {
             return canonical.path_of(rel, out_buf);
         }
+        let mut own_copies = OWN_COPIES.lock();
         if canonical.is_ours() {
-            return canonical
-                .repair()
+            return (canonical.is_complete() || canonical.repair())
                 .then(|| canonical.path_of(rel, out_buf))
                 .flatten();
         }
-        let own_copy = OWN_COPIES
-            .lock()
-            .iter()
-            .find(|(hash, _)| *hash == self.hash)
-            .map(|(_, name)| name.clone());
-        if let Some(name) = &own_copy {
+        if let Some((_, name)) = own_copies.iter().find(|(hash, _)| *hash == self.hash) {
             let mut name_buf = bun_paths::path_buffer_pool::get();
             let own = self.dir(tmpdir, uid, bun_paths::resolve_path::z(name, &mut name_buf));
             if own.is_complete() || (own.is_ours() && own.repair()) {
@@ -4777,7 +4785,7 @@ impl<'a> MirrorSet<'a> {
 
         // No mirror yet: write the closure into a scratch directory, then
         // rename it into place. A directory rename never replaces a non-empty
-        // directory, so the first Worker or process to finish owns the name.
+        // directory, so the first process to finish owns the name.
         let mut scratch_buf = bun_paths::path_buffer_pool::get();
         let scratch_name = Fs::FileSystem::tmpname(b"tmp", &mut scratch_buf[..], self.hash).ok()?;
         bun_sys::mkdirat(tmpdir, scratch_name, 0o700).ok()?;
@@ -4802,7 +4810,7 @@ impl<'a> MirrorSet<'a> {
             return canonical.path_of(rel, out_buf);
         }
         if canonical.is_ours() {
-            // Another Worker or process won the name.
+            // Another process won the name.
             discard_scratch();
             return (canonical.is_complete() || canonical.repair())
                 .then(|| canonical.path_of(rel, out_buf))
@@ -4811,7 +4819,6 @@ impl<'a> MirrorSet<'a> {
         // The name belongs to someone else on a sticky `/tmp`: load from our
         // own copy, this call and the later ones.
         let len = self.dir(tmpdir, uid, scratch_name).path_of(rel, out_buf)?;
-        let mut own_copies = OWN_COPIES.lock();
         own_copies.retain(|(hash, _)| *hash != self.hash);
         own_copies.push((self.hash, Box::from(scratch_name.as_bytes())));
         Some(len)

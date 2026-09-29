@@ -730,6 +730,32 @@ static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
     }
 }
 
+void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
+{
+    socket = adopted;
+    upgraded = true;
+    releaseTunnelReadsForUpgrade();
+
+    // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
+    if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_takeBackConnection(res->m_ctx, JSValue::encode(res), true);
+    }
+    WTF::Vector<WebCore::JSNodeHTTPResponse*, 2> pipelined;
+    {
+        Locker locker { m_pipelinedResponsesLock };
+        for (auto& entry : m_pipelinedResponses) {
+            if (auto* res = entry.get()) {
+                pipelined.append(res);
+            }
+        }
+    }
+    for (auto* res : pipelined) {
+        if (res->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_takeBackConnection(res->m_ctx, JSValue::encode(res), true);
+        }
+    }
+}
+
 void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
 {
     syncPeerCertificateVerification();

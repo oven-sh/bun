@@ -11,6 +11,7 @@ import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
+import { WebSocketServer } from "ws";
 
 const [suite, transport, triggerName] = process.argv.slice(2);
 const isTLS = transport === "tls";
@@ -256,6 +257,60 @@ async function completedButPending() {
   return { completed, secondBody: received.includes("second-body") };
 }
 
+// Request 1 upgrades to a WebSocket while response 2 is queued behind it. The socket of the
+// connection is a WebSocket then, and response 2 is used.
+async function adopted(use: string) {
+  const wss = new WebSocketServer({ noServer: true });
+  const first = Promise.withResolvers<http.IncomingMessage>();
+  const second = Promise.withResolvers<{ req: http.IncomingMessage; res: http.ServerResponse }>();
+  const server = createServer((req, res) => {
+    req.on("error", () => {});
+    res.on("error", () => {});
+    if (req.url === "/second") second.resolve({ req, res });
+    else first.resolve(req);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = await connect(server);
+  let received = "";
+  const switched = Promise.withResolvers<void>();
+  const greeted = Promise.withResolvers<void>();
+  client.on("data", chunk => {
+    received += chunk.toString("latin1");
+    if (received.includes("\r\n\r\n")) switched.resolve();
+    if (received.includes("hello")) greeted.resolve();
+  });
+  client.write(
+    "GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n" +
+      request("/second"),
+  );
+  const upgradeRequest = await first.promise;
+  const { req, res } = await second.promise;
+  const queued = res.socket === null;
+  const opened = Promise.withResolvers<import("ws").WebSocket>();
+  wss.handleUpgrade(upgradeRequest, upgradeRequest.socket, Buffer.alloc(0), ws => opened.resolve(ws));
+  const ws = await opened.promise;
+  ws.on("error", () => {});
+  await switched.promise;
+
+  const result = attempt(() => uses[use](req, res));
+  await turn();
+  // A use that destroys the socket of the request closes the WebSocket with it.
+  const open = ws.readyState === ws.OPEN;
+  if (open) {
+    ws.send("hello");
+    await greeted.promise;
+  }
+  const closed = once(client, "close");
+  client.destroy();
+  await closed;
+  ws.terminate();
+  wss.close();
+  server.close();
+  server.closeAllConnections();
+  return { use, queued, switched: received.startsWith("HTTP/1.1 101 "), open, result };
+}
+
 const results: unknown[] = [];
 if (suite === "displaced") {
   for (const secondRequest of ["same read", "later read"] as const) {
@@ -285,5 +340,9 @@ if (suite === "displaced") {
   }
 } else if (suite === "completed-but-pending") {
   results.push(await completedButPending());
+} else if (suite === "adopted") {
+  for (const use of Object.keys(uses)) {
+    results.push(await adopted(use));
+  }
 }
 for (const result of results) console.log(JSON.stringify(result));

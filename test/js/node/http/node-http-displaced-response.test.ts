@@ -5,11 +5,13 @@ import { join } from "path";
 // A connection has one current response. The server socket gives the connection to the next
 // response when JS says that the current one is done (res.detachSocket(), a 'close' or 'finish'
 // event, socket._httpMessage = null), or when the next request of a keep-alive connection
-// arrives. The response that leaves the slot no longer hears about a close, so it must not keep
-// a pointer to the socket. It used to: the next call on it read the freed socket.
+// arrives. A WebSocket can also adopt the socket while responses are queued. A response that
+// lost the connection no longer hears about a close, so it must not keep a pointer to the
+// socket. It used to: the next call on it read the freed socket.
 //
 // Each fixture run is one process that goes through its scenarios in order and prints a line
-// for each. The unfixed build stops at the first one (ASAN: heap-use-after-free), or never exits.
+// for each. The unfixed build stops at the first one (ASAN: heap-use-after-free or
+// heap-buffer-overflow), or never exits.
 const fixture = join(import.meta.dir, "node-http-displaced-response-fixture.ts");
 // A debug or ASAN build needs several seconds to load node:http and to run 22 scenarios.
 const timeout = isASAN || isDebug ? 90_000 : undefined;
@@ -88,7 +90,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     timeout,
   );
 
-  // Bun only: Node.js v26.3.0 fails an internal assertion (resOnFinish) when response 2 finishes first.
   test(
     "does not write into the place of the response that has the connection",
     async () => {
@@ -113,6 +114,26 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       expect(await run("completed-but-pending", transport)).toEqual({
         results: [{ completed: true, secondBody: true }],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "a queued response can be used after a WebSocket adopted the connection",
+    async () => {
+      expect(await run("adopted", transport)).toEqual({
+        results: uses.map(use => ({
+          use,
+          queued: true,
+          switched: true,
+          // req.destroy() destroys the socket of the request, which the WebSocket has.
+          open: use !== "req.destroy",
+          result: "returned",
+        })),
         stderr: "",
         exitCode: 0,
         signalCode: null,

@@ -29,7 +29,7 @@ struct us_socket_stream_buffer_t {
 
 struct us_socket_t;
 
-void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue);
+void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue, bool adopted);
 }
 
 namespace uWS {
@@ -117,7 +117,7 @@ public:
     void setCurrentResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response)
     {
         if (auto* replaced = m_currentResponse.get(); replaced != nullptr && replaced != response && replaced->m_ctx != nullptr) {
-            Bun__NodeHTTPResponse_takeBackConnection(replaced->m_ctx, JSC::JSValue::encode(replaced));
+            Bun__NodeHTTPResponse_takeBackConnection(replaced->m_ctx, JSC::JSValue::encode(replaced), false);
         }
         m_currentResponse.set(vm, this, response);
     }
@@ -197,6 +197,8 @@ public:
     void reset();
     void syncPeerCertificateVerification();
     void onClose(int readError, bool peerEnded);
+    /* A WebSocket adopted the connection. `adopted` is its socket: the adoption can move it. */
+    void onUpgraded(us_socket_t* adopted);
     void onDrain();
     void onData(const char* data, int length, bool last);
     void applyTunnelReads();

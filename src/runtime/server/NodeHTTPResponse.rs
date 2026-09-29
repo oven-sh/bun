@@ -1476,32 +1476,44 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::CURRENT));
     }
 
-    /// The server socket gives the connection to another response. No close reaches this one
-    /// any more, so it keeps nothing of the connection: not the handle, not a handler on the
-    /// socket, not the refs that wait for the end of the response. To JS it reads as closed.
+    /// The server socket gives the connection to another response, or a WebSocket adopted the
+    /// socket. This response keeps nothing of the connection: not the handle, not a handler on
+    /// the socket, not the refs that wait for the end of the response. To JS it reads as closed.
     /// `js_this` is this response's wrapper: `get_this_value()` answers for the socket's current one.
+    /// `adopted`: the socket is a WebSocket now, so this touches nothing of it.
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_takeBackConnection", no_catch)]
-    pub(crate) fn take_back_connection(&self, js_this: JSValue) {
+    #[inline]
+    pub(crate) fn take_back_connection(&self, js_this: JSValue, adopted: bool) {
+        let flags = self.flags.get();
+        if flags.intersects(Flags::IS_REQUEST_PENDING | Flags::UPGRADED) {
+            return self.take_back_unfinished_connection(js_this, adopted);
+        }
+        // Finished, the case of each keep-alive request: `mark_request_as_done()` left nothing of it on the connection.
+        self.connection.release();
+        self.flags.set(flags.difference(Flags::CURRENT));
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn take_back_unfinished_connection(&self, js_this: JSValue, adopted: bool) {
         scoped_log!(NodeHTTPResponse, "takeBackConnection");
         let flags = self.flags.get();
-        if !flags.contains(Flags::IS_REQUEST_PENDING) {
-            // Finished: `mark_request_as_done()` left nothing of it on the connection.
-            self.connection.release();
-            self.update_flags(|f| f.remove(Flags::CURRENT));
+        if flags.contains(Flags::UPGRADED) {
+            // It handed the socket to the WebSocket itself.
             return;
         }
 
         let _guard = self.ref_guard();
         let global_object = self.server.global_this();
-        // The bytes that a write() already counted go out before the next response.
         let pinned = self.pending_pinned_write.get();
         if pinned.is_some() {
-            if let Some(raw_response) = self.writer() {
+            // The bytes that a write() already counted go out before the next response.
+            if !adopted && let Some(raw_response) = self.writer() {
                 raw_response.spill_body(pinned.remaining());
             }
             self.clear_pending_pinned_write(global_object, js_this);
         }
-        if let Some(raw_response) = self.reader() {
+        if !adopted && let Some(raw_response) = self.reader() {
             raw_response.clear_handlers_of(self.as_ctx_ptr());
         }
         self.connection.release();

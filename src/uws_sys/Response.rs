@@ -929,8 +929,12 @@ impl AnyResponse {
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
     pub fn clear_handlers_of<U>(self, user_data: *mut U) {
         match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).clear_handlers_of(user_data.cast()),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).clear_handlers_of(user_data.cast()),
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).clear_handlers_of(user_data.cast())
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).clear_handlers_of(user_data.cast())
+            }
             AnyResponse::H3(_) | AnyResponse::H2(_) => {}
         }
     }

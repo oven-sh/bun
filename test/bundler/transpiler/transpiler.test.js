@@ -6443,6 +6443,16 @@ describe.concurrent("a deeply nested define value", () => {
     expect(await run(["entry.js"], files)).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
   });
 
+  it("stays valid while the transpiler parses other sources", () => {
+    const transpiler = new Bun.Transpiler({ define: { NESTED: '{"a":{"b":[1,"two",{"c":null}]}}' } });
+    const before = transpiler.transformSync("console.log(NESTED);");
+    for (let i = 0; i < 50; i++) transpiler.transformSync(`export const v${i} = [${i}, { k: "x" }];`);
+    expect([before, transpiler.transformSync("console.log(NESTED);")]).toEqual([
+      'console.log({ a: { b: [1, "two", { c: null }] } });\n',
+      'console.log({ a: { b: [1, "two", { c: null }] } });\n',
+    ]);
+  });
+
   it("loads again in a Worker of a process that has it", async () => {
     const files = {
       "bunfig.toml": `[define]\n"DEEPX" = '${nested(workerDepth)}'\n`,

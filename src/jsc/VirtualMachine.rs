@@ -1782,10 +1782,7 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            if unhandled == Unhandled::Exit
-                && origin != UncaughtExceptionOrigin::EntryPointRejection
-                && self.unhandled_report_ends_the_run()
-            {
+            if unhandled == Unhandled::Exit && self.unhandled_report_ends_the_run() {
                 self.report_and_exit(global_object, err);
             }
             // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.

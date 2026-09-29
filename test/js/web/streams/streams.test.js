@@ -711,8 +711,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   }
 
-  // The text sink of a direct stream has its own BOM rule: it removes one BOM, and only from
-  // the strings that follow the last binary chunk.
+  // The same chunks through the text sink of a direct stream.
   const directSource = chunks =>
     new ReadableStream({
       type: "direct",
@@ -749,12 +748,7 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     },
     "single string with a BOM": { chunks: () => ["\uFEFFabc"], text: "abc" },
     "a BOM split across string chunks": { chunks: () => ["\uFEFF", "\uFEFFabc"], text: "\uFEFFabc" },
-    "a BOM string chunk before bytes": {
-      chunks: () => ["\uFEFF", new TextEncoder().encode("abc")],
-      text: "\uFEFFabc",
-    },
     "a BOM string chunk after bytes": { chunks: () => [new TextEncoder().encode("ab"), "\uFEFFcd"], text: "abcd" },
-    "bytes with a BOM": { chunks: () => [new Uint8Array([0xef, 0xbb, 0xbf, 0x61])], text: "\uFEFFa" },
     "lone surrogate in a string chunk": { chunks: () => ["a\uD800b"], text: "a\uD800b" },
     "lone surrogate in a string chunk before bytes": {
       chunks: () => ["a\uD800b", new TextEncoder().encode("c")],

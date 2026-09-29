@@ -26,6 +26,11 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#elif defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace uWS {
 
@@ -73,42 +78,116 @@ struct RequestTargetScan {
     bool pathMayNormalize;
 };
 
-/* One pass over a request-target, eight bytes at a time. The query separator
- * is what every request needs. pathMayNormalize is the router's reason to ask
- * the URL parser for the pathname instead of matching the raw bytes: it is set
- * for a '#' (ends the path), a '\\' (the parser reads it as '/'), or a segment
- * that starts with '.' or '%' ("." / ".." / "%2e" / "%2e%2e" collapse). Any
- * other byte keeps its segment. The parser may percent-encode it, but the
- * segment boundaries, and so the matched route, stay the same. */
-static inline RequestTargetScan scanRequestTarget(std::string_view target) {
-    constexpr uint64_t ONES = 0x0101010101010101ULL;
-    constexpr uint64_t LOW7 = 0x7f7f7f7f7f7f7f7fULL;
-    /* 0x80 in every byte of `w` that is zero, and nowhere else. */
-    auto zeroBytes = [](uint64_t w) { return ~(((w & LOW7) + LOW7) | w | LOW7); };
+/* Bit masks over one 16-byte block of a request-target. Each byte owns
+ * BITS_PER_BYTE bits, all set when the byte matches: 1 bit from SSE2's
+ * movemask, 4 bits from NEON's narrowing shift. */
+struct RequestTargetBlock {
+#if defined(__ARM_NEON) && !defined(__SSE2__)
+    static constexpr unsigned BITS_PER_BYTE = 4;
+#else
+    static constexpr unsigned BITS_PER_BYTE = 1;
+#endif
+    uint64_t query, slash, dotOrPercent, hashOrBackslash;
 
+    static RequestTargetBlock load(const char *p) {
+#if defined(__SSE2__)
+        __m128i v = _mm_loadu_si128((const __m128i *) p);
+        auto eq = [&](char c) { return _mm_cmpeq_epi8(v, _mm_set1_epi8(c)); };
+        auto mask = [](__m128i m) { return (uint64_t) (unsigned) _mm_movemask_epi8(m); };
+        return {
+            mask(eq('?')),
+            mask(eq('/')),
+            mask(_mm_or_si128(eq('.'), eq('%'))),
+            mask(_mm_or_si128(eq('#'), eq('\\'))),
+        };
+#elif defined(__ARM_NEON)
+        uint8x16_t v = vld1q_u8((const uint8_t *) p);
+        auto eq = [&](char c) { return vceqq_u8(v, vdupq_n_u8((uint8_t) c)); };
+        auto mask = [](uint8x16_t m) { return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0); };
+        return {
+            mask(eq('?')),
+            mask(eq('/')),
+            mask(vorrq_u8(eq('.'), eq('%'))),
+            mask(vorrq_u8(eq('#'), eq('\\'))),
+        };
+#else
+        RequestTargetBlock b = {};
+        for (unsigned i = 0; i < 16; i++) {
+            uint64_t bit = 1ULL << i;
+            switch (p[i]) {
+            case '?': b.query |= bit; break;
+            case '/': b.slash |= bit; break;
+            case '.': case '%': b.dotOrPercent |= bit; break;
+            case '#': case '\\': b.hashOrBackslash |= bit; break;
+            default: break;
+            }
+        }
+        return b;
+#endif
+    }
+};
+
+/* One pass over a request-target. The query separator is what every request
+ * needs. pathMayNormalize is the router's reason to ask the URL parser for the
+ * pathname instead of matching the raw bytes: it is set for a '#' (ends the
+ * path), a '\\' (the parser reads it as '/'), or a segment that starts with
+ * '.' or '%' ("." / ".." / "%2e" / "%2e%2e" collapse). Any other byte keeps
+ * its segment. The parser may percent-encode it, but the segment boundaries,
+ * and so the matched route, stay the same. */
+static inline RequestTargetScan scanRequestTarget(std::string_view target) {
     const char *data = target.data();
     const size_t length = target.length();
+    constexpr unsigned BITS = RequestTargetBlock::BITS_PER_BYTE;
     uint64_t marks = 0;
-    /* Bit 7 is set when the previous word ended with '/'. */
+    /* The low bits are set when the byte before the block is '/'. */
     uint64_t previousSlash = 0;
-    for (size_t i = 0; i < length; i += 8) {
-        uint64_t word = 0;
-        /* The tail is zero padded: no byte this scan looks for is NUL, and
-         * neither transport delivers a NUL inside the target. */
-        memcpy(&word, data + i, length - i < 8 ? length - i : 8);
-        uint64_t slash = zeroBytes(word ^ (ONES * '/'));
-        uint64_t wordMarks = zeroBytes(word ^ (ONES * '#'))
-            | zeroBytes(word ^ (ONES * '\\'))
-            | (((slash << 8) | previousSlash) & (zeroBytes(word ^ (ONES * '.')) | zeroBytes(word ^ (ONES * '%'))));
-        uint64_t query = zeroBytes(word ^ (ONES * '?'));
+    size_t i = 0;
+    bool last = false;
+    while (!last) {
+        RequestTargetBlock b;
+        /* All bits of the bytes this block scans for the first time. */
+        uint64_t valid = ~0ULL;
+        if (i + 16 <= length) {
+            b = RequestTargetBlock::load(data + i);
+            last = i + 16 == length;
+        } else if (i == length) {
+            break;
+        } else if (length >= 16) {
+            /* The last block overlaps the previous one: the transports do not
+             * promise readable bytes past the target. */
+            unsigned repeated = (unsigned) (i - (length - 16));
+            b = RequestTargetBlock::load(data + length - 16);
+            valid <<= repeated * BITS;
+            i = length - 16;
+            last = true;
+        } else {
+            last = true;
+            /* Shorter than a block: a zero padded copy, no byte of interest is NUL. */
+            alignas(16) char copy[16] = {};
+            if (length >= 8) {
+                memcpy(copy, data, 8);
+                memcpy(copy + length - 8, data + length - 8, 8);
+            } else if (length >= 4) {
+                memcpy(copy, data, 4);
+                memcpy(copy + length - 4, data + length - 4, 4);
+            } else {
+                copy[0] = data[0];
+                copy[length - 1] = data[length - 1];
+                copy[length / 2] = data[length / 2];
+            }
+            b = RequestTargetBlock::load(copy);
+        }
+        uint64_t blockMarks = (b.hashOrBackslash | (((b.slash << BITS) | previousSlash) & b.dotOrPercent)) & valid;
+        uint64_t query = b.query & valid;
         if (query) {
             /* Only the bytes before the first '?' are path. */
             uint64_t firstQuery = query & (0 - query);
-            marks |= wordMarks & (firstQuery - 1);
-            return {(unsigned int) (i + (__builtin_ctzll(query) >> 3)), marks != 0};
+            marks |= blockMarks & (firstQuery - 1);
+            return {(unsigned int) (i + __builtin_ctzll(query) / BITS), marks != 0};
         }
-        marks |= wordMarks;
-        previousSlash = slash >> 56;
+        marks |= blockMarks;
+        previousSlash = b.slash >> (15 * BITS);
+        i += 16;
     }
     return {(unsigned int) length, marks != 0};
 }

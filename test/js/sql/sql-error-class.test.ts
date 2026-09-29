@@ -448,10 +448,13 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 // Runs `body` with an Error.prepareStackTrace that reports each error of the
 // adapter that it is asked to format. These tests are not concurrent: the
 // function is global.
-async function withPrepareStackTrace<T>(onError: (error: Error) => void, body: () => T | Promise<T>): Promise<T> {
+async function withPrepareStackTrace<T>(
+  onError: (error: Error, frames: unknown[]) => void,
+  body: () => T | Promise<T>,
+): Promise<T> {
   const original = Error.prepareStackTrace;
   Error.prepareStackTrace = (error, frames) => {
-    if (error instanceof SQL.SQLError) onError(error);
+    if (error instanceof SQL.SQLError) onError(error, frames);
     return String(error) + frames.map(frame => "\n    at " + frame).join("");
   };
   try {
@@ -462,7 +465,7 @@ async function withPrepareStackTrace<T>(onError: (error: Error) => void, body: (
 }
 
 // The state today: a native error has no stack frames, so `stack` is the name
-// and the message, and it is written when the error is made. When Bun can
+// and the message. The first read makes it, as for each Error. When Bun can
 // show where the query was made (#22011), only the expectations of `stack`
 // and of the printed error in these two blocks change.
 //
@@ -485,7 +488,7 @@ describeWithContainer("mysql: the stack of a native error", { image: "mysql_plai
   const url = () => `mysql://root@${container.host}:${container.port}/bun_sql_test`;
 
   describe.each(madeWith)("made with %s", (_, make) => {
-    test("has no frames, and Error.prepareStackTrace does not run inside the client", async () => {
+    test("has no frames, and Error.prepareStackTrace runs on the first read, not inside the client", async () => {
       await container.ready;
       await using sql = new SQL({ url: url(), max: 1 });
       await sql`SELECT 1`;
@@ -498,23 +501,57 @@ describeWithContainer("mysql: the stack of a native error", { image: "mysql_plai
           await make(sql.unsafe("SELECT * FROM no_such_table_for_error_class")),
         ],
       );
-      expect({ thrown: thrown.stack, fromServer: fromServer.stack, formatted }).toEqual({
-        thrown: "MySQLError: failed to execute query",
+      expect(formatted).toEqual([]);
+
+      const read = await withPrepareStackTrace(
+        (error, frames) => formatted.push([error === thrown ? "thrown" : error, frames.length]),
+        () => [thrown.stack, thrown.stack],
+      );
+      expect({ read, fromServer: fromServer.stack, formatted }).toEqual({
+        read: ["MySQLError: failed to execute query", "MySQLError: failed to execute query"],
         fromServer: "MySQLError: Table 'bun_sql_test.no_such_table_for_error_class' doesn't exist",
-        formatted: [],
+        formatted: [["thrown", 0]],
       });
     });
   });
 
-  test("does not follow a later change of the message", async () => {
+  test("follows a change of the message until the first read", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1 });
 
     const error = await rejectionOf(sql.unsafe(oversizedQuery()));
     error.message = "changed";
-    expect({ string: String(error), stack: error.stack }).toEqual({
-      string: "MySQLError: changed",
-      stack: "MySQLError: failed to execute query",
+    const first = error.stack;
+    error.message = "changed again";
+    expect({ string: String(error), first, second: error.stack }).toEqual({
+      string: "MySQLError: changed again",
+      first: "MySQLError: changed",
+      second: "MySQLError: changed",
+    });
+  });
+
+  test("is an own property that is not enumerable, before and after the first read", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    const error = await rejectionOf(sql.unsafe(oversizedQuery()));
+    const before = Object.getOwnPropertyDescriptor(error, "stack");
+    const stack = error.stack;
+    expect({
+      before: { enumerable: before?.enumerable, configurable: before?.configurable },
+      after: Object.getOwnPropertyDescriptor(error, "stack"),
+    }).toEqual({
+      before: { enumerable: false, configurable: true },
+      after: { value: stack, writable: true, enumerable: false, configurable: true },
+    });
+
+    const assigned = await rejectionOf(sql.unsafe(oversizedQuery()));
+    assigned.stack = "assigned before the first read";
+    expect(Object.getOwnPropertyDescriptor(assigned, "stack")).toEqual({
+      value: "assigned before the first read",
+      writable: true,
+      enumerable: false,
+      configurable: true,
     });
   });
 
@@ -569,7 +606,7 @@ describeWithContainer("postgres: the stack of a native error", { image: "postgre
   };
 
   describe.each(madeWith)("made with %s", (_, make) => {
-    test("has no frames, and Error.prepareStackTrace does not run inside the client", async () => {
+    test("has no frames, and Error.prepareStackTrace runs on the first read, not inside the client", async () => {
       await container.ready;
       await using sql = new SQL({ url: url(), max: 1 });
       await sql`CREATE TEMPORARY TABLE error_class_not_null (id int NOT NULL)`;
@@ -582,11 +619,18 @@ describeWithContainer("postgres: the stack of a native error", { image: "postgre
           await make(sql`INSERT INTO error_class_not_null (id) VALUES (${null})`),
         ],
       );
-      expect({ thrown: thrown.stack, fromServer: fromServer.stack, formatted }).toEqual({
+      expect(formatted).toEqual([]);
+
+      const read = await withPrepareStackTrace(
+        (error, frames) => formatted.push([error === fromServer ? "fromServer" : error, frames.length]),
+        () => [fromServer.stack, fromServer.stack],
+      );
+      expect({ read, thrown: thrown.stack, formatted }).toEqual({
+        read: ["PostgresError: " + message, "PostgresError: " + message],
         thrown: "PostgresError: " + tooManyParametersMessage,
-        fromServer: "PostgresError: " + message,
-        formatted: [],
+        formatted: [["fromServer", 0]],
       });
+      // The read of `stack` leaves the position of the server.
       expect(fields(fromServer)).toEqual(serverFields);
     });
 
@@ -646,15 +690,18 @@ describeWithContainer("postgres: the stack of a native error", { image: "postgre
     await expectUsable(sql);
   });
 
-  test("does not follow a later change of the message", async () => {
+  test("follows a change of the message until the first read", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1 });
 
     const error = await rejectionOf(sql.unsafe("SELECT 1", tooManyParameters()));
     error.message = "changed";
-    expect({ string: String(error), stack: error.stack }).toEqual({
-      string: "PostgresError: changed",
-      stack: "PostgresError: " + tooManyParametersMessage,
+    const first = error.stack;
+    error.message = "changed again";
+    expect({ string: String(error), first, second: error.stack }).toEqual({
+      string: "PostgresError: changed again",
+      first: "PostgresError: changed",
+      second: "PostgresError: changed",
     });
   });
 

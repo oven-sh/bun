@@ -196,6 +196,9 @@ async function connected(trigger: string) {
   await turn();
 
   const late = attempt(() => responses[0].end("first-body"));
+  // The connection did not queue response 1, so it does not give it the connection again.
+  const socketHandle = handleOf(responses[1].socket!);
+  const regranted = socketHandle.startPipelinedResponse(handleOf(responses[0]), false, false);
   client.write(request("/third"));
   await third.promise;
   const thirdQueued = responses[2].socket === null;
@@ -212,7 +215,7 @@ async function connected(trigger: string) {
     .split("\r\n\r\n")
     .slice(1)
     .map(part => part.split("HTTP/1.1")[0]);
-  return { trigger, late, thirdQueued, bodies: received_bodies, errors };
+  return { trigger, late, regranted, thirdQueued, bodies: received_bodies, errors };
 }
 
 // A response that native code completed because its dispatch settled, and that did not end in
@@ -311,6 +314,92 @@ async function adopted(use: string) {
   return { use, queued, switched: received.startsWith("HTTP/1.1 101 "), open, result };
 }
 
+// Response 2 waits in the queue behind response 1. Its native handle is called directly: the
+// connection is not its own yet, so nothing of the call reaches the wire.
+async function queued(call: string) {
+  const responses: http.ServerResponse[] = [];
+  const server = createServer((req, res) => {
+    res.on("error", () => {});
+    responses.push(res);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = await connect(server);
+  let received = "";
+  const bodies = Promise.withResolvers<void>();
+  client.on("data", chunk => {
+    received += chunk.toString("latin1");
+    if (received.includes("second-body")) bodies.resolve();
+  });
+  client.write(request("/first") + request("/second"));
+  while (responses.length < 2) await turn();
+  await turn();
+
+  const isQueued = responses[1].socket === null;
+  const handle = handleOf(responses[1]);
+  const result = attempt(() => {
+    if (call === "cork") return void handle.cork(() => {});
+    if (call === "writeHead") return void handle.writeHead(201, "Created", ["x-early", "yes"]);
+    handle[call](call === "flushHeaders" || call === "writeContinue" ? undefined : "early");
+  });
+  responses[0].end("first-body");
+  responses[1].end("second-body");
+  await bodies.promise;
+
+  const closed = once(client, "close");
+  client.destroy();
+  await closed;
+  server.close();
+  server.closeAllConnections();
+  return { call, queued: isQueued, result, received: received.replace(/Date: [^\r]+\r\n/g, "") };
+}
+
+// Response 1 leaves a large write in the socket buffer, with its tail held by reference, and
+// loses the connection. The tail has to go out before response 2, and the drain handler of the
+// socket must not call a response that is gone.
+async function draining() {
+  const size = 8 * 1024 * 1024;
+  const second = Promise.withResolvers<http.ServerResponse>();
+  const server = createServer((req, res) => {
+    req.on("error", () => {});
+    res.on("error", () => {});
+    if (req.url === "/second") {
+      second.resolve(res);
+      return;
+    }
+    res.write(Buffer.alloc(size, "a"));
+    res.detachSocket(req.socket);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = await connect(server);
+  client.pause();
+  let received = 0;
+  let tail = "";
+  const bodies = Promise.withResolvers<void>();
+  client.on("data", chunk => {
+    received += chunk.length;
+    tail = (tail + chunk.toString("latin1")).slice(-64);
+    if (tail.includes("second-body")) bodies.resolve();
+  });
+  client.write(request("/first") + request("/second"));
+  const res = await second.promise;
+  await turn();
+  const displaced = res.socket !== null;
+  // Nothing in JS holds response 1 now.
+  Bun.gc(true);
+  await turn();
+  Bun.gc(true);
+  client.resume();
+  res.end("second-body");
+  await bodies.promise;
+
+  const closed = once(client, "close");
+  client.destroy();
+  await closed;
+  server.close();
+  server.closeAllConnections();
+  return { displaced, receivedAtLeastTheWrite: received >= size };
+}
+
 const results: unknown[] = [];
 if (suite === "displaced") {
   for (const secondRequest of ["same read", "later read"] as const) {
@@ -344,5 +433,11 @@ if (suite === "displaced") {
   for (const use of Object.keys(uses)) {
     results.push(await adopted(use));
   }
+} else if (suite === "queued") {
+  for (const call of ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"]) {
+    results.push(await queued(call));
+  }
+} else if (suite === "draining") {
+  results.push(await draining());
 }
 for (const result of results) console.log(JSON.stringify(result));

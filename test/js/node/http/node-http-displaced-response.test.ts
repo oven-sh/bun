@@ -97,6 +97,7 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
         results: triggers.map(trigger => ({
           trigger,
           late: "returned",
+          regranted: false,
           thirdQueued: true,
           bodies: ["second-body", "third-body"],
           errors: [],
@@ -114,6 +115,40 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       expect(await run("completed-but-pending", transport)).toEqual({
         results: [{ completed: true, secondBody: true }],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "a queued response does not write before it has the connection",
+    async () => {
+      const head = (length: number) =>
+        `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
+      const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
+      expect(await run("queued", transport)).toEqual({
+        results: calls.map(call => ({
+          call,
+          queued: true,
+          result: "returned",
+          received: head(10) + "first-body" + head(11) + "second-body",
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "the write that it left in the socket buffer goes out, and its drain handler is gone",
+    async () => {
+      expect(await run("draining", transport)).toEqual({
+        results: [{ displaced: true, receivedAtLeastTheWrite: true }],
         stderr: "",
         exitCode: 0,
         signalCode: null,

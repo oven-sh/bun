@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -119,6 +119,105 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
+  });
+
+  // Not on Windows: libuv starts the next read of a pipe after the read callback returns.
+  it.skipIf(isWindows)("delivers each message once when a handler lets in the next read of the channel", async () => {
+    using dir = tempDir("ipc-read-below-handler", {
+      // The child writes the frames itself. Each write is one read in the parent.
+      "child-fixture.js": `
+        import { serialize } from "bun:jsc";
+        import { existsSync, writeSync } from "node:fs";
+        import { join } from "node:path";
+
+        const mode = process.argv[2];
+        const parent = process.ppid;
+
+        function frame(message) {
+          if (mode === "json") return Buffer.from(JSON.stringify(message) + "\\n");
+          const body = serialize(message, { binaryType: "nodebuffer" });
+          const head = Buffer.alloc(5);
+          head[0] = 2;
+          head.writeUInt32LE(body.length, 1);
+          return Buffer.concat([head, body]);
+        }
+
+        function write(...parts) {
+          const bytes = Buffer.concat(parts);
+          for (let offset = 0; offset < bytes.length; ) {
+            try {
+              offset += writeSync(3, bytes, offset);
+            } catch (error) {
+              if (error.code !== "EAGAIN") throw error;
+            }
+          }
+        }
+
+        function parentReceived(message) {
+          while (!existsSync(join(import.meta.dir, message + ".received"))) {
+            if (process.ppid !== parent) process.exit(1);
+            Bun.sleepSync(1);
+          }
+        }
+
+        const a = frame("a");
+        // The parent keeps the 3 bytes of "a" in the buffer of the channel.
+        write(frame("hello"), a.subarray(0, 3));
+        parentReceived("hello");
+        // The parent decodes "a" from that buffer, with "b" and "c" behind it.
+        write(a.subarray(3), frame("b"), frame("c"));
+        parentReceived("a");
+        // The handler of "a" waits for "e", so this read arrives below it.
+        write(frame("d"), frame("e"));
+        parentReceived("e");
+      `,
+      "parent-fixture.js": `
+        import { expect } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const received = [];
+        const e = Promise.withResolvers();
+        const child = Bun.spawn({
+          cmd: [process.execPath, join(import.meta.dir, "child-fixture.js"), process.argv[2]],
+          stdio: ["ignore", "inherit", "inherit"],
+          serialization: process.argv[2],
+          ipc(message) {
+            if (received.includes(message)) {
+              console.log(JSON.stringify([...received, message]));
+              process.exit(1);
+            }
+            received.push(message);
+            if (message === "hello" || message === "a" || message === "e") {
+              writeFileSync(join(import.meta.dir, message + ".received"), "");
+            }
+            if (message === "e") e.resolve();
+            if (message === "a") {
+              // Outside a test this matcher runs the event loop until the promise settles.
+              expect(e.promise).resolves.toBeUndefined();
+              received.push("the handler of a returns");
+            }
+          },
+        });
+        await e.promise;
+        await child.exited;
+        console.log(JSON.stringify(received));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent-fixture.js", mode],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["hello", "a", "b", "c", "d", "e", "the handler of a returns"]);
+    expect(exitCode).toBe(0);
   });
 });
 

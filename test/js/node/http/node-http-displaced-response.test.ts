@@ -122,7 +122,8 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     timeout,
   );
 
-  test(
+  // Not on TLS: its socket is bigger, so the unfixed build reads inside the block of the WebSocket and nothing shows.
+  test.skipIf(transport === "tls")(
     "a queued response can be used after a WebSocket adopted the connection",
     async () => {
       expect(await run("adopted", transport)).toEqual({

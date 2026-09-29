@@ -641,7 +641,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     version_str,
                     &mut sbuf!(lockfile),
                     log,
-                    Some(&mut *manager),
                 )?;
                 if !ok {
                     log.add_error_fmt(

@@ -1,8 +1,19 @@
 import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
+import {
+  aliasedPackages,
+  aliasRegistry,
+  aliasRows,
+  failAfterDependencyRows,
+  lockedPackages,
+  manifestsOf,
+  nestedIn,
+  ownPackages,
+  plainDependencies,
+} from "./npm-alias-fixtures";
 
 const registry = new VerdaccioRegistry();
 
@@ -520,4 +531,150 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   // unreachable, so the fallback resolve cannot fetch it either).
   expect(await exists(join(packageDir, "node_modules", "dep"))).toBe(false);
   expect(code).not.toBe(0);
+});
+
+// Only input that bun uses for a resolve registers an `npm:` alias, the entry that sends a plain
+// dependency with the name of the alias to the alias target. The loader of bun.lockb registers
+// none. bun registers the dependency rows of a bun.lockb when it keeps that lockfile.
+describe("npm: alias in a row of bun.lockb", () => {
+  const aliases = aliasRows("dependency");
+  const newDependency = { name: "new-dependency", version: "1.0.0", dependencies: plainDependencies(aliases) };
+
+  // Each run has a manifest cache of its own, so the requests show what it resolved.
+  async function resolve(cwd: string, cache: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args, "--lockfile-only"],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, cache) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { err, exitCode };
+  }
+
+  async function createProject(registry: { url: string }, packageJson: object) {
+    const dir = tempDir("bun-lockb-npm-alias-", {
+      "package.json": JSON.stringify({ name: "app", ...packageJson }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, saveTextLockfile: false } }),
+    });
+    const { err, exitCode } = await resolve(String(dir), ".bun-cache-of-lockfile", "install");
+    expect(err).not.toContain("error:");
+    expect(await exists(join(String(dir), "bun.lockb"))).toBeTrue();
+    expect(exitCode).toBe(0);
+    return dir;
+  }
+
+  // Resolves again and saves bun.lock, to read the rows.
+  async function resolveAgain(cwd: string, registry: { requests: string[] }, ...args: string[]) {
+    registry.requests.length = 0;
+    const { err, exitCode } = await resolve(cwd, ".bun-cache", ...args, "--save-text-lockfile");
+    return { err, packages: await lockedPackages(cwd), requests: registry.requests.toSorted(), exitCode };
+  }
+
+  it("bun.lockb fails to load after the rows", async () => {
+    using registry = await aliasRegistry(aliases);
+    using dir = await createProject(registry, { dependencies: aliases });
+    const cwd = String(dir);
+
+    const lockb = Buffer.from(await file(join(cwd, "bun.lockb")).arrayBuffer());
+    await write(join(cwd, "bun.lockb"), failAfterDependencyRows(lockb));
+    await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: plainDependencies(aliases) }));
+
+    const { err, ...result } = await resolveAgain(cwd, registry, "install");
+    expect(err).toContain("failed to parse lockfile: 'bun.lockb'");
+    expect(err).toContain("warn: Ignoring lockfile");
+    expect(result).toEqual({
+      packages: ownPackages(aliases),
+      requests: manifestsOf(...Object.keys(aliases)),
+      exitCode: 0,
+    });
+  });
+
+  it("package.json no longer has the override and catalog rows", async () => {
+    const rows = { ...aliasRows("override"), ...aliasRows("catalog"), ...aliasRows("named-catalog") };
+    using registry = await aliasRegistry(rows, [{ name: "unrelated", version: "1.0.0" }]);
+    using dir = await createProject(registry, {
+      workspaces: { packages: [], catalog: aliasRows("catalog"), catalogs: { group: aliasRows("named-catalog") } },
+      dependencies: { unrelated: "1.0.0" },
+      overrides: aliasRows("override"),
+    });
+    const cwd = String(dir);
+    await write(
+      join(cwd, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { unrelated: "1.0.0", ...plainDependencies(rows) } }),
+    );
+
+    const { err, ...result } = await resolveAgain(cwd, registry, "install");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("Ignoring lockfile");
+    expect(result).toEqual({
+      packages: { ...ownPackages(rows), unrelated: "unrelated@1.0.0" },
+      requests: manifestsOf(...Object.keys(rows)),
+      exitCode: 0,
+    });
+  });
+
+  describe("a new dependency", () => {
+    it("does not follow the alias of an override for one parent", async () => {
+      using registry = await aliasRegistry(aliases, [
+        newDependency,
+        { name: "parent", version: "1.0.0", dependencies: plainDependencies(aliases) },
+      ]);
+      using dir = await createProject(registry, {
+        dependencies: { parent: "1.0.0" },
+        overrides: { parent: aliases },
+      });
+
+      const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Ignoring lockfile");
+      expect(result).toEqual({
+        packages: {
+          ...ownPackages(aliases),
+          "new-dependency": "new-dependency@1.0.0",
+          parent: "parent@1.0.0",
+          ...nestedIn("parent", aliasedPackages(aliases)),
+        },
+        requests: manifestsOf("new-dependency", ...Object.keys(aliases)),
+        exitCode: 0,
+      });
+    });
+
+    // These two are the same before and after the loader stopped to register aliases.
+    it("follows the alias that a package of the registry declares", async () => {
+      using registry = await aliasRegistry(aliases, [
+        newDependency,
+        { name: "has-aliases", version: "1.0.0", dependencies: aliases },
+      ]);
+      using dir = await createProject(registry, { dependencies: { "has-aliases": "1.0.0" } });
+
+      const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Ignoring lockfile");
+      expect(result).toEqual({
+        packages: {
+          ...aliasedPackages(aliases),
+          "has-aliases": "has-aliases@1.0.0",
+          "new-dependency": "new-dependency@1.0.0",
+        },
+        requests: manifestsOf("new-dependency", "short", "some-other-package"),
+        exitCode: 0,
+      });
+    });
+
+    it("follows the alias that package.json declares", async () => {
+      using registry = await aliasRegistry(aliases, [newDependency]);
+      using dir = await createProject(registry, { dependencies: aliases });
+
+      const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Ignoring lockfile");
+      expect(result).toEqual({
+        packages: { ...aliasedPackages(aliases), "new-dependency": "new-dependency@1.0.0" },
+        requests: manifestsOf("new-dependency", "short", "some-other-package"),
+        exitCode: 0,
+      });
+    });
+  });
 });

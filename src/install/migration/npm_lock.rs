@@ -599,7 +599,7 @@ impl<'a> Migrator<'a> {
                 DepTag::Github,
                 &sliced,
                 None,
-                Some(&mut *self.manager as &mut dyn dependency::NpmAliasRegistry),
+                None,
             )
             .map(|v| *v.github())
         } else {
@@ -677,15 +677,8 @@ impl<'a> Migrator<'a> {
                     let dep_name = sb.append_with_hash(name, name_hash)?;
                     let dep_version = sb.append(spec)?;
                     let sliced = dep_version.sliced(sb.bytes.as_slice());
-                    Dependency::parse(
-                        dep_name,
-                        Some(name_hash),
-                        sliced.slice,
-                        &sliced,
-                        None,
-                        Some(&mut *self.manager),
-                    )
-                    .map(|version| (dep_name, version))
+                    Dependency::parse(dep_name, Some(name_hash), sliced.slice, &sliced, None, None)
+                        .map(|version| (dep_name, version))
                 };
                 let Some((dep_name, version)) = version.filter(|(_, v)| v.tag != DepTag::Catalog)
                 else {

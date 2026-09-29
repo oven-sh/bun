@@ -1,7 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
+import { rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
+import {
+  aliasedPackages,
+  aliasRegistry,
+  aliasRows,
+  failAfterDependencyRows,
+  plainDependencies,
+} from "../install/npm-alias-fixtures";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
 //   -i                              Auto-install dependencies during execution. Equivalent to --install=fallback.
@@ -120,4 +128,104 @@ test("--install=fallback to install missing packages", async () => {
 
   expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
   expect(stdout?.toString("utf8")).toBe("true false\n");
+});
+
+// An `npm:` alias sends a plain dependency with the name of the alias to the alias target. At run
+// time bun parses no package.json for the aliases. It takes the ones of the bun.lockb that it
+// keeps: the dependency rows, the overrides and the catalogs.
+describe("auto-install with npm: aliases in bun.lockb", () => {
+  const catalog = aliasRows("catalog");
+  const namedCatalog = aliasRows("named-catalog");
+  const packageJson = {
+    name: "app",
+    workspaces: { packages: [], catalog, catalogs: { group: namedCatalog } },
+    dependencies: { ...aliasRows("dependency"), "has-aliases": "1.0.0" },
+    overrides: aliasRows("override"),
+  };
+  const hasAliases = { name: "has-aliases", version: "1.0.0", dependencies: aliasRows("transitive") };
+  const aliases = {
+    ...aliasRows("dependency"),
+    ...hasAliases.dependencies,
+    ...packageJson.overrides,
+    ...catalog,
+    ...namedCatalog,
+  };
+  // Each package of the registry exports its name. This one has plain dependencies with the
+  // names of the aliases, and exports what each of them exports.
+  const notInLockfile = {
+    name: "not-in-lockfile",
+    version: "1.0.0",
+    dependencies: plainDependencies(aliases),
+    files: {
+      "index.js": `module.exports = Object.fromEntries(${JSON.stringify(Object.keys(aliases))}.map(name => [name, require(name)]));`,
+    },
+  };
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Both projects have the bun.lockb of `packageJson`. bun keeps the one of `kept`.
+  let registry: Awaited<ReturnType<typeof aliasRegistry>>;
+  let kept: ReturnType<typeof tempDir>;
+  let failsToLoad: ReturnType<typeof tempDir>;
+  beforeAll(async () => {
+    registry = await aliasRegistry(aliases, [hasAliases, notInLockfile]);
+    const files = {
+      "package.json": JSON.stringify(packageJson),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, saveTextLockfile: false } }),
+      "index.js": `console.log(JSON.stringify(require("not-in-lockfile")));`,
+    };
+    kept = tempDir("autoinstall-npm-alias-kept-", files);
+    failsToLoad = tempDir("autoinstall-npm-alias-fails-", files);
+    expect(
+      await Promise.all([
+        // This puts the alias targets in the cache. The run takes the packages of bun.lockb from there.
+        run(String(kept), "install"),
+        run(String(failsToLoad), "install", "--lockfile-only"),
+      ]),
+    ).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
+
+    const lockb = join(String(failsToLoad), "bun.lockb");
+    await Promise.all([
+      rm(join(String(kept), "node_modules"), { recursive: true }),
+      Bun.write(lockb, failAfterDependencyRows(Buffer.from(await Bun.file(lockb).arrayBuffer()))),
+      Bun.write(join(String(failsToLoad), "package.json"), JSON.stringify({ name: "app" })),
+    ]);
+  });
+  afterAll(() => {
+    registry?.[Symbol.dispose]();
+    kept?.[Symbol.dispose]();
+    failsToLoad?.[Symbol.dispose]();
+  });
+
+  test("bun.lockb fails to load after the rows", async () => {
+    expect(await run(String(failsToLoad), "--install=fallback", "index.js")).toEqual({
+      stdout: JSON.stringify(Object.fromEntries(Object.keys(aliases).map(name => [name, name]))) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // This is the same before and after the loader stopped to register aliases.
+  test("a package that is not in bun.lockb follows the aliases", async () => {
+    expect(await run(String(kept), "--install=fallback", "index.js")).toEqual({
+      stdout:
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(aliasedPackages(aliases)).map(([name, id]) => [name, id.slice(0, id.lastIndexOf("@"))]),
+          ),
+        ) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

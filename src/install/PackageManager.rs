@@ -828,9 +828,9 @@ impl PackageManager {
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. `Lockfile::load_from_cwd` reads
-        // `manager.options`/`manager.log` only and never re-projects
-        // `manager.lockfile`. Both raw pointers below are derived from `self`,
+        // never alias overlapping bytes. The bun.lock and bun.lockb loaders only
+        // read `manager`. A migration also writes to it (the package.json cache,
+        // the manifest cache). Both raw pointers below are derived from `self`,
         // so the caller's borrow stays on the Stacked-Borrows stack.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
@@ -2682,7 +2682,14 @@ fn init_with_runtime_once(
     if has_lockb {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
         match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
-            lockfile::LoadResult::Ok(_) => {}
+            lockfile::LoadResult::Ok(ok) => {
+                if ok.format == lockfile::Format::Binary {
+                    ok.lockfile
+                        .record_dependency_row_aliases(&mut manager.known_npm_aliases);
+                }
+                ok.lockfile
+                    .record_override_and_catalog_aliases(&mut manager.known_npm_aliases);
+            }
             _ => lockfile.init_empty(),
         }
         manager.lockfile = lockfile;

@@ -2,6 +2,16 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, pack, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
+import {
+  aliasedPackages,
+  aliasRegistry,
+  aliasRows,
+  lockedPackages,
+  manifestsOf,
+  nestedIn,
+  ownPackages,
+  plainDependencies,
+} from "../npm-alias-fixtures";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -1909,6 +1919,183 @@ describe("package-lock.json migration fixes", () => {
         report.push(`bun install --frozen-lockfile exit code: ${check.exitCode}`, "", text);
       }
       expect(report.join("\n")).toMatchSnapshot();
+    });
+  });
+});
+
+// Only input that bun uses for a resolve registers an `npm:` alias, the entry that sends a plain
+// dependency with the name of the alias to the alias target. A migration registers none: bun can
+// stop to use the lockfile after the migration read the row. bun registers the dependency rows of
+// a package-lock.json or a yarn.lock when it keeps what the migration made.
+describe("npm: alias in a row of the lockfile of another package manager", () => {
+  async function resolve(
+    registry: { url: string; requests: string[] },
+    files: Record<string, string>,
+    ...cmd: string[]
+  ) {
+    using dir = tempDir("migrate-npm-alias-", {
+      ...files,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url } }),
+    });
+    const cwd = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd, "--lockfile-only"],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, packages: await lockedPackages(cwd), requests: registry.requests.toSorted(), exitCode };
+  }
+
+  const aliases = aliasRows("dependency");
+  const hasAliases = { name: "has-aliases", version: "1.0.0", dependencies: aliases };
+  const newDependency = { name: "new-dependency", version: "1.0.0", dependencies: plainDependencies(aliases) };
+  const packageLock = (
+    registry: { tarballUrl(name: string): string; integrity(name: string): string },
+    root: object,
+    rows: Record<string, object>,
+  ) => {
+    const row = (name: string) => ({
+      version: "1.0.0",
+      resolved: registry.tarballUrl(name),
+      integrity: registry.integrity(name),
+    });
+    return JSON.stringify({
+      name: "app",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "app", ...root },
+        "node_modules/dependency-of-short": { name: "short", ...row("short") },
+        "node_modules/dependency-of-some-other-package": { name: "some-other-package", ...row("some-other-package") },
+        ...Object.fromEntries(
+          Object.entries(rows).map(([name, more]) => [`node_modules/${name}`, { ...row(name), ...more }]),
+        ),
+      },
+    });
+  };
+
+  test.concurrent("package-lock.json fails to migrate after the rows", async () => {
+    using registry = await aliasRegistry(aliases, [{ name: "unrelated", version: "1.0.0" }]);
+    const { stderr, ...result } = await resolve(
+      registry,
+      {
+        "package.json": JSON.stringify({ name: "app", dependencies: plainDependencies(aliases) }),
+        "package-lock.json": packageLock(
+          registry,
+          { dependencies: { ...aliases, unrelated: "1.0.0" } },
+          // "cpu" has to be an array. The migration fails here, after it read the dependencies of the root.
+          { unrelated: { cpu: "x64" } },
+        ),
+      },
+      "install",
+    );
+    expect(stderr).toContain("InvalidNPMLockfile: failed to migrate lockfile: 'package-lock.json'");
+    expect(stderr).toContain("warn: Ignoring lockfile");
+    expect(result).toEqual({
+      packages: ownPackages(aliases),
+      requests: manifestsOf(...Object.keys(aliases)),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("pnpm-lock.yaml fails to migrate after the rows", async () => {
+    const overrides = aliasRows("override");
+    using registry = await aliasRegistry(overrides);
+    const { stderr, ...result } = await resolve(
+      registry,
+      {
+        "package.json": JSON.stringify({ name: "app", dependencies: plainDependencies(overrides) }),
+        // No "importers": the migration fails after the overrides.
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+overrides:
+  override-of-short: npm:short@1.0.0
+  override-of-some-other-package: npm:some-other-package@1.0.0
+`,
+      },
+      "install",
+    );
+    expect(stderr).toContain("error: pnpm-lock.yaml missing 'importers' field");
+    expect(stderr).toContain("warn: Ignoring lockfile");
+    expect(result).toEqual({
+      packages: ownPackages(overrides),
+      requests: manifestsOf(...Object.keys(overrides)),
+      exitCode: 0,
+    });
+  });
+
+  describe("a new dependency follows the alias that a package of the lockfile declares", () => {
+    const followed = {
+      packages: {
+        ...aliasedPackages(aliases),
+        "has-aliases": "has-aliases@1.0.0",
+        "new-dependency": "new-dependency@1.0.0",
+      },
+      exitCode: 0,
+    };
+
+    // This is the same before and after the migration stopped to register aliases.
+    test.concurrent("package-lock.json", async () => {
+      using registry = await aliasRegistry(aliases, [hasAliases, newDependency]);
+      const { stderr, ...result } = await resolve(
+        registry,
+        {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "has-aliases": "1.0.0" } }),
+          "package-lock.json": packageLock(
+            registry,
+            { dependencies: { "has-aliases": "1.0.0" } },
+            { "has-aliases": { dependencies: aliases } },
+          ),
+        },
+        "add",
+        "new-dependency",
+      );
+      expect(stderr).toContain("migrated lockfile from package-lock.json");
+      expect(stderr).not.toContain("error:");
+      expect(result).toEqual({ ...followed, requests: manifestsOf("new-dependency", "short", "some-other-package") });
+    });
+
+    // The migration fetches the manifest of each package of yarn.lock, and the lockfile it makes
+    // has a second row for a package that a new dependency takes.
+    test.concurrent("yarn.lock", async () => {
+      using registry = await aliasRegistry(aliases, [hasAliases, newDependency]);
+      const row = (name: string) => `  version "1.0.0"
+  resolved "${registry.tarballUrl(name)}#0123456789abcdef0123456789abcdef01234567"
+  integrity ${registry.integrity(name)}`;
+      const { stderr, ...result } = await resolve(
+        registry,
+        {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "has-aliases": "1.0.0" } }),
+          "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"dependency-of-short@npm:short@1.0.0":
+${row("short")}
+
+"dependency-of-some-other-package@npm:some-other-package@1.0.0":
+${row("some-other-package")}
+
+has-aliases@1.0.0:
+${row("has-aliases")}
+  dependencies:
+    dependency-of-short "npm:short@1.0.0"
+    dependency-of-some-other-package "npm:some-other-package@1.0.0"
+`,
+        },
+        "add",
+        "new-dependency",
+      );
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(stderr).not.toContain("error:");
+      expect(result).toEqual({
+        packages: { ...followed.packages, ...nestedIn("new-dependency", aliasedPackages(aliases)) },
+        requests: manifestsOf("has-aliases", "new-dependency", "short", "some-other-package"),
+        exitCode: 0,
+      });
     });
   });
 });

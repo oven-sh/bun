@@ -502,7 +502,7 @@ impl Lockfile {
     pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         dir: Fd,
-        mut manager: Option<&mut PackageManager>,
+        manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
@@ -584,9 +584,13 @@ impl Lockfile {
                 }
             };
 
-            if let Err(e) =
-                TextLockfile::parse_into_binary_lockfile(self, parsed.root, &source, log, manager)
-            {
+            if let Err(e) = TextLockfile::parse_into_binary_lockfile(
+                self,
+                parsed.root,
+                &source,
+                log,
+                manager.as_deref(),
+            ) {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
@@ -608,7 +612,7 @@ impl Lockfile {
             });
         }
 
-        let mut result = self.load_from_bytes(manager.as_deref_mut(), buf, log);
+        let mut result = self.load_from_bytes(manager.as_deref(), buf, log);
 
         // When BUN_DEBUG_TEST_TEXT_LOCKFILE is set, convert
         // the freshly loaded binary lockfile into a text lockfile in memory,
@@ -658,7 +662,7 @@ impl Lockfile {
                     parsed.root,
                     &source,
                     log,
-                    Some(manager),
+                    Some(&*manager),
                 ) {
                     Output::panic(format_args!(
                         "failed to parse text lockfile converted from binary lockfile: {}",
@@ -675,7 +679,7 @@ impl Lockfile {
 
     pub fn load_from_bytes<'a>(
         &'a mut self,
-        pm: Option<&mut PackageManager>,
+        pm: Option<&PackageManager>,
         buf: Vec<u8>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
@@ -691,9 +695,7 @@ impl Lockfile {
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
 
-        let link_workspace_packages = pm
-            .as_deref()
-            .is_none_or(|pm| pm.options.link_workspace_packages);
+        let link_workspace_packages = pm.is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
             Err(e) => {
@@ -2080,6 +2082,30 @@ impl Default for Lockfile {
     }
 }
 
+/// Parses each alias of `rows` again, because the parser is what registers an alias.
+#[inline(never)]
+fn record_npm_aliases(
+    registry: &mut dyn dependency::NpmAliasRegistry,
+    rows: &[Dependency],
+    buf: &[u8],
+) {
+    for row in rows {
+        if row.version.tag != dependency::Tag::Npm || !row.version.npm().is_alias {
+            continue;
+        }
+        let literal = row.version.literal.sliced(buf);
+        let _ = dependency::parse_with_tag(
+            row.name,
+            Some(row.name_hash),
+            literal.slice,
+            dependency::Tag::Npm,
+            &literal,
+            None,
+            Some(&mut *registry),
+        );
+    }
+}
+
 /// The workspace an npm range on `name_hash`'s package links to instead of the registry: the
 /// workspace of that name, when the range satisfies its version or is a `*` range (which links even
 /// a workspace without a version, https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419).
@@ -2136,6 +2162,34 @@ impl Lockfile {
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
         self.loaded_package_count = self.packages.len() as PackageID;
+    }
+
+    /// Registers the `npm:` aliases of the dependency rows. No loader registers an alias, so a
+    /// lockfile that bun does not use leaves none behind. The caller that keeps a lockfile of the
+    /// binary format calls this: bun.lockb, and what package-lock.json and yarn.lock migrate to.
+    /// A plain dependency follows the alias of a row of those, and not of bun.lock or pnpm-lock.yaml.
+    #[cold]
+    pub(crate) fn record_dependency_row_aliases(
+        &self,
+        registry: &mut dyn dependency::NpmAliasRegistry,
+    ) {
+        let buf = self.buffers.string_bytes.as_slice();
+        record_npm_aliases(registry, &self.buffers.dependencies, buf);
+    }
+
+    /// Registers the `npm:` aliases of the flat overrides and of the catalogs, for the caller
+    /// that keeps the lockfile and parses no package.json, which registers them otherwise.
+    #[cold]
+    pub(crate) fn record_override_and_catalog_aliases(
+        &self,
+        registry: &mut dyn dependency::NpmAliasRegistry,
+    ) {
+        let buf = self.buffers.string_bytes.as_slice();
+        record_npm_aliases(registry, self.overrides.map.values(), buf);
+        record_npm_aliases(registry, self.catalogs.default.values(), buf);
+        for catalog in self.catalogs.groups.values() {
+            record_npm_aliases(registry, catalog.values(), buf);
+        }
     }
 
     /// Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild a dependency from its

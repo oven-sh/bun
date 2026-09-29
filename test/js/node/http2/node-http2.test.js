@@ -5681,6 +5681,52 @@ it("Http2SecureServer#close() calls closeIdleConnections() exactly when allowHTT
   expect(calls).toEqual({ "allowHTTP1: true": [[]], "allowHTTP1: false": [] });
 });
 
+// Like in Node 26.5: close() destroys an allowHTTP1 connection that has sent nothing or that is between
+// requests. It leaves a connection that has sent part of a request head, and that request is served.
+it("Http2SecureServer#close() leaves an allowHTTP1 connection that has sent part of a request head", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) =>
+    res.end(`served ${req.url}`),
+  );
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const clients = [];
+  // Http2SecureServer sets up the HTTP/1 fallback in its own 'secureConnection' listener, which runs before this one.
+  async function connect() {
+    const accepted = new Promise(resolve => server.once("secureConnection", resolve));
+    const client = await connectOverHttp1(port);
+    clients.push(client);
+    return { client, serverSocket: await accepted };
+  }
+  try {
+    const fresh = await connect();
+    const partial = await connect();
+    const done = await connect();
+    const partialHeadArrived = new Promise(resolve => partial.serverSocket.once("data", resolve));
+    partial.client.write("GET /partial HTTP/1.1\r\nHost: localhost\r\n");
+    await partialHeadArrived;
+    const doneResponse = readHttp1Response(done.client);
+    done.client.write("GET /done HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(await doneResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "served /done" });
+
+    const serverClosed = new Promise(resolve => server.once("close", resolve));
+    server.close();
+    expect({
+      fresh: fresh.serverSocket.destroyed,
+      partial: partial.serverSocket.destroyed,
+      done: done.serverSocket.destroyed,
+    }).toEqual({ fresh: true, partial: false, done: true });
+
+    // Connection: close ends the connection after the response, and then the server emits 'close'.
+    const partialResponse = readHttp1Response(partial.client);
+    partial.client.write("Connection: close\r\n\r\n");
+    expect(await partialResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "served /partial" });
+    await serverClosed;
+  } finally {
+    for (const client of clients) client.destroy();
+    if (server.listening) server.close();
+  }
+});
+
 it("http2 allowHTTP1 fallback enforces maxRequestsPerSocket like http.Server", async () => {
   const served = [];
   const dropped = [];

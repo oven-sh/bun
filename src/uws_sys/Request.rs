@@ -70,9 +70,8 @@ impl Request {
         // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
-    /// The path the router matched, without the query: the raw path, or the
-    /// URL parser's pathname when the two can differ (a `..`, `%2e`, `\` or
-    /// `#` in the target). Empty before a route handler runs.
+    /// The path the router matched, without the query (`uWS::HttpRequest::getRoutedUrl`).
+    /// Empty before a route handler runs.
     pub fn routed_url(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         let len = c::uws_req_get_routed_url(self, &mut ptr);

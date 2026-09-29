@@ -859,11 +859,8 @@ impl Request {
             })
     }
 
-    /// The `(path, query)` that `request.url` is built from. The path is the
-    /// one the router matched: the raw path, or the URL parser's pathname when
-    /// the target held a `..`, `%2e`, `\` or `#`. So the route that ran and
-    /// `request.url` describe the same path. Before a route handler runs
-    /// the router has matched nothing, and the raw target is used as is.
+    /// `(path, query)` for `request.url`: the path the router matched (see
+    /// `uws::Request::routed_url`), or the raw target before a route handler runs.
     fn routed_target(req: &bun_uws::Request) -> (Cow<'_, [u8]>, &[u8]) {
         let routed = req.routed_url();
         if !routed.is_empty() {

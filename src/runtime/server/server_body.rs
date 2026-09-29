@@ -3071,9 +3071,7 @@ where
                     let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
                     s
                 });
-            // The path the router matched, then the query: the same pair
-            // `Request::ensure_url` uses for HTTP/1, so the route that ran and
-            // `request.url` describe the same path.
+            // Same `(routed path, query)` pair as `Request::ensure_url` for HTTP/1.
             let routed_is_origin_form = {
                 let routed = ReqLike::routed_url(req);
                 !routed.is_empty() && routed[0] == b'/'

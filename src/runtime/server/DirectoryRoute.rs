@@ -122,10 +122,7 @@ impl DirectoryRoute {
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        // The path the router matched: the raw path, or the URL parser's
-        // pathname when the target held a dot segment, a `\` or a `#`. Either
-        // way it is the path the `/prefix/*` match ran on, so the served file
-        // cannot differ from the routed path.
+        // The path the `/prefix/*` match ran on, so the served file cannot differ from it.
         let Some((rel_len, had_trailing_slash)) =
             resolve_subpath(req.routed_url(), &this.url_prefix, &mut path_buf.0[..])
         else {
@@ -505,11 +502,10 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         return None;
     }
 
-    // uWS routed on this path split on literal `/` with no decode. (A target
-    // with a dot segment, `\` or `#` was routed on the URL parser's pathname,
-    // and that is the path we were given.) Any transformation we apply that
-    // uWS did not creates a path uWS never matched, which can bypass a
-    // more-specific overlapping route. So reject every such transformation: `%XX` whose decoded byte is
+    // uWS routed on this path split on literal `/` with no decode. Any
+    // transformation we apply that uWS did not creates a path uWS never
+    // matched, which can bypass a more-specific overlapping route. So reject
+    // every such transformation: `%XX` whose decoded byte is
     // a `pchar` (would let `%61dmin` reach `admin/`); encoded `%2F`; and any
     // non-canonical segment (empty / `.` / `..`). Route segments can only
     // consist of `pchar`s on the wire, so rejecting encoded `pchar`s leaves

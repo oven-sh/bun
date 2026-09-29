@@ -156,7 +156,8 @@ impl<'a> Lookup<'a> {
         key.extend_from_slice(&[self.options().target as u8, self.depth]);
         let slot = {
             let mut modules = self.ctx.const_call_modules.modules.lock();
-            bun_core::handle_oom(modules.get_or_put_value(&key, Default::default())).clone()
+            let slot = bun_core::handle_oom(modules.get_or_put_value(&key, Default::default()));
+            Arc::clone(slot)
         };
         slot.get_or_init(|| {
             let exports = self.parse(file).map(Arc::new);
@@ -197,7 +198,14 @@ impl<'a> Lookup<'a> {
             )
         };
         let mut entry = cache
-            .read_file_with_allocator(fs, path.text, bun_sys::Fd::INVALID, false, None, Some(arena))
+            .read_file_with_allocator(
+                fs,
+                path.text,
+                bun_sys::Fd::INVALID,
+                false,
+                None,
+                Some(arena),
+            )
             .ok()?;
         let contents = core::mem::take(&mut entry.contents);
         let _ = entry.close_fd();
@@ -327,7 +335,13 @@ impl<'a> Lookup<'a> {
             .reexports
             .iter()
             .find(|from| *from.alias == *alias && hops < MAX_HOPS)?;
-        self.lookup_from(path, &from.specifier, &from.imported, ImportKind::Stmt, hops + 1)
+        self.lookup_from(
+            path,
+            &from.specifier,
+            &from.imported,
+            ImportKind::Stmt,
+            hops + 1,
+        )
     }
 }
 

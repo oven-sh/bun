@@ -83,6 +83,15 @@ export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "
   chunkPaths?: string,
 ) => string | null | undefined;
 
+/** `start` and `length` are byte offsets of the directive's string literal in the UTF-8 source. */
+export const scanUseDirective: (
+  source: string | Uint8Array,
+) => null | { directive: "client" | "server"; start: number; length: number } = $newRustFunction(
+  "JSBundler.rs",
+  "jsScanUseDirective",
+  1,
+);
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

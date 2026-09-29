@@ -65,6 +65,24 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
   });
 });
 
+// With server components on, the bundler scans each file for "use client"
+// before the parser gets it. The scan runs the lexer, so it takes the same
+// limit. An open comment makes a lexer with no limit read to the end of the
+// source, where the position of its error does not fit.
+test("the use directive scan leaves a source that is too large to the parser", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      import { scanUseDirective } from "bun:internal-for-testing";
+      const input = new Uint8Array(${SIZE});
+      input.set(Buffer.from("/*"));
+      console.log(scanUseDirective(input));
+    `,
+  ]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "null", stderr: "", exitCode: 0 });
+});
+
 // Each file is sparse: everything past the first line is a hole, so it takes no
 // disk space and reads back as NUL bytes. Reading it costs the child process
 // 2 GiB of memory (and, in debug builds, tens of seconds of allocator

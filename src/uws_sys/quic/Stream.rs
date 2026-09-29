@@ -57,8 +57,7 @@ impl Stream {
         us_quic_stream_reset(self)
     }
 
-    /// The application error code of the peer's RESET_STREAM or STOP_SENDING,
-    /// if it sent one.
+    /// The error code of the peer's RESET_STREAM or STOP_SENDING, if it sent one.
     pub fn peer_reset_code(&mut self) -> Option<u64> {
         u64::try_from(us_quic_stream_peer_reset_code(self)).ok()
     }

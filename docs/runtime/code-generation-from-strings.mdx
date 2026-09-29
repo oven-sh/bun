@@ -20,6 +20,8 @@ new Function("return 1 + 1"); // EvalError: Code generation from strings disallo
 
 A refusal is a synchronous `EvalError` that you can catch. `import()` of a refused URL rejects with the same error. A library that probes with `try { new Function("") } catch {}` takes its fallback path.
 
+Two refusals reach you another way. `ShadowRealm.prototype.importValue()` of a refused URL rejects with a `TypeError` whose message contains the `EvalError`. A refused URL in a Worker's `preload` option is reported by the Worker's `error` event.
+
 ## The flag applies to the whole process
 
 Bun reads the flag at startup. Nothing turns it off afterwards:
@@ -138,6 +140,8 @@ await Bun.build({
 });
 ```
 
+Write the value with `=`. In `--compile-exec-argv="--disallow-code-generation-from-strings strict"`, with a space, `strict` is a separate argument, which a compiled executable ignores. That executable runs with the flag and no value, and prints no error. The check in [Checking that the flag is on](#checking-that-the-flag-is-on) catches the mistake.
+
 `BUN_OPTIONS` can raise the level of a compiled executable. It cannot lower it.
 
 A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
@@ -173,7 +177,7 @@ A `Worker` inherits `process.execArgv`, so the same check works inside one. When
 ## What the flag does not cover
 
 - **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.
-- **Startup.** The entry point, `--preload`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs.
+- **Startup.** The entry point, a file given to `--preload`, `--import` or `--require`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs. A `data:` URL given to `--preload`, `--import` or `--require` is not a file, and `=strict` refuses it like any other `data:` URL.
 - **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
 - **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.

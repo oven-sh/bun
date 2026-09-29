@@ -1,6 +1,141 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { GCProfiler, getHeapStatistics, isStringOneByteRepresentation } from "node:v8";
+import vm from "node:vm";
+
+describe("v8.getHeapStatistics", () => {
+  test("returns all expected fields as non-negative numbers", () => {
+    const stats = getHeapStatistics();
+    expect(Object.keys(stats).sort()).toEqual(
+      [
+        "total_heap_size",
+        "total_heap_size_executable",
+        "total_physical_size",
+        "total_available_size",
+        "used_heap_size",
+        "total_allocated_bytes",
+        "heap_size_limit",
+        "malloced_memory",
+        "peak_malloced_memory",
+        "does_zap_garbage",
+        "number_of_native_contexts",
+        "number_of_detached_contexts",
+        "total_global_handles_size",
+        "used_global_handles_size",
+        "external_memory",
+      ].sort(),
+    );
+    for (const [key, value] of Object.entries(stats)) {
+      expect(value, key).toBeNumber();
+      expect(value, key).toBeGreaterThanOrEqual(0);
+    }
+    expect(stats.number_of_native_contexts).toBeGreaterThanOrEqual(1);
+  });
+
+  test("number_of_native_contexts counts node:vm contexts", () => {
+    Bun.gc(true);
+    const before = getHeapStatistics().number_of_native_contexts;
+    const contexts = [vm.createContext({}), vm.createContext({}), vm.createContext({})];
+    expect(getHeapStatistics().number_of_native_contexts).toBe(before + contexts.length);
+  });
+
+  // A full GC does not always return the count to its starting value, so the
+  // reference after each collection is the heap walk that the counter replaces.
+  test("number_of_native_contexts matches the heap walk after contexts are collected", () => {
+    const before = heapStats().globalObjectCount;
+    let created = 0;
+    for (let round = 0; round < 3; round++) {
+      (() => {
+        const contexts = Array.from({ length: 5 }, () => vm.createContext({}));
+        created += contexts.length;
+        Bun.gc(true);
+        expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
+        expect(contexts).toHaveLength(5);
+      })();
+      Bun.gc(true);
+      expect(getHeapStatistics().number_of_native_contexts).toBe(heapStats().globalObjectCount);
+    }
+    // Some global was destroyed, so the equalities above covered the decrement.
+    expect(heapStats().globalObjectCount).toBeLessThan(before + created);
+  });
+
+  // https://github.com/oven-sh/bun/issues/19254
+  test("stays cheap and does not grow RSS when called repeatedly", async () => {
+    const script = /* js */ `
+      const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
+
+      for (let i = 0; i < 50; i++) {
+        getHeapStatistics();
+        getHeapSpaceStatistics();
+      }
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+
+      for (let i = 0; i < 1000; i++) {
+        getHeapStatistics();
+        getHeapSpaceStatistics();
+      }
+
+      Bun.gc(true);
+      const rssAfter = process.memoryUsage.rss();
+
+      process.stdout.write(JSON.stringify({
+        rssDeltaMB: (rssAfter - rssBefore) / 1024 / 1024,
+      }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { rssDeltaMB } = JSON.parse(stdout) as { rssDeltaMB: number };
+    expect(exitCode).toBe(0);
+
+    const rssLimit = isASAN || isDebug ? 20 : 10;
+    expect(rssDeltaMB, `RSS grew by ${rssDeltaMB.toFixed(2)} MB over 1000 iterations`).toBeLessThan(rssLimit);
+  });
+
+  test("does not run a replaced Array.prototype[Symbol.iterator]", async () => {
+    const script = /* js */ `
+      const { getHeapStatistics, getHeapSpaceStatistics } = require("node:v8");
+      const original = Array.prototype[Symbol.iterator];
+      let calls = 0;
+      Array.prototype[Symbol.iterator] = function () {
+        calls++;
+        throw new Error("user iterator ran");
+      };
+      let result;
+      try {
+        result = { used: typeof getHeapStatistics().used_heap_size, spaces: getHeapSpaceStatistics().length };
+      } catch (e) {
+        result = { error: String(e) };
+      } finally {
+        Array.prototype[Symbol.iterator] = original;
+      }
+      process.stdout.write(JSON.stringify({ ...result, calls }));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ used: "number", spaces: 13, calls: 0 });
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe("v8.isStringOneByteRepresentation", () => {
   test("rejects non-string arguments", () => {

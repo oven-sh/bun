@@ -278,6 +278,17 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                 stable_source_indices,
             )?;
         }
+        if let Content::Javascript(js) = &chunk.content {
+            // The chunk calls the wrapper of each file it starts, and no part holds that use.
+            for &(_, wrapped) in js.starts_in_chunk_order.iter() {
+                minify_renamer.accumulate_symbol_use_count(
+                    &mut top_level_symbols,
+                    all_wrapper_refs[wrapped as usize],
+                    1,
+                    stable_source_indices,
+                )?;
+            }
+        }
         for &copy in entry_point_cjs_export_copies {
             minify_renamer.accumulate_symbol_use_count(
                 &mut top_level_symbols,

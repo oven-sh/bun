@@ -108,7 +108,7 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
           console.log(JSON.stringify({
             code,
             linkExists: fs.existsSync("link"),
-            targetIsSourcePrefix: target.length < ${120 * 1024} && target.every(byte => byte === 0x53),
+            targetLength: target.every(byte => byte === 0x53) ? target.length : "target holds old bytes",
           }));
         `,
       });
@@ -125,7 +125,12 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ code: "EFBIG", linkExists: false, targetIsSourcePrefix: true });
+      const result = JSON.parse(stdout);
+      expect(result).toEqual({ code: "EFBIG", linkExists: false, targetLength: expect.any(Number) });
+      // Linux writes up to the limit: 100 blocks of 512 or 1024 bytes, by the shell. Other
+      // kernels reject the whole write that crosses the limit, so less of the source lands.
+      if (isLinux) expect(result.targetLength).toBeOneOf([100 * 512, 100 * 1024]);
+      else expect(result.targetLength).toBeLessThan(120 * 1024);
       expect(exitCode).toBe(0);
     });
 

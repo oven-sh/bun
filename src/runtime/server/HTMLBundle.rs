@@ -691,15 +691,8 @@ impl Route {
         }
     }
 
-    /// The response for a route in `State::Err`, both for the requests that were
-    /// waiting on the build that failed and for every request arriving while
-    /// the route stays in that state (outside of development: until the server
-    /// is restarted). The build log is never rendered into the response so
-    /// error details do not reach end users.
-    ///
-    /// `resume_pending_responses` runs from a JS event-loop task, not a uWS
-    /// handler, so `end_without_body(true)` alone cannot close the socket
-    /// there; the Content-Length gives the client framing either way.
+    /// The response for a route in `State::Err`. The build log stays out of
+    /// the body so error details do not reach end users.
     fn end_build_failed(resp: AnyResponse) {
         resp.write_status(b"500 Build Failed");
         resp.write_header_int(b"Content-Length", 0);

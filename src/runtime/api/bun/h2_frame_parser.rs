@@ -3452,8 +3452,28 @@ impl H2FrameParser {
             });
             self.enter_stream_dispatch(stream)
                 .set_context(returned, &global);
+        } else if returned.is_number() && self.count_rejected_stream(stream_identifier) {
+            // streamStart refused the stream and returned the RST_STREAM code that answers it.
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            self.end_stream(unsafe { &mut *stream }, ErrorCode(returned.to_u32()));
         }
         Some(stream)
+    }
+
+    /// Returns false when this used up maxSessionRejectedStreams and the session sent its GOAWAY.
+    fn count_rejected_stream(&self, stream_id: u32) -> bool {
+        self.rejected_streams.set(self.rejected_streams.get() + 1);
+        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
+            self.send_go_away(
+                stream_id,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+            return false;
+        }
+        true
     }
 
     fn to_writer(&self) -> DirectWriterStruct {
@@ -4165,18 +4185,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_stream_rejected(&self, stream_id: u32) {
-        // maxSessionRejectedStreams: counts only locally-initiated rejections (oversized or
-        // malformed header blocks) - peer-sent RST_STREAM frames must not consume the budget.
-        self.rejected_streams.set(self.rejected_streams.get() + 1);
-        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-            self.send_go_away(
-                stream_id,
-                ErrorCode::ENHANCE_YOUR_CALM,
-                b"ENHANCE_YOUR_CALM",
-                self.last_stream_id.get(),
-                true,
-            );
-        }
+        self.count_rejected_stream(stream_id);
     }
 
     fn on_stream_reset(&self, stream_id: u32, code: u32) {
@@ -5043,25 +5052,6 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid ErrorCode")));
         }
         let error_code = error_arg.to_u32();
-
-        // maxSessionRejectedStreams: a REFUSED_STREAM reset from the JS layer (the
-        // max-concurrent-streams refusal in streamStart) is the same rejection class the engine
-        // counts; budget it identically so a flood of refused streams still tears the session
-        // down. Server-side only: a client's GOAWAY sweep resets its own unprocessed streams
-        // with REFUSED_STREAM and must not consume the budget.
-        if error_code == ErrorCode::REFUSED_STREAM.0 && this.is_server.get() {
-            this.rejected_streams.set(this.rejected_streams.get() + 1);
-            if this.max_rejected_streams.get() <= this.rejected_streams.get() {
-                this.send_go_away(
-                    stream_id,
-                    ErrorCode::ENHANCE_YOUR_CALM,
-                    b"ENHANCE_YOUR_CALM",
-                    this.last_stream_id.get(),
-                    true,
-                );
-                return Ok(JSValue::UNDEFINED);
-            }
-        }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
             // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams

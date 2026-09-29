@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -2191,6 +2192,58 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
     expect(sessionError?.code).toBe("ERR_HTTP2_SESSION_ERROR");
     expect(sessionError?.message).toBe("Session closed with error code 11");
   } finally {
+    server.close();
+  }
+});
+
+it("http2 server keeps its session when the handler refuses requests with REFUSED_STREAM", async () => {
+  // A budget of 2 so that one refusal uses it up when resets of delivered streams count: close()
+  // and the destroy that follows it each submit a reset.
+  const server = http2.createServer({ maxSessionRejectedStreams: 2 });
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    if (headers[":path"] === "/events") {
+      stream.respond({ ":status": 200 });
+      stream.on("data", chunk => stream.write(chunk));
+      return;
+    }
+    stream.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const seen = { goaway: [], sessionError: undefined, eventsError: undefined };
+    client.on("goaway", code => seen.goaway.push(code));
+    client.on("error", err => (seen.sessionError = err.message));
+
+    const events = client.request({ ":path": "/events", ":method": "POST" });
+    events.on("error", err => (seen.eventsError = err.code));
+    events.setEncoding("utf8");
+    await once(events, "response");
+
+    for (let i = 0; i < 5; i++) {
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      const req = client.request({ ":path": "/work" });
+      // A refused request ends with an 'error' on node.
+      req.on("error", () => {});
+      req.on("close", onClose);
+      req.end();
+      await closed;
+      // The long-lived stream still carries data in both directions.
+      events.write(`${i}`);
+      expect((await once(events, "data"))[0]).toBe(`${i}`);
+    }
+    expect({ ...seen, closed: client.closed, destroyed: client.destroyed }).toEqual({
+      goaway: [],
+      sessionError: undefined,
+      eventsError: undefined,
+      closed: false,
+      destroyed: false,
+    });
+    events.close();
+  } finally {
+    client.close();
     server.close();
   }
 });

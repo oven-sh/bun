@@ -10,12 +10,12 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Cat {
+pub(crate) struct Cat {
     pub(crate) state: CatState,
 }
 
 #[derive(Default)]
-pub enum CatState {
+pub(crate) enum CatState {
     #[default]
     Idle,
     ExecStdin {
@@ -37,7 +37,6 @@ pub enum CatState {
         in_done: bool,
     },
     WaitingWriteErr,
-    Done,
 }
 
 /// Internal: what to do after dropping the &mut state borrow.
@@ -45,6 +44,16 @@ pub(crate) enum Step {
     Suspend,
     Done(ExitCode),
     Next,
+}
+
+impl Step {
+    fn run(self, interp: &Interpreter, cmd: NodeId) -> Yield {
+        match self {
+            Step::Suspend => Yield::suspended(),
+            Step::Done(code) => Builtin::done(interp, cmd, code),
+            Step::Next => Cat::next(interp, cmd),
+        }
+    }
 }
 
 impl Cat {
@@ -111,7 +120,6 @@ impl Cat {
             Stdin,
             FileArg { args_start: usize, idx: usize },
             WaitingErr,
-            Done,
         }
         let branch = match &Self::state_mut(interp, cmd).state {
             CatState::Idle => panic!("Invalid state"),
@@ -123,7 +131,6 @@ impl Cat {
                 idx: *idx,
             },
             CatState::WaitingWriteErr => Branch::WaitingErr,
-            CatState::Done => Branch::Done,
         };
         match branch {
             Branch::Stdin => {
@@ -225,8 +232,7 @@ impl Cat {
                 });
                 reader.start()
             }
-            Branch::WaitingErr => Yield::failed(),
-            Branch::Done => Builtin::done(interp, cmd, 0),
+            Branch::WaitingErr => Yield::suspended(),
         }
     }
 
@@ -304,11 +310,7 @@ impl Cat {
             CatState::WaitingWriteErr => Step::Done(1),
             _ => panic!("Invalid state"),
         };
-        match step {
-            Step::Suspend => Yield::suspended(),
-            Step::Done(code) => Builtin::done(interp, cmd, code),
-            Step::Next => Self::next(interp, cmd),
-        }
+        step.run(interp, cmd)
     }
 
     pub(crate) fn on_io_reader_chunk(
@@ -390,7 +392,7 @@ impl Cat {
                     Step::Suspend
                 }
             }
-            CatState::Done | CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
+            CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
         };
         if cancel {
             let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -398,16 +400,12 @@ impl Cat {
                 fd.writer.cancel_chunks(wchild);
             }
         }
-        match step {
-            Step::Suspend => Yield::suspended(),
-            Step::Done(code) => Builtin::done(interp, cmd, code),
-            Step::Next => Self::next(interp, cmd),
-        }
+        step.run(interp, cmd)
     }
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

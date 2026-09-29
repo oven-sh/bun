@@ -29,7 +29,7 @@ pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: core::ffi::c_int = 2;
 pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
-pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
+pub const LIBUS_SOCKET_OPEN_PAUSED: core::ffi::c_int = 256;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
@@ -46,6 +46,11 @@ pub struct us_bun_verify_error_t {
     pub code: *const core::ffi::c_char,
     pub reason: *const core::ffi::c_char,
 }
+impl us_bun_verify_error_t {
+    /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
+    pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
+}
+
 impl Default for us_bun_verify_error_t {
     fn default() -> Self {
         Self {
@@ -86,7 +91,7 @@ impl us_bun_verify_error_t {
     }
 
     /// `code` as a byte slice (no NUL), or `b""` if null. Convenience for the
-    /// dominant `BunString::clone_utf8(..)` / `ZigString::from_utf8(..)` shape.
+    /// dominant `BunString::clone_utf8(..)` / `EncodedSlice::utf8(..)` shape.
     #[inline]
     pub fn code_bytes(&self) -> &[u8] {
         self.code().map_or(b"", core::ffi::CStr::to_bytes)
@@ -139,7 +144,6 @@ pub struct Opcode(pub i32);
 impl Opcode {
     pub const Text: Opcode = Opcode(1);
     pub const Binary: Opcode = Opcode(2);
-    pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
     // Upper-case aliases for callers that use the screaming-snake names
@@ -165,10 +169,29 @@ pub use bun_core::Timespec;
 // `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
 // as `safe fn` and drop per-call-site `unsafe { }`.
-bun_core::opaque_extern!(
-    pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
-    pub UpgradedDuplex, pub WindowsNamedPipe,
-);
+bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe);
+
+pub mod socket_transfer {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_char, c_int, c_uint, c_void};
+    unsafe extern "C" {
+        pub safe fn bsd_socket_export_size() -> c_int;
+        pub fn bsd_socket_export(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            target_pid: c_uint,
+            info_out: *mut c_void,
+        ) -> c_int;
+        pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub fn bsd_create_bound_socket(
+            host: *const c_char,
+            port: c_int,
+            options: c_int,
+            out_port: *mut c_int,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+    }
+}
 
 // ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
 // The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
@@ -188,6 +211,10 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
+    safe fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex);
+    safe fn UpgradedDuplex__latest_session(
+        this: &UpgradedDuplex,
+    ) -> *mut bun_boringssl_sys::SSL_SESSION;
     safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
     safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
     fn UpgradedDuplex__encode_and_write(
@@ -199,6 +226,7 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
 }
 impl UpgradedDuplex {
     #[inline]
@@ -221,6 +249,14 @@ impl UpgradedDuplex {
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = UpgradedDuplex__ssl(self);
         if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub(crate) fn set_inline_reject(&self) {
+        UpgradedDuplex__set_inline_reject(self)
+    }
+    #[inline]
+    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        UpgradedDuplex__latest_session(self)
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
@@ -256,6 +292,10 @@ impl UpgradedDuplex {
     pub(crate) fn close(&mut self) {
         UpgradedDuplex__close(self)
     }
+    #[inline]
+    pub(crate) fn abandon_js_side(&mut self) {
+        UpgradedDuplex__abandon_js_side(self)
+    }
 }
 
 // ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
@@ -270,6 +310,10 @@ unsafe extern "C" {
     safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    safe fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe);
+    safe fn WindowsNamedPipe__latest_session(
+        this: &WindowsNamedPipe,
+    ) -> *mut bun_boringssl_sys::SSL_SESSION;
     safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
     safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
     fn WindowsNamedPipe__encode_and_write(
@@ -306,6 +350,14 @@ impl WindowsNamedPipe {
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = WindowsNamedPipe__ssl(self);
         if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub(crate) fn set_inline_reject(&self) {
+        WindowsNamedPipe__set_inline_reject(self)
+    }
+    #[inline]
+    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        WindowsNamedPipe__latest_session(self)
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
@@ -358,6 +410,8 @@ pub mod app;
 pub mod body_reader_mixin;
 #[path = "ConnectingSocket.rs"]
 pub mod connecting_socket;
+#[path = "h2.rs"]
+pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
 #[path = "InternalLoopData.rs"]
@@ -436,7 +490,6 @@ pub mod fault_inject {
 
     unsafe extern "C" {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
-        pub safe fn us_fault_clear(syscall: c_int);
         pub safe fn us_fault_clear_all();
         pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
         -> c_int;
@@ -444,7 +497,6 @@ pub mod fault_inject {
 }
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
-    SocketTcp, SocketTls,
 };
 
 // ───────────────────────────── re-exports ────────────────────────────────────
@@ -452,12 +504,11 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
+pub use loop_::{Loop, NOW_NS_UNKNOWN};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
-#[cfg(not(windows))]
-pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows
+
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;
@@ -467,7 +518,7 @@ pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
+pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.

@@ -35,12 +35,6 @@ impl JSONOptions {
     };
 }
 
-impl Default for JSONOptions {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
@@ -254,7 +248,7 @@ fn report_index_error(
     crate::Error::SyntaxError
 }
 
-fn guess_indentation(s: &[u8]) -> Indentation {
+pub fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
         if s[i] == b'"' || s[i] == b'\'' {
@@ -915,7 +909,7 @@ pub fn materialize(
 ) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
-            format_args!("JSON document is too deeply nested"),
+            format_args!("Document is too deeply nested"),
             bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: root.loc,

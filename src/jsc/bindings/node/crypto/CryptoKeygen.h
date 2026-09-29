@@ -26,10 +26,7 @@ struct SecretKeyJobCtx {
 };
 
 struct SecretKeyJob {
-    static SecretKeyJob* create(JSC::JSGlobalObject*, size_t length, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx&&, JSC::JSValue callback);
-
-    void schedule();
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsGenerateKey);

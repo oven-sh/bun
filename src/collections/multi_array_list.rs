@@ -46,9 +46,8 @@
 //! `<[MaybeUninit<u8>]>` slice ops over [`Col`]/[`ColMut`] views.
 
 use core::alloc::Layout;
-use core::any::TypeId;
 use core::marker::PhantomData;
-use core::mem::type_info::{Type as TypeInfo, TypeKind};
+use core::mem::type_info;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
@@ -115,7 +114,7 @@ macro_rules! multi_array_columns {
             /// backing allocation), so holding all of them mutably at once is
             /// sound. This is the safe replacement for the `items_raw` +
             /// per-site `unsafe { &mut * }` pattern.
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             $vis struct [<$trait Mut>] <'__mal, $($decl)*> {
                 $( pub $field: &'__mal mut [$ty], )*
                 #[doc(hidden)]
@@ -132,20 +131,20 @@ macro_rules! multi_array_columns {
             /// responsibility (per-site `unsafe`); columns are physically
             /// disjoint by `COLUMN_OFFSET_PER_CAP`, so distinct-column derefs
             /// never alias. Invalidated by any reallocation of the list.
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             $vis struct [<$trait Raw>] <$($decl)*> {
                 $( pub $field: *mut [$ty], )*
                 #[doc(hidden)]
                 pub __mal: ::core::marker::PhantomData<*mut $elem>,
             }
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             impl <$($decl)*> ::core::marker::Copy for [<$trait Raw>] <$($use)*> {}
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             impl <$($decl)*> ::core::clone::Clone for [<$trait Raw>] <$($use)*> {
                 #[inline] fn clone(&self) -> Self { *self }
             }
 
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             $vis trait $trait <$($decl)*> {
                 $( $crate::__mal_column_sig!($field : $ty); )*
                 /// Split-borrow every column at once.
@@ -153,15 +152,15 @@ macro_rules! multi_array_columns {
                 /// Raw column pointers (root provenance, no `&mut` intermediate).
                 fn split_raw(&self) -> [<$trait Raw>]<$($use)*>;
             }
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
-                $( $crate::__mal_column_impl!($field : $ty); )*
+                $( $crate::__mal_column_impl!($elem, $field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
                 $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
-            #[allow(dead_code, non_snake_case)]
+            #[allow(non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::multi_array_list::Slice<$elem> {
-                $( $crate::__mal_column_impl!($field : $ty); )*
+                $( $crate::__mal_column_impl!($elem, $field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
                 $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
@@ -226,10 +225,12 @@ macro_rules! __mal_split_raw_impl {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __mal_column_impl {
-    ($field:ident : $ty:ty) => {
+    ($elem:ty, $field:ident : $ty:ty) => {
         $crate::__mal_paste! {
             #[inline]
             fn [<items_ $field>](&self) -> &[$ty] {
+                // `dead_code` cannot follow a column found by name; this use of `$field` it can.
+                let _ = ::core::mem::offset_of!($elem, $field);
                 self.items::<{ ::core::stringify!($field) }, $ty>()
             }
             #[inline]
@@ -242,35 +243,19 @@ macro_rules! __mal_column_impl {
 
 /// Upper bound on struct field count. The reflected per-field metadata is
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
-/// value type without a `where [(); field_count::<T>()]:` bound propagating to
-/// every caller.
+/// value type without a `where [(); Reflected::<T>::COUNT]:` bound propagating
+/// to every caller.
 const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
 use crate::const_str_eq;
 
-/// `TypeId` of `F` without the `'static` bound `TypeId::of` imposes — needed
-/// because reflected `Field::ty` ids are not `'static`-restricted, and column
-/// callers routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
-#[inline(always)]
-const fn type_id_of<F: ?Sized>() -> TypeId {
-    const { core::intrinsics::type_id::<F>() }
-}
-
-/// Reflected fields of `T` (struct only). Panics at const-eval for non-structs.
-const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
-    match TypeInfo::of::<T>().kind {
-        TypeKind::Struct(s) => s.fields,
-        _ => panic!("MultiArrayList<T>: T must be a struct with named fields"),
-    }
-}
-
-/// Number of fields in `T`.
-#[inline(always)]
-const fn field_count<T>() -> usize {
-    fields_of::<T>().len()
-}
+// The reflection methods on `TypeId` are compile-time-only functions: they can
+// be called from a `const` item or an inline `const { }` block, not from a
+// `const fn` body. `type_info::of::<F>()` is `TypeId::of` without the `'static`
+// bound — reflected field ids are not `'static`-restricted, and column callers
+// routinely use lifetime-carrying field types (`&'a [u8]`, `Ref<'a>`).
 
 /// Column-layout sort key for a field of `size` bytes within a struct of
 /// alignment `struct_align`.
@@ -323,7 +308,41 @@ const ZERO_META: FieldMeta = FieldMeta {
 struct Reflected<T>(PhantomData<T>);
 
 impl<T> Reflected<T> {
-    const COUNT: usize = field_count::<T>();
+    /// Number of fields in `T`; const-panics unless `T` is laid out as a struct.
+    ///
+    /// The reflection API has no "is this a struct" query (`Type::of::<T>().kind`
+    /// ICEs on nightly-2026-09-15, and `variant(0)` is a hard error on a struct),
+    /// so the check is on what the scatter/gather needs: one variant (not a
+    /// multi-variant enum), fields unless `T` is zero-sized (not a primitive,
+    /// pointer or array), and fields that do not overlap (not a union; disjoint
+    /// fields cannot sum past `size_of::<T>()`). A single-variant enum with an
+    /// explicit `#[repr(int)]` still passes; its tag would never be written.
+    const COUNT: usize = {
+        let id = type_info::of::<T>();
+        assert!(
+            id.variants() == 1,
+            "MultiArrayList<T>: T must be a struct with named fields",
+        );
+        let n = id.fields(0);
+        assert!(
+            n > 0 || core::mem::size_of::<T>() == 0,
+            "MultiArrayList<T>: T must be a struct with named fields",
+        );
+        let mut sum = 0usize;
+        let mut i = 0;
+        while i < n {
+            sum += match id.field(0, i).type_id().size() {
+                Some(s) => s,
+                None => panic!("MultiArrayList: field type must be Sized"),
+            };
+            i += 1;
+        }
+        assert!(
+            sum <= core::mem::size_of::<T>(),
+            "MultiArrayList<T>: T must be a struct with named fields",
+        );
+        n
+    };
     const ALIGN: usize = core::mem::align_of::<T>();
 
     /// Dangling sentinel for an empty buffer. Aligned to `align_of::<T>()`,
@@ -333,8 +352,8 @@ impl<T> Reflected<T> {
 
     /// `[FieldMeta; COUNT]` in declaration order.
     const META: [FieldMeta; MAX_FIELDS] = {
-        let fields = fields_of::<T>();
-        let n = fields.len();
+        let id = type_info::of::<T>();
+        let n = Self::COUNT;
         assert!(
             n <= MAX_FIELDS,
             "MultiArrayList: too many fields (raise MAX_FIELDS)",
@@ -343,15 +362,15 @@ impl<T> Reflected<T> {
         let struct_align = core::mem::align_of::<T>();
         let mut i = 0;
         while i < n {
-            let f = &fields[i];
-            let size = match f.ty.size() {
+            let f = id.field(0, i);
+            let size = match f.type_id().size() {
                 Some(s) => s,
                 None => panic!("MultiArrayList: field type must be Sized"),
             };
             let align = align_sort_key(size, struct_align);
             out[i] = FieldMeta {
                 size,
-                offset: f.offset,
+                offset: f.offset(),
                 align,
             };
             i += 1;
@@ -423,15 +442,18 @@ impl<T> Reflected<T> {
     /// Field index for `NAME`; const-panics if no such field.
     #[cfg(test)]
     const fn index_of<const NAME: &'static str>() -> usize {
-        let fields = fields_of::<T>();
-        let mut i = 0;
-        while i < fields.len() {
-            if const_str_eq(fields[i].name, NAME) {
-                return i;
+        const {
+            let id = type_info::of::<T>();
+            let mut i = 0;
+            while i < Self::COUNT {
+                if const_str_eq(id.field(0, i).name(), NAME) {
+                    break;
+                }
+                i += 1;
             }
-            i += 1;
+            assert!(i < Self::COUNT, "MultiArrayList: no such field");
+            i
         }
-        panic!("MultiArrayList: no such field");
     }
 
     /// Const-panics unless field `NAME` exists and has type `F`.
@@ -443,22 +465,25 @@ impl<T> Reflected<T> {
     /// so a size match is accepted when ids differ. Size mismatch is always
     /// rejected.
     const fn check<const NAME: &'static str, F>() -> usize {
-        let fields = fields_of::<T>();
-        let mut i = 0;
-        while i < fields.len() {
-            if const_str_eq(fields[i].name, NAME) {
-                if fields[i].ty == type_id_of::<F>() {
-                    return i;
+        const {
+            let id = type_info::of::<T>();
+            let mut i = 0;
+            while i < Self::COUNT {
+                let f = id.field(0, i);
+                if const_str_eq(f.name(), NAME) {
+                    if !(f.type_id() == type_info::of::<F>()) {
+                        assert!(
+                            Self::META[i].size == core::mem::size_of::<F>(),
+                            "MultiArrayList: column type does not match field type",
+                        );
+                    }
+                    break;
                 }
-                assert!(
-                    Self::META[i].size == core::mem::size_of::<F>(),
-                    "MultiArrayList: column type does not match field type",
-                );
-                return i;
+                i += 1;
             }
-            i += 1;
+            assert!(i < Self::COUNT, "MultiArrayList: no such field");
+            i
         }
-        panic!("MultiArrayList: no such field");
     }
 }
 
@@ -990,29 +1015,33 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// Remove the specified item from the list, swapping the last
     /// item in the list into its position. Fast, but does not
-    /// retain list ordering.
-    pub fn swap_remove(&mut self, index: usize) {
+    /// retain list ordering. Returns the removed element, like [`pop`](Self::pop).
+    pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::swap_remove: index out of bounds"
         );
         let last = self.len - 1;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(last, index, 1);
         self.len -= 1;
+        removed
     }
 
     /// Remove the specified item from the list, shifting items
-    /// after it to preserve order.
-    pub fn ordered_remove(&mut self, index: usize) {
+    /// after it to preserve order. Returns the removed element, like [`pop`](Self::pop).
+    pub fn ordered_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
             "MultiArrayList::ordered_remove: index out of bounds"
         );
         let tail = self.len - 1 - index;
         let mut s = self.slice();
+        let removed = s.gather(index);
         s.copy_rows_within(index + 1, index, tail);
         self.len -= 1;
+        removed
     }
 
     /// Attempt to reduce allocated capacity to `new_len`.
@@ -1385,10 +1414,6 @@ mod tests {
         assert_eq!(list.len(), 3);
     }
 
-    // Fields are read via the `items::<"name", _>()` const-generic field-name
-    // API (which goes through the __mal! macro's offset table), not by direct
-    // access — `dead_code` can't see that.
-    #[allow(dead_code)]
     struct Borrowed<'a> {
         name: &'a [u8],
         n: u32,
@@ -1400,6 +1425,8 @@ mod tests {
         list.push(Borrowed { name: b"hi", n: 7 }).unwrap();
         assert_eq!(list.items::<"name", &[u8]>()[0], b"hi");
         assert_eq!(list.items::<"n", u32>()[0], 7);
+        let row = list.get(0);
+        assert_eq!((row.name, row.n), (&b"hi"[..], 7));
     }
 
     #[test]
@@ -1422,10 +1449,50 @@ mod tests {
             .unwrap();
         }
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
-        list.ordered_remove(2);
+        assert_eq!(list.ordered_remove(2), Foo { a: 2, b: 2, c: 2 });
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 3, 4, 5]);
-        list.swap_remove(1);
+        assert_eq!(list.swap_remove(1), Foo { a: 1, b: 1, c: 1 });
         assert_eq!(list.items::<"a", u32>(), &[0, 5, 3, 4]);
+        assert_eq!(list.items::<"c", u64>(), &[0, 5, 3, 4]);
+        // Removing the last row swaps it with itself / shifts nothing.
+        assert_eq!(list.swap_remove(3), Foo { a: 4, b: 4, c: 4 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5, 3]);
+        assert_eq!(list.ordered_remove(2), Foo { a: 3, b: 3, c: 3 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5]);
+    }
+
+    struct Owning {
+        name: Box<[u8]>,
+        n: u32,
+    }
+
+    // Under Miri this also checks that every `name` is freed exactly once.
+    #[test]
+    fn remove_returns_owned_element() {
+        let mut list = MultiArrayList::<Owning>::default();
+        for i in 0..4u32 {
+            list.push(Owning {
+                name: vec![b'a' + i as u8; 3].into_boxed_slice(),
+                n: i,
+            })
+            .unwrap();
+        }
+
+        let removed = list.swap_remove(1);
+        assert_eq!(&*removed.name, b"bbb");
+        assert_eq!(removed.n, 1);
+        assert_eq!(list.items::<"n", u32>(), &[0, 3, 2]);
+        drop(removed);
+
+        let removed = list.ordered_remove(0);
+        assert_eq!(&*removed.name, b"aaa");
+        assert_eq!(list.items::<"n", u32>(), &[3, 2]);
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[0], b"ddd");
+        assert_eq!(&*list.items::<"name", Box<[u8]>>()[1], b"ccc");
+        drop(removed);
+
+        list.drop_elements();
+        assert_eq!(list.len(), 0);
     }
 
     #[test]

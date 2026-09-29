@@ -808,21 +808,22 @@ describe("WebSocket finishRequest", () => {
     protocols.push("a");
     const message = firstMessage(ws);
     authorize(request);
-
-    expect({
+    const seen = {
       message: await message,
       readsInConstructor: readsInConstructor > 0,
       readsAtEnd: reads - readsInConstructor,
       protocol: ws.protocol,
       upgrades,
-    }).toEqual({
+    };
+    ws.terminate();
+
+    expect(seen).toEqual({
       message: "authorization=token",
       readsInConstructor: true,
       readsAtEnd: 0,
       protocol: "a",
       upgrades: ["token"],
     });
-    ws.terminate();
   });
 
   // setHeader() accepted the value, so what is wrong with it at req.end() is a failed connection.
@@ -1024,7 +1025,10 @@ describe("WebSocket finishRequest", () => {
       getHeader: request.getHeader("authorization"),
     };
 
-    expect({ before, after, message: await message, upgrades }).toEqual({
+    const received = await message;
+    ws.terminate();
+
+    expect({ before, after, message: received, upgrades }).toEqual({
       before: { headersSent: false, finished: false },
       after: {
         headersSent: true,
@@ -1036,7 +1040,6 @@ describe("WebSocket finishRequest", () => {
       message: "authorization=token",
       upgrades: ["token"],
     });
-    ws.terminate();
   });
 
   it("connects over TLS", async () => {

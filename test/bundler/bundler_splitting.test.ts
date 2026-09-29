@@ -4033,6 +4033,84 @@ describe("bundler", () => {
     ],
   });
 
+  // x.cjs moves into the hashed chunk of app.js, which imports the chunk of the runtime for it. Folded into the chunk of util.js, that import would run util.js first.
+  itBundled("splitting/MinChunkSizeKeepsChunkThatHashedChunkImportsForCommonJSImport", {
+    files: {
+      "/app.js": /* js */ `
+        import "./x.cjs";
+        import { Store } from "./store.js";
+        import { util } from "./util.js";
+        console.log("app", new Store().name, util.length);
+        import("./route.js");
+      `,
+      "/admin.js": /* js */ `
+        import "./z.cjs";
+        import { util } from "./util.js";
+        console.log("admin", util.length);
+      `,
+      "/third.js": `import { util } from "./util.js"; console.log("third", util.length);`,
+      "/x.cjs": `console.log("x"); globalThis.APP = { name: "app" };`,
+      "/z.cjs": `console.log("z");`,
+      "/store.js": `console.log("store", globalThis.APP?.name); export class Store { name = "s"; }`,
+      "/util.js": `console.log("util"); export const util = "${Buffer.alloc(20000, "x").toString()}";`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+    },
+    entryPoints: ["/app.js", "/admin.js", "/third.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const util = chunkContaining(api, `console.log("util")`);
+      api.expectFile("/out/" + chunkContaining(api, `console.log("x")`)).not.toContain(util);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin|third)\.js"/);
+    },
+    run: [
+      { file: "/out/app.js", stdout: "x\nstore app\nutil\napp s 20000\nroute s" },
+      { file: "/out/third.js", stdout: "util\nthird 20000" },
+    ],
+  });
+
+  // c.js runs nothing, and the hashed chunk of app.js loads wherever r1.js and r2.js do. With c.js in it, the hashed chunk would import the chunk of d.js, and d.js would run ahead of setup.cjs.
+  itBundled("splitting/MinChunkSizeFoldsNothingIntoHashedChunkThatStartsCommonJSImport", {
+    files: {
+      "/app.js": /* js */ `
+        import "./setup.cjs";
+        import { Store } from "./store.js";
+        import { d } from "./d.js";
+        console.log("app", new Store().name, d.length);
+        import("./r1.js").then(() => import("./r2.js"));
+      `,
+      "/admin.js": `import { d } from "./d.js"; console.log("admin", d.length);`,
+      "/r1.js": /* js */ `
+        import { c } from "./c.js";
+        import { Store } from "./store.js";
+        console.log("r1", c(), new Store().name);
+      `,
+      "/r2.js": `import { c } from "./c.js"; console.log("r2", c());`,
+      "/c.js": `import { d } from "./d.js"; export const c = () => d.length;`,
+      "/d.js": `console.log("d", globalThis.APP?.name); export const d = "${Buffer.alloc(20000, "x").toString()}";`,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/store.js": `console.log("store", globalThis.APP?.name); export class Store { name = "s"; }`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const d = chunkContaining(api, `console.log("d"`);
+      api.expectFile("/out/" + chunkContaining(api, `console.log("setup")`)).not.toContain(d);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+    },
+    run: [
+      { file: "/out/app.js", stdout: "setup\nstore app\nd app\napp s 20000\nr1 20000 s\nr2 20000" },
+      { file: "/out/admin.js", stdout: "d undefined\nadmin 20000" },
+    ],
+  });
+
   // The hashed chunk of main.js starts lib.cjs, so the require_lib() call of f.js does nothing in the chunk of g.js.
   itBundled("splitting/MinChunkSizeFoldsImporterOfCommonJSImportThatHashedChunkStarts", {
     files: {

@@ -293,7 +293,7 @@ enum Pin {
     BesideEntry,
     /// Neither merged nor merged into.
     Entry,
-    /// The parent of a pinned entry point starts a wrapped file of the group, or of a group that imports this one. Rule 2 neither merges it nor merges into it.
+    /// The parent of a pinned entry point that starts a wrapped file, the group of that file, or a group that one of the two imports. Rule 2 neither merges it nor merges into it.
     Started,
 }
 
@@ -1729,10 +1729,10 @@ fn starts_of_parents(
             if groups[home].pin == Pin::Entry {
                 continue;
             }
-            // The parent imports the chunk of the file for the call. That chunk and what it imports have to stay what the walk saw.
-            imported.push(home);
+            // The parent imports the chunk of the file for the call. Both chunks and what they import have to stay what the walk saw.
+            imported.extend([parent, home]);
             while let Some(group) = imported.pop() {
-                if group != parent && groups[group].pin == Pin::None {
+                if groups[group].pin == Pin::None {
                     groups[group].pin = Pin::Started;
                     imported.extend(groups[group].deps.iter().map(|&dep| resolve(groups, dep)));
                 }

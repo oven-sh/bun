@@ -5882,6 +5882,7 @@ describe.concurrent("session teardown when the peer never closes its side of the
     const { port } = server.address();
     return {
       port,
+      firstConnectionData: new Promise(resolve => server.once("connection", socket => socket.once("data", resolve))),
       firstConnectionEnded: new Promise(resolve => server.once("connection", socket => socket.once("end", resolve))),
       [Symbol.dispose]() {
         for (const socket of accepted) socket.destroy();
@@ -6031,6 +6032,36 @@ describe.concurrent("session teardown when the peer never closes its side of the
         ["error", "boom", true],
         ["close", true],
       ]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The session never connects: the server accepts the TCP connection and never answers the
+  // ClientHello (a load balancer that accepts and stalls). destroy() is the caller's connect
+  // deadline, and the socket it leaves behind must not outlive the session.
+  it("client session.destroy() during a TLS handshake the server never answers destroys the socket", async () => {
+    using server = await silentServer();
+    let socket;
+    const client = http2.connect(`https://127.0.0.1:${server.port}`, {
+      createConnection: () =>
+        (socket = tls.connect({
+          port: server.port,
+          host: "127.0.0.1",
+          ALPNProtocols: ["h2"],
+          rejectUnauthorized: false,
+        })),
+    });
+    let connected = false;
+    client.on("connect", () => (connected = true));
+    try {
+      await server.firstConnectionData; // the ClientHello arrived; no ServerHello ever follows
+      const { closed } = recordTeardown(client, socket);
+      client.destroy();
+      expect(client.destroyed).toBeTrue();
+      await server.firstConnectionEnded; // the FIN still goes out first
+      expect(await closed).toEqual([["close", true]]);
+      expect(connected).toBeFalse();
     } finally {
       client.destroy();
     }

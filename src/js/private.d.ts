@@ -225,6 +225,7 @@ interface JSCommonJSModule {
   paths: string[];
   require: typeof require;
   filename: string;
+  _compile(source: string, filename: string): void;
 }
 
 /**

@@ -717,6 +717,98 @@ describe("error event", () => {
   });
 });
 
+// Runs a worker in a child process (under `bun test` a worker's uncaught error goes to the test runner) and
+// returns the child's stdout lines, sorted.
+async function linesFromWorkerInChild(source: string, parentCode: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker, postMessageToThread } = require("node:worker_threads");
+       const worker = new Worker(${JSON.stringify(source)}, { eval: true });
+       worker.on("error", err => console.log("error", err.message));
+       worker.on("exit", code => console.log("exit", code));
+       ${parentCode}`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode };
+}
+
+// The start sequence calls these handlers with no script frame beneath them, so a stop that is requested inside one
+// has nothing to unwind: the start sequence has to stand down. If it goes on to its GC, debug and ASAN builds abort
+// at `vm.hasTerminationRequest()`. A release build prints the same lines either way, except in the last row.
+const spinUntilTerminated = `require("node:worker_threads").parentPort.postMessage("in the handler"); for (;;) {}`;
+const terminateOnMessage = `worker.on("message", () => worker.terminate());`;
+test.concurrent.each([
+  [
+    "process.exit() in an uncaughtException capture callback, CommonJS entry point throws",
+    `require("node:fs"); process.setUncaughtExceptionCaptureCallback(() => process.exit(42)); throw new Error("boom");`,
+    "",
+    ["exit 42"],
+  ],
+  [
+    "process.exit() in an uncaughtException capture callback, ES module entry point rejects",
+    `process.setUncaughtExceptionCaptureCallback(() => process.exit(42)); await 0; throw new Error("boom");`,
+    "",
+    ["exit 42"],
+  ],
+  [
+    "terminate() landing in an uncaughtException capture callback",
+    `process.setUncaughtExceptionCaptureCallback(() => { ${spinUntilTerminated} }); throw new Error("boom");`,
+    terminateOnMessage,
+    ["exit 1"],
+  ],
+  // The abort needs an Error whose stack nothing has read yet: the GC formats it.
+  [
+    "process.exit() in a 'workerMessage' listener, message buffered while the entry point loaded",
+    `globalThis.unreadStack = new Error("kept"); process.on("workerMessage", () => process.exit(7)); setInterval(() => {}, 1000);`,
+    `postMessageToThread(worker.threadId, "hello").catch(() => {});`,
+    ["exit 7"],
+  ],
+  [
+    "terminate() landing in a 'workerMessage' listener, message buffered while the entry point loaded",
+    `globalThis.unreadStack = new Error("kept"); process.on("workerMessage", () => { ${spinUntilTerminated} }); setInterval(() => {}, 1000);`,
+    `postMessageToThread(worker.threadId, "hello").catch(() => {}); ${terminateOnMessage}`,
+    ["exit 1"],
+  ],
+  [
+    "a getHeapSnapshot() that waits for the worker to run rejects, as in Node",
+    `process.setUncaughtExceptionCaptureCallback(() => process.exit(42)); throw new Error("boom");`,
+    `worker.getHeapSnapshot().then(() => console.log("snapshot resolved"), err => console.log("snapshot rejected", err.code));`,
+    ["exit 42", "snapshot rejected ERR_WORKER_NOT_RUNNING"],
+  ],
+])("a worker stopped inside a handler that its start sequence calls: %s", async (_name, source, parentCode, lines) => {
+  expect(await linesFromWorkerInChild(source, parentCode)).toEqual({
+    lines,
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// The error reporter leaves the termination pending, and that is what stops the nextTick drain above it.
+test.concurrent(
+  "process.exit() in an uncaughtException capture callback stops the ticks queued behind the one that threw",
+  async () => {
+    const source = `const { parentPort } = require("node:worker_threads");
+    process.setUncaughtExceptionCaptureCallback(() => process.exit(42));
+    setTimeout(() => {
+      process.nextTick(() => { throw new Error("boom"); });
+      process.nextTick(() => parentPort.postMessage("a tick ran after process.exit()"));
+    }, 1);`;
+    expect(await linesFromWorkerInChild(source, `worker.on("message", message => console.log(message));`)).toEqual({
+      lines: ["exit 42"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 describe("getHeapSnapshot", () => {
   test("throws if the wrong options are passed", () => {
     const worker = new Worker("", { eval: true });

@@ -226,6 +226,44 @@ devTest("chrome devtools automatic workspace folders", {
   },
 });
 
+devTest("error overlay dims node_modules stack frames", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": "console.log('ready');",
+  },
+  async test(dev) {
+    const paths = [
+      ["node_modules/dependency.js", 0.5],
+      ["vendor/node_modules/dependency.js", 0.5],
+      ["node_modules\\dependency.js", 0.5],
+      ["C:\\project\\node_modules\\dependency.js", 0.5],
+      ["C:/project/node_modules\\dependency.js", 0.5],
+      ["file:///project/node_modules/dependency.js", 0.5],
+      ["my_node_modules/dependency.js", 1],
+      ["node_modules_backup/dependency.js", 1],
+      ["node_modules", 1],
+      ["src/index.ts", 1],
+    ] as const;
+    const stack = "Error: dependency failed\n" + paths.map(([file], i) => `    at frame${i} (${file}:1:1)`).join("\n");
+    await using client = await dev.client("/", { errors: [] });
+    await client.expectMessage("ready");
+    await client.js`
+      const error = new Error("dependency failed");
+      error.stack = ${stack};
+      window.dispatchEvent(new ErrorEvent("error", { error }));
+    `;
+    await client.expectErrorOverlay(["error: dependency failed"]);
+    const frames = await client.js`
+      return [...document.querySelector("bun-hmr").shadowRoot.querySelectorAll(".trace-frame")]
+        .map(frame => ({
+          file: frame.querySelector(".file-name").textContent,
+          opacity: Number(getComputedStyle(frame).opacity || 1),
+        }));
+    `;
+    expect(frames).toEqual(paths.map(([file, opacity]) => ({ file, opacity })));
+  },
+});
+
 devTest("error report endpoint handles stack frames with very long absolute paths", {
   files: {
     "index.html": emptyHtmlFile({

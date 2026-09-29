@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "node:path";
 
 // The close of a tunnel gave the request body handler one more last chunk, also when the parser had given it one.
@@ -8,8 +8,6 @@ import path from "node:path";
 describe("an Upgrade request with a body", () => {
   const fixture = path.join(import.meta.dir, "node-http-upgrade-body-fixture.js");
   const nativeLog = "[nodehttpresponse] ";
-  // A debug build needs most of the default timeout to load node:http in the child.
-  const timeout = isDebug || isASAN ? 60_000 : undefined;
 
   async function run(options: Record<string, unknown>, env: Record<string, string | undefined> = bunEnv) {
     await using proc = Bun.spawn({
@@ -91,32 +89,35 @@ describe("an Upgrade request with a body", () => {
       ],
     ];
     for (const [name, options, expected] of rows) {
-      test.concurrent(
-        name,
-        async () => {
-          expect(await run(options)).toMatchObject({ ...expected, ...exited });
-        },
-        timeout,
-      );
+      test.concurrent(name, async () => {
+        expect(await run(options)).toMatchObject({ ...expected, ...exited });
+      });
     }
   });
 
   // Only a debug build prints what uws gives to the body handler of the request.
   describe.skipIf(!isDebug)("gets nothing from uws after its last chunk", () => {
-    const rows: [name: string, options: Record<string, unknown>][] = [
-      ["the close of the socket inside that chunk", { act: "socket.destroy()" }],
-      ["bytes of the tunnel after socket.end() inside that chunk", { act: "socket.end()", tunnelBytes: "0123456789" }],
+    const rows: [name: string, options: Record<string, unknown>, events: string[]][] = [
+      ["the close of the socket inside that chunk", { act: "socket.destroy()" }, [...ended, "socket close"]],
+      [
+        "bytes of the tunnel after socket.end() inside that chunk",
+        { act: "socket.end()", tunnelBytes: "0123456789" },
+        // The upgrade socket got the bytes, so uws did read them.
+        [...ended, "socket data 10", "socket end", "socket close"],
+      ],
     ];
-    for (const [name, options] of rows) {
-      test.concurrent(
-        name,
-        async () => {
-          const result = await run(options, { ...bunEnv, BUN_DEBUG_NodeHTTPResponse: "1" });
-          const native = result.native.filter(line => line.startsWith("onData("));
-          expect({ ...result, native }).toMatchObject({ native: ["onData(100 bytes, is_last = 1)"], ...exited });
-        },
-        timeout,
-      );
+    for (const [name, options, events] of rows) {
+      test.concurrent(name, async () => {
+        // A BUN_DEBUG from the shell of the developer sends the log to a file. An empty one keeps it on stdout.
+        const result = await run(options, { ...bunEnv, BUN_DEBUG: "", BUN_DEBUG_NodeHTTPResponse: "1" });
+        const native = result.native.filter(line => line.startsWith("onData("));
+        expect({ ...result, native }).toMatchObject({
+          events,
+          eofs: 1,
+          native: ["onData(100 bytes, is_last = 1)"],
+          ...exited,
+        });
+      });
     }
   });
 });

@@ -1286,6 +1286,13 @@ const fdQueryCases: Record<"SCHED_NONE" | "SCHED_RR", FdQueryCase[]> = {
       steps: twoAsks("tls", "udp4"),
       answers: [refused("EINVAL", "bind"), served],
     },
+    {
+      // A net server skips that check. The listener of the primary refuses the number: Bun.listen takes an integer.
+      name: "net on the descriptor plus 0.5, then net on the descriptor",
+      socket: "tcp",
+      steps: fd => [ask("net", fd + 0.5), ask("net", fd), { connect: true }],
+      answers: [refused("EINVAL", "bind"), served, { client: "served" }],
+    },
   ],
 };
 

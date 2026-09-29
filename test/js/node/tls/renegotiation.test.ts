@@ -350,6 +350,179 @@ it("should terminate the connection when the peer exceeds the renegotiation limi
   expect(await outcome).toBe("closed");
 });
 
+// The server starts a renegotiation only when the client sends data, and writes "done N" when renegotiation N
+// completed. So each handshake report sits between two pieces of data, and request 4 is the one that the client
+// refuses (the limit is 3 in 600 s).
+const pingPongRenegotiationServer = /* js */ `
+  const tls = require("tls");
+  // The server counts handshakes too. Only the limit of the client is under test.
+  tls.CLIENT_RENEG_LIMIT = 100;
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let asked = 0;
+      socket.on("data", () => {
+        const n = ++asked;
+        socket.renegotiate({ rejectUnauthorized: false }, err => {
+          if (!err) socket.write("done " + n);
+        });
+      });
+    },
+  );
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
+
+function spawnPingPongRenegotiationServer() {
+  return Bun.spawn({
+    cmd: ["node", "-e", pingPongRenegotiationServer],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+}
+
+async function portOf(server: ReturnType<typeof spawnPingPongRenegotiationServer>) {
+  const { value, done } = await server.stdout.getReader().read();
+  if (done) throw new Error("the server exited before it printed its port");
+  return Number(new TextDecoder().decode(value).trim());
+}
+
+// A refusal is not the result of a handshake. The client reports it as an error, and what the server sent before
+// it stays readable.
+it.concurrent.each([
+  { transport: "TCP", trusted: false },
+  { transport: "TCP", trusted: true },
+  { transport: "a Duplex", trusted: false },
+  { transport: "a Duplex", trusted: true },
+])(
+  "a renegotiation that the client refuses is an 'error' and no 'secureConnect' over $transport (trusted chain: $trusted)",
+  async ({ transport, trusted }) => {
+    await using server = spawnPingPongRenegotiationServer();
+    const port = await portOf(server);
+
+    const options = { servername: "localhost", rejectUnauthorized: false, ...(trusted && { ca: tls.cert }) };
+    let raw: ReturnType<typeof netConnect> | undefined;
+    let socket: ReturnType<typeof tlsConnect>;
+    if (transport === "TCP") {
+      socket = tlsConnect({ ...options, port, host: "127.0.0.1" });
+    } else {
+      const transportSocket = (raw = netConnect(port, "127.0.0.1"));
+      transportSocket.on("error", () => {});
+      const duplex = new Duplex({
+        read() {},
+        write(chunk: Buffer, encoding: string, callback: () => void) {
+          transportSocket.write(chunk, callback);
+        },
+        final(callback: () => void) {
+          transportSocket.end();
+          callback();
+        },
+      });
+      transportSocket.on("data", (chunk: Buffer) => duplex.push(chunk));
+      transportSocket.on("end", () => duplex.push(null));
+      transportSocket.on("close", () => duplex.destroy());
+      socket = tlsConnect({ ...options, socket: duplex });
+    }
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    socket.on("secureConnect", () => {
+      if (events.push(`secureConnect authorized=${socket.authorized}`) === 1) socket.write("go");
+    });
+    socket.on("data", (chunk: Buffer) => {
+      events.push(`data ${chunk}`);
+      socket.write("go");
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+    socket.on("end", () => events.push("end"));
+    socket.on("close", () => closed.resolve());
+    try {
+      await closed.promise;
+      expect(events).toEqual([
+        `secureConnect authorized=${trusted}`,
+        `secureConnect authorized=${trusted}`,
+        "data done 1",
+        `secureConnect authorized=${trusted}`,
+        "data done 2",
+        `secureConnect authorized=${trusted}`,
+        "data done 3",
+        "error ERR_TLS_SESSION_ATTACK: TLS session renegotiation attack detected",
+        "end",
+      ]);
+    } finally {
+      socket.destroy();
+      raw?.destroy();
+    }
+  },
+);
+
+// Bun.connect reports the refusal to `error`, or to `close` when the socket has no `error` handler. Neither
+// `handshake` nor `open` runs for it.
+it.concurrent.each(["handshake, error", "handshake", "error"] as const)(
+  "Bun.connect reports a renegotiation that the client refuses (handlers: open, data, %s, close)",
+  async handlerSet => {
+    await using server = spawnPingPongRenegotiationServer();
+    const port = await portOf(server);
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const describe = (error: unknown) => (error ? `${(error as NodeJS.ErrnoException).code}` : `${error}`);
+    let askedFirst = false;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: { rejectUnauthorized: false, ca: tls.cert, serverName: "localhost" },
+      socket: {
+        open(socket) {
+          events.push("open");
+          // With no handshake handler, `open` is the report of the first handshake.
+          if (!handlerSet.includes("handshake")) socket.write("go");
+        },
+        data(socket, chunk) {
+          events.push(`data ${chunk}`);
+          socket.write("go");
+        },
+        ...(handlerSet.includes("handshake") && {
+          handshake(socket: Bun.Socket, success: boolean, error: Error | null) {
+            events.push(`handshake ${success} ${describe(error)}`);
+            if (!askedFirst) {
+              askedFirst = true;
+              socket.write("go");
+            }
+          },
+        }),
+        ...(handlerSet.includes("error") && {
+          error(_socket: Bun.Socket, error: Error) {
+            events.push(`error ${describe(error)}`);
+          },
+        }),
+        close(socket, error) {
+          events.push(`close ${describe(error)} authorized=${socket.authorized}`);
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+
+    const handshake = handlerSet.includes("handshake") ? ["handshake true null"] : [];
+    expect(events).toEqual([
+      "open",
+      ...handshake,
+      ...handshake,
+      "data done 1",
+      ...handshake,
+      "data done 2",
+      ...handshake,
+      "data done 3",
+      ...(handlerSet.includes("error")
+        ? ["error ERR_TLS_SESSION_ATTACK", "close undefined authorized=false"]
+        : ["close ERR_TLS_SESSION_ATTACK authorized=false"]),
+    ]);
+  },
+);
+
 // A renegotiation reports the certificate check of its own handshake. The client ends its write side while the first
 // handshake still runs, which sends nothing but marks the TLS session as shut down. That state must not turn the
 // failed check of the renegotiated handshake into a pass. Runs the client over a Duplex, the SSLWrapper path.

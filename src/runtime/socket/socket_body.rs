@@ -328,7 +328,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
     /// In the padding that follows the flag above.
-    pending_tls_error: Cell<PendingTlsError>,
+    pub(crate) pending_tls_error: Cell<PendingTlsError>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
     /// bound to this address before connecting. Always a literal IP.
@@ -356,7 +356,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
 /// The TLS error that the `close` handler reports, for a socket with no
 /// `error` handler. 0 is none.
 #[derive(Clone, Copy, Default)]
-struct PendingTlsError(u32);
+pub(crate) struct PendingTlsError(u32);
 
 impl PendingTlsError {
     /// No packed BoringSSL error has this value: its library byte is 0xff.
@@ -3707,6 +3707,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            pending_tls_error: Cell::default(),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -3832,6 +3833,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            pending_tls_error: Cell::default(),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -4895,6 +4897,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),
+        pending_tls_error: Cell::default(),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),

@@ -9,6 +9,7 @@ use crate::node::{StringOrBuffer, ThreadIsolated};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
+use bun_ast::ts::DecoratorMetadata;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
@@ -776,7 +777,8 @@ impl TransformTask {
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
-            decorator_metadata: tsconfig.map_or(Default::default(), |ts| ts.decorator_metadata()),
+            decorator_metadata: tsconfig
+                .map_or(DecoratorMetadata::Off, |ts| ts.decorator_metadata()),
             use_define_for_class_fields: tsconfig
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
@@ -1238,7 +1240,7 @@ impl JSTranspiler {
             decorator_metadata: config
                 .tsconfig
                 .as_deref()
-                .map_or(Default::default(), |ts| ts.decorator_metadata()),
+                .map_or(DecoratorMetadata::Off, |ts| ts.decorator_metadata()),
             use_define_for_class_fields: config
                 .tsconfig
                 .as_deref()

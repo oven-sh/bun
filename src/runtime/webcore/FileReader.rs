@@ -50,9 +50,7 @@ pub struct FileReader {
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
     /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
-    pub(crate) max_size: Option<usize>,
-    /// Whether `max_size` is a window that `slice()` set, not a file size that `.size` cached.
-    pub(crate) size_is_explicit: bool,
+    pub(crate) max_size: Option<MaxSize>,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
@@ -70,6 +68,14 @@ pub struct FileReader {
     pub(crate) sink_paused: Cell<bool>,
 }
 
+/// `Blob.size` of the Blob that the reader came from.
+#[derive(Clone, Copy)]
+pub(crate) struct MaxSize {
+    pub(crate) bytes: usize,
+    /// `slice()` set the size. If not, `.size` cached the size of the file.
+    pub(crate) is_explicit: bool,
+}
+
 impl Default for FileReader {
     fn default() -> Self {
         Self {
@@ -81,7 +87,6 @@ impl Default for FileReader {
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
-            size_is_explicit: false,
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // Sentinel only; never dispatched (callers must overwrite before use).
@@ -399,7 +404,7 @@ impl FileReader {
                 unsafe { (*self.parent()).increment_count() };
                 self.waiting_for_on_reader_done.set(true);
             }
-            self.reader().set_limit(self.max_size);
+            self.reader().set_limit(self.max_size.map(|max| max.bytes));
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)

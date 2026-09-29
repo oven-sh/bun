@@ -1010,19 +1010,18 @@ describe("fs.watch", () => {
     for (const dir of dirs.reverse()) fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  for (const { title, limits, levels, checked } of [
+  test.concurrent.skipIf(!isLinux).each([
     // The crawl stopped where the process had no descriptor left, and the
     // watch covered nothing below that depth.
     { title: "a tree deeper than the open-file limit", limits: ["-n 64"], levels: 100, checked: 10 },
     // The recursion needed 5 MiB of stack for this tree.
     { title: "a tree 600 levels deep on a 4 MiB stack", limits: ["-s 4096"], levels: 600, checked: 1 },
-  ]) {
-    test.concurrent.skipIf(!isLinux)(`recursive watch covers ${title}`, async () => {
-      using dir = tempDir("fs-watch-deep-tree", {});
-      const root = String(dir);
-      fs.mkdirSync(path.join(root, ...Array(levels).fill("a")), { recursive: true });
+  ])("recursive watch covers $title", async ({ limits, levels, checked }) => {
+    using dir = tempDir("fs-watch-deep-tree", {});
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, ...Array(levels).fill("a")), { recursive: true });
 
-      const fixture = /* js */ `
+    const fixture = /* js */ `
         ${crawlFixture}
         // The deepest directories of the chain.
         const dirs = chain("", "a", ${levels}).slice(-${checked});
@@ -1038,33 +1037,31 @@ describe("fs.watch", () => {
         fs.writeFileSync(path.join(root, "last.txt"), "x");
       `;
 
-      try {
-        const { stdout, stderr, exitCode } = await runWithLimits(limits, fixture, { WATCH_ROOT: root });
-        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-          stdout: JSON.stringify({ unwatched: [], errors: [] }),
-          stderr: "",
-          exitCode: 0,
-        });
-      } finally {
-        removeChain(root, "a", levels);
-      }
-    });
-  }
+    try {
+      const { stdout, stderr, exitCode } = await runWithLimits(limits, fixture, { WATCH_ROOT: root });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ unwatched: [], errors: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      removeChain(root, "a", levels);
+    }
+  });
 
   // A directory that moves into a recursive watch is crawled on the inotify
   // reader thread, which reports every entry that it finds.
-  for (const { title, limits, levels } of [
+  test.concurrent.skipIf(!isLinux).each([
     { title: "a tree deeper than the open-file limit", limits: ["-n 64"], levels: 100 },
     // The recursion overflowed the 2 MiB stack of the reader thread, and the
     // process died with SIGSEGV.
     { title: "a tree 300 levels deep", limits: [], levels: 300 },
-  ]) {
-    test.concurrent.skipIf(!isLinux)(`recursive watch covers ${title} that moves into it`, async () => {
-      using dir = tempDir("fs-watch-deep-move", { "watched": {} });
-      const root = String(dir);
-      fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
+  ])("recursive watch covers $title that moves into it", async ({ limits, levels }) => {
+    using dir = tempDir("fs-watch-deep-move", { "watched": {} });
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
 
-      const fixture = /* js */ `
+    const fixture = /* js */ `
         ${crawlFixture}
         const watched = path.join(root, "watched");
         const dirs = chain("moved", "a", ${levels});
@@ -1090,19 +1087,18 @@ describe("fs.watch", () => {
         fs.writeFileSync(path.join(watched, "crawled.txt"), "x");
       `;
 
-      try {
-        const { stdout, stderr, exitCode } = await runWithLimits(limits, fixture, { WATCH_ROOT: root });
-        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-          stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
-          stderr: "",
-          exitCode: 0,
-        });
-      } finally {
-        removeChain(path.join(root, "watched", "moved"), "a", levels);
-        removeChain(path.join(root, "src"), "a", levels);
-      }
-    });
-  }
+    try {
+      const { stdout, stderr, exitCode } = await runWithLimits(limits, fixture, { WATCH_ROOT: root });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      removeChain(path.join(root, "watched", "moved"), "a", levels);
+      removeChain(path.join(root, "src"), "a", levels);
+    }
+  });
 
   // One descriptor is all a crawl needs, at any depth. fs.watch() also kept the
   // descriptor that it resolves the path with open across the first crawl.

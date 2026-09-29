@@ -832,15 +832,21 @@ enum OrderFrame {
         importer: u32,
         wrapped: u32,
     },
+    /// A live part of the own file imports an external module that can run something here.
+    External(u32),
 }
 
-/// What runs while a pinned entry point loads and may have to run in the parent.
+/// What runs while a pinned entry point loads. The walk lists these in evaluation order.
 #[derive(Clone, Copy)]
 enum RunPoint {
     /// An own file that does more than declare.
     Own(u32),
+    /// A file of the parent that does more than declare.
+    Parent(u32),
     /// The first start of `wrapped`. `importer` is an own file.
     Start { importer: u32, wrapped: u32 },
+    /// An external import of the own file. The file takes it along when it moves. No chunk loads it ahead of the parent for a file that stays.
+    Cut(u32),
 }
 
 fn index_own_files(
@@ -956,6 +962,7 @@ fn files_that_leave_entry_chunk(
     let mut only_starts: ArrayHashMap<u32, ()> = ArrayHashMap::new();
     // The wrapped files of another class.
     let mut outside: ArrayHashMap<u32, ()> = ArrayHashMap::new();
+    let mut external_parts: Vec<u32> = Vec::new();
     let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
@@ -969,15 +976,23 @@ fn files_that_leave_entry_chunk(
                         points.push(RunPoint::Own(file));
                     } else {
                         cut = points.len();
+                        points.push(RunPoint::Parent(file));
                     }
                 }
                 continue;
             }
             OrderFrame::Start { importer, wrapped } => {
+                // Only the first start runs the file. The one of a file of the parent is in the parent as it is.
                 if !started.contains(&wrapped) {
                     started.put(wrapped, ())?;
-                    points.push(RunPoint::Start { importer, wrapped });
+                    if own(importer) {
+                        points.push(RunPoint::Start { importer, wrapped });
+                    }
                 }
+                continue;
+            }
+            OrderFrame::External(file) => {
+                points.push(RunPoint::Cut(file));
                 continue;
             }
             OrderFrame::Enter(file) => file,
@@ -1010,12 +1025,34 @@ fn files_that_leave_entry_chunk(
         let mark = stack.len();
         let starts_here = own(file);
         let mut made_start = false;
+        // `for_each_edge` leaves out the imports of external modules. They go between the edges of the parts around them.
+        external_parts.clear();
+        if starts_here && (file == entry_source || flags[file as usize].wrap == WrapKind::None) {
+            for (part_index, part) in parts[file as usize].as_slice().iter().enumerate() {
+                if this.graph.parts_live[file as usize].is_set(part_index)
+                    && part.import_record_indices.iter().any(|&record| {
+                        let record = &records[file as usize][record as usize];
+                        record.kind == ImportKind::Stmt
+                            && !record.source_index.is_valid()
+                            && !record.flags.intersects(
+                                ImportRecordFlags::IS_UNUSED
+                                    | ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                            )
+                    })
+                {
+                    external_parts.push(part_index as u32);
+                }
+            }
+        }
+        let mut externals = external_parts.iter().peekable();
         for_each_edge(this, file, live(file), |part_index, edge| {
             let Edge::Import(other) = edge else {
                 return;
             };
-            if starts_here
-                && flags[other as usize].wrap != WrapKind::None
+            while externals.next_if(|&&part| part < part_index).is_some() {
+                stack.push(OrderFrame::External(file));
+            }
+            if flags[other as usize].wrap != WrapKind::None
                 && live(other)
                 && let Some(part) = parts[file as usize].as_slice().get(part_index as usize)
                 && this.graph.parts_live[file as usize].is_set(part_index as usize)
@@ -1024,7 +1061,7 @@ fn files_that_leave_entry_chunk(
                         == Some(other)
                 })
             {
-                made_start = true;
+                made_start |= starts_here;
                 stack.push(OrderFrame::Start {
                     importer: file,
                     wrapped: other,
@@ -1032,6 +1069,9 @@ fn files_that_leave_entry_chunk(
             }
             stack.push(OrderFrame::Enter(other));
         });
+        for _ in externals {
+            stack.push(OrderFrame::External(file));
+        }
         stack[mark..].reverse();
         if made_start && file != entry_source {
             makes_start.put(file, ())?;
@@ -1064,6 +1104,25 @@ fn files_that_leave_entry_chunk(
                         && leads_back.leads_back_to_entry(this, &own, file)?)
                     {
                         pending.push(file);
+                    }
+                }
+                RunPoint::Parent(file) => debug_assert!(!own(file)),
+                RunPoint::Cut(file) if leaves.is_set(file as usize) => {}
+                RunPoint::Cut(file) => {
+                    let mut moves = file != entry_source
+                        && !leads_back.leads_back_to_entry(this, &own, file)?;
+                    if moves {
+                        index_own_files(&points, &mut position)?;
+                        match position.get(&file) {
+                            // The file moves with its `import` statement. The list goes as one up to it.
+                            Some(&index) if index < cut.max(end) => end = end.max(index + 1),
+                            _ => moves = false,
+                        }
+                    }
+                    if moves {
+                        pending.push(file);
+                    } else {
+                        stuck = true;
                     }
                 }
                 RunPoint::Start { importer, wrapped } => {

@@ -23,17 +23,20 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// The register fields are unsigned long in musl and unsigned long long in glibc.
 #if defined(__x86_64__)
 typedef struct user_regs_struct regs_t;
 static long reg_nr(regs_t *r) { return (long)r->orig_rax; }
-static unsigned long long *reg_path(regs_t *r) { return &r->rsi; }
+static uint64_t reg_path(regs_t *r) { return (uint64_t)r->rsi; }
+static void reg_set_path(regs_t *r, uint64_t v) { r->rsi = v; }
 static int get_regs(pid_t t, regs_t *r) { return ptrace(PTRACE_GETREGS, t, 0, r); }
 static int set_regs(pid_t t, regs_t *r) { return ptrace(PTRACE_SETREGS, t, 0, r); }
 #elif defined(__aarch64__)
 #include <linux/elf.h>
 typedef struct user_regs_struct regs_t;
 static long reg_nr(regs_t *r) { return (long)r->regs[8]; }
-static unsigned long long *reg_path(regs_t *r) { return &r->regs[1]; }
+static uint64_t reg_path(regs_t *r) { return (uint64_t)r->regs[1]; }
+static void reg_set_path(regs_t *r, uint64_t v) { r->regs[1] = v; }
 static int get_regs(pid_t t, regs_t *r) {
   struct iovec io = { r, sizeof(*r) };
   return ptrace(PTRACE_GETREGSET, t, (void *)NT_PRSTATUS, &io);
@@ -50,7 +53,7 @@ static int set_regs(pid_t t, regs_t *r) {
 #define MAX_TIDS 4096
 static pid_t tid_tab[MAX_TIDS];
 static unsigned char in_call[MAX_TIDS];
-static unsigned long long saved_path[MAX_TIDS];
+static uint64_t saved_path[MAX_TIDS];
 static unsigned char has_saved[MAX_TIDS];
 
 static int slot(pid_t t) {
@@ -79,7 +82,7 @@ static void drop(pid_t t) {
 
 // Copies the NUL-terminated string at `addr` in the tracee. Returns 0 when the
 // string does not end within `cap` bytes or the memory cannot be read.
-static int read_string(pid_t t, unsigned long long addr, char *out, size_t cap) {
+static int read_string(pid_t t, uint64_t addr, char *out, size_t cap) {
   size_t n = 0;
   while (n < cap) {
     errno = 0;
@@ -198,17 +201,17 @@ int main(int argc, char **argv) {
       if (get_regs(t, &r) == 0) {
         if (in_call[s]) {
           char path[128];
-          if (reg_nr(&r) == SYS_openat && read_string(t, *reg_path(&r), path, sizeof(path)) &&
+          if (reg_nr(&r) == SYS_openat && read_string(t, reg_path(&r), path, sizeof(path)) &&
               matches(path, patterns, pattern_count)) {
-            saved_path[s] = *reg_path(&r);
+            saved_path[s] = reg_path(&r);
             has_saved[s] = 1;
-            *reg_path(&r) += 1;
+            reg_set_path(&r, saved_path[s] + 1);
             if (set_regs(t, &r) == 0) redirected++;
           }
         } else if (has_saved[s]) {
           // The syscall ABI keeps the argument registers, so the caller can still use this one.
           has_saved[s] = 0;
-          *reg_path(&r) = saved_path[s];
+          reg_set_path(&r, saved_path[s]);
           set_regs(t, &r);
         }
       }

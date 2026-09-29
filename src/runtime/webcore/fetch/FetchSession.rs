@@ -37,8 +37,6 @@ pub(crate) struct TlsOption {
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) reject_unauthorized: Option<bool>,
     pub(crate) check_server_identity: Option<JSValue>,
-    /// A `checkServerIdentity` that is not a function.
-    pub(crate) unusable_check_server_identity: Option<JSValue>,
 }
 
 pub(crate) fn parse_tls(
@@ -50,7 +48,6 @@ pub(crate) fn parse_tls(
         ssl_config: None,
         reject_unauthorized: None,
         check_server_identity: None,
-        unusable_check_server_identity: None,
     };
     if let Some(reject) = tls.get(global, "rejectUnauthorized")? {
         if reject.is_boolean() {
@@ -63,7 +60,11 @@ pub(crate) fn parse_tls(
         if callback.is_cell() && callback.is_callable() {
             parsed.check_server_identity = Some(callback);
         } else if !callback.is_null() {
-            parsed.unusable_check_server_identity = Some(callback);
+            return Err(global.throw_invalid_property_type_value(
+                b"tls.checkServerIdentity",
+                b"function",
+                callback,
+            ));
         }
     }
     if let Some(config) = SSLConfig::from_js(vm, global, tls)? {
@@ -294,13 +295,6 @@ impl FetchSession {
         if let Some(tls) = options.get(global, "tls")? {
             if tls.is_object() {
                 let parsed = parse_tls(vm, global, tls)?;
-                if let Some(value) = parsed.unusable_check_server_identity {
-                    return Err(global.throw_invalid_property_type_value(
-                        b"tls.checkServerIdentity",
-                        b"function",
-                        value,
-                    ));
-                }
                 this.ssl_config = parsed.ssl_config;
                 this.reject_unauthorized = parsed.reject_unauthorized;
                 if let Some(callback) = parsed.check_server_identity {

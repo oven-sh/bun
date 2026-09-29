@@ -9,8 +9,6 @@
 //!   - `bun_bundler::dispatch::DevServerVTable` wiring (`DEV_SERVER_VTABLE`)
 //!   - `is_file_cached`
 
-#![allow(clippy::module_inception)]
-
 use core::sync::atomic::Ordering;
 
 use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
@@ -678,7 +676,7 @@ impl HotReloadEvent {
 
         match &mut dev_ref.testing_batch_events {
             TestingBatchEvents::Disabled => {}
-            TestingBatchEvents::Enabled(ev) => {
+            TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
                 bun_core::handle_oom(ev.append(&entry_points));
                 dev_ref.publish(
                     HmrTopic::TestingWatchSynchronization,
@@ -879,7 +877,6 @@ impl WatcherAtomics {
     /// pointer returned by the matching `watcher_acquire_event` call, and the
     /// watcher thread still holds exclusive access to it.
     // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
-    #[allow(clippy::needless_borrow)]
     pub(crate) unsafe fn watcher_release_and_submit_event(
         this: *mut Self,
         ev: *mut HotReloadEvent,

@@ -213,6 +213,15 @@ pub struct RecentlyVisitedTSNamespace {
     pub(crate) map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
+/// Keyed by where the node is: an async arrow's `async` -> its parameters; an arrow's `=>` -> its expression body; a
+/// class element's name or static block -> the element (its `static`, its `[`).
+#[derive(Default)]
+pub struct StartsForParseOnly {
+    pub(crate) async_arrow_parameters: bun_collections::HashMap<i32, i32>,
+    pub(crate) arrow_expression_bodies: bun_collections::HashMap<i32, i32>,
+    pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
+}
+
 #[derive(Clone, Copy)]
 pub struct ReactRefreshImportClause<'a> {
     pub(crate) name: &'a [u8],
@@ -372,6 +381,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_commonjs_export_names: bool,
 
     pub(crate) stack_check: bun_core::StackCheck,
+    /// `Parser::parse_only`: where what does not say so itself starts.
+    pub(crate) starts_for_parse_only: Option<StartsForParseOnly>,
 
     pub(crate) reported_stack_overflow: core::cell::Cell<bool>,
 
@@ -1468,10 +1479,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let import_record_index =
                 self.add_import_record(ImportKind::Dynamic, arg.loc, str_.slice(self.arena));
-
-            if let Some(tag) = state.import_record_tag {
-                self.import_records.items_mut()[import_record_index as usize].tag = tag;
-            }
 
             if let Some(loader) = state.import_loader {
                 self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
@@ -3565,8 +3572,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `scope_ref` (shared borrow of the `StoreRef` local) must end
                 // before the `DerefMut` write to `scope.generated` inside the
                 // loop; NLL drops it at last use (the snapshot block above).
-                let _ = scope_ref;
-
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
 
@@ -6957,7 +6962,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbol = &self.symbols[name_ref.inner_index() as usize];
         }
         let symbol_kind = symbol.kind;
-        let _ = symbol;
         let arena = self.arena;
 
         // Make sure to only emit a variable once for a given namespace, since there
@@ -6974,7 +6978,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
                 value: None,
             }]);
-            let _ = arena;
 
             if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
@@ -9094,7 +9097,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                         // `part` is `ManuallyDrop`; falls out of scope without dropping.
-                        let _ = part;
                     }
                 }
 
@@ -9256,7 +9258,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     remaining_stmts[..src.len()].copy_from_slice(src);
                     remaining_stmts = &mut remaining_stmts[src.len()..];
                 }
-                let _ = remaining_stmts;
             }
 
             let wrapper = self.new_expr(
@@ -9771,6 +9772,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
+            starts_for_parse_only: None,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),

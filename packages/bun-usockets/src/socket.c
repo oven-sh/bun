@@ -290,6 +290,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 
@@ -366,6 +367,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 
@@ -473,6 +475,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->defer_error_until_read = 0;
+    s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -620,6 +623,13 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         us_internal_rearm_writable(s);
     }
     return written;
+}
+
+int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    if (s->ssl) {
+        return us_internal_ssl_writev(s, iov, count);
+    }
+    return us_socket_raw_writev(s, iov, count);
 }
 
 int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {

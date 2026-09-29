@@ -12,7 +12,6 @@
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
 #![allow(deprecated, non_snake_case)]
-#![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag`.
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
@@ -24,7 +23,6 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
-#![allow(incomplete_features)]
 
 extern crate alloc;
 // Allow `::bun_jsc::…` paths emitted by the proc-macros to resolve when used
@@ -429,6 +427,8 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BytecodeOrderRecorder.rs"]
+pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
@@ -1240,8 +1240,8 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
-    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
+    PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]

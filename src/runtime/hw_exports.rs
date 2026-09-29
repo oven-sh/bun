@@ -77,16 +77,22 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
 /// # Safety
 /// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
-// Forwards `frames` to the C++-side remapper without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
     frames: *mut ZigStackFrame,
     frames_count: usize,
 ) {
+    // The collector thread is not otherwise a Bun thread: give it the per-thread output source a source-map warning writes
+    // through and the stack bound the map parser's recursion guard reads (idempotent), and flush what it wrote, since
+    // nothing else on that thread will.
+    let on_js_thread = VirtualMachine::get_or_null().is_some();
+    bun_core::output::Source::configure_thread();
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
     // the raw ptr because it forwards to the C++-side remapper.
     unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    if !on_js_thread {
+        bun_core::output::flush();
+    }
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
@@ -374,7 +380,6 @@ unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 /// `arg_options` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_BunObject_dispatchBraces1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_bunobject_dispatch_braces(
     global: &JSGlobalObject,
     input: &bun_core::String,
@@ -393,7 +398,6 @@ pub(crate) fn bindgen_bunobject_dispatch_braces(
 /// `arg_force` and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_BunObject_dispatchGc1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_bunobject_dispatch_gc(
     global: &JSGlobalObject,
     arg_force: *const bool,
@@ -415,7 +419,6 @@ pub(crate) fn bindgen_bunobject_dispatch_gc(
 /// `arg_formatter` and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Fmt_jsc_dispatchFmtString1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_fmt_jsc_dispatch_fmt_string(
     global: &JSGlobalObject,
     arg_code: &bun_core::String,
@@ -454,7 +457,6 @@ unsafe extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
 /// `arg_a`, `arg_b`, and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Bindgen_test_dispatchAdd1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_bindgen_test_dispatch_add(
     global: &JSGlobalObject,
     arg_a: *const i32,
@@ -558,7 +560,6 @@ unsafe extern "C" fn bindgen_Node_os_dispatchFreemem1(
 /// `arg_pid` and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Node_os_dispatchGetPriority1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_node_os_dispatch_get_priority(
     global: &JSGlobalObject,
     arg_pid: *const i32,
@@ -630,7 +631,6 @@ pub(crate) fn bindgen_node_os_dispatch_uptime(global: &JSGlobalObject, out: *mut
 /// `arg_options` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_Node_os_dispatchUserInfo1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_node_os_dispatch_user_info(
     global: &JSGlobalObject,
     arg_options: *const crate::node::os::gen_::UserInfoOptions,
@@ -654,7 +654,6 @@ pub(crate) fn bindgen_node_os_dispatch_version(
 /// `arg_pid` and `arg_priority` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Node_os_dispatchSetPriority1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_node_os_dispatch_set_priority1(
     global: &JSGlobalObject,
     arg_pid: *const i32,
@@ -672,7 +671,6 @@ pub(crate) fn bindgen_node_os_dispatch_set_priority1(
 /// `arg_priority` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_Node_os_dispatchSetPriority2, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn bindgen_node_os_dispatch_set_priority2(
     global: &JSGlobalObject,
     arg_priority: *const i32,

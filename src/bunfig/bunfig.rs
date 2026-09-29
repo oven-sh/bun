@@ -6,7 +6,7 @@
 //! (`api::TransformOptions`), `ctx.install` (`api::BunInstall`), and the rest
 //! of `ContextData`.
 
-#![allow(clippy::collapsible_if, clippy::needless_return)]
+#![allow(clippy::collapsible_if)]
 
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;

@@ -696,6 +696,27 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
 /// promise.
 pub(crate) type HTMLRewriterTransform = RewriterPipe;
 
+/// [`RewriterPipe::schedule_background_pull`]'s task: same pointer as the pipe, its own tag.
+#[repr(transparent)]
+pub(crate) struct RewriterPipeBackgroundPull(RewriterPipe);
+impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HTMLRewriterBackgroundPull;
+    /// Give back what `schedule_background_pull` took: the cell's protect and the pipe's ref.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: the task's ref keeps the allocation live until the `deref_nn` below.
+        let pipe = BackRef::from(unsafe { NonNull::new_unchecked(this.cast::<RewriterPipe>()) });
+        let cell = pipe.cell.get();
+        if cell.is_cell() {
+            cell.unprotect();
+        }
+        RewriterPipe::deref_nn(pipe.into());
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
 /// Streaming pipe for one `HTMLRewriter::transform()`: receives input bytes
 /// via [`SinkHandle::HTMLRewriter`], feeds them through lol-html (suspending
 /// when a content handler returns a pending Promise), and emits output either
@@ -922,7 +943,7 @@ impl RewriterPipe {
         if let (Some(reason), SourceHandle::JSController(_)) = (cancel, upstream) {
             upstream.cancel(reason);
         }
-        JSSink::<RewriterPipe>::detach(&mut src, &self.global);
+        src.detach(&self.global);
         if cancel.is_some() {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
@@ -1349,14 +1370,14 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-                core::ptr::from_ref(self).cast_mut(),
-                Self::run_background_pull,
-            ));
+        vm.as_mut().enqueue_task(bun_event_loop::Task::init(
+            core::ptr::from_ref(self)
+                .cast_mut()
+                .cast::<RewriterPipeBackgroundPull>(),
+        ));
     }
 
-    fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
+    pub(crate) fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
         // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
         // the allocation live until the `deref_nn` below.
         let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });

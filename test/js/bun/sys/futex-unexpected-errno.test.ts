@@ -20,6 +20,7 @@ const SHIM_C = /* c */ `
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -37,6 +38,12 @@ long syscall(long nr, ...) {
   long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
   va_end(ap);
   if (!next_syscall) {
+    // The crash is on purpose. It must not leave a core file for CI to find.
+    struct rlimit core;
+    if (getrlimit(RLIMIT_CORE, &core) == 0) {
+      core.rlim_cur = 0;
+      setrlimit(RLIMIT_CORE, &core);
+    }
     fail_errno = atoi(getenv("FUTEX_ERRNO"));
     fail_op = (strcmp(getenv("FUTEX_OP"), "FUTEX_WAKE") == 0 ? FUTEX_WAKE : FUTEX_WAIT) | FUTEX_PRIVATE_FLAG;
     next_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");

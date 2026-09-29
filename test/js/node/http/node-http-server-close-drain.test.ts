@@ -636,13 +636,14 @@ test.each([
       socket.on("error", () => {});
       let response = "";
       const swept = Promise.withResolvers<void>();
-      const kept = Promise.withResolvers<string>();
+      const outcome = Promise.withResolvers<string>();
       socket.on("data", chunk => {
         response += chunk;
         if (response.endsWith("/sweep")) swept.resolve();
-        if (response.endsWith("/second")) kept.resolve("kept");
+        if (response.endsWith("/second")) outcome.resolve("kept");
       });
-      const closed = once(socket, "close").then(() => "closed");
+      // Also after an 'error': a request to a connection that the server closed can get a reset.
+      socket.on("close", () => outcome.resolve("closed"));
 
       socket.write(first);
       if (rest) {
@@ -656,7 +657,7 @@ test.each([
       await swept.promise;
       // A connection that is still open answers this.
       socket.write("GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
-      expect(await Promise.race([closed, kept.promise])).toBe("closed");
+      expect(await outcome.promise).toBe("closed");
     } finally {
       socket.destroy();
       server.closeAllConnections();

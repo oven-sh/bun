@@ -14,7 +14,9 @@ use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    BodyLength, StartOptions as FileResponseStreamOptions, StreamOwner, zero_size_file_has_content,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
@@ -68,7 +70,7 @@ enum Serve {
         file_type: FileType,
         pollable: bool,
         offset: u64,
-        length: Option<u64>,
+        length: BodyLength,
     },
 }
 
@@ -85,7 +87,8 @@ impl FileRoute {
             + self.blob.reported_estimated_size.get()
     }
 
-    pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
+    /// `from_stat`: false for a file that reports no size, whose mtime is not the time its content changed.
+    pub(crate) fn last_modified_date(&self, from_stat: bool) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let string = BunString::borrow_utf8(last_modified);
@@ -95,6 +98,9 @@ impl FileRoute {
                     return Ok(Some(date_f64 as u64));
                 }
             }
+        }
+        if !from_stat {
+            return Ok(None);
         }
 
         // `Cell::take` then restore — single-threaded event loop, no re-entry
@@ -191,7 +197,7 @@ impl FileRoute {
         Ok(None)
     }
 
-    fn write_headers(&self, resp: AnyResponse) {
+    fn write_headers(&self, resp: AnyResponse, last_modified_from_stat: bool) {
         use bun_http_types::ETag::HeaderEntryColumns;
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();
@@ -210,7 +216,7 @@ impl FileRoute {
             }
         }
 
-        if !self.has_last_modified_header {
+        if !self.has_last_modified_header && last_modified_from_stat {
             // `Cell::take` then restore — `write_header` is a sync uWS buffer
             // copy, no re-entry into `stat_hash` between take/set.
             let sh = self.stat_hash.take();
@@ -325,11 +331,11 @@ impl FileRoute {
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
-        let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
+        let (can_serve_file, offset, size, file_type, pollable, unframed) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
                 // file_type is never read because can_serve_file == false
-                Err(_) => break 'brk (false, 0, 0, FileType::File, false),
+                Err(_) => break 'brk (false, 0, 0, FileType::File, false, false),
             };
 
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
@@ -338,7 +344,19 @@ impl FileRoute {
 
             let mode = stat.st_mode as bun_sys::Mode;
             if bun_sys::S::ISDIR(mode) {
-                break 'brk (false, 0, 0, FileType::File, false);
+                break 'brk (false, 0, 0, FileType::File, false, false);
+            }
+
+            // Such a file is read to EOF, as a pipe is, and `size` is its window. A route that sends no body, or a `Content-Length` of its own, keeps the answer of the `stat`.
+            if stat_size == 0
+                && bun_sys::S::ISREG(mode)
+                && !self.has_content_length_header
+                && self.sends_body()
+            {
+                let (offset, window) = (self.blob.offset.get(), self.blob.size.get());
+                if zero_size_file_has_content(fd, offset, window) {
+                    break 'brk (true, offset, window, FileType::File, false, true);
+                }
             }
 
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
@@ -348,14 +366,14 @@ impl FileRoute {
             self.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (true, offset, size, FileType::Pipe, true);
+                break 'brk (true, offset, size, FileType::Pipe, true, false);
             }
 
             if bun_sys::S::ISSOCK(mode) {
-                break 'brk (true, offset, size, FileType::Socket, true);
+                break 'brk (true, offset, size, FileType::Socket, true, false);
             }
 
-            break 'brk (true, offset, size, FileType::File, false);
+            break 'brk (true, offset, size, FileType::File, false, false);
         };
 
         if !can_serve_file {
@@ -370,6 +388,7 @@ impl FileRoute {
         // set Content-Range — they're managing partial responses themselves.
         let range: RangeRequest::Result = if (method == Method::GET || method == Method::HEAD)
             && file_type == FileType::File
+            && !unframed
             && self.status_code == 200
             && !self.has_content_range_header
         {
@@ -382,7 +401,7 @@ impl FileRoute {
         let last_modified_ms = if req.header(b"if-modified-since").is_some()
             || req.header(b"if-unmodified-since").is_some()
         {
-            let Ok(lmd) = self.last_modified_date() else {
+            let Ok(lmd) = self.last_modified_date(!unframed) else {
                 return Serve::Done;
             };
             lmd
@@ -399,7 +418,7 @@ impl FileRoute {
             resp.mark_wrote_date_header();
         }
         resp.write_mark();
-        self.write_headers(resp);
+        self.write_headers(resp, !unframed);
 
         // Bodiless statuses end before the range switch so a 304 emits no
         // Content-Range. FileResponseStream ships via sendfile/write(), so a
@@ -413,7 +432,7 @@ impl FileRoute {
             return Serve::Done;
         }
 
-        // `None` (read to EOF) is only for pipes and sockets; a file's body is its Content-Length.
+        // `None` (read to EOF) is for pipes, sockets and a file that reports no size; the body of another file is its Content-Length.
         let (body_offset, body_len): (u64, Option<u64>) = match range {
             RangeRequest::Result::Satisfiable { .. } => {
                 let (start, len) = write_content_range(resp, range, size).unwrap();
@@ -425,7 +444,9 @@ impl FileRoute {
                 return Serve::Done;
             }
             RangeRequest::Result::None => {
-                if file_type == FileType::File {
+                if unframed {
+                    (offset, None)
+                } else if file_type == FileType::File {
                     (offset, Some(size))
                 } else {
                     (0, None)
@@ -454,8 +475,17 @@ impl FileRoute {
             file_type,
             pollable,
             offset: body_offset,
-            length: body_len,
+            length: match body_len {
+                Some(len) => BodyLength::Exact(len),
+                None if unframed => BodyLength::unframed(offset, size),
+                None => BodyLength::ToEof,
+            },
         }
+    }
+
+    /// Whether the status of the route has a body.
+    fn sends_body(&self) -> bool {
+        !HTTPStatusText::is_null_body(self.status_code) && !matches!(self.status_code, 307 | 308)
     }
 
     /// The last thing a response does with the route; callers then release

@@ -210,6 +210,32 @@ server.stop(true);
 console.log("DONE " + okBodies);
 `;
 
+// A regular file on procfs reports a stat size of 0, so the server reads it to
+// its end: one read() for the content and one that finds the end. The second
+// read() of the first response fails here, after the server wrote the first
+// bytes of the body. The client must not get a complete response.
+const UNSIZED_FIXTURE_JS = /* js */ `
+const path = process.argv[2];
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  routes: { "/static": new Response(Bun.file(path)) },
+  fetch() { return new Response(Bun.file(path)); },
+});
+const results = [];
+for (const url of ["/handler", "/static", "/handler", "/static"]) {
+  try {
+    const r = await fetch("http://127.0.0.1:" + server.port + url, { headers: { connection: "close" } });
+    const b = await r.arrayBuffer();
+    results.push(b.byteLength > 0 ? "complete" : "empty");
+  } catch {
+    results.push("failed");
+  }
+}
+server.stop(true);
+console.log("DONE " + results.join(" "));
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 let supervisorBin: string | undefined;
 let served: string;
@@ -219,6 +245,7 @@ beforeAll(async () => {
   dir = tempDir("serve-file-slice-read-error", {
     "supervisor.c": SUPERVISOR_C,
     "fixture.mjs": FIXTURE_JS,
+    "unsized.mjs": UNSIZED_FIXTURE_JS,
     "served.bin": Buffer.alloc(4096, 97).toString("latin1"),
   });
   served = join(String(dir), "served.bin");
@@ -266,6 +293,29 @@ test.skipIf(!isLinux || !cc)(
     expect(stderr).toContain("matched read() calls on target:");
     const reads = Number(stderr.match(/matched read\(\) calls on target:\s*(\d+)/)![1]);
     expect({ stdout: stdout.trim(), reads }).toEqual({ stdout: "DONE 2", reads: 3 });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isLinux || !cc)(
+  "Bun.serve does not complete the response of a file whose stat size is 0 when a read() fails after the first bytes",
+  async () => {
+    expect(supervisorBin).toBeDefined();
+
+    // Nothing else in the process reads this file.
+    const unsized = "/proc/loadavg";
+    const asanOpts = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    await using proc = Bun.spawn({
+      cmd: [supervisorBin!, unsized, "2", "--", bunExe(), join(String(dir), "unsized.mjs"), unsized],
+      env: { ...bunEnv, ASAN_OPTIONS: asanOpts, LSAN_OPTIONS: "detect_leaks=0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The first response has the read() that fails. Each of the others has two.
+    const reads = Number(stderr.match(/matched read\(\) calls on target:\s*(\d+)/)?.[1]);
+    expect({ stdout: stdout.trim(), reads }).toEqual({ stdout: "DONE failed complete complete complete", reads: 8 });
     expect(exitCode).toBe(0);
   },
 );

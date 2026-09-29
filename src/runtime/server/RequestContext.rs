@@ -275,6 +275,7 @@ mod NativePromiseContext {
     }
 }
 use crate::node::types::PathLikeExt as _;
+use crate::server::file_response_stream::BodyLength;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
@@ -1855,6 +1856,16 @@ where
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+        // Such a file is read to EOF, as a pipe is. A descriptor of the caller keeps the answer of its `stat`.
+        let unframed = stat_size == 0
+            && is_regular
+            && auto_close
+            && file_response_stream::zero_size_file_has_content(
+                fd,
+                blob_offset as u64,
+                original_size as u64,
+            );
+        let framed = is_regular && !unframed;
         if let AnyBlob::Blob(b) = blob_ref {
             b.size.set(if is_regular {
                 stat_size
@@ -1863,18 +1874,18 @@ where
             });
         }
 
-        self.flags.set_needs_content_length(is_regular);
+        self.flags.set_needs_content_length(framed);
         let mut sendfile = SendfileContext {
             remain: blob_offset + original_size,
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
+        if framed && auto_close {
             self.flags.set_needs_content_range(
                 sendfile.remain.saturating_sub(sendfile.offset) != stat_size,
             );
         }
-        if is_regular {
+        if framed {
             sendfile.offset = sendfile.offset.min(stat_size);
             sendfile.remain = sendfile
                 .remain
@@ -1906,7 +1917,7 @@ where
             && (original_size == crate::webcore::blob::MAX_SIZE || original_size == stat_size);
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
         let method_allows_range = self.method == Method::GET || self.method == Method::HEAD;
-        if is_regular
+        if framed
             && method_allows_range
             && !user_handles_range
             && is_whole_file
@@ -1956,7 +1967,7 @@ where
         resp.run_corked_with_type(Self::render_metadata_corked, self.as_ctx_ptr());
 
         let sendfile = self.sendfile.get();
-        if (is_regular && sendfile.remain == 0) || !self.method.has_body() {
+        if (framed && sendfile.remain == 0) || !self.method.has_body() {
             if auto_close {
                 fd.close();
             }
@@ -1992,10 +2003,12 @@ where
             file_type,
             pollable,
             offset: sendfile.offset as u64,
-            length: if is_regular {
-                Some(sendfile.remain as u64)
+            length: if framed {
+                BodyLength::Exact(sendfile.remain as u64)
+            } else if unframed {
+                BodyLength::unframed(blob_offset as u64, original_size as u64)
             } else {
-                None
+                BodyLength::ToEof
             },
             idle_timeout: server.config().idle_timeout,
             owner: file_response_stream::StreamOwner::Ctx {
@@ -2633,10 +2646,16 @@ where
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
+                let window = (blob.offset.get(), blob.size.get());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
+                // GET reads such a file to EOF, so HEAD has no length to give.
+                let unframed = blob_size == 0 && zero_size_path_has_content(blob, window);
                 this.render_metadata();
 
+                if unframed {
+                    return this.end_without_body(this.should_close_connection());
+                }
                 if blob_size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
@@ -4748,6 +4767,35 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         bits.set(FlagsBits::HAS_FINALIZED, v);
         self.0.set(bits);
     }
+}
+
+/// `zero_size_file_has_content` for HEAD, which has no descriptor: the file that `blob` names by path, whose `stat` gave a size of 0.
+#[cold]
+fn zero_size_path_has_content(blob: &Blob, (offset, window): (BlobSizeType, BlobSizeType)) -> bool {
+    use crate::webcore::node_types::PathOrFileDescriptor;
+    let Some(store) = blob.store.get().as_ref() else {
+        return false;
+    };
+    let crate::webcore::blob::store::Data::File(file) = &store.data else {
+        return false;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return false;
+    };
+    if !file_response_stream::HAS_PROCFS || file.seekable != Some(true) || window == 0 {
+        return false;
+    }
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let Ok(fd) = bun_sys::open(
+        path.slice_z(&mut path_buf),
+        bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
+        0,
+    ) else {
+        return false;
+    };
+    let has_content = file_response_stream::zero_size_file_has_content(fd, offset, window);
+    fd.close();
+    has_content
 }
 
 fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {

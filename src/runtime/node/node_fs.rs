@@ -4912,21 +4912,26 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Ok: trim dest (no O_TRUNC at open) to `wrote`, close. Err: close, unlink unless dest is src.
+    /// Ok: trim dest (no O_TRUNC at open) to `wrote`. Err: remove dest. Then close.
     #[cfg(not(windows))]
     fn close_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat, wrote: u64, ok: bool) {
         if ok {
             let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
             let _ = Syscall::fchmod(dest_fd, src_stat.st_mode as Mode);
-            dest_fd.close();
-            return;
+        } else {
+            Self::unlink_failed_copy_dest(dest, dest_fd, src_stat);
         }
-        let is_src = matches!(
-            Syscall::fstat(dest_fd),
-            Ok(d) if d.st_dev == src_stat.st_dev && d.st_ino == src_stat.st_ino
-        );
         dest_fd.close();
-        if !is_src {
+    }
+
+    /// Unlinks only a regular file that is not the source: never a fifo or a device node.
+    #[cfg(not(windows))]
+    fn unlink_failed_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat) {
+        let Ok(d) = Syscall::fstat(dest_fd) else {
+            return;
+        };
+        let is_src = d.st_dev == src_stat.st_dev && d.st_ino == src_stat.st_ino;
+        if sys::S::ISREG(d.st_mode as u32) && !is_src {
             let _ = Syscall::unlink(dest);
         }
     }
@@ -5128,7 +5133,7 @@ impl NodeFS {
                     E::EINTR => continue,
                     E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break 'cfr,
                     e => {
-                        let _ = sys::unlink(dest);
+                        Self::unlink_failed_copy_dest(dest, dest_fd, &stat_);
                         return Err(sys::Error {
                             errno: e as _,
                             syscall: sys::Tag::copyfile,
@@ -5147,7 +5152,7 @@ impl NodeFS {
                 stat_.st_size.max(0) as usize,
                 &mut wrote,
             ) {
-                let _ = sys::unlink(dest);
+                Self::unlink_failed_copy_dest(dest, dest_fd, &stat_);
                 return Err(err);
             }
             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);

@@ -35,6 +35,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  reportUncaughtException,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -115,6 +116,7 @@ function lazyBlockList() {
 }
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const doListen = $newRustFunction("node_net_binding.rs", "doListen", 1);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -304,9 +306,6 @@ function onClientHandshakeComplete(self, socket, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
-  // Node has no try/catch around these emits; a listener throw reaches
-  // InternalCallbackScope as uncaughtException. reportError mirrors that
-  // without changing Bun.connect's handshake-throw-to-error-handler contract.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
   try {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
@@ -349,7 +348,7 @@ function onClientHandshakeComplete(self, socket, verifyError) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
     self.emit("secure", self);
   } catch (err) {
-    reportError(err);
+    reportUncaughtException(err);
   }
 }
 function onConnectEnd() {
@@ -1018,7 +1017,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
       if (!server) self.emit("secure", self);
     } catch (err) {
-      reportError(err);
+      reportUncaughtException(err);
     }
   },
   error(socket, error) {
@@ -1714,7 +1713,7 @@ function Socket(options?) {
             // The native data dispatch would otherwise route a throw to the
             // socket error handler; hand it to the uncaught-exception path
             // synchronously the way node's bare call does.
-            reportError(e);
+            reportUncaughtException(e);
           }
           if (self.destroyed) return;
           if (ret === false || self.isPaused()) {
@@ -1744,7 +1743,7 @@ function Socket(options?) {
         } catch (e) {
           // Same as above: report then fall through so the next slice is
           // delivered, matching node's per-onStreamRead behavior.
-          reportError(e);
+          reportUncaughtException(e);
         }
         if (self.destroyed) return;
         if (ret === false || self.isPaused()) {
@@ -3895,7 +3894,7 @@ Server.prototype[kRealListen] = function (
     exclusive = false;
   }
   if (path) {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       unix: path,
       tls,
       // Accepted sockets are always half-open natively; the stream layer
@@ -3929,7 +3928,7 @@ Server.prototype[kRealListen] = function (
       }
     }
   } else if (fd != null) {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       fd,
       hostname,
       tls,
@@ -3942,7 +3941,7 @@ Server.prototype[kRealListen] = function (
       pauseOnConnect: this.pauseOnConnect,
     });
   } else {
-    this._handle = Bun.listen({
+    this._handle = doListen({
       port,
       hostname,
       tls,

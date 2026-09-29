@@ -1430,7 +1430,7 @@ impl Subprocess<'_> {
                         // SAFETY: `event_loop` is the live VM's owned event loop,
                         // accessed on the single JS mutator thread.
                         unsafe {
-                            (*event_loop).run_callback(
+                            (*event_loop).run_callback_keep_alive(
                                 cb,
                                 global_this,
                                 this_jsvalue,

@@ -470,7 +470,11 @@ impl Macro {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
             unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                (*vm).unhandled_rejection_keep_alive(
+                    &*(*vm).global,
+                    result,
+                    (*loaded_result).to_js(),
+                );
             }
             return Err(crate::Error::MacroLoadError);
         }
@@ -631,7 +635,7 @@ impl<'a> Run<'a> {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                 let _ = unsafe {
-                    (*self.macro_.vm()).uncaught_exception(
+                    (*self.macro_.vm()).uncaught_exception_keep_alive(
                         self.global,
                         value,
                         bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -672,7 +676,7 @@ impl<'a> Run<'a> {
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                         let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(
+                            (*self.macro_.vm()).uncaught_exception_keep_alive(
                                 self.global,
                                 value,
                                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -850,6 +854,9 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
+                // The runner reads the rejection itself and reports it below. Nothing else
+                // may report it, also not while the loop turns in `wait_for_promise`.
+                promise.set_handled(vm.jsc_vm());
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
                 vm.as_mut()
                     .wait_for_promise(promise)
@@ -872,7 +879,7 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut().unhandled_rejection(
+                    vm.as_mut().unhandled_rejection_keep_alive(
                         self.global,
                         promise_result,
                         promise.as_value(),

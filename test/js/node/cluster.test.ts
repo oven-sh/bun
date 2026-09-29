@@ -1371,3 +1371,97 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// node ends the process at the throw of an uncaught error that nothing takes.
+// What the listener queued before the throw does not run. Only 'exit'
+// listeners run. The queued timer ends the process with status 3: a build that
+// goes on after the report fails here and does not wait for the worker.
+test.concurrent(
+  "a worker 'message' listener that throws with no 'uncaughtException' listener ends the primary at the throw",
+  async () => {
+    using dir = tempDir("cluster-message-throw", {
+      "index.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        process.on("exit", code => console.log("exit", code));
+        cluster.fork().on("message", () => {
+          process.nextTick(() => console.log("TICK"));
+          setImmediate(() => console.log("IMMEDIATE"));
+          setTimeout(() => {
+            console.log("TIMER");
+            process.exit(3);
+          }, 0);
+          throw new Error("boom-cluster-message");
+        });
+      } else {
+        process.send("hi");
+        process.on("disconnect", () => process.exit(0));
+        setInterval(() => {}, 1e9);
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\n",
+      stderr: expect.stringContaining("boom-cluster-message"),
+      exitCode: 1,
+    });
+  },
+);
+
+// A worker gets its connections as descriptors from the primary. A 'data'
+// listener on such a socket that throws is an uncaught exception in the
+// worker, as on any other socket of node:net.
+test.concurrent(
+  "a socket 'data' listener in a worker that throws with no 'uncaughtException' listener ends the worker at the throw",
+  async () => {
+    using dir = tempDir("cluster-socket-data-throw", {
+      "index.js": `
+      const cluster = require("node:cluster");
+      const net = require("node:net");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("exit", (code, signal) => console.log("worker exit", code, signal));
+        worker.on("message", port => {
+          const client = net.connect(port, "127.0.0.1", () => client.write("x"));
+          client.on("error", () => {});
+        });
+      } else {
+        process.on("exit", code => console.log("exit", code));
+        const server = net.createServer(socket => {
+          socket.on("data", () => {
+            process.nextTick(() => console.log("TICK"));
+            setImmediate(() => console.log("IMMEDIATE"));
+            setTimeout(() => {
+              console.log("TIMER");
+              process.exit(3);
+            }, 0);
+            throw new Error("boom-worker-data");
+          });
+        });
+        server.listen(0, "127.0.0.1", () => process.send(server.address().port));
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\nworker exit 1 null\n",
+      stderr: expect.stringContaining("boom-worker-data"),
+      exitCode: 0,
+    });
+  },
+);

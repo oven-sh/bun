@@ -5976,3 +5976,47 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// node ends the process at the throw of an uncaught error that nothing takes.
+// The tick, the immediate and the timer that the callback queued before the
+// throw do not run. Only 'exit' listeners run. The timer ends the process with
+// status 3: a build that goes on after the report fails here and does not wait
+// for the interval.
+describe("a session listener that throws with no 'uncaughtException' listener ends the process at the throw", () => {
+  const prelude = `
+    process.on("exit", code => console.log("exit", code));
+    function boom(label) {
+      process.nextTick(() => console.log("TICK"));
+      setImmediate(() => console.log("IMMEDIATE"));
+      setTimeout(() => {
+        console.log("TIMER");
+        process.exit(3);
+      }, 0);
+      throw new Error(label);
+    }
+    setInterval(() => {}, 1e9);
+  `;
+  it.concurrent.each([
+    [
+      "stream",
+      `const http2 = require("http2"); const s = http2.createServer(); s.on("stream", () => boom("boom-stream")); s.listen(0, "127.0.0.1", () => { const c = http2.connect("http://127.0.0.1:" + s.address().port); c.on("error", () => {}); c.request({ ":path": "/" }).on("error", () => {}).end(); });`,
+    ],
+    [
+      "response",
+      `const http2 = require("http2"); const s = http2.createServer(); s.on("stream", st => { st.respond({ ":status": 200 }); st.end("ok"); }); s.listen(0, "127.0.0.1", () => { const c = http2.connect("http://127.0.0.1:" + s.address().port); c.on("error", () => {}); const r = c.request({ ":path": "/" }); r.on("response", () => boom("boom-response")); r.on("error", () => {}); r.end(); });`,
+    ],
+  ])("%s", async (name, body) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\n",
+      stderr: expect.stringContaining("boom-" + name),
+      exitCode: 1,
+    });
+  });
+});

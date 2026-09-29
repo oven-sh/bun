@@ -470,6 +470,42 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
+        self.run_callback_folding(
+            callback,
+            global_object,
+            this_value,
+            arguments,
+            crate::task::report_error_or_terminate,
+        );
+    }
+
+    /// `run_callback` for a caller that goes on after the report of what the callback threw (see
+    /// `VirtualMachine::uncaught_exception_keep_alive`).
+    pub fn run_callback_keep_alive(
+        &mut self,
+        callback: JSValue,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        arguments: &[JSValue],
+    ) {
+        self.run_callback_folding(
+            callback,
+            global_object,
+            this_value,
+            arguments,
+            crate::task::report_error_or_terminate_keep_alive,
+        );
+    }
+
+    #[inline]
+    fn run_callback_folding(
+        &mut self,
+        callback: JSValue,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        arguments: &[JSValue],
+        fold: fn(&JSGlobalObject, crate::JsError) -> Result<(), Stopped>,
+    ) {
         // The gate for native code entering user JS from outside the task
         // queue (all 50+ callers funnel through here): not once teardown has
         // forbidden script (Node's `can_call_into_js`), and not with an
@@ -496,7 +532,7 @@ impl EventLoop {
         if let Err(err) = callback.call(global_object, this_value, arguments) {
             // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
             // the gate, not a pending exception, to know the VM has stopped.
-            let _ = crate::task::report_error_or_terminate(global_object, err);
+            let _ = fold(global_object, err);
         }
         // Force a re-escape between the JS call and the post-call `exit()` so
         // LLVM cannot forward any `*this` field across `call()`.
@@ -1407,10 +1443,12 @@ pub fn event_loop_run_callback2(
     arg0: JSValue,
     arg1: JSValue,
 ) {
-    global
-        .bun_vm()
-        .event_loop_mut()
-        .run_callback(callback, global, this_value, &[arg0, arg1]);
+    global.bun_vm().event_loop_mut().run_callback_keep_alive(
+        callback,
+        global,
+        this_value,
+        &[arg0, arg1],
+    );
 }
 
 // HOST_EXPORT(Bun__EventLoop__enter, c)

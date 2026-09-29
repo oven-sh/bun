@@ -2,6 +2,7 @@
 // machinery is not set up until it is actually used.
 const EventEmitter = require("node:events");
 const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/validators");
+const { guardCallback } = require("internal/shared");
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -22,7 +23,7 @@ class StatWatcher extends EventEmitter {
 
   constructor(path, options) {
     super();
-    this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
+    this._handle = fs.watchFile(path, options, guardCallback(this.#onChange.bind(this)));
   }
 
   #onChange(curr, prev) {

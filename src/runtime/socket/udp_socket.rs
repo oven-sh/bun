@@ -830,7 +830,7 @@ impl UDPSocket {
             return;
         }
         if callback.is_empty_or_undefined_or_null() {
-            let _ = vm.uncaught_exception(
+            let _ = vm.uncaught_exception_keep_alive(
                 global_this,
                 err,
                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -840,7 +840,7 @@ impl UDPSocket {
 
         // A top-level call from the UDP socket callbacks: what `error` itself
         // throws is reported.
-        vm.event_loop_mut().run_callback(
+        vm.event_loop_mut().run_callback_keep_alive(
             callback,
             global_this,
             this_value,

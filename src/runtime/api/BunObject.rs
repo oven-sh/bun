@@ -2078,7 +2078,7 @@ pub(crate) mod environment_variables {
 extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
     let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
-    let _ = vm.uncaught_exception(
+    let _ = vm.uncaught_exception_keep_alive(
         global_object,
         err,
         bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,

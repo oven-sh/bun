@@ -587,3 +587,96 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+// The macro runner reads what the macro throws or rejects and hands it to its
+// caller as a build error. In a script the runner uses the VM of the program,
+// and the report of the macro's error must not end that program.
+describe("a macro that fails in a script is a build error for the caller", () => {
+  const prelude = `
+    setImmediate(() => console.log("immediate"));
+  `;
+  const usesMacro = `
+    import { fail } from "./macro.ts" with { type: "macro" };
+    export const value = fail();
+  `;
+  const viaRequire = `
+    try {
+      require("./uses-macro.ts");
+      console.log("required");
+    } catch (error) {
+      console.log("caught", error.name);
+    }
+    console.log("after");
+  `;
+  const viaTransformSync = `
+    try {
+      new Bun.Transpiler({ loader: "ts" }).transformSync(require("fs").readFileSync("./uses-macro.ts", "utf8"));
+      console.log("transformed");
+    } catch (error) {
+      console.log("caught", error.name);
+    }
+    console.log("after");
+  `;
+  test.concurrent.each([
+    {
+      name: "an async macro that rejects, through require()",
+      index: viaRequire,
+      macro: `export async function fail() { throw new Error("macro-rejects"); }`,
+      message: "macro-rejects",
+    },
+    {
+      name: "an async macro that rejects, through Bun.Transpiler#transformSync",
+      index: viaTransformSync,
+      macro: `export async function fail() { throw new Error("macro-rejects"); }`,
+      message: "macro-rejects",
+    },
+    {
+      name: "an async macro that rejects after an await",
+      index: viaRequire,
+      macro: `export async function fail() { await null; throw new Error("macro-rejects-late"); }`,
+      message: "macro-rejects-late",
+    },
+    {
+      name: "an async macro that rejects after a timer",
+      index: viaRequire,
+      macro: `export async function fail() { await new Promise(resolve => setTimeout(resolve, 1)); throw new Error("macro-rejects-later"); }`,
+      message: "macro-rejects-later",
+    },
+    {
+      name: "a macro module that throws when it loads",
+      index: viaRequire,
+      macro: `throw new Error("macro-module-throws"); export function fail() {}`,
+      message: "macro-module-throws",
+    },
+    {
+      name: "a macro module that throws after a top-level await",
+      index: viaRequire,
+      macro: `await null; throw new Error("macro-module-throws-late"); export function fail() {}`,
+      message: "macro-module-throws-late",
+    },
+  ])("$name", async ({ index, macro, message }) => {
+    using dir = tempDir("macro-fails-in-script", {
+      "index.js": prelude + index,
+      "uses-macro.ts": usesMacro,
+      "macro.ts": macro,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A debug build also prints "[macro] call fail" to stdout.
+    expect({
+      stdout: stdout.split("\n").filter(line => !line.startsWith("[macro]")),
+      stderr,
+      exitCode,
+    }).toEqual({
+      stdout: ["caught BuildMessage", "after", "immediate", ""],
+      stderr: expect.stringContaining(message),
+      exitCode: 1,
+    });
+  });
+});

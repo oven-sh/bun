@@ -3416,7 +3416,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // a SocketListener, so these handlers have no listener to release. The
         // server-ness lives in the SSL accept state (adopt_tls
         // is_client=!is_server) + the ServerHandlers JS table, not here.
-        let handlers = Handlers::from_js(global, socket_obj, super::SocketMode::Client)?;
+        // The new table has the owner of the table it replaces.
+        let owner = this
+            .handlers_opt()
+            .map_or(super::HandlersOwner::Bun, |previous| previous.owner);
+        let handlers = Handlers::from_js(global, socket_obj, super::SocketMode::Client, owner)?;
         // Nothing holds the callback cell until the TLS wrapper below does.
         let _cell_root = handlers.root_cell(global);
 
@@ -4587,6 +4591,8 @@ pub fn js_upgrade_duplex_to_tls(
         } else {
             crate::socket::SocketMode::Client
         },
+        // Only `node:net` calls this function.
+        super::HandlersOwner::NodeNet,
     )?;
     // Nothing holds the callback cell until the TLS wrapper below does.
     let _cell_root = handlers.root_cell(global);

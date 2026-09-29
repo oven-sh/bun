@@ -1,0 +1,16 @@
+{
+  "src/js/internal/sql/postgres.ts": 1,
+  "src/js_parser_jsc/Macro.rs": 4,
+  "src/jsc/Task.rs": 1,
+  "src/jsc/bindings/ExposeNodeModuleGlobals.cpp": 1,
+  "src/jsc/bindings/ZigGlobalObject.cpp": 2,
+  "src/jsc/event_loop.rs": 2,
+  "src/runtime/api/BunObject.rs": 1,
+  "src/runtime/api/bun/subprocess.rs": 1,
+  "src/runtime/cli/run_command.rs": 1,
+  "src/runtime/server/WebSocketServerContext.rs": 2,
+  "src/runtime/socket/Handlers.rs": 2,
+  "src/runtime/socket/udp_socket.rs": 2,
+  "src/runtime/webview/ChromeBackend.cpp": 2,
+  "src/runtime/webview/WebKitBackend.cpp": 1
+}

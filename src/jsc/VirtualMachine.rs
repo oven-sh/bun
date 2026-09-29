@@ -316,6 +316,14 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// An unhandled report prints and returns; it does not end the process. Set by the interactive
+    /// `bun repl`, where node wraps evaluation in a domain for the same reason
+    /// (https://github.com/nodejs/node/blob/main/lib/repl.js), and by `bun build --app`, where a
+    /// report from one page must not stop the build.
+    pub suppress_fatal_uncaught: bool,
+    /// Set while `expect(fn).toThrow()` reads what `fn` rejects (`quiet_unhandled_rejections`). A
+    /// rejection that arrives then goes to the hook. It is not a report and does not end the process.
+    pub(crate) unhandled_rejections_quiet: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -381,6 +389,15 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
+}
+
+/// What the report of an uncaught error does when no listener takes the error.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Unhandled {
+    /// Print it and end the process with status 1, as node does.
+    Exit,
+    /// Print it and return to the caller.
+    KeepAlive,
 }
 
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
@@ -532,6 +549,7 @@ pub struct UnhandledRejectionScope {
     pub ctx: Option<*mut c_void>,
     pub(crate) on_unhandled_rejection: OnUnhandledRejection,
     pub(crate) count: usize,
+    pub(crate) quiet: bool,
 }
 
 impl UnhandledRejectionScope {
@@ -539,6 +557,7 @@ impl UnhandledRejectionScope {
         vm.on_unhandled_rejection = self.on_unhandled_rejection;
         vm.on_unhandled_rejection_ctx = self.ctx;
         vm.unhandled_error_counter = self.count;
+        vm.unhandled_rejections_quiet = self.quiet;
     }
 }
 
@@ -1350,14 +1369,13 @@ impl VirtualMachine {
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + el.yield_tasks.len()
+            + (el.has_concurrent_tasks() as usize)
+            + (el.has_pending_refs() as usize)
+            > 0
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1389,7 +1407,15 @@ impl VirtualMachine {
             on_unhandled_rejection: self.on_unhandled_rejection,
             ctx: self.on_unhandled_rejection_ctx,
             count: self.unhandled_error_counter,
+            quiet: self.unhandled_rejections_quiet,
         }
+    }
+
+    /// What `expect(fn).toThrow()` installs around its call of `fn`.
+    /// `UnhandledRejectionScope::apply` puts the reporter back.
+    pub fn quiet_unhandled_rejections(&mut self) {
+        self.on_unhandled_rejection = Self::on_quiet_unhandled_rejection_handler_capture_value;
+        self.unhandled_rejections_quiet = true;
     }
 
     pub(crate) fn handled_promise(&self, global_object: &JSGlobalObject, promise: JSValue) -> bool {
@@ -1664,11 +1690,38 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// Reports an uncaught error: the listeners get it, and when none of them takes it, the error is
+    /// printed and the main run ends with status 1 (node: `TriggerUncaughtException`). Every fold
+    /// ends here (`run_callback`, `report_error_or_terminate`, `dispatch::fold`), so a callback
+    /// that nobody classified exits and cannot leave a process that prints and continues.
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
         origin: UncaughtExceptionOrigin,
+    ) -> bool {
+        self.uncaught_exception_impl(global_object, err, origin, Unhandled::Exit)
+    }
+
+    /// The report of a caller that goes on when no listener takes the error: `reportError()`, and
+    /// the handlers of `Bun.serve` websockets, `Bun.listen`, `Bun.connect`, `Bun.udpSocket` and
+    /// `Bun.spawn` ipc. Each call site is counted in
+    /// test/internal/source-lints/keep-alive-report.inventory.json.
+    pub fn uncaught_exception_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        origin: UncaughtExceptionOrigin,
+    ) -> bool {
+        self.uncaught_exception_impl(global_object, err, origin, Unhandled::KeepAlive)
+    }
+
+    fn uncaught_exception_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        origin: UncaughtExceptionOrigin,
+        unhandled: Unhandled,
     ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
@@ -1729,7 +1782,13 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            self.unhandled_error_counter += 1;
+            if unhandled == Unhandled::Exit && self.unhandled_report_ends_the_run() {
+                self.report_and_exit(global_object, err);
+            }
+            // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
+            if !self.run_goes_on_after_report(unhandled) {
+                self.unhandled_error_counter += 1;
+            }
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
@@ -1742,6 +1801,43 @@ impl VirtualMachine {
         // `panic!`, which never returns), so a linear reset here suffices.
         self.is_handling_uncaught_exception = false;
         handled
+    }
+
+    /// Whether a report that nothing takes ends the process in this VM. Only the VM of the main
+    /// run does that. The field, not `is_main_thread()`: a macro VM on the bundler thread and the
+    /// debugger's VM have no worker either, and must not end the process.
+    fn unhandled_report_ends_the_run(&self) -> bool {
+        !self.suppress_fatal_uncaught
+            && !self.unhandled_rejections_quiet
+            && self.is_main_thread
+            && self.hot_reload == HotReload::None
+    }
+
+    /// `unhandled_error_counter` says that the run ended on an error: `on_before_exit` then skips
+    /// 'beforeExit'. A report that the main run goes on after does not count.
+    fn run_goes_on_after_report(&self, unhandled: Unhandled) -> bool {
+        (unhandled == Unhandled::KeepAlive || self.suppress_fatal_uncaught)
+            && self.is_main_thread
+            && self.hot_reload == HotReload::None
+    }
+
+    /// Prints `err` and ends the process with status 1. Only 'exit' listeners run after it.
+    fn report_and_exit(&mut self, global_object: &JSGlobalObject, err: JSValue) -> ! {
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        self.unhandled_error_counter += 1;
+        self.exit_handler.exit_code = 1;
+        (self.on_unhandled_rejection)(self, global_object, err);
+        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
+        bun_core::pretty_errorln!(
+            "<r>\n<d>{}<r>",
+            bun_core::Global::unhandled_error_bun_version_string,
+        );
+        self.is_handling_uncaught_exception = false;
+        self.exit_on_uncaught_exception = true;
+        // SAFETY: `global_object` is the live VM global; `process_exit` is
+        // `bun_runtime::node::process::exit` (main-thread `noreturn`).
+        unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+        panic!("made it past process.exit()");
     }
 
     pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {
@@ -3790,6 +3886,28 @@ impl VirtualMachine {
         reason: JSValue,
         promise: JSValue,
     ) {
+        self.unhandled_rejection_impl(global_object, reason, promise, Unhandled::Exit);
+    }
+
+    /// `unhandled_rejection` for a caller that read the rejection itself and goes on: the macro
+    /// runner, which hands it to its caller as a build error. Each call site is counted in
+    /// test/internal/source-lints/keep-alive-report.inventory.json.
+    pub fn unhandled_rejection_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+    ) {
+        self.unhandled_rejection_impl(global_object, reason, promise, Unhandled::KeepAlive);
+    }
+
+    fn unhandled_rejection_impl(
+        &mut self,
+        global_object: &JSGlobalObject,
+        reason: JSValue,
+        promise: JSValue,
+        unhandled: Unhandled,
+    ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
@@ -3829,7 +3947,11 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                // continue to default handler
+                // Bun's default mode does not ask the 'uncaughtException' listeners, which is
+                // its difference from `throw`. `expect(fn).toThrow()` reads the rejection itself.
+                if unhandled == Unhandled::Exit && self.unhandled_report_ends_the_run() {
+                    self.report_and_exit(global_object, reason);
+                }
             }
             Mode::None => {
                 let _ = handle_unhandled();
@@ -3856,13 +3978,13 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception(
+                let _ = self.uncaught_exception_impl(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
+                    unhandled,
                 );
-                let handled = handle_unhandled();
-                if !handled {
+                if !handle_unhandled() {
                     emit_warning(self);
                 }
                 drain(self);
@@ -3874,23 +3996,22 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception(
+                if self.uncaught_exception_impl(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
+                    unhandled,
                 ) {
                     drain(self);
                     return;
                 }
-                // continue to default handler — but RETURN if this drain
-                // errors (the VM is dead; don't bump the counter or invoke the
-                // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
-                }
+                let _ = self.event_loop_mut().drain_microtasks();
+                return;
             }
         }
-        self.unhandled_error_counter += 1;
+        if !self.run_goes_on_after_report(unhandled) {
+            self.unhandled_error_counter += 1;
+        }
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 

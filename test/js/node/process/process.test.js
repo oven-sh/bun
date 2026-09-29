@@ -2917,6 +2917,551 @@ describe("NODE_NO_WARNINGS", () => {
   });
 });
 
+it("a fatal uncaught exception exits before already-queued work runs", async () => {
+  using dir = tempDir("fatal-uncaught-order", {
+    "fatal.js": `
+      const fs = require("fs");
+      fs.stat(".", () => console.log("IO-CALLBACK-RAN"));
+      process.on("exit", (code) => console.log("EXIT-HANDLER code=" + code));
+      process.on("beforeExit", () => console.log("BEFORE-EXIT-RAN"));
+      setImmediate(() => console.log("IMMEDIATE-RAN"));
+      setTimeout(() => console.log("TIMER-RAN"), 0);
+      process.nextTick(() => { throw new Error("fatal"); });
+      process.nextTick(() => console.log("LATER-TICK-RAN"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fatal.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("EXIT-HANDLER code=1");
+  expect(stderr).toContain("fatal");
+  expect(exitCode).toBe(1);
+});
+
+it("a handled uncaughtException keeps the event loop running", async () => {
+  using dir = tempDir("handled-uncaught-order", {
+    "handled.js": `
+      const fs = require("fs");
+      process.on("uncaughtException", (e) => console.log("HANDLED:" + e.message));
+      fs.stat(".", () => console.log("IO-CALLBACK-RAN"));
+      setTimeout(() => console.log("TIMER-RAN"), 0);
+      process.nextTick(() => { throw new Error("caught-me"); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "handled.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.trim().split(/\r?\n/).sort();
+  expect(lines).toEqual(["HANDLED:caught-me", "IO-CALLBACK-RAN", "TIMER-RAN"]);
+  expect(exitCode).toBe(0);
+});
+
+// node ends the process at the report of an uncaught error that nothing takes:
+// only 'exit' listeners run after it, and the status is 1. boom() queues work
+// and then throws. The queued timer ends the process with status 3, so a build
+// that goes on after the report fails here and does not wait for the interval
+// or the pending top-level await.
+describe("a native callback that throws with no 'uncaughtException' listener ends the process at the throw", () => {
+  const prelude = file => `
+    ${file.endsWith(".mjs") ? `import crypto from "node:crypto";` : `const crypto = require("node:crypto");`}
+    process.on("exit", code => console.log("exit", code, process.exitCode));
+    function boom(label) {
+      process.nextTick(() => console.log("TICK"));
+      setImmediate(() => console.log("IMMEDIATE"));
+      setTimeout(() => {
+        console.log("TIMER");
+        process.exit(3);
+      }, 0);
+      throw new Error(label);
+    }
+    setInterval(() => {}, 1e9);
+  `;
+  it.concurrent.each([
+    {
+      name: "under a pending top-level await",
+      file: "index.mjs",
+      body: `
+        crypto.randomBytes(8, () => boom("boom-pending-await"));
+        await new Promise(() => {});
+      `,
+      stdout: "exit 1 1\n",
+      stderr: "boom-pending-await",
+    },
+    {
+      name: "after the listener that took an earlier error removed itself",
+      file: "index.cjs",
+      body: `
+        process.on("uncaughtException", function listener(error) {
+          console.log("listener", error.message);
+          process.off("uncaughtException", listener);
+          crypto.randomBytes(8, () => boom("boom-second"));
+        });
+        crypto.randomBytes(8, () => {
+          throw new Error("first");
+        });
+      `,
+      stdout: "listener first\nexit 1 1\n",
+      stderr: "boom-second",
+    },
+    {
+      name: "with status 1 when process.exitCode was set before",
+      file: "index.cjs",
+      body: `
+        process.exitCode = 42;
+        crypto.randomBytes(8, () => boom("boom-exit-code"));
+      `,
+      stdout: "exit 1 1\n",
+      stderr: "boom-exit-code",
+    },
+  ])("$name", async ({ file, body, stdout: expected, stderr: message }) => {
+    using dir = tempDir("uncaught-ends-at-the-throw", { [file]: prelude(file) + body });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: expect.stringContaining(message),
+      exitCode: 1,
+    });
+  });
+});
+
+// The handlers of Bun.serve websockets and of Bun.listen print an uncaught
+// error and go on. The run did not end on that error: when the loop is empty
+// later, 'beforeExit' fires as on any other run. The status stays 1.
+describe("'beforeExit' fires after an uncaught error that the run went on after", () => {
+  it.concurrent.each([
+    {
+      name: "a Bun.serve websocket message handler",
+      message: "ws-boom",
+      source: `
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("not a websocket");
+          },
+          websocket: {
+            message(ws, message) {
+              if (message === "boom") throw new Error("ws-boom");
+              ws.send("echo:" + message);
+            },
+          },
+        });
+        const url = "ws://127.0.0.1:" + server.port;
+        const first = new WebSocket(url);
+        first.onopen = () => {
+          first.send("boom");
+          first.send("first");
+        };
+        first.onmessage = () => {
+          const second = new WebSocket(url);
+          second.onopen = () => second.send("second");
+          second.onmessage = event => {
+            console.log("served", event.data);
+            first.close();
+            second.close();
+            server.stop(true);
+          };
+        };
+      `,
+      stdout: "served echo:second\nbeforeExit 1\nexit 1\n",
+    },
+    {
+      name: "a Bun.listen data handler",
+      message: "listen-boom",
+      source: `
+        let served = 0;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(socket, chunk) {
+              socket.end("echo:" + chunk);
+              if (++served === 2) server.stop(true);
+              throw new Error("listen-boom");
+            },
+          },
+        });
+        function client(message, then) {
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              open(socket) {
+                socket.write(message);
+              },
+              data(socket, chunk) {
+                console.log("served", String(chunk));
+              },
+              close() {
+                then?.();
+              },
+            },
+          });
+        }
+        client("first", () => client("second"));
+      `,
+      stdout: "served echo:first\nserved echo:second\nbeforeExit 1\nexit 1\n",
+    },
+  ])("$name", async ({ source, message, stdout: expected }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("beforeExit", code => console.log("beforeExit", code));
+         process.on("exit", code => console.log("exit", code));
+         ${source}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: expect.stringContaining(message),
+      exitCode: 1,
+    });
+  });
+});
+
+it("a throwing Bun.listen data handler with no error: handler keeps the server alive", async () => {
+  using dir = tempDir("bun-listen-handler-throw", {
+    "server.js": `
+      let hits = 0;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(socket) {
+            socket.end();
+            console.log("DATA-HANDLER-RAN:" + ++hits);
+            if (hits === 2) server.stop(true);
+            throw new Error("handler-boom");
+          },
+        },
+      });
+      for (let i = 0; i < 2; i++) {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open(s) { s.write("x"); }, data() {}, close() {} },
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["DATA-HANDLER-RAN:1", "DATA-HANDLER-RAN:2"]);
+  expect(stderr).toContain("handler-boom");
+  expect(exitCode).toBe(1);
+});
+
+it("a Bun.listen error: handler that itself throws keeps the server alive", async () => {
+  using dir = tempDir("bun-listen-error-handler-throw", {
+    "server.js": `
+      let hits = 0;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {},
+          data(socket) {
+            socket.end();
+            console.log("DATA-HANDLER-RAN:" + ++hits);
+            if (hits === 2) server.stop(true);
+            throw new Error("from-data");
+          },
+          error() { throw new Error("from-error-handler"); },
+        },
+      });
+      for (let i = 0; i < 2; i++) {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open(s) { s.write("x"); }, data() {}, close() {} },
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["DATA-HANDLER-RAN:1", "DATA-HANDLER-RAN:2"]);
+  expect(stderr).toContain("from-error-handler");
+  expect(exitCode).toBe(1);
+});
+
+it("a throwing EventTarget listener lets dispatch complete, then fatal-exits next tick", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `setInterval(() => console.log("TICK"), 5000);
+       const ac = new AbortController();
+       ac.signal.addEventListener("abort", () => { throw new Error("from-first"); });
+       ac.signal.addEventListener("abort", () => console.log("SECOND-LISTENER"));
+       ac.abort();
+       console.log("AFTER-ABORT");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split(/\r?\n/)).toEqual(["SECOND-LISTENER", "AFTER-ABORT"]);
+  expect(stdout).not.toContain("TICK");
+  expect(stderr).toContain("from-first");
+  expect(exitCode).toBe(1);
+});
+
+it("a rejecting async EventTarget listener fatal-exits next tick", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `setInterval(() => console.log("TICK"), 5000);
+       const t = new EventTarget();
+       t.addEventListener("x", async () => { throw new Error("from-async"); });
+       t.dispatchEvent(new Event("x"));
+       console.log("AFTER-DISPATCH");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("AFTER-DISPATCH");
+  expect(stdout).not.toContain("TICK");
+  expect(stderr).toContain("from-async");
+  expect(exitCode).toBe(1);
+});
+
+it.each([undefined, "throw", "strict"])(
+  "an unhandled rejection fatal-exits with pending work (--unhandled-rejections=%s)",
+  async mode => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        ...(mode ? [`--unhandled-rejections=${mode}`] : []),
+        "-e",
+        `setInterval(() => console.log("TICK"), 5000); Promise.reject(new Error("rejected"))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("TICK");
+    expect(stderr).toContain("rejected");
+    expect(exitCode).toBe(1);
+  },
+);
+
+// Bun's default mode prints an unhandled rejection and ends the process. It
+// does not ask the 'uncaughtException' listeners or the capture callback: that
+// is its difference from --unhandled-rejections=throw. Only 'exit' listeners
+// run after the report. The queued immediate ends the process with status 3,
+// so a build that goes on after the report fails here and does not wait for
+// the top-level await.
+it.each([
+  {
+    name: "when nothing listens",
+    setup: "",
+    reason: `new Error("oops")`,
+    stderr: expect.stringContaining("error: oops"),
+  },
+  {
+    name: "and prints a reason that is not an error as it is",
+    setup: "",
+    reason: `{ plain: "object" }`,
+    stderr: expect.stringMatching(/^error\n\{\n  plain: "object",\n\}\n\nBun v/),
+  },
+  {
+    name: "and does not ask an 'uncaughtException' listener",
+    setup: `process.on("uncaughtException", e => console.log("uncaughtException", e.message));`,
+    reason: `new Error("oops")`,
+    stderr: expect.stringContaining("error: oops"),
+  },
+  {
+    name: "and does not ask the capture callback",
+    setup: `process.setUncaughtExceptionCaptureCallback(e => console.log("captured", e.message));`,
+    reason: `new Error("oops")`,
+    stderr: expect.stringContaining("error: oops"),
+  },
+  {
+    name: "under a pending top-level await",
+    setup: "",
+    reason: `new Error("oops")`,
+    tail: `await new Promise(() => {});`,
+    stderr: expect.stringContaining("error: oops"),
+  },
+])("a default-mode unhandled rejection ends the process $name", async ({ setup, reason, tail, stderr: errors }) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `${setup}
+       process.on("exit", code => console.log("exit", code, process.exitCode));
+       setImmediate(() => {
+         console.log("immediate");
+         process.exit(3);
+       });
+       Promise.reject(${reason});
+       ${tail ?? ""}`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 1 1\n", stderr: errors, exitCode: 1 });
+});
+
+// expect() from bun:test also works in a script. toThrow() reads the rejection
+// of an async function itself, so that rejection is not an uncaught error.
+it("expect(fn).toThrow() in a script reads the rejection of an async function", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { expect } from "bun:test";
+       expect(async () => { throw new Error("captured"); }).toThrow("captured");
+       console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "after\n", stderr: "", exitCode: 0 });
+});
+
+it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
+  using dir = tempDir("spawn-ipc-throw", {
+    "parent.js": `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "child.js"],
+        ipc(message) {
+          if (message === "boom") throw new Error("ipc-boom");
+          console.log("got:" + message);
+          child.send("ack");
+        },
+      });
+      await child.exited;
+    `,
+    "child.js": `
+      process.send("boom");
+      process.send("second");
+      process.on("message", () => process.exit(0));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("got:second");
+  expect(stderr).toContain("ipc-boom");
+  expect(exitCode).toBe(1);
+});
+
+it("a throwing Bun.serve websocket message handler keeps the server serving", async () => {
+  using dir = tempDir("ws-throw-alive", {
+    "server.js": `
+      const server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("http-ok");
+        },
+        websocket: {
+          message(ws, msg) {
+            if (msg === "boom") throw new Error("ws-boom");
+            ws.send("echo:" + msg);
+          },
+        },
+      });
+      console.log(server.port);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = proc.stdout.getReader();
+  const { value } = await reader.read();
+  reader.releaseLock();
+  const port = parseInt(new TextDecoder().decode(value).trim());
+
+  const first = new WebSocket("ws://127.0.0.1:" + port);
+  await new Promise((resolve, reject) => {
+    first.onopen = resolve;
+    first.onerror = () => reject(new Error("first connection failed to open"));
+  });
+  first.send("boom");
+
+  let stderrText = "";
+  const errReader = proc.stderr.getReader();
+  const errDecoder = new TextDecoder();
+  while (!stderrText.includes("ws-boom")) {
+    const { value, done } = await errReader.read();
+    if (done) throw new Error("stderr ended before the throw was reported: " + stderrText);
+    stderrText += errDecoder.decode(value);
+  }
+
+  const echoed = await new Promise((resolve, reject) => {
+    const ws = new WebSocket("ws://127.0.0.1:" + port);
+    ws.onopen = () => ws.send("after");
+    ws.onmessage = e => resolve(e.data);
+    ws.onclose = e => reject(new Error("second connection closed: " + e.code));
+    ws.onerror = () => reject(new Error("second connection errored"));
+  });
+  expect(echoed).toBe("echo:after");
+  first.close();
+
+  proc.kill();
+  while (true) {
+    const { done } = await errReader.read();
+    if (done) break;
+  }
+  await proc.exited;
+});
+
 it("process.exit() does not run microtasks or nextTicks that were queued before it", async () => {
   // Node runs 'exit' handlers and nothing queued before them; the exit-time
   // teardown must discard, not drain, the pre-exit microtask/nextTick queues.

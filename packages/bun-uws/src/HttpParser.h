@@ -1430,10 +1430,8 @@ struct HttpResponseData;
              * WebSockets or otherwise closed the socket. */
             /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
             if constexpr (ConsumeMinimally && IsNodeHttp) {
-                /* A head that took several reads: consumePostPadded set head to the part of the current read that
-                 * is not in the buffer. What the buffer holds behind the request head are copies of the bytes of
-                 * that read right in front of it, so head becomes the whole rest of the read, as for a head that
-                 * came in one read. */
+                /* consumePostPadded set head to the part of the read that is not in this buffer. The bytes behind
+                 * the request head here are copies of the bytes of the read right in front of that part. */
                 req->head = std::span<const char>(req->head.data() - length, req->head.size() + length);
             } else {
                 req->head = std::span<const char>(data, length);
@@ -1669,10 +1667,8 @@ public:
 
             size_t maxCopyDistance = std::min<size_t>(maxFallbackSize - fallback.length(), (size_t) length);
 
-            /* This frame owns the bytes while the head is parsed out of them and dispatched. The handler can destroy
-             * this parser while the HttpRequest still views them (the socket closes or becomes a WebSocket), and it
-             * can answer without user and leave the parser alive (a node:http tunnel that ended its own side): a
-             * head that was dispatched must not wait in fallback for the next read. */
+            /* This frame owns the bytes for the dispatch: the handler can destroy this parser while the request
+             * views them, and a parser that lives on must not keep a head that was dispatched. */
             std::string reassembled = std::move(fallback);
             fallback.clear();
 

@@ -635,11 +635,8 @@ impl NodeHTTPResponse {
             );
         }
 
-        // The sec-websocket-* headers were already copied into
-        // raw_response.upgrade(). The request is a stack object of the uWS parse
-        // frame that dispatched it, and its header views end with that dispatch,
-        // so set_on_aborted_handler (which would call
-        // preserve_web_socket_headers_if_needed) must not run post-upgrade.
+        // raw_response.upgrade() copied the sec-websocket-* headers. The request's header
+        // views end with its dispatch, so nothing reads them through this context from here on.
         self.upgrade_context.with_mut(|c| c.reset());
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.

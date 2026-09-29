@@ -84,6 +84,11 @@ public:
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
 
+    // For events that the runtime starts (exit, a signal, an IPC message). Returns true when a listener ran.
+    bool emitFromRuntime(const JSC::Identifier& eventName, const JSC::MarkedArgumentBuffer& args);
+    bool hasListeners(const JSC::Identifier& eventName);
+    int listenerCount(const JSC::Identifier& eventName);
+
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 

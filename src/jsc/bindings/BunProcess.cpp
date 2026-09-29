@@ -339,7 +339,6 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (process->m_isExiting)
         return;
     process->m_isExiting = true;
-    auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
@@ -347,13 +346,13 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
     auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
+    if (!process->hasListeners(event)) {
         return;
     }
 
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    process->emitFromRuntime(event, arguments);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -862,7 +861,7 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+    auto fired = process->emitFromRuntime(Identifier::fromString(vm, "beforeExit"_s), arguments);
     RETURN_IF_EXCEPTION(scope, );
     if (fired) {
         // The ticks and the microtasks of the listeners run now, with or without a tick queue (node: MakeCallback).
@@ -1291,7 +1290,7 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));
 
-    return process->wrapped().emitForBindings(signalNameIdentifier, args);
+    return process->emitFromRuntime(signalNameIdentifier, args);
 }
 
 #if OS(WINDOWS)
@@ -1330,7 +1329,6 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
-    auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
@@ -1364,9 +1362,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     }
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
-    if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
+    if (process->listenerCount(uncaughtExceptionMonitor) > 0) {
         auto monitorScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        wrapped.emit(uncaughtExceptionMonitor, args);
+        process->emitFromRuntime(uncaughtExceptionMonitor, args);
         RETURN_IF_EXCEPTION(monitorScope, true);
     }
 
@@ -1385,9 +1383,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
         }
-    } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+    } else if (process->listenerCount(uncaughtExceptionIdent) > 0) {
         auto emitScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        wrapped.emit(uncaughtExceptionIdent, args);
+        process->emitFromRuntime(uncaughtExceptionIdent, args);
         RETURN_IF_EXCEPTION(emitScope, true);
     } else {
         return false;
@@ -1494,12 +1492,11 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     Bun::ErrorHandlerContextScope inRealmsContext(globalObject, nullptr);
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
-    auto& wrapped = process->wrapped();
-    if (wrapped.listenerCount(eventType) > 0) {
+    if (process->listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        wrapped.emit(eventType, args);
+        process->emitFromRuntime(eventType, args);
         return true;
     }
 
@@ -1527,11 +1524,10 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return true;
     }
-    auto& wrapped = process->wrapped();
-    if (wrapped.listenerCount(eventType) > 0) {
+    if (process->listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
         args.append(promise);
-        wrapped.emit(eventType, args);
+        process->emitFromRuntime(eventType, args);
         RETURN_IF_EXCEPTION(scope, true);
         return true;
     }
@@ -1586,13 +1582,14 @@ extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
+        auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+        auto* process = global->processObject();
         if (eventName == "memoryPressure") {
-            auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
             if (isAdded) {
-                if (eventEmitter.listenerCount(eventName) == 1) {
+                if (process->listenerCount(eventName) == 1) {
                     Bun__MemoryPressure__install(global);
                 }
-            } else if (eventEmitter.listenerCount(eventName) == 0) {
+            } else if (process->listenerCount(eventName) == 0) {
                 Bun__MemoryPressure__uninstall(global);
             }
             return;
@@ -1600,10 +1597,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         // IPC handlers
         if (eventName == "message" || eventName == "disconnect") {
-            auto* global = uncheckedDowncast<GlobalObject>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             auto& vm = JSC::getVM(global);
-            auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
-            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
+            auto messageListenerCount = process->listenerCount(vm.propertyNames->message);
+            auto disconnectListenerCount = process->listenerCount(Identifier::fromString(vm, "disconnect"_s));
             if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
                 disconnectListenerCount--;
             }
@@ -1632,7 +1628,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-            int listenerCount = eventEmitter.listenerCount(eventName);
+            int listenerCount = process->listenerCount(eventName);
             // Mirror the count for the watcher thread's --watch-kill-signal check.
             Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)
@@ -1697,6 +1693,21 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
 Process::~Process()
 {
+}
+
+bool Process::emitFromRuntime(const Identifier& eventName, const MarkedArgumentBuffer& args)
+{
+    return wrapped().emitForBindings(eventName, args);
+}
+
+bool Process::hasListeners(const Identifier& eventName)
+{
+    return wrapped().hasEventListeners(eventName);
+}
+
+int Process::listenerCount(const Identifier& eventName)
+{
+    return wrapped().listenerCount(eventName);
 }
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
@@ -1794,7 +1805,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
     auto ident = builtinNames(vm).warningPublicName();
     JSC::MarkedArgumentBuffer args;
     args.append(value);
-    process->wrapped().emit(ident, args);
+    process->emitFromRuntime(ident, args);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -4968,11 +4979,11 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
         }
     }
 
-    if (process->wrapped().hasEventListeners(ident)) {
+    if (process->hasListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         args.append(message);
         args.append(JSValue::decode(handle));
-        process->wrapped().emit(ident, args);
+        process->emitFromRuntime(ident, args);
     }
 }
 
@@ -4981,9 +4992,9 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     auto ident = Identifier::fromString(vm, "disconnect"_s);
-    if (process->wrapped().hasEventListeners(ident)) {
+    if (process->hasListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
-        process->wrapped().emit(ident, args);
+        process->emitFromRuntime(ident, args);
     }
 }
 
@@ -4992,11 +5003,11 @@ extern "C" void Process__emitMemoryPressureEvent(Zig::GlobalObject* global, int 
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
     auto ident = Identifier::fromString(vm, "memoryPressure"_s);
-    if (process->wrapped().hasEventListeners(ident)) {
+    if (process->hasListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         // Level values match NOTE_MEMORYSTATUS_PRESSURE_WARN (2) / _CRITICAL (4).
         args.append(jsString(vm, level == 2 ? String("warning"_s) : String("critical"_s)));
-        process->wrapped().emit(ident, args);
+        process->emitFromRuntime(ident, args);
     }
 }
 
@@ -5004,10 +5015,10 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
-    if (process->wrapped().hasEventListeners(vm.propertyNames->error)) {
+    if (process->hasListeners(vm.propertyNames->error)) {
         JSC::MarkedArgumentBuffer args;
         args.append(JSValue::decode(value));
-        process->wrapped().emit(vm.propertyNames->error, args);
+        process->emitFromRuntime(vm.propertyNames->error, args);
     }
 }
 

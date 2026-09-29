@@ -458,11 +458,54 @@ mod _impl {
             }
         }
 
+        /// Starts a new session on the same context, which keeps the dictionary
+        /// and the parameters, as node does since v26.10.0:
+        /// https://github.com/nodejs/node/blob/v26.10.0/src/node_zlib.cc#L1720-L1744
+        /// https://github.com/nodejs/node/blob/v26.10.0/src/node_zlib.cc#L1822-L1839
         pub(crate) fn reset(&mut self) -> Error {
-            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
-            // with its default (empty) dictionary — a reset drops the dictionary.
-            // `init` frees the previous context itself.
-            self.init(self.pledged_src_size, None)
+            // Every field is named, with no `..`: a field added to `Context`
+            // does not compile until a reset keeps it or clears it here.
+            let Self {
+                mode,
+                state,
+                pledged_src_size,
+                flush: _,
+                input: _,
+                output: _,
+                remaining: _,
+            } = *self;
+            // A handle that was never init()ed, or whose init() failed, has no
+            // context, and zstd dereferences the pointer unconditionally.
+            let Some(state) = state else {
+                return Error::OK;
+            };
+            let result = match mode {
+                NodeMode::ZSTD_COMPRESS => {
+                    // SAFETY: state is a valid CCtx set by init().
+                    let result =
+                        unsafe { c::ZSTD_CCtx_reset(state.cast(), c::ZSTD_reset_session_only) };
+                    if c::ZSTD_isError(result) > 0 {
+                        result
+                    } else {
+                        // zstd keeps a pledged size for one frame only, so a
+                        // session reset clears it.
+                        // SAFETY: state is a valid CCtx set by init().
+                        unsafe {
+                            c::ZSTD_CCtx_setPledgedSrcSize(state.cast(), pledged_src_size as _)
+                        }
+                    }
+                }
+                // SAFETY: state is a valid DCtx set by init().
+                NodeMode::ZSTD_DECOMPRESS => unsafe {
+                    c::ZSTD_DCtx_reset(state.cast(), c::ZSTD_reset_session_only)
+                },
+                _ => unreachable!(),
+            };
+            if c::ZSTD_isError(result) == 0 {
+                return Error::OK;
+            }
+            self.remaining = result as u64;
+            self.get_error_info()
         }
 
         /// Frees the Zstd encoder/decoder state without changing mode.

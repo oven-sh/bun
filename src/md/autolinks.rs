@@ -1,5 +1,5 @@
 use crate::helpers;
-use crate::inlines::EmphDelim;
+use crate::inlines::{EmphDelim, MAX_EMPH_MATCHES};
 use bun_core::strings;
 
 pub(crate) fn is_list_bullet(c: u8) -> bool {
@@ -12,8 +12,58 @@ pub(crate) fn is_list_item_mark(c: u8) -> bool {
 
 #[derive(Copy, Clone)]
 pub struct Autolink {
+    /// Position of the trigger character ('@', ':', or '.').
+    pub(crate) trigger: usize,
     pub(crate) beg: usize,
     pub(crate) end: usize,
+    /// The first and the last delimiter of a tail, one of which has to be paired for this to be a link, or `NONE`.
+    first_run: usize,
+    scan_end: usize,
+}
+
+impl Autolink {
+    fn certain(trigger: usize, beg: usize, end: usize) -> Autolink {
+        Autolink {
+            trigger,
+            beg,
+            end,
+            first_run: NONE,
+            scan_end: NONE,
+        }
+    }
+
+    /// True if emphasis resolution cannot take this link back.
+    pub(crate) fn is_certain(&self) -> bool {
+        self.first_run == NONE
+    }
+
+    /// This link with the runs that emphasis paired, if no pair has only one of its runs in the link.
+    pub(crate) fn resolved_with(&self, resolved: &[EmphDelim]) -> Option<Autolink> {
+        if self.is_certain() {
+            return Some(*self);
+        }
+        let mut open_pairs: usize = 0;
+        let mut from = resolved.partition_point(|d| d.pos < self.beg);
+        for _ in 0..MAX_PAIRED_RUNS_IN_LINK {
+            let at = resolved.get(from)?.next_paired as usize;
+            let run = resolved.get(at)?;
+            if run.pos >= self.first_run {
+                // The link ends in front of the first paired run of its tail.
+                let mut link = *self;
+                if run.pos > self.first_run {
+                    link.end = run.pos;
+                }
+                return (run.pos <= self.scan_end && open_pairs == 0).then_some(link);
+            }
+            let (opens, closes) = (usize::from(run.open_num), usize::from(run.close_num));
+            if opens.max(closes) >= MAX_EMPH_MATCHES {
+                return None;
+            }
+            open_pairs = open_pairs.checked_sub(closes)? + opens;
+            from = at + 1;
+        }
+        None
+    }
 }
 
 pub(crate) type AutolinkResult = Option<Autolink>;
@@ -78,6 +128,9 @@ const COMPONENTS: [Component; 4] = [
 
 const NONE: usize = usize::MAX;
 
+/// A link that emphasis resolution decides about is no link if it has more paired runs than this in it.
+const MAX_PAIRED_RUNS_IN_LINK: usize = 32;
+
 /// What the scans of the url and www candidates that failed have read, in positions of the top inline slice.
 #[derive(Copy, Clone)]
 pub struct AutolinkScanMemo {
@@ -87,6 +140,15 @@ pub struct AutolinkScanMemo {
     accept_start: [usize; 4],
     accept_end: [usize; 4],
     host_marks: HostMarks,
+    /// Marks of the host run up to `host_cut`.
+    host_cut_marks: HostMarks,
+    host_cut: usize,
+    /// Per kind of the component that a scan ends in. Two scans that end in the same kind end at the same byte or do not overlap.
+    tails: [TailMemo; 4],
+    /// What `stripped_end` found for the run at `strip_run` and a query that starts at `strip_query`.
+    strip_run: usize,
+    strip_query: usize,
+    strip_end: usize,
     /// `parens` is the count for `content[paren_from..paren_to]`.
     paren_from: usize,
     paren_to: usize,
@@ -99,6 +161,12 @@ impl AutolinkScanMemo {
         accept_start: [NONE; 4],
         accept_end: [0; 4],
         host_marks: HostMarks::EMPTY,
+        host_cut_marks: HostMarks::EMPTY,
+        host_cut: NONE,
+        tails: [TailMemo::EMPTY; 4],
+        strip_run: NONE,
+        strip_query: NONE,
+        strip_end: 0,
         paren_from: NONE,
         paren_to: 0,
         parens: ParenCount { open: 0, close: 0 },
@@ -125,6 +193,7 @@ impl AutolinkScanMemo {
             self.accept_end[kind] = end;
             if kind == HOST {
                 self.host_marks = HostMarks::of(content, base, scan.accept_start, scan.accept_end);
+                self.host_cut = NONE;
             }
         }
     }
@@ -150,6 +219,153 @@ impl AutolinkScanMemo {
         }
         parens
     }
+
+    /// True if the recorded host run has `min` components from `start` to `cut`.
+    fn host_has_to(
+        &mut self,
+        content: &[u8],
+        base: usize,
+        start: usize,
+        cut: usize,
+        min: u32,
+    ) -> bool {
+        if self.host_cut != cut {
+            debug_assert!(base <= self.accept_start[HOST] && self.accept_start[HOST] <= cut);
+            let from = self.accept_start[HOST] - base;
+            self.host_cut_marks = HostMarks::of(content, base, from, cut - base);
+            self.host_cut = cut;
+        }
+        self.host_cut_marks.has(start, min)
+    }
+
+    /// The first delimiter of the delimiters and periods in front of `end`, or the delimiter at `end`.
+    fn delimiter_in_tail(
+        &mut self,
+        content: &[u8],
+        base: usize,
+        scan: TailScan,
+    ) -> Option<TailRun> {
+        let TailScan { kind, from, end } = scan;
+        let limit = base + content.len();
+        let memo = self.tails[kind];
+        let known = self.armed
+            && memo.end == base + end
+            && memo.limit == limit
+            && memo.start >= base + from;
+        if known {
+            return memo.tail.map(|tail| tail.relative_to(base));
+        }
+        let mut run = NONE;
+        if end < content.len() && EMPH_DELIMS.contains(content[end]) {
+            run = end;
+        }
+        let mut pos = end;
+        while pos > from && (EMPH_DELIMS.contains(content[pos - 1]) || content[pos - 1] == b'.') {
+            pos -= 1;
+            if content[pos] != b'.' {
+                run = pos;
+            }
+        }
+        let tail = (run != NONE).then(|| TailRun {
+            start: pos,
+            run,
+            token_ends: token_ends_with_punctuation(content, end),
+        });
+        if self.armed && pos != from {
+            self.tails[kind] = TailMemo {
+                limit,
+                end: base + end,
+                start: base + pos,
+                tail: tail.map(|tail| TailRun {
+                    start: base + tail.start,
+                    run: base + tail.run,
+                    token_ends: tail.token_ends,
+                }),
+            };
+        }
+        tail
+    }
+
+    /// The end of a link in front of `tail.run`, as in GFM without the periods and the unbalanced ')' there.
+    fn stripped_end(
+        &mut self,
+        content: &[u8],
+        base: usize,
+        host_start: usize,
+        query_start: usize,
+        tail: TailRun,
+    ) -> usize {
+        // The tail has only periods in front of its first delimiter.
+        let mut end = tail.start;
+        if end <= query_start || content[end - 1] != b')' {
+            return end;
+        }
+        let (run, query) = (base + tail.run, base + query_start);
+        if self.armed && self.strip_run == run && self.strip_query == query {
+            return self.strip_end - base;
+        }
+        let mut parens = self.parens(content, base, query_start, tail.run);
+        while end > host_start {
+            match content[end - 1] {
+                b'.' => {}
+                b')' if parens.close > parens.open => parens.close -= 1,
+                _ => break,
+            }
+            end -= 1;
+        }
+        if self.armed {
+            self.strip_run = run;
+            self.strip_query = query;
+            self.strip_end = base + end;
+        }
+        end
+    }
+}
+
+/// The delimiters and periods at the end of a scan.
+#[derive(Copy, Clone)]
+struct TailRun {
+    start: usize,
+    /// The first delimiter.
+    run: usize,
+    /// True if the token has only punctuation from the end of the scan on.
+    token_ends: bool,
+}
+
+impl TailRun {
+    fn relative_to(self, base: usize) -> TailRun {
+        TailRun {
+            start: self.start - base,
+            run: self.run - base,
+            token_ends: self.token_ends,
+        }
+    }
+}
+
+/// A scan that ends at `end` in a component of `kind`, with its host at `from`.
+#[derive(Copy, Clone)]
+struct TailScan {
+    kind: usize,
+    from: usize,
+    end: usize,
+}
+
+/// What `delimiter_in_tail` found for the scan end `end` in the slice that ends at `limit`.
+#[derive(Copy, Clone)]
+struct TailMemo {
+    limit: usize,
+    end: usize,
+    start: usize,
+    tail: Option<TailRun>,
+}
+
+impl TailMemo {
+    const EMPTY: TailMemo = TailMemo {
+        limit: NONE,
+        end: NONE,
+        start: NONE,
+        tail: None,
+    };
 }
 
 #[derive(Copy, Clone)]
@@ -322,24 +538,75 @@ const EMPH_DELIMS: ByteSet = ByteSet::of(b"*_~");
 const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
 const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
 
+/// When an emphasis delimiter (*_~) next to a link is a boundary.
+#[derive(Copy, Clone)]
+enum DelimiterBoundary<'a> {
+    /// In front of a URL or WWW link, which is found before emphasis is paired.
+    Always,
+    /// Behind a URL or WWW link: `delimiter_in_tail` finds the run that ends the link.
+    Never,
+    /// Next to an email address, if its run was paired.
+    IfPaired(&'a [EmphDelim]),
+}
+
+impl DelimiterBoundary<'_> {
+    fn is_boundary(self, at: usize) -> bool {
+        match self {
+            DelimiterBoundary::Always => true,
+            DelimiterBoundary::Never => false,
+            DelimiterBoundary::IfPaired(resolved) => is_paired_delimiter(resolved, at),
+        }
+    }
+}
+
+/// What can follow a link in its token: the trailing punctuation of GFM, quotes and closing brackets.
+const TRAILING_PUNCTUATION: ByteSet = ByteSet::of(b"*_~.,:;!?'\")]}");
+/// A token ends at whitespace, at '<' and at a backslash.
+const TOKEN_END: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C<\\");
+
+/// True if the token has only punctuation and entities from `pos` on.
+fn token_ends_with_punctuation(content: &[u8], pos: usize) -> bool {
+    let mut pos = pos;
+    while pos < content.len() {
+        let entity = if content[pos] == b'&' {
+            helpers::find_entity(content, pos)
+        } else {
+            None
+        };
+        match entity {
+            Some(end) => pos = end,
+            None if TRAILING_PUNCTUATION.contains(content[pos]) => pos += 1,
+            None => break,
+        }
+    }
+    let Some(&c) = content.get(pos) else {
+        return true;
+    };
+    if c.is_ascii() {
+        return TOKEN_END.contains(c);
+    }
+    // A '_' in front of a letter is a part of the word, as it is between ASCII letters.
+    let in_word = pos > 0 && content[pos - 1] == b'_';
+    let next = helpers::decode_utf8(content, pos).codepoint;
+    !in_word || helpers::is_unicode_whitespace(next) || helpers::is_unicode_punctuation(next)
+}
+
 /// Check left boundary for permissive autolinks.
-/// An emphasis delimiter (*_~) is a boundary if its run in `resolved` was paired.
-fn check_left_boundary(content: &[u8], pos: usize, resolved: &[EmphDelim]) -> bool {
+fn check_left_boundary(content: &[u8], pos: usize, delims: DelimiterBoundary) -> bool {
     if pos == 0 {
         return true;
     }
     let c = content[pos - 1];
-    LEFT_BOUNDARY.contains(c) || (EMPH_DELIMS.contains(c) && is_paired_delimiter(resolved, pos - 1))
+    LEFT_BOUNDARY.contains(c) || (EMPH_DELIMS.contains(c) && delims.is_boundary(pos - 1))
 }
 
 /// Check right boundary for permissive autolinks.
-/// An emphasis delimiter (*_~) is a boundary if its run in `resolved` was paired.
-fn check_right_boundary(content: &[u8], pos: usize, resolved: &[EmphDelim]) -> bool {
+fn check_right_boundary(content: &[u8], pos: usize, delims: DelimiterBoundary) -> bool {
     if pos >= content.len() {
         return true;
     }
     let c = content[pos];
-    RIGHT_BOUNDARY.contains(c) || (EMPH_DELIMS.contains(c) && is_paired_delimiter(resolved, pos))
+    RIGHT_BOUNDARY.contains(c) || (EMPH_DELIMS.contains(c) && delims.is_boundary(pos))
 }
 
 struct Scheme {
@@ -351,7 +618,6 @@ struct Scheme {
 pub(crate) fn find_url_autolink(
     content: &[u8],
     pos: usize,
-    resolved: &[EmphDelim],
     ctx: &mut ScanContext,
 ) -> AutolinkResult {
     // URL autolink: check for http://, https://, ftp://
@@ -378,12 +644,17 @@ pub(crate) fn find_url_autolink(
                 && &content[pos + 1..pos + 1 + suflen] == scheme.suffix
             {
                 let beg = pos - slen;
-                if !check_left_boundary(content, beg, resolved) {
+                if !check_left_boundary(content, beg, DelimiterBoundary::Always) {
                     continue;
                 }
-                let host_start = pos + 1 + suflen;
-                if let Some(al) = scan_url_tail(content, beg, host_start, 2, resolved, ctx) {
-                    return Some(al);
+                let link = LinkStart {
+                    trigger: pos,
+                    beg,
+                    host_start: pos + 1 + suflen,
+                    min_host_components: 2,
+                };
+                if let Some(link) = scan_url_tail(content, link, ctx) {
+                    return Some(link);
                 }
             }
         }
@@ -423,29 +694,40 @@ pub(crate) fn find_email_autolink(
         return None; // empty username
     }
 
-    if !check_left_boundary(content, beg, resolved) {
+    let delims = DelimiterBoundary::IfPaired(resolved);
+    if !check_left_boundary(content, beg, delims) {
         return None;
     }
 
     // Scan forward for domain (host component only for email)
-    let host = scan_url_component(content, None, HOST, pos + 1, 2);
+    let mut content = content;
+    let mut host = scan_url_component(content, None, HOST, pos + 1, 2);
+    // The input of the host ends at the first paired run in it.
+    let runs = &resolved[resolved.partition_point(|d| d.pos < pos)..];
+    let paired = runs
+        .iter()
+        .take_while(|d| d.pos < host.accept_end)
+        .find(|d| d.open_count + d.close_count > 0);
+    if let Some(run) = paired {
+        content = &content[..run.pos];
+        host = scan_url_component(content, None, HOST, pos + 1, 2);
+    }
     if !host.ok {
         return None;
     }
     let end = host.end;
 
-    if !check_right_boundary(content, end, resolved) {
+    if !check_right_boundary(content, end, delims) {
         return None;
     }
 
-    Some(Autolink { beg, end })
+    Some(Autolink::certain(pos, beg, end))
 }
 
 /// Detect a permissive WWW autolink. `pos` is the position of the '.' after "www".
 pub(crate) fn find_www_autolink(
     content: &[u8],
     pos: usize,
-    resolved: &[EmphDelim],
     ctx: &mut ScanContext,
 ) -> AutolinkResult {
     if pos < 3 {
@@ -456,21 +738,35 @@ pub(crate) fn find_www_autolink(
     }
 
     let beg = pos - 3;
-    if !check_left_boundary(content, beg, resolved) {
+    if !check_left_boundary(content, beg, DelimiterBoundary::Always) {
         return None;
     }
-    scan_url_tail(content, beg, pos + 1, 1, resolved, ctx)
+    let link = LinkStart {
+        trigger: pos,
+        beg,
+        host_start: pos + 1,
+        min_host_components: 1,
+    };
+    scan_url_tail(content, link, ctx)
 }
 
-/// Scan the host (mandatory), path, query and fragment of a link that starts at `beg`.
-fn scan_url_tail(
-    content: &[u8],
+/// What a finder knows of a candidate in front of the scan.
+#[derive(Copy, Clone)]
+struct LinkStart {
+    trigger: usize,
     beg: usize,
     host_start: usize,
     min_host_components: u32,
-    resolved: &[EmphDelim],
-    ctx: &mut ScanContext,
-) -> AutolinkResult {
+}
+
+/// Scan the host (mandatory), path, query and fragment of the candidate `link`, and find its end.
+fn scan_url_tail(content: &[u8], link: LinkStart, ctx: &mut ScanContext) -> AutolinkResult {
+    let LinkStart {
+        trigger,
+        beg,
+        host_start,
+        min_host_components,
+    } = link;
     let host = scan_url_component(content, Some(ctx), HOST, host_start, min_host_components);
     if !host.ok {
         ctx.memo.note(content, ctx.base, &[host]);
@@ -480,12 +776,88 @@ fn scan_url_tail(
     let query = scan_url_component(content, Some(ctx), QUERY, path.end, 1);
     let frag = scan_url_component(content, Some(ctx), FRAGMENT, query.end, 1);
 
-    let end = post_process_autolink_end(content, beg, path.end, frag.end, ctx);
-    if !check_right_boundary(content, end, resolved) {
+    let scan_end = frag.end;
+    let scan = TailScan {
+        kind: if frag.end > query.end {
+            FRAGMENT
+        } else if query.end > path.end {
+            QUERY
+        } else if path.end > host.end {
+            PATH
+        } else {
+            HOST
+        },
+        from: host_start,
+        end: scan_end,
+    };
+    let tail = ctx.memo.delimiter_in_tail(content, ctx.base, scan);
+    let host_scan = HostScan {
+        start: host_start,
+        accept_end: host.accept_end,
+        min_components: min_host_components,
+    };
+    let certain = |end| Autolink::certain(trigger, beg, end);
+    let link = match tail {
+        Some(tail) if tail.token_ends => {
+            end_at_delimiter_run(content, host_scan, path.end, tail, ctx).map(certain)
+        }
+        _ => {
+            let end = post_process_autolink_end(content, beg, path.end, scan_end, ctx);
+            if check_right_boundary(content, end, DelimiterBoundary::Never) {
+                Some(certain(end))
+            } else {
+                // Text follows the delimiter at the scan end: `Autolink::resolved_with` decides.
+                tail.filter(|_| EMPH_DELIMS.contains(content[end]))
+                    .and_then(|tail| {
+                        let end = end_at_delimiter_run(content, host_scan, path.end, tail, ctx)?;
+                        Some(Autolink {
+                            trigger,
+                            beg,
+                            end,
+                            first_run: tail.run,
+                            scan_end,
+                        })
+                    })
+            }
+        }
+    };
+    // The bytes of a link that is not certain are read again.
+    if link.is_none_or(|link| !link.is_certain()) {
         ctx.memo.note(content, ctx.base, &[host, path, query, frag]);
-        return None;
     }
-    Some(Autolink { beg, end })
+    link
+}
+
+#[derive(Copy, Clone)]
+struct HostScan {
+    start: usize,
+    accept_end: usize,
+    min_components: u32,
+}
+
+/// The end of a link in front of the first delimiter of `tail`, if the host in front of that end is whole.
+fn end_at_delimiter_run(
+    content: &[u8],
+    host: HostScan,
+    query_start: usize,
+    tail: TailRun,
+    ctx: &mut ScanContext,
+) -> Option<usize> {
+    let end = ctx
+        .memo
+        .stripped_end(content, ctx.base, host.start, query_start, tail);
+    if end < host.accept_end {
+        let (base, memo, min) = (ctx.base, &mut *ctx.memo, host.min_components);
+        let ok = if memo.armed && memo.covers(HOST, base + host.start) {
+            memo.host_has_to(content, base, base + host.start, base + end, min)
+        } else {
+            HostMarks::of(content, 0, host.start, end).has(host.start, min)
+        };
+        if !ok {
+            return None;
+        }
+    }
+    Some(end)
 }
 
 /// GFM post-processing: trim trailing unbalanced `)` and entity-like suffixes from autolink URLs.

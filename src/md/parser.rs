@@ -69,6 +69,11 @@ pub(crate) struct Parser<'a> {
     pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
     // Memo of the url and www autolink candidates that failed (autolinks.rs).
     pub(crate) autolink_scan_memo: crate::autolinks::AutolinkScanMemo,
+    // Bare URL and WWW links of the slices that process_inline_content is in, innermost last.
+    pub(crate) autolinks: Vec<crate::autolinks::Autolink>,
+    // The links of the current slice start at `autolink_base`, the walk is at `autolink_cursor`.
+    pub(crate) autolink_base: usize,
+    pub(crate) autolink_cursor: usize,
 
     // Number of active containers
     pub(crate) n_containers: u32,
@@ -281,6 +286,9 @@ impl<'a> Parser<'a> {
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             autolink_scan_memo: crate::autolinks::AutolinkScanMemo::EMPTY,
+            autolinks: Vec::new(),
+            autolink_base: 0,
+            autolink_cursor: 0,
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),

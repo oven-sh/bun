@@ -36,7 +36,7 @@ pub enum NativeWireResult {
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
 /// producers that feed it.
 #[derive(Default)]
-pub enum Strong {
+pub(crate) enum Strong {
     #[default]
     Empty,
     /// GC-roots the stream.
@@ -46,9 +46,6 @@ pub enum Strong {
     /// `None` once the stream (and its `Box<NewSource<_>>`) is collected.
     Weak(bun_jsc::Weak<()>),
 }
-
-/// Re-export under the qualified name callers expect.
-pub type ReadableStreamStrong = Strong;
 
 impl Strong {
     fn value(&self) -> Option<JSValue> {
@@ -140,13 +137,20 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__isClosedUnread(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
-    safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__used(global: &JSGlobalObject, consumed: bool) -> JSValue;
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
-    safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__closeConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
+    /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
+    safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
     safe fn ZigGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,
@@ -188,56 +192,56 @@ impl ReadableStream {
         });
     }
 
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
-        if self.is_disturbed(global_this) {
+        if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
         }
 
         self.reload_tag();
 
-        match self.ptr {
+        let blob = match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done();
-                    return Some(blob);
-                }
+                blobby.to_any_blob(global_this)?
             }
             Source::File(_) => {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
                 // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
                 let blobby = self.ptr.file().expect("matched File");
-                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
-                    let blob = Blob::init_with_store(store.clone(), global_this);
-                    // The window `from_blob_copy_ref` moved onto the reader.
-                    if let Some(offset) = blobby.start_offset {
-                        blob.offset.set(offset as webcore::blob::SizeType);
-                    }
-                    if let Some(size) = blobby.max_size {
-                        blob.size.set(size as webcore::blob::SizeType);
-                    }
-                    // it should be lazy, file shouldn't have opened yet.
-                    debug_assert!(!blobby.started.get());
-                    self.done();
-                    return Some(webcore::blob::Any::Blob(blob));
+                let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() else {
+                    return None;
+                };
+                let blob = Blob::init_with_store(store.clone(), global_this);
+                // The window `from_blob_copy_ref` moved onto the reader.
+                if let Some(offset) = blobby.start_offset {
+                    blob.offset.set(offset as webcore::blob::SizeType);
                 }
+                if let Some(size) = blobby.max_size {
+                    blob.size.set(size as webcore::blob::SizeType);
+                }
+                // it should be lazy, file shouldn't have opened yet.
+                debug_assert!(!blobby.started.get());
+                webcore::blob::Any::Blob(blob)
             }
             Source::Bytes(_) => {
                 // BACKREF: see `Source::bytes()` — payload valid while stream alive.
                 let bytes = self.ptr.bytes().expect("matched Bytes");
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
-                if let Some(blob) = bytes.to_any_blob() {
-                    self.done();
-                    return Some(blob);
-                }
-                return None;
+                bytes.to_any_blob()?
             }
-            _ => {}
-        }
+            // Closed before anything read from it: the same store-less empty Blob `new Blob([])` gives.
+            Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
+                webcore::blob::Any::Blob(Blob::init_empty(global_this))
+            }
+            Source::JavaScript | Source::Invalid => return None,
+        };
 
-        None
+        self.done();
+        ReadableStream__closeConsumedAsBody(self.value, global_this);
+        Some(blob)
     }
 
     pub fn done(&self) {
@@ -286,13 +290,18 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
+        if let Some(bytes) = self.ptr.bytes() {
+            bytes.error_native_consumer(reason);
+        } else if let Some(file) = self.ptr.file() {
+            file.error_native_consumer(reason);
+        }
         self.done();
         result
     }
 
-    pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__detach(self.value, global_object);
+    /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
+    pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
+        ReadableStream__markConsumedAsBody(self.value, global_object);
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native
@@ -317,7 +326,6 @@ impl ReadableStream {
         set_source: impl FnOnce(streams::SourceHandle),
     ) -> NativeWireResult {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
-        use webcore::SinkHandle;
 
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
@@ -329,7 +337,7 @@ impl ReadableStream {
                 byte_stream.signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
-                    byte_stream.sink.set(SinkHandle::None);
+                    byte_stream.detach_sink(Some(&err));
                     return NativeWireResult::EndedInline(Some(err));
                 }
 
@@ -344,14 +352,14 @@ impl ReadableStream {
                     match sink.write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
-                            byte_stream.sink.set(SinkHandle::None);
+                            byte_stream.detach_sink(None);
                             return NativeWireResult::EndedInline(None);
                         }
                         _ => {}
                     }
                 }
                 if had_last {
-                    byte_stream.sink.set(SinkHandle::None);
+                    byte_stream.detach_sink(None);
                     return NativeWireResult::EndedInline(None);
                 }
                 // Wake the producer after the older bytes are in the sink;
@@ -370,12 +378,16 @@ impl ReadableStream {
                         use bun_sys_jsc::SystemErrorJsc;
                         let err_js = e.to_system_error().to_error_instance(global);
                         err_js.ensure_still_alive();
-                        return NativeWireResult::EndedInline(Some(StreamError::JSValue(
-                            jsc::strong::Optional::create(err_js, global),
-                        )));
+                        let err =
+                            StreamError::JSValue(jsc::strong::Optional::create(err_js, global));
+                        self.lock_native(global);
+                        file_reader.parent_const().end_locked_stream(Some(&err));
+                        return NativeWireResult::EndedInline(Some(err));
                     }
                     Some(Start::OwnedAndDone(bytes)) => {
+                        self.lock_native(global);
                         let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
+                        file_reader.parent_const().end_locked_stream(None);
                         return NativeWireResult::EndedInline(None);
                     }
                     Some(_) | None => {}
@@ -400,6 +412,11 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// Fetch's "body is unusable" (<https://fetch.spec.whatwg.org/#body-unusable>).
+    pub fn is_disturbed_or_locked(&self, global_object: &JSGlobalObject) -> bool {
+        self.is_disturbed(global_object) || self.is_locked(global_object)
     }
 
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
@@ -494,38 +511,38 @@ impl ReadableStream {
     }
 
     pub(crate) fn from_owned_slice(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         bytes: impl Into<Vec<u8>>,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        let blob = Blob::init(bytes.into(), global_this);
-        Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
+        let blob = Blob::init(bytes.into(), cx.global());
+        Self::from_blob_copy_ref(cx, &blob, recommended_chunk_size)
     }
 
     pub fn from_blob_copy_ref(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let Some(store) = blob.store.get() else {
-            return ReadableStream::empty(global_this);
+            return ReadableStream::empty(cx.global());
         };
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(global_this)),
+                    global_this: Some(bun_ptr::BackRef::new(cx.global())),
                     context: ByteBlobLoader::default(),
                     ..Default::default()
                 });
                 reader.context.setup(blob, recommended_chunk_size);
-                reader.to_readable_stream(global_this)
+                reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
-                    global_this: Some(bun_ptr::BackRef::new(global_this)),
+                    global_this: Some(bun_ptr::BackRef::new(cx.global())),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            global_this.bun_vm().as_mut().event_loop().cast(),
+                            cx.vm().as_mut().event_loop().cast(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
@@ -538,21 +555,11 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                reader.to_readable_stream(global_this)
+                reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
                 let path = s3.path();
-                // `Transpiler::env_mut` is the safe accessor for the
-                // process-singleton dotenv loader (set during init).
-                let proxy = global_this
-                    .bun_vm()
-                    .as_mut()
-                    .transpiler
-                    .env_mut()
-                    .get_http_proxy(true, None, None);
-                let proxy_url = proxy.as_ref().map(|p| p.href);
-
                 crate::webcore::s3::client::readable_stream(
                     credentials,
                     path,
@@ -562,24 +569,23 @@ impl ReadableStream {
                     } else {
                         None
                     },
-                    proxy_url,
                     s3.request_payer,
-                    global_this,
+                    cx,
                 )
             }
         }
     }
 
     pub fn from_pipe<P>(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         _parent: P,
         buffered_reader: &mut bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
-            global_this: Some(bun_ptr::BackRef::new(global_this)),
+            global_this: Some(bun_ptr::BackRef::new(cx.global())),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    global_this.bun_vm().as_mut().event_loop().cast(),
+                    cx.vm().as_mut().event_loop().cast(),
                 )),
                 ..Default::default()
             },
@@ -591,7 +597,7 @@ impl ReadableStream {
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
-        let stream = source.to_readable_stream(global_this)?;
+        let stream = source.to_readable_stream(cx)?;
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
@@ -606,15 +612,15 @@ impl ReadableStream {
 
     /// A stream that delivers `bytes`, then errors with `err`.
     pub fn from_bytes_then_error(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         bytes: Vec<u8>,
         err: syscall::Error,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
-            global_this: Some(bun_ptr::BackRef::new(global_this)),
+            global_this: Some(bun_ptr::BackRef::new(cx.global())),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    global_this.bun_vm().as_mut().event_loop().cast(),
+                    cx.vm().as_mut().event_loop().cast(),
                 )),
                 buffered: bun_jsc::JsCell::new(bytes),
                 read_error: bun_jsc::JsCell::new(Some(err)),
@@ -624,7 +630,7 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        source.to_readable_stream(global_this)
+        source.to_readable_stream(cx)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -634,11 +640,17 @@ impl ReadableStream {
         })
     }
 
+    /// A locked stand-in for the stream of a body that was read to its end: closed and disturbed.
     pub fn used(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
-            ReadableStream__used(global_this)
+            ReadableStream__used(global_this, true)
         })
+    }
+
+    /// A locked stand-in for the stream of a body a consumer is still reading: it stays readable.
+    pub fn in_use(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        bun_jsc::from_js_host_call(global_this, || ReadableStream__used(global_this, false))
     }
 
     /// A stream already in the `errored` state, so every read rejects with
@@ -664,7 +676,7 @@ pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) ->
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     Invalid = -1,
 
     /// ReadableStreamDefaultController or ReadableByteStreamController
@@ -774,14 +786,10 @@ pub trait SourceContext: Sized {
     fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
     /// `js_${NAME}InternalReadableStreamSource::pending_promise_set_cached`
     fn js_pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_set_cached`
-    fn js_on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_get_cached`
-    fn js_on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
-    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_set_cached`
-    fn js_on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_get_cached`
-    fn js_on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    /// `js_${NAME}InternalReadableStreamSource::close_adapter_set_cached`
+    fn js_close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::close_adapter_get_cached`
+    fn js_close_adapter_get_cached(this: JSValue) -> Option<JSValue>;
     /// `js_${NAME}InternalReadableStreamSource::owner_set_cached`
     fn js_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::sink_owner_set_cached`
@@ -802,7 +810,7 @@ pub trait SourceContext: Sized {
     }
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
-    /// sweep: no JS. `ByteStream` tells a parked producer nobody can read it now.
+    /// sweep: no JS. `ByteStream` tells its producer nobody can read it now.
     fn wrapper_finalized(&mut self) {}
 
     /// `setRefUnrefFn` — default no-op.
@@ -821,7 +829,7 @@ pub trait SourceContext: Sized {
     /// `toBufferedValue` — `None` ⇒ "not implemented" (caller throws TODO).
     fn to_buffered_value(
         &mut self,
-        _global_this: &JSGlobalObject,
+        _cx: &bun_jsc::JsThread<'_>,
         _action: streams::BufferActionTag,
     ) -> Option<JsResult<JSValue>> {
         None
@@ -842,7 +850,7 @@ pub trait SourceContext: Sized {
 // type generic over `C`): codegen name is "JS{C::NAME}InternalReadableStreamSource".
 // The toJS/fromJS/fromJSDirect aliases are wired
 // manually below; cached-property accessors (pendingPromiseSetCached,
-// onDrainCallback{Get,Set}Cached) are emitted by the .classes.ts generator.
+// closeAdapter{Get,Set}Cached) are emitted by the .classes.ts generator.
 //
 // `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
 // [`ReadableStream::from_js`] casts that straight to `*mut C`.
@@ -854,11 +862,6 @@ pub struct NewSource<C: SourceContext> {
     pub cancelled: bool,
     pub ref_count: u32,
     pub pending_err: Option<syscall::Error>,
-    pub close_handler: Option<fn(Option<*mut c_void>)>,
-    /// Borrowed opaque context for native `close_handler`s (never
-    /// owned/freed here). The JS path stores
-    /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
-    pub close_ctx: Option<NonNull<c_void>>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
     pub producer: Cell<streams::SourceHandle>,
@@ -872,18 +875,28 @@ pub struct NewSource<C: SourceContext> {
     /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
-    /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
+    /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
-    /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
-    /// its ref keeps this allocation, not the wrapper, so an unread stream can
-    /// be collected. Cleared by [`Self::root_wrapper`].
+    /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
     pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
     pub is_closed: Cell<bool>,
+    /// The context of the script that started reading ([`Self::start_from_js`]). The stream's
+    /// end is not reported to a `Bun.ModuleGraph` that was disposed meanwhile: closing the JS
+    /// stream settles every read its script is waiting on.
+    pub reader_context: Cell<Option<jsc::ContextId>>,
+    /// Armed while this is the source of a stream script of a `Bun.ModuleGraph` was given: what it
+    /// reads from (a file, a child's pipe nobody is reading) is closed with that graph.
+    pub abort_handle: jsc::AbortHandle,
 }
+
+jsc::impl_abort_handle_owner!([C: SourceContext] NewSource<C>, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live.
+    unsafe { (*this).cancel() }
+});
 
 impl<C: SourceContext + Default> Default for NewSource<C> {
     fn default() -> Self {
@@ -892,13 +905,13 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             cancelled: false,
             ref_count: 1,
             pending_err: None,
-            close_handler: None,
-            close_ctx: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
+            reader_context: Cell::new(None),
+            abort_handle: jsc::AbortHandle::for_owner::<Self>(),
         }
     }
 }
@@ -911,10 +924,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 pub(crate) trait NewSourceCodegen {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
-    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    fn close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn close_adapter_get_cached(this: JSValue) -> Option<JSValue>;
     fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn sink_owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
@@ -944,32 +955,18 @@ macro_rules! source_context_codegen {
             $crate::generated_classes::$gen::pending_promise_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_set_cached(
+        fn js_close_adapter_set_cached(
             this: $crate::webcore::jsc::JSValue,
             global: &$crate::webcore::jsc::JSGlobalObject,
             value: $crate::webcore::jsc::JSValue,
         ) {
-            $crate::generated_classes::$gen::on_drain_callback_set_cached(this, global, value)
+            $crate::generated_classes::$gen::close_adapter_set_cached(this, global, value)
         }
         #[inline]
-        fn js_on_drain_callback_get_cached(
+        fn js_close_adapter_get_cached(
             this: $crate::webcore::jsc::JSValue,
         ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::on_drain_callback_get_cached(this)
-        }
-        #[inline]
-        fn js_on_close_callback_set_cached(
-            this: $crate::webcore::jsc::JSValue,
-            global: &$crate::webcore::jsc::JSGlobalObject,
-            value: $crate::webcore::jsc::JSValue,
-        ) {
-            $crate::generated_classes::$gen::on_close_callback_set_cached(this, global, value)
-        }
-        #[inline]
-        fn js_on_close_callback_get_cached(
-            this: $crate::webcore::jsc::JSValue,
-        ) -> Option<$crate::webcore::jsc::JSValue> {
-            $crate::generated_classes::$gen::on_close_callback_get_cached(this)
+            $crate::generated_classes::$gen::close_adapter_get_cached(this)
         }
         #[inline]
         fn js_owner_set_cached(
@@ -1003,17 +1000,11 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_pending_promise_set_cached(this, global, value)
     }
-    fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        C::js_on_drain_callback_set_cached(this, global, value)
+    fn close_adapter_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        C::js_close_adapter_set_cached(this, global, value)
     }
-    fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue> {
-        C::js_on_drain_callback_get_cached(this)
-    }
-    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        C::js_on_close_callback_set_cached(this, global, value)
-    }
-    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue> {
-        C::js_on_close_callback_get_cached(this)
+    fn close_adapter_get_cached(this: JSValue) -> Option<JSValue> {
+        C::js_close_adapter_get_cached(this)
     }
     fn owner_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_owner_set_cached(this, global, value)
@@ -1121,53 +1112,59 @@ impl<C: SourceContext> NewSource<C> {
         p.close(None);
     }
 
-    pub fn on_close(&mut self) {
-        if self.cancelled {
-            return;
-        }
-        if let Some(close) = self.close_handler.take() {
-            // Identity check against the *exact* fn pointer stored by `set_on_close_from_js`, so the
-            // JS path receives `self` (not `close_ctx`, which is unset on that path).
-            if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
-                Self::on_js_close(Some(std::ptr::from_mut(self).cast::<c_void>()));
-            } else {
-                close(self.close_ctx.map(|p| p.as_ptr()));
-            }
-        }
+    fn is_reader_live(&self) -> bool {
+        self.reader_context
+            .get()
+            .is_none_or(|context| self.global_this().bun_vm().is_context_live(context))
     }
 
-    /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
-    /// JS side registered an `onclose` callback. Stored *directly* in
-    /// `close_handler` by [`Self::set_on_close_from_js`] so the fn-pointer
-    /// identity check above matches.
-    fn on_js_close(ptr: Option<*mut c_void>) {
-        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
-        // Reached from `FileReader::on_reader_done` off the event loop. While
-        // the across-read ref is held (`increment_count` upgraded to Strong),
-        // the wrapper is rooted and `try_get()` is `Some`. If the wrapper was
-        // already finalized, `try_get()` is `None` and there is no callback.
-        let Some(this_jsvalue) = this.this_jsvalue.try_get() else {
+    /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
+    pub fn on_close(&mut self) {
+        if self.cancelled || !self.is_reader_live() {
+            return;
+        }
+        // A finalized wrapper reads `None` here (see `this_jsvalue`), so a close after GC is a no-op.
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;
         };
-        let global_this = this.global_this();
-        if let Some(cb) = <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue) {
-            if !cb.is_undefined() {
-                global_this.queue_microtask(cb, &[]);
-            }
+        let Some(adapter) = <Self as NewSourceCodegen>::close_adapter_get_cached(this_jsvalue)
+        else {
+            return;
+        };
+        if !adapter.is_cell() {
+            return;
         }
-        <Self as NewSourceCodegen>::on_close_callback_set_cached(
+        let global_this = self.global_this();
+        <Self as NewSourceCodegen>::close_adapter_set_cached(
             this_jsvalue,
             global_this,
             JSValue::UNDEFINED,
         );
+        Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
+    }
+
+    /// A stream that [`ReadableStream::lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
+    pub fn end_locked_stream(&self, err: Option<&streams::StreamError>) {
+        if !self.is_reader_live() {
+            return;
+        }
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
+            return;
+        };
+        let global_this = self.global_this();
+        let reason = err.map_or(JSValue::ZERO, |err| err.to_js(global_this));
+        crate::dispatch::fold(bun_jsc::cpp::Bun__NativeStreamSource__endLockedStream(
+            this_jsvalue,
+            global_this,
+            reason,
+        ));
     }
 
     pub fn increment_count(&mut self) {
         self.ref_count += 1;
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
-        // `on_js_close`, reached from `on_reader_done` off the event loop with
+        // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
             // SAFETY: `self` is live for the call.
@@ -1188,8 +1185,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    /// The producer keeps its native ref but stops rooting the wrapper: nothing
-    /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
+    /// The producer's ref leaves the wrapper collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
     ///
     /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
@@ -1206,7 +1202,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
+    /// Undo [`Self::unroot_wrapper`]: a consumer that does not hold the wrapper takes the bytes.
     ///
     /// # Safety
     /// As [`Self::unroot_wrapper`].
@@ -1267,30 +1263,35 @@ impl<C: SourceContext> NewSource<C> {
 
     fn to_readable_stream_with(
         &mut self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         from_native: fn(&JSGlobalObject, JSValue) -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         let out_value = if let Some(v) = self.this_jsvalue.try_get() {
             v
         } else {
-            <Self as NewSourceCodegen>::to_js(self, global_this)
+            <Self as NewSourceCodegen>::to_js(self, cx.global())
         };
         out_value.ensure_still_alive();
         if self.this_jsvalue.is_empty() {
             self.this_jsvalue = jsc::JsRef::init_weak(out_value);
+            if let Some(context) = cx.vm().as_graph_context(cx.context()) {
+                // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
+                // context when this is dropped.
+                unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };
+            }
         }
-        from_native(global_this, out_value)
+        from_native(cx.global(), out_value)
     }
 
-    pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_readable_stream_with(global_this, ReadableStream::from_native)
+    pub(crate) fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        self.to_readable_stream_with(cx, ReadableStream::from_native)
     }
 
     pub(crate) fn to_text_readable_stream(
         &mut self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
     ) -> JsResult<JSValue> {
-        self.to_readable_stream_with(global_this, ReadableStream::from_native_text)
+        self.to_readable_stream_with(cx, ReadableStream::from_native_text)
     }
 
     pub fn set_raw_mode_from_js(
@@ -1337,6 +1338,11 @@ impl<C: SourceContext> NewSource<C> {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Cancelled with its graph: a read its leftover code still makes stays pending. ("Done"
+        // would let that code carry on with what it takes for the whole of the data.)
+        if self.abort_handle.context_stopped() {
+            return Ok(jsc::JSPromise::create(global_this).to_js());
+        }
         let this_jsvalue = call_frame.this();
         let [view, flags] = call_frame.arguments_as_array::<2>();
         view.ensure_still_alive();
@@ -1344,15 +1350,23 @@ impl<C: SourceContext> NewSource<C> {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.on_pull_from_js(buffer.slice_mut(), view);
-        Self::process_result(this_jsvalue, global_this, flags, result)
+        Self::process_result(
+            this_jsvalue,
+            &global_this.js_thread_of_caller(call_frame),
+            flags,
+            result,
+        )
     }
 
     pub fn start_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        _call_frame: &CallFrame,
+        call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         self.global_this = Some(bun_ptr::BackRef::new(global_this));
+        self.reader_context.set(Some(
+            global_this.bun_vm().context_of_caller(call_frame).id(),
+        ));
         match self.on_start_from_js() {
             streams::Start::Empty => Ok(JSValue::js_number(0.0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384.0)),
@@ -1368,21 +1382,21 @@ impl<C: SourceContext> NewSource<C> {
 
     fn process_result(
         this_jsvalue: JSValue,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         flags: JSValue,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
         match &result {
             streams::Result::Err(err) => {
-                let js_err = err.to_js(global_this);
+                let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                Err(global_this.throw_value(js_err))
+                Err(cx.global().throw_value(js_err))
             }
             streams::Result::Pending(_) => {
-                let out = result.to_js(global_this)?;
+                let out = result.to_js(cx)?;
                 <Self as NewSourceCodegen>::pending_promise_set_cached(
                     this_jsvalue,
-                    global_this,
+                    cx.global(),
                     out,
                 );
                 Ok(out)
@@ -1390,10 +1404,10 @@ impl<C: SourceContext> NewSource<C> {
             streams::Result::TemporaryAndDone(_)
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
-                flags.put_index(global_this, 0, JSValue::TRUE)?;
-                result.to_js(global_this)
+                flags.put_index(cx.global(), 0, JSValue::TRUE)?;
+                result.to_js(cx)
             }
-            _ => result.to_js(global_this),
+            _ => result.to_js(cx),
         }
     }
 
@@ -1404,96 +1418,6 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<JSValue> {
         self.cancel();
         Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn set_on_close_from_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
-        // Store the handler by *identity* — `NewSource::on_close` compares the
-        // stored fn pointer against `on_js_close` to decide whether to pass
-        // `self` (JS path) or `close_ctx` (native path).
-        self.close_handler = Some(Self::on_js_close);
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
-
-        if value.is_undefined() {
-            if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-                <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                    this_jsvalue,
-                    global_object,
-                    JSValue::UNDEFINED,
-                );
-            }
-            return Ok(());
-        }
-
-        if !value.is_callable() {
-            return Err(global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onclose",
-                "function",
-            ));
-        }
-        let cb = value.with_async_context_if_needed(global_object);
-        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-            <Self as NewSourceCodegen>::on_close_callback_set_cached(
-                this_jsvalue,
-                global_object,
-                cb,
-            );
-        }
-        Ok(())
-    }
-
-    pub fn set_on_drain_from_js(
-        &mut self,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.global_this = Some(bun_ptr::BackRef::new(global_object));
-
-        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
-            return Ok(());
-        };
-
-        if value.is_undefined() {
-            <Self as NewSourceCodegen>::on_drain_callback_set_cached(
-                this_jsvalue,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-            return Ok(());
-        }
-
-        if !value.is_callable() {
-            return Err(global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onDrain",
-                "function",
-            ));
-        }
-        let cb = value.with_async_context_if_needed(global_object);
-        <Self as NewSourceCodegen>::on_drain_callback_set_cached(this_jsvalue, global_object, cb);
-        Ok(())
-    }
-
-    pub fn get_on_close_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        if let Some(this_jsvalue) = self.this_jsvalue.try_get() {
-            if let Some(val) =
-                <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue)
-            {
-                return val;
-            }
-        }
-        JSValue::UNDEFINED
-    }
-
-    pub fn get_on_drain_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        self.this_jsvalue
-            .try_get()
-            .and_then(<Self as NewSourceCodegen>::on_drain_callback_get_cached)
-            .unwrap_or(JSValue::UNDEFINED)
     }
 
     pub fn update_ref_from_js(
@@ -1552,10 +1476,14 @@ impl<C: SourceContext> NewSource<C> {
     fn to_buffered_value_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        _call_frame: &CallFrame,
+        call_frame: &CallFrame,
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
-        if let Some(r) = self.context.to_buffered_value(global_this, action) {
+        let context = global_this.bun_vm().context_of_caller(call_frame);
+        if let Some(r) = self
+            .context
+            .to_buffered_value(&global_this.js_thread(context), action)
+        {
             return r;
         }
         Err(global_this.throw_todo(b"This is not implemented yet"))

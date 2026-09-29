@@ -381,6 +381,15 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
+    match bun_core::code_generation_from_strings() {
+        bun_core::CodeGenerationFromStrings::Allowed => {}
+        bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
+            argv.push(lit(b"--disallow-code-generation-from-strings\0"));
+        }
+        bun_core::CodeGenerationFromStrings::Disallowed => {
+            argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
+        }
+    }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));
     }
@@ -457,7 +466,6 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
     match r {
         J::Automatic => "automatic",
         J::Classic => "classic",
-        J::Solid => "solid",
         J::_none => "_none",
     }
 }
@@ -469,7 +477,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
-pub struct WorkerCommands {
+pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
@@ -631,7 +639,6 @@ impl<'a> WorkerLoop<'a> {
 // `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
 // while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
 // would alias. The `# Safety` contract above documents the caller's obligation.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
@@ -679,6 +686,7 @@ pub(crate) fn run_as_worker(
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
     vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm_ref.exit_handler.requested = test_command::exit_is_requested();
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe {

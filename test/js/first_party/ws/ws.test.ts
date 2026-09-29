@@ -161,6 +161,264 @@ describe("WebSocket", () => {
       });
     }
   });
+  // The echo server answers every message with a binary frame. This peer completes the upgrade and
+  // writes the frames that a test gives it.
+  describe("message", () => {
+    type Row = { shape: string; text: string; isBinary: boolean };
+    type Listener = (data: unknown, isBinary: boolean) => void;
+
+    // binaryType selects the shape of a binary frame only. A text frame is a Buffer:
+    // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L634-L655
+    const modes = [
+      { binaryType: "nodebuffer", binary: "Buffer" },
+      { binaryType: "arraybuffer", binary: "ArrayBuffer" },
+      { binaryType: "blob", binary: "Blob" },
+      { binaryType: "fragments", binary: "[Buffer]" },
+    ];
+    // In "arraybuffer" mode on('message') gets a text frame as a plain Uint8Array, in "fragments" mode
+    // as [Buffer]: https://github.com/oven-sh/bun/issues/44108
+    const today = modes.filter(({ binaryType }) => binaryType === "nodebuffer" || binaryType === "blob");
+
+    const listeners: Record<string, (ws: WebSocket, listener: Listener) => unknown> = {
+      on: (ws, listener) => ws.on("message", listener),
+      addListener: (ws, listener) => ws.addListener("message", listener),
+      prependListener: (ws, listener) => ws.prependListener("message", listener),
+      "events.on": async (ws, listener) => {
+        for await (const [data, isBinary] of EventEmitter.on(ws, "message")) listener(data, isBinary);
+      },
+      once: (ws, listener) => ws.once("message", listener),
+      prependOnceListener: (ws, listener) => ws.prependOnceListener("message", listener),
+      "events.once": async (ws, listener) => {
+        const [data, isBinary] = await once(ws, "message");
+        listener(data, isBinary);
+      },
+    };
+    const takesOneFrame = ["once", "prependOnceListener", "events.once"];
+
+    function frame(opcode: number, payload: string | number[] | Buffer, { fin = true, rsv1 = false } = {}) {
+      const body = Buffer.from(payload as string);
+      return Buffer.concat([Buffer.from([(fin ? 0x80 : 0) | (rsv1 ? 0x40 : 0) | opcode, body.length]), body]);
+    }
+
+    const texts = ["ascii", "", "latin1-©", "bmp-€", "astral-😶", "\ufeffbom-\0-nul"];
+    const frames = [
+      ...texts.map(text => frame(1, text)),
+      // One character in two fragments.
+      frame(1, [0xf0, 0x9f], { fin: false }),
+      frame(0, [0x98, 0xb6]),
+      // "compressed-😶" as raw deflate with a sync flush, without the 00 00 ff ff at its end.
+      frame(1, Buffer.from("4acecf2d284a2d2e4e4dd1fd307fc6360000", "hex"), { rsv1: true }),
+      frame(2, [1, 2, 3]),
+    ];
+    const textRows = [...texts, "😶", "compressed-😶"].map(text => ({ shape: "Buffer", text, isBinary: false }));
+
+    // Writes `frames` when the first frame of the client arrives, or in the same write as the 101.
+    function peer(frames: Buffer[], { withThe101 = false } = {}) {
+      return Bun.listen<{ request: string; upgraded: boolean; wrote: boolean }>({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.data = { request: "", upgraded: false, wrote: withThe101 };
+          },
+          data(socket, chunk) {
+            const state = socket.data;
+            if (state.upgraded) {
+              if (!state.wrote) socket.write(Buffer.concat(frames));
+              state.wrote = true;
+              return;
+            }
+            state.request += chunk.toString("latin1");
+            if (!state.request.includes("\r\n\r\n")) return;
+            state.upgraded = true;
+            const key = /^sec-websocket-key: (.+)$/im.exec(state.request)![1].trim();
+            const accept = crypto
+              .createHash("sha1")
+              .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+              .digest("base64");
+            const extensions = /permessage-deflate/i.test(state.request)
+              ? "Sec-WebSocket-Extensions: permessage-deflate\r\n"
+              : "";
+            const response = Buffer.from(
+              `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n${extensions}Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+            );
+            socket.write(withThe101 ? Buffer.concat([response, ...frames]) : response);
+          },
+        },
+      });
+    }
+
+    // Resolves with the first `count` values that `listen` pushes. The socket asks the peer for its frames once open.
+    async function receive<T>(
+      server: { port: number },
+      binaryType: string,
+      count: number,
+      listen: (ws: WebSocket, push: (value: T | Promise<T>) => void) => void,
+      options: ConstructorParameters<typeof WebSocket>[2] = {},
+    ) {
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, [], options);
+      clients.push(ws);
+      ws.binaryType = binaryType as WebSocket["binaryType"];
+      const values: (T | Promise<T>)[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      ws.addEventListener("error", reject);
+      ws.addEventListener("close", ({ code }) =>
+        reject(new Error(`closed with ${code} after ${values.length} values`)),
+      );
+      ws.addEventListener("open", () => ws.send("send the frames"));
+      listen(ws, value => {
+        values.push(value);
+        if (values.length === count) resolve();
+      });
+      await promise;
+      return await Promise.all(values.slice(0, count));
+    }
+
+    async function rowOf(data: unknown, isBinary: boolean): Promise<Row> {
+      const fragments: unknown[] = Array.isArray(data) ? data : [data];
+      const bytes = await Promise.all(
+        fragments.map(async part => Buffer.from(part instanceof Blob ? await part.arrayBuffer() : (part as Buffer))),
+      );
+      return {
+        shape: Array.isArray(data) ? `[${data.map(shapeOf)}]` : shapeOf(data),
+        text: Buffer.concat(bytes).toString(isBinary ? "hex" : "utf8"),
+        isBinary,
+      };
+    }
+
+    it.each(today)("$binaryType: every way to listen gets a text frame as a Buffer", async ({ binaryType, binary }) => {
+      using server = peer(frames);
+      const rows = [...textRows, { shape: binary, text: "010203", isBinary: true }];
+
+      const seen = await Promise.all(
+        Object.entries(listeners).map(async ([name, listen]) => {
+          const count = takesOneFrame.includes(name) ? 1 : rows.length;
+          return [
+            name,
+            await receive<Row>(server, binaryType, count, (ws, push) => {
+              listen(ws, (data, isBinary) => push(rowOf(data, isBinary)));
+            }),
+          ];
+        }),
+      );
+
+      expect(Object.fromEntries(seen)).toEqual(
+        Object.fromEntries(
+          Object.keys(listeners).map(name => [name, takesOneFrame.includes(name) ? rows.slice(0, 1) : rows]),
+        ),
+      );
+    });
+
+    it.each(modes)(
+      "$binaryType: addEventListener and onmessage get a text frame as a string",
+      async ({ binaryType }) => {
+        using server = peer([frame(1, "text-😶")]);
+
+        const seen = await Promise.all([
+          receive<unknown>(server, binaryType, 1, (ws, push) => {
+            ws.addEventListener("message", event => push(event.data));
+          }),
+          receive<unknown>(server, binaryType, 1, (ws, push) => {
+            ws.onmessage = event => push(event.data);
+          }),
+        ]);
+
+        expect(seen).toEqual([["text-😶"], ["text-😶"]]);
+      },
+    );
+
+    // A socket can have listeners of the three kinds. They run in the order of their registration.
+    type Kind = "on" | "addEventListener" | "onmessage";
+    const kinds: Record<Kind, (ws: WebSocket, push: (value: string) => void) => void> = {
+      on: (ws, push) => ws.on("message", data => push(`on ${shapeOf(data)} ${data}`)),
+      addEventListener: (ws, push) => ws.addEventListener("message", event => push(`addEventListener ${event.data}`)),
+      onmessage: (ws, push) => (ws.onmessage = event => push(`onmessage ${event.data}`)),
+    };
+    const orders: Kind[][] = [
+      ["on", "addEventListener"],
+      ["on", "onmessage"],
+      ["addEventListener", "on"],
+      ["addEventListener", "onmessage"],
+      ["onmessage", "on"],
+      ["onmessage", "addEventListener"],
+      ["on", "addEventListener", "onmessage"],
+      ["on", "onmessage", "addEventListener"],
+      ["addEventListener", "on", "onmessage"],
+      ["addEventListener", "onmessage", "on"],
+      ["onmessage", "on", "addEventListener"],
+      ["onmessage", "addEventListener", "on"],
+      ["addEventListener", "on", "addEventListener"],
+    ];
+
+    it.each(today)("$binaryType: listeners of every kind run in the order of registration", async ({ binaryType }) => {
+      using server = peer([frame(1, "text")]);
+
+      const seen = await Promise.all(
+        orders.map(order =>
+          receive<string>(server, binaryType, order.length, (ws, push) => {
+            for (const kind of order) kinds[kind](ws, push);
+          }),
+        ),
+      );
+
+      const row = { on: "on Buffer text", addEventListener: "addEventListener text", onmessage: "onmessage text" };
+      expect(seen).toEqual(orders.map(order => order.map(kind => row[kind])));
+    });
+
+    // The client holds a frame for one task when the socket has no 'message' listener.
+    it.each(today)("$binaryType: a frame that comes with the 101", async ({ binaryType }) => {
+      using server = peer([frame(1, "early-😶")], { withThe101: true });
+      const inOpen = (add: () => void) => add();
+      const afterOpen = (add: () => void) => queueMicrotask(add);
+
+      const seen = await Promise.all(
+        [inOpen, afterOpen].flatMap(when => [
+          receive<Row>(server, binaryType, 1, (ws, push) => {
+            ws.on("open", () => when(() => ws.on("message", (data, isBinary) => push(rowOf(data, isBinary)))));
+          }),
+          receive<unknown>(server, binaryType, 1, (ws, push) => {
+            ws.on("open", () => when(() => ws.addEventListener("message", event => push(event.data))));
+          }),
+        ]),
+      );
+
+      const row = { shape: "Buffer", text: "early-😶", isBinary: false };
+      expect(seen).toEqual([[row], ["early-😶"], [row], ["early-😶"]]);
+    });
+
+    // With finishRequest the native socket is made when the request ends, or after the callback.
+    it.each(today)("$binaryType: a socket that finishRequest starts", async ({ binaryType }) => {
+      using server = peer([frame(1, "early-😶")], { withThe101: true });
+      const listen = (ws: WebSocket, push: (value: Promise<Row>) => void) => {
+        ws.on("open", () => queueMicrotask(() => ws.on("message", (data, isBinary) => push(rowOf(data, isBinary)))));
+      };
+
+      const seen = await Promise.all([
+        receive<Row>(server, binaryType, 1, listen, { finishRequest: request => request.end() }),
+        receive<Row>(server, binaryType, 1, listen, { finishRequest: () => {} }),
+      ]);
+
+      const row = { shape: "Buffer", text: "early-😶", isBinary: false };
+      expect(seen).toEqual([[row], [row]]);
+    });
+
+    it.each(Object.keys(kinds) as Kind[])(
+      "%s: a text frame that is not UTF-8 closes the socket with 1007",
+      async kind => {
+        using server = peer([frame(1, [0xff, 0xfe]), frame(1, "after")]);
+        const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+        clients.push(ws);
+        const messages: string[] = [];
+        const { promise, resolve } = Promise.withResolvers<number>();
+        kinds[kind](ws, message => messages.push(message));
+        ws.on("error", () => {});
+        ws.on("open", () => ws.send("send the frames"));
+        ws.on("close", resolve);
+
+        expect({ code: await promise, messages }).toEqual({ code: 1007, messages: [] });
+      },
+    );
+  });
   describe("send()", () => {
     for (const { label, message, bytes } of messages) {
       test(label, (ws, done) => {

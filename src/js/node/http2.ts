@@ -4051,8 +4051,8 @@ class ServerHttp2Session extends Http2Session {
       // SETTINGS_MAX_CONCURRENT_STREAMS. nghttp2 answers with RST_STREAM REFUSED_STREAM and never
       // surfaces the stream to the JS layer.
       if (stream_id % 2 === 1 && self.#peerInitiatedStreams >= self.#advertisedMaxConcurrentStreams) {
-        self.#parser?.rstStream(stream_id, constants.NGHTTP2_REFUSED_STREAM);
-        return;
+        // Native counts this against maxSessionRejectedStreams and resets the stream while budget remains.
+        return constants.NGHTTP2_REFUSED_STREAM;
       }
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;

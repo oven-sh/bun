@@ -1285,14 +1285,15 @@ describe("concurrent terminals on one Image", () => {
         const buf = new Uint8Array(n);
 
         let outputs = 0, leaked = 0, unwritten = 0, rejected = 0, rounds = 0;
-        // Every round is an independent try. Keep going past the minimum
-        // while few decodes have seen the rewrite, so a box where the writer
-        // and the pool rarely overlap gets more tries. About one in four of
-        // those decodes completes as the small picture, which is the case
-        // the fill finds.
+        // Every round is an independent try. Past the minimum, keep going
+        // while few decodes have seen the rewrite, by the clock and not by a
+        // count of rounds: a box where the writer and the pool rarely overlap
+        // gets the tries its speed allows. About one in four of those decodes
+        // completes as the small picture, which is the case the fill finds.
         const minRounds = Number(process.env.WEBP_RACE_ROUNDS);
         const withMarker = process.env.WEBP_RACE_MARKER === "1";
-        for (let round = 0; round < minRounds * 8 && (round < minRounds || rejected < 16); round++) {
+        const deadline = performance.now() + 20_000;
+        for (let round = 0; round < minRounds || (rejected < 16 && performance.now() < deadline); round++) {
           rounds++;
           const [small, large] = pairs[round % pairs.length];
           buf.set(large);
@@ -1366,11 +1367,10 @@ describe("concurrent terminals on one Image", () => {
     // A sanitizer stop on the over-read leaves no summary line behind.
     const summary = stdout.trim().split("\n").at(-1) ?? "";
     expect({ summary, stderr: stderr.slice(-3000), exitCode }).toMatchObject({ exitCode: 0 });
-    // How many decodes saw the rewrite is in the summary and is not asserted:
-    // whether the writer and the pool overlap is the machine's, not the decode's.
-    const { leaked, unwritten, calm } = JSON.parse(summary);
-    expect({ summary, leaked, unwritten, calm }).toEqual({
-      summary,
+    const { rounds, leaked, unwritten, rejected, calm } = JSON.parse(summary);
+    // A run in which no decode saw the rewrite shows nothing about the decode, so it does not pass.
+    expect(rejected, `inconclusive: no decode saw the rewrite in ${rounds} rounds`).toBeGreaterThan(0);
+    expect({ leaked, unwritten, calm }).toEqual({
       leaked: 0,
       unwritten: 0,
       calm: ["200x211", "200x211"],
@@ -1767,7 +1767,7 @@ describe("WebP container walk", () => {
     // end in a chunk header that covers the picture: the demuxer has no picture then.
     [
       "a picture that a header inside a frame chunk covers",
-      riff([vp8x(ICCP), chunk("ICCP", profile(512)), anim, frame([chunk("XXXX", image).subarray(0, 8)]), image]),
+      riff([vp8x(ICCP), chunk("ICCP", profile(512)), anim, frame([chunk("XTRA", image).subarray(0, 8)]), image]),
       "none",
     ],
     [
@@ -1777,7 +1777,7 @@ describe("WebP container walk", () => {
         chunk("ICCP", profile(512)),
         alph,
         anim,
-        frame([chunk("XXXX", lossy).subarray(0, 8)]),
+        frame([chunk("XTRA", lossy).subarray(0, 8)]),
         lossy,
       ]),
       "none",

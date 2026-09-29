@@ -57,6 +57,7 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn BunTest__setCodeCoverageIgnoredLines(
     source_url: &bun_core::String,
+    ignored_source_hash: u64,
     ignored_lines: *const u32,
     ignored_lines_len: usize,
 ) {
@@ -73,7 +74,11 @@ extern "C" fn BunTest__setCodeCoverageIgnoredLines(
         // thread with a slice owned by the live job for the duration of call.
         unsafe { core::slice::from_raw_parts(ignored_lines, ignored_lines_len).to_vec() }
     };
-    bun_sourcemap_jsc::code_coverage::set_ignored_lines(source_url, ignored_lines);
+    bun_sourcemap_jsc::code_coverage::set_ignored_lines(
+        source_url,
+        ignored_source_hash,
+        ignored_lines,
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2672,6 +2677,8 @@ fn transpile_source_code_inner(
                     // Keep this in step with Zig::SourceProvider::create so ignored lines only
                     // enter the handoff for files that will get a coverage mapping.
                     if unsafe { BunTest__shouldGenerateCodeCoverage(&source_url) } {
+                        let ignored_source_hash =
+                            bun_wyhash::hash(parse_result.source.contents.as_ref());
                         let ignored_lines = parse_result
                             .ast
                             .coverage_ignore_next_lines
@@ -2680,6 +2687,7 @@ fn transpile_source_code_inner(
                             .unwrap_or_default();
                         bun_sourcemap_jsc::code_coverage::set_ignored_lines(
                             &source_url,
+                            ignored_source_hash,
                             ignored_lines,
                         );
                     }

@@ -649,6 +649,8 @@ pub struct ByteRangeMapping {
     pub source_url: Utf8Bytes<'static>,
     /// Original-source zero-based lines excluded by `istanbul ignore next`.
     ignored_lines: Vec<u32>,
+    /// Hash of the source those line numbers refer to.
+    ignored_source_hash: Option<u64>,
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
@@ -667,13 +669,17 @@ thread_local! {
         const { UnsafeCell::new(None) };
     // Same-thread handoff from transpiling original source to the matching
     // JSC SourceProvider callback, which creates the ByteRangeMapping.
-    static PENDING_IGNORED_LINES: std::cell::RefCell<std::collections::HashMap<u64, Vec<u32>>> =
+    static PENDING_IGNORED_LINES: std::cell::RefCell<std::collections::HashMap<u64, (u64, Vec<u32>)>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// Attach original-source coverage directives to the next SourceProvider
 /// mapping created for this URL on the current JS thread.
-pub fn set_ignored_lines(source_url: &bun_core::String, ignored_lines: Vec<u32>) {
+pub fn set_ignored_lines(
+    source_url: &bun_core::String,
+    ignored_source_hash: u64,
+    ignored_lines: Vec<u32>,
+) {
     let hash = bun_wyhash::hash(source_url.to_utf8().slice());
     if ignored_lines.is_empty() {
         PENDING_IGNORED_LINES.with(|pending| {
@@ -682,16 +688,20 @@ pub fn set_ignored_lines(source_url: &bun_core::String, ignored_lines: Vec<u32>)
         if let Some(mut mapping) = find(source_url) {
             // SAFETY: `find` returns a pointer into this thread's pinned map; this
             // function runs on the same JS thread as SourceProvider registration.
-            unsafe { mapping.as_mut() }.ignored_lines.clear();
+            let mapping = unsafe { mapping.as_mut() };
+            mapping.ignored_lines.clear();
+            mapping.ignored_source_hash = None;
         }
         return;
     }
     PENDING_IGNORED_LINES.with(|pending| {
-        pending.borrow_mut().insert(hash, ignored_lines);
+        pending
+            .borrow_mut()
+            .insert(hash, (ignored_source_hash, ignored_lines));
     });
 }
 
-fn take_pending_ignored_lines(hash: u64) -> Option<Vec<u32>> {
+fn take_pending_ignored_lines(hash: u64) -> Option<(u64, Vec<u32>)> {
     PENDING_IGNORED_LINES.with(|pending| pending.borrow_mut().remove(&hash))
 }
 
@@ -1046,10 +1056,10 @@ impl ByteRangeMapping {
             unreachable!();
         }
 
-        // Ignored lines are in original-source coordinates. When sourcemaps are
-        // explicitly disabled, the report can use generated/transformed source
-        // coordinates instead, so applying this mask could hide the wrong line.
-        if !ignore_sourcemap {
+        // Ignored lines are in original-source coordinates. Without a parsed
+        // map, apply them only when the provider text is the original source.
+        let ignored_source_matches = self.ignored_source_hash == Some(self.source_hash);
+        if !ignore_sourcemap && (parsed_mappings_.is_some() || ignored_source_matches) {
             for &line in &self.ignored_lines {
                 let line = line as usize;
                 if line >= line_hits.len() {
@@ -1089,6 +1099,7 @@ impl ByteRangeMapping {
             source_hash,
             source_url,
             ignored_lines: Vec::new(),
+            ignored_source_hash: None,
         }
     }
 }
@@ -1114,8 +1125,9 @@ extern "C" fn ByteRangeMapping__generate(
     if let Some(existing) = map.get_mut(&hash)
         && existing.source_hash == source_hash
     {
-        if let Some(ignored_lines) = ignored_lines.take() {
+        if let Some((ignored_source_hash, ignored_lines)) = ignored_lines.take() {
             existing.ignored_lines = ignored_lines;
+            existing.ignored_source_hash = Some(ignored_source_hash);
         }
         existing.source_ids.push(source_id);
         return;
@@ -1123,8 +1135,9 @@ extern "C" fn ByteRangeMapping__generate(
 
     let mut new_value =
         ByteRangeMapping::compute(source_contents.slice(), source_hash, source_id, source_url);
-    if let Some(ignored_lines) = ignored_lines {
+    if let Some((ignored_source_hash, ignored_lines)) = ignored_lines {
         new_value.ignored_lines = ignored_lines;
+        new_value.ignored_source_hash = Some(ignored_source_hash);
     }
     map.insert(hash, new_value);
 }

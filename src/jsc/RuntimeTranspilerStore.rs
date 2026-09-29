@@ -52,6 +52,7 @@ unsafe extern "C" {
     // Synchronously copies this job-owned slice on the JS thread; it must not retain the pointer.
     fn BunTest__setCodeCoverageIgnoredLines(
         source_url: &bun_core::String,
+        ignored_source_hash: u64,
         ignored_lines: *const u32,
         ignored_lines_len: usize,
     );
@@ -387,6 +388,7 @@ impl RuntimeTranspilerStore {
                 parse_error: None,
                 coverage_eligible,
                 coverage_ignored_lines: Vec::new(),
+                coverage_ignored_source_hash: 0,
                 work_task: WorkPoolTask {
                     node: Default::default(),
                     callback: TranspilerJob::run_from_worker_thread,
@@ -450,6 +452,8 @@ pub struct TranspilerJob {
     /// Original-source coverage lines carried from the worker to the JS-thread
     /// SourceProvider handoff.
     pub(crate) coverage_ignored_lines: Vec<u32>,
+    /// Hash of the original source those line numbers refer to.
+    pub(crate) coverage_ignored_source_hash: u64,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
     pub(crate) resolved_source: ResolvedSource,
     pub(crate) work_task: WorkPoolTask,
@@ -574,6 +578,7 @@ impl TranspilerJob {
             unsafe {
                 BunTest__setCodeCoverageIgnoredLines(
                     &resolved_source.source_url,
+                    self.coverage_ignored_source_hash,
                     self.coverage_ignored_lines.as_ptr(),
                     self.coverage_ignored_lines.len(),
                 );
@@ -949,6 +954,10 @@ impl TranspilerJob {
             self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+        if self.coverage_eligible {
+            self.coverage_ignored_source_hash =
+                bun_wyhash::hash(parse_result.source.contents.as_ref());
+        }
         self.coverage_ignored_lines = parse_result
             .ast
             .coverage_ignore_next_lines

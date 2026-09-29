@@ -748,7 +748,27 @@ where
         {
             return;
         }
-        if let Some(stream) = response.get_body_readable_stream() {
+        let stream = response.get_body_readable_stream();
+        let producer = if stream.is_none() {
+            match response.get_body_value() {
+                Body::Value::Locked(locked)
+                    if matches!(
+                        locked.producer,
+                        WebCore::streams::SourceHandle::FetchResponseBody(_)
+                    ) =>
+                {
+                    Some(core::mem::take(&mut locked.producer))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(mut producer) = producer {
+            // Other pending producers may call back into JS while the Response is still locked.
+            producer.cancel(JSValue::UNDEFINED);
+        }
+        if let Some(stream) = stream {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.

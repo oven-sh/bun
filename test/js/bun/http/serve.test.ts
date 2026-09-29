@@ -261,6 +261,53 @@ describe("HEAD request with a ReadableStream body", () => {
       expect(after).toBeLessThanOrEqual(before + 2);
     });
   }
+
+  it("cancels an unmaterialized fetch Response body", async () => {
+    const headCount = 3;
+    let abortedCount = 0;
+    const allAborted = Promise.withResolvers<void>();
+
+    await using upstream = Bun.serve({
+      port: 0,
+      fetch(request) {
+        if (new URL(request.url).pathname === "/ok") return new Response("ok");
+
+        request.signal.addEventListener(
+          "abort",
+          () => {
+            if (++abortedCount === headCount) allAborted.resolve();
+          },
+          { once: true },
+        );
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("pending"));
+            },
+          }),
+        );
+      },
+    });
+
+    await using proxy = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const pathname = new URL(request.url).pathname;
+        return fetch(new URL(pathname, upstream.url));
+      },
+    });
+
+    for (let i = 0; i < headCount; i++) {
+      const response = await fetch(new URL(`/lazy-${i}`, proxy.url), { method: "HEAD" });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+    }
+
+    await allAborted.promise;
+
+    const response = await fetch(new URL("/ok", proxy.url));
+    expect(await response.text()).toBe("ok");
+  });
 });
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {

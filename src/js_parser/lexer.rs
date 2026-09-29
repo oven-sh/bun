@@ -239,6 +239,11 @@ pub struct Lexer<'a> {
     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
+    /// Set by `Parser::init` only for coverage-enabled source containing the
+    /// directive text. The parser's real token stream then supplies comment
+    /// ranges without rescanning regex, template, or JSX contents as JavaScript.
+    /// This is fixed before lexing starts, so snapshots do not need to preserve it.
+    pub(crate) coverage_directive_candidate: bool,
     pub(crate) track_react_suppressions: bool,
     /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
     pub(crate) jsc_builtin_syntax: bool,
@@ -2279,6 +2284,7 @@ impl<'a> Lexer<'a> {
             string_literal_raw_format: StringLiteralRawFormat::Ascii,
             temp_buffer_u16: Vec::new(),
             track_comments: false,
+            coverage_directive_candidate: false,
             track_react_suppressions: false,
             jsc_builtin_syntax: false,
             all_comments: Vec::new(),
@@ -3604,4 +3610,128 @@ impl fmt::Display for InvalidEscapeSequenceFormatter {
             _ => writer.write_str("Unexpected escape sequence"),
         }
     }
+}
+
+const COVERAGE_IGNORE_NEXT_MARKER: &[u8] = b"istanbul ignore next";
+
+pub(crate) fn has_coverage_ignore_next_candidate(source: &Source) -> bool {
+    strings::index_of(source.contents(), COVERAGE_IGNORE_NEXT_MARKER).is_some()
+}
+
+/// Finds own-line `/* istanbul ignore next */` directives among comments
+/// collected by the source parser. Using parser-collected ranges is important:
+/// raw lexing cannot distinguish comments from text inside regexes, templates,
+/// or JSX.
+pub(crate) fn coverage_ignore_next_lines(source: &Source, comments: &[Range]) -> Vec<u32> {
+    if comments.is_empty() {
+        return Vec::new();
+    }
+
+    let contents = source.contents();
+    let line_starts = source_line_starts(contents);
+    let mut ignored_lines = Vec::new();
+    for comment in comments {
+        let start = usize::try_from(comment.loc.start).expect("non-negative lexer offset");
+        let end = start + usize::try_from(comment.len).expect("non-negative comment length");
+        let Some(text) = contents.get(start..end) else {
+            continue;
+        };
+        if !text.starts_with(b"/*") || !text.ends_with(b"*/") || contains_line_break(text) {
+            continue;
+        }
+        let body = trim_ascii_whitespace(&text[2..text.len() - 2]);
+        if body != COVERAGE_IGNORE_NEXT_MARKER {
+            continue;
+        }
+
+        let line = line_starts
+            .partition_point(|&line_start| line_start <= start)
+            .saturating_sub(1);
+        let Some(&next_line_start) = line_starts.get(line + 1) else {
+            continue;
+        };
+        let line_start = line_starts[line];
+        let line_end = line_content_end(contents, line_start, next_line_start);
+        if end > line_end
+            || !is_horizontal_whitespace(&contents[line_start..start])
+            || !is_horizontal_whitespace(&contents[end..line_end])
+        {
+            continue;
+        }
+
+        if let Ok(line) = u32::try_from(line + 1) {
+            ignored_lines.push(line);
+        }
+    }
+
+    ignored_lines.sort_unstable();
+    ignored_lines.dedup();
+    ignored_lines
+}
+
+fn source_line_starts(contents: &[u8]) -> Vec<usize> {
+    let mut line_starts = vec![0];
+    let mut offset = 0;
+    while offset < contents.len() {
+        match contents[offset] {
+            b'\r' => {
+                offset += if contents.get(offset + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
+                line_starts.push(offset);
+            }
+            b'\n' => {
+                offset += 1;
+                line_starts.push(offset);
+            }
+            0xE2 if contents
+                .get(offset..offset + 3)
+                .is_some_and(is_unicode_line_break) =>
+            {
+                offset += 3;
+                line_starts.push(offset);
+            }
+            _ => offset += 1,
+        }
+    }
+    line_starts
+}
+
+fn line_content_end(contents: &[u8], line_start: usize, next_line_start: usize) -> usize {
+    let mut line_end = next_line_start;
+    if line_end >= line_start + 3 && is_unicode_line_break(&contents[line_end - 3..line_end]) {
+        line_end -= 3;
+    } else if line_end >= line_start + 2 && &contents[line_end - 2..line_end] == b"\r\n" {
+        line_end -= 2;
+    } else if line_end > line_start && matches!(contents[line_end - 1], b'\r' | b'\n') {
+        line_end -= 1;
+    }
+    line_end
+}
+
+fn contains_line_break(text: &[u8]) -> bool {
+    strings::index_of_any(text, b"\r\n").is_some()
+        || strings::index_of(text, b"\xe2\x80\xa8").is_some()
+        || strings::index_of(text, b"\xe2\x80\xa9").is_some()
+}
+
+fn is_unicode_line_break(sequence: &[u8]) -> bool {
+    sequence == b"\xe2\x80\xa8" || sequence == b"\xe2\x80\xa9"
+}
+
+fn trim_ascii_whitespace(mut text: &[u8]) -> &[u8] {
+    while text.first().is_some_and(u8::is_ascii_whitespace) {
+        text = &text[1..];
+    }
+    while text.last().is_some_and(u8::is_ascii_whitespace) {
+        text = &text[..text.len() - 1];
+    }
+    text
+}
+
+fn is_horizontal_whitespace(text: &[u8]) -> bool {
+    text.iter()
+        .all(|byte| matches!(byte, b' ' | b'\t' | 0x0B | 0x0C))
 }

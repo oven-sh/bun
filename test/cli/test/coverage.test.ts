@@ -57,6 +57,228 @@ export class Y {
   );
 });
 
+test("coverage ignores the next original JS and TypeScript lines", async () => {
+  using dir = tempDir("cov-istanbul-ignore-next", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { lines = 1.0 }\n`,
+    "subject.ts": `export function choose(flag: boolean) {
+  if (flag) return 1;
+  /* istanbul ignore next */
+  return 2;
+}
+`,
+    "subject.js":
+      `const regexp = /[/* istanbul ignore next]/;
+const template = ` +
+      "`" +
+      `raw \${"value"}
+/* istanbul ignore next */
+\${"tail"}` +
+      "`" +
+      `;
+export function chooseJs(flag) {
+  if (flag) return 1;
+  /* istanbul ignore next */
+  return 2;
+}
+`,
+    "subject.test.ts": `import { expect, test } from "bun:test";
+import { choose } from "./subject.ts";
+import { chooseJs } from "./subject.js";
+
+test("takes the covered branch", () => {
+  expect(choose(true)).toBe(1);
+  expect(chooseJs(true)).toBe(1);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  for (const [file, ignoredLine] of [
+    ["subject.ts", 4],
+    ["subject.js", 8],
+  ] as const) {
+    const record = lcov.split("end_of_record").find(r => r.includes(`SF:${file}`));
+    expect(record).toBeDefined();
+    expect(record).not.toMatch(new RegExp(`^DA:${ignoredLine},`, "m"));
+    const lineCounts = record!.match(/^LF:(\d+)\nLH:(\d+)$/m);
+    expect(lineCounts?.[1]).toBe(lineCounts?.[2]);
+  }
+  expect(stdout + stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(stdout + stderr).toMatch(/ subject\.js +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(exitCode).toBe(0);
+});
+
+test("coverage treats template and JSX text as source text, not comments", async () => {
+  using dir = tempDir("cov-istanbul-ignore-context", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "subject.js":
+      `export function fromTemplate(flag) {
+  return ` +
+      "`" +
+      `raw
+/* istanbul ignore next */
+\${flag ? "yes" : "no"}` +
+      "`" +
+      `;
+}
+`,
+    "subject.tsx": `export function fromJsx(flag: boolean) {
+  return <section>
+    /* istanbul ignore next */
+    {flag ? "yes" : "no"}
+  </section>;
+}
+/* istanbul ignore next */
+export const ignored = 1;
+`,
+    "subject-blank.js": `export function afterBlankLine() {
+  /* istanbul ignore next */
+
+  return 1;
+}
+/* istanbul ignore next */
+export const asyncIgnored = 2;
+`,
+    "subject-bun.js": `// @bun
+export function alreadyBundled(flag) {
+  if (flag) return 1;
+  /* istanbul ignore next */
+  return 2;
+}
+`,
+    "node_modules/react/jsx-dev-runtime.js": `export function jsxDEV(type, props, key) {
+  return { type, props, key };
+}
+`,
+    "subject.test.ts": `import { test } from "bun:test";
+import { fromTemplate } from "./subject.js";
+import { fromJsx } from "./subject.tsx";
+
+test("loads sources containing marker-like text", async () => {
+  fromTemplate(true);
+  fromJsx(true);
+  await import("./subject-blank.js");
+  const alreadyBundled = await import("./subject-bun.js");
+  alreadyBundled.alreadyBundled(true);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  for (const [file, line] of [
+    ["subject.js", 4],
+    ["subject.tsx", 4],
+  ] as const) {
+    const record = lcov.split("end_of_record").find(r => r.includes(`SF:${file}`));
+    expect(record).toBeDefined();
+    expect(record).toMatch(new RegExp(`^DA:${line},`, "m"));
+  }
+  const tsxRecord = lcov.split("end_of_record").find(r => r.includes("SF:subject.tsx"));
+  expect(tsxRecord).not.toMatch(/^DA:8,/m);
+  const blankRecord = lcov.split("end_of_record").find(r => r.includes("SF:subject-blank.js"));
+  expect(blankRecord).not.toMatch(/^DA:3,/m);
+  expect(blankRecord).toMatch(/^DA:4,\d+$/m);
+  expect(blankRecord).not.toMatch(/^DA:7,/m);
+  const alreadyBundledRecord = lcov.split("end_of_record").find(r => r.includes("SF:subject-bun.js"));
+  expect(alreadyBundledRecord).not.toMatch(/^DA:5,/m);
+});
+
+test("coverageIgnoreSourcemaps does not apply original-source directives to generated lines", async () => {
+  using dir = tempDir("cov-istanbul-ignore-generated-lines", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageIgnoreSourcemaps = true\ncoverageThreshold = { lines = 1.0 }\n`,
+    "subject.ts": `enum Color {
+  Red,
+  Blue,
+}
+
+
+
+/* istanbul ignore next */
+export function choose(flag: boolean) {
+  if (flag) return Color.Red;
+  return Color.Blue;
+}
+`,
+    "subject.test.ts": `import { test } from "bun:test";
+import { choose } from "./subject.ts";
+
+test("leaves the generated uncovered branch in the report", () => {
+  choose(true);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toContain("1 pass");
+  expect(exitCode).toBe(1);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  expect(record).toMatch(/^DA:9,0$/m);
+});
+
+test("coverage directives require an exact comment token", async () => {
+  using dir = tempDir("cov-istanbul-ignore-string", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "subject.js": `const marker = "/* istanbul ignore next */";
+const regexp = /\\/\\* istanbul ignore next \\*\\//;
+export const stringValue = 1;
+/* istanbul ignore next line */
+export const commentValue = 2;
+`,
+    "subject.test.ts": `import { test } from "bun:test";
+import "./subject.js";
+
+test("loads the subject", () => {});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.js"));
+  expect(record).toBeDefined();
+  expect(record).toMatch(/^DA:2,\d+$/m);
+  expect(record).toMatch(/^DA:3,\d+$/m);
+  expect(record).toMatch(/^DA:5,\d+$/m);
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -717,6 +939,16 @@ describe("a file loaded more than once counts every load", () => {
   return n + 1;
 };
 `;
+  const sameUrlIgnored = `export function staleMask(flag) {
+  if (flag) return 1;
+  /* istanbul ignore next */
+  return 2;
+}
+`;
+  const sameUrlCleared = sameUrlIgnored.replace(
+    "  /* istanbul ignore next */",
+    " ".repeat("  /* istanbul ignore next */".length),
+  );
   const compiledText =
     Buffer.alloc(12, "\n").toString() +
     "exports.other = function other(n) {\n  if (n > 5) {\n    return 1;\n  }\n  return 2;\n};\nexports.other(1);\n";
@@ -724,6 +956,7 @@ describe("a file loaded more than once counts every load", () => {
   const files = {
     "host-and-graph.ts": esm,
     "two-graphs.ts": esm,
+    "same-url-ignore.js": sameUrlIgnored,
     "cjs-host-and-graph.cjs": cjs,
     "query-strings.ts": esm,
     "overlapping-imports.ts": esm,
@@ -794,6 +1027,26 @@ test("two-graphs.ts", async () => {
   const inB = await b.import(here("two-graphs.ts"));
   expect(a.run(() => inA.covered(10))).toBe(20);
   expect(b.run(() => inB.covered(1))).toBe(2);
+});
+
+test("same-url-ignore.js", async () => {
+  // The test runner may return an isolation-cached SourceProvider before it
+  // reads the updated file. The outer test runs this case again with that
+  // cache disabled so the second graph exercises a fresh parse of the same URL.
+  if (process.env.BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE !== "1") return;
+
+  const filename = here("same-url-ignore.js");
+
+  if (!oneLoad) {
+    using previous = new Bun.ModuleGraph({});
+    const subject = await previous.import(filename);
+    expect(previous.run(() => subject.staleMask(false))).toBe(2);
+  }
+
+  writeFileSync(filename, ${JSON.stringify(sameUrlCleared)});
+  using updated = new Bun.ModuleGraph({});
+  const subject = await updated.import(filename);
+  expect(updated.run(() => subject.staleMask(false))).toBe(2);
 });
 
 test("cjs-host-and-graph.cjs", async () => {
@@ -937,11 +1190,13 @@ test("b", () => {
 
   let loaded: Awaited<ReturnType<typeof run>>;
   let oneLoad: Awaited<ReturnType<typeof run>>;
+  let sameUrlFreshSource: Awaited<ReturnType<typeof run>>;
   let pluginUnderIsolate: Awaited<ReturnType<typeof run>>;
   beforeAll(async () => {
-    [loaded, oneLoad, pluginUnderIsolate] = await Promise.all([
+    [loaded, oneLoad, sameUrlFreshSource, pluginUnderIsolate] = await Promise.all([
       run(files, ["./loads.test.ts"]),
       run(files, ["./loads.test.ts"], { ONE_LOAD: "1" }),
+      run(files, ["./loads.test.ts"], { BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE: "1" }),
       run(pluginFiles, ["--isolate", "./a.test.ts", "./b.test.ts"]),
     ]);
   });
@@ -997,6 +1252,10 @@ test("b", () => {
   test("a file that changed between two loads reports the last text alone", () => {
     expect(oneLoad.rows["changed.ts"].functions).toBe("50.00");
     expect(loaded.rows["changed.ts"]).toEqual(oneLoad.rows["changed.ts"]);
+  });
+
+  test("an empty ignore mask restores a line after a same-URL reload", () => {
+    expect(sameUrlFreshSource.lcov["same-url-ignore.js"]).toMatch(/^DA:4,\d+$/m);
   });
 
   test("bun:jsc codeCoverageForFile()", () => {

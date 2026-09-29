@@ -109,6 +109,8 @@ pub struct Parser<'a> {
 }
 
 pub struct Options<'a> {
+    /// Record own-line Istanbul ignore-next directives for runtime coverage.
+    pub capture_coverage_directives: bool,
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
     pub keep_names: bool,
@@ -166,6 +168,7 @@ impl<'a> Default for Options<'a> {
         // real options out of `Parser` (moving the heap-owning `jsx: Pragma`
         // by value) instead of bitwise-copying it and double-freeing on drop.
         Options {
+            capture_coverage_directives: false,
             jsx: options::JSX::Pragma::default(),
             ts: false,
             keep_names: true,
@@ -217,6 +220,7 @@ impl<'a> Options<'a> {
     pub fn clone_for_lazy_export(&self) -> Options<'a> {
         let f = &self.features;
         Options {
+            capture_coverage_directives: self.capture_coverage_directives,
             jsx: self.jsx.clone(),
             ts: self.ts,
             keep_names: self.keep_names,
@@ -324,6 +328,7 @@ impl<'a> Options<'a> {
         // `macro_context` is `None`
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
+            capture_coverage_directives: false,
             ts: loader.is_typescript(),
             jsx,
             keep_names: true,
@@ -374,7 +379,10 @@ impl<'a> Parser<'a> {
         let orig_error_count = log.errors;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
-        lexer.track_comments = options.features.minify_identifiers;
+        lexer.coverage_directive_candidate = options.capture_coverage_directives
+            && js_lexer::has_coverage_ignore_next_candidate(source);
+        lexer.track_comments =
+            options.features.minify_identifiers || lexer.coverage_directive_candidate;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.step();
@@ -880,7 +888,36 @@ impl<'a> Parser<'a> {
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
             if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
-                return Ok(crate::Result::AlreadyBundled(pragma));
+                let ignored_lines = if p.lexer.coverage_directive_candidate {
+                    // Preserve the already-bundled execution path while asking
+                    // the real parser lexer which source comments are genuine.
+                    // Use a scratch log because this parse exists only to
+                    // collect directives and must not add diagnostics.
+                    let mut scratch_log = bun_ast::Log::default();
+                    let scratch_log_ptr = core::ptr::NonNull::from(&mut scratch_log);
+                    let original_log_ptr = p.log;
+                    p.log = scratch_log_ptr;
+                    p.lexer.log = scratch_log_ptr;
+                    let mut parse_options = ParseStatementOptions {
+                        scope: StatementScope::Module,
+                        ..Default::default()
+                    };
+                    let parsed = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut parse_options);
+                    let parsed_without_errors = parsed.is_ok() && scratch_log.errors == 0;
+                    p.log = original_log_ptr;
+                    p.lexer.log = original_log_ptr;
+
+                    parsed_without_errors
+                        .then(|| {
+                            let lines =
+                                js_lexer::coverage_ignore_next_lines(source, &p.lexer.all_comments);
+                            (!lines.is_empty()).then(|| lines.into_boxed_slice())
+                        })
+                        .flatten()
+                } else {
+                    None
+                };
+                return Ok(crate::Result::AlreadyBundled(pragma, ignored_lines));
             }
         }
 
@@ -900,11 +937,13 @@ impl<'a> Parser<'a> {
                 let is_node_module = strings::last_index_of(name.dir, NM).is_some();
                 let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
                     || strings::has_suffix_comptime(name.filename, b".tsx");
-                if cache.get(
-                    p.source,
-                    core::ptr::NonNull::from(&p.options).cast::<()>(),
-                    p.options.jsx.parse && (!is_node_module || is_jsx_file),
-                ) {
+                if !p.lexer.coverage_directive_candidate
+                    && cache.get(
+                        p.source,
+                        core::ptr::NonNull::from(&p.options).cast::<()>(),
+                        p.options.jsx.parse && (!is_node_module || is_jsx_file),
+                    )
+                {
                     return Ok(crate::Result::Cached);
                 }
             }

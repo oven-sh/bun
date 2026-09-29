@@ -647,6 +647,8 @@ pub struct ByteRangeMapping {
     /// Of the text `line_offset_table` was built from.
     source_hash: u64,
     pub source_url: Utf8Bytes<'static>,
+    /// Original-source zero-based lines excluded by `istanbul ignore next`.
+    ignored_lines: Vec<u32>,
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
@@ -663,6 +665,34 @@ thread_local! {
     // §Forbidden: no Box::leak).
     static MAP: UnsafeCell<Option<Box<ByteRangeMappingHashMap>>> =
         const { UnsafeCell::new(None) };
+    // Same-thread handoff from transpiling original source to the matching
+    // JSC SourceProvider callback, which creates the ByteRangeMapping.
+    static PENDING_IGNORED_LINES: std::cell::RefCell<std::collections::HashMap<u64, Vec<u32>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Attach original-source coverage directives to the next SourceProvider
+/// mapping created for this URL on the current JS thread.
+pub fn set_ignored_lines(source_url: &bun_core::String, ignored_lines: Vec<u32>) {
+    let hash = bun_wyhash::hash(source_url.to_utf8().slice());
+    if ignored_lines.is_empty() {
+        PENDING_IGNORED_LINES.with(|pending| {
+            pending.borrow_mut().remove(&hash);
+        });
+        if let Some(mut mapping) = find(source_url) {
+            // SAFETY: `find` returns a pointer into this thread's pinned map; this
+            // function runs on the same JS thread as SourceProvider registration.
+            unsafe { mapping.as_mut() }.ignored_lines.clear();
+        }
+        return;
+    }
+    PENDING_IGNORED_LINES.with(|pending| {
+        pending.borrow_mut().insert(hash, ignored_lines);
+    });
+}
+
+fn take_pending_ignored_lines(hash: u64) -> Option<Vec<u32>> {
+    PENDING_IGNORED_LINES.with(|pending| pending.borrow_mut().remove(&hash))
 }
 
 /// Returns a raw pointer to this thread's map, lazily creating it.
@@ -1016,6 +1046,21 @@ impl ByteRangeMapping {
             unreachable!();
         }
 
+        // Ignored lines are in original-source coordinates. When sourcemaps are
+        // explicitly disabled, the report can use generated/transformed source
+        // coordinates instead, so applying this mask could hide the wrong line.
+        if !ignore_sourcemap {
+            for &line in &self.ignored_lines {
+                let line = line as usize;
+                if line >= line_hits.len() {
+                    continue;
+                }
+                executable_lines.unset(line);
+                lines_which_have_executed.unset(line);
+                line_hits[line] = 0;
+            }
+        }
+
         functions_which_have_executed.resize(functions.len(), false)?;
         stmts_which_have_executed.resize(stmts.len(), false)?;
 
@@ -1043,6 +1088,7 @@ impl ByteRangeMapping {
             source_ids: vec![source_id],
             source_hash,
             source_url,
+            ignored_lines: Vec::new(),
         }
     }
 }
@@ -1062,17 +1108,24 @@ extern "C" fn ByteRangeMapping__generate(
     let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
     let source_hash = bun_wyhash::hash(source_contents.slice());
+    let mut ignored_lines = take_pending_ignored_lines(hash);
 
     // Another text replaces the entry: the line table and the saved source map describe one text.
     if let Some(existing) = map.get_mut(&hash)
         && existing.source_hash == source_hash
     {
+        if let Some(ignored_lines) = ignored_lines.take() {
+            existing.ignored_lines = ignored_lines;
+        }
         existing.source_ids.push(source_id);
         return;
     }
 
-    let new_value =
+    let mut new_value =
         ByteRangeMapping::compute(source_contents.slice(), source_hash, source_id, source_url);
+    if let Some(ignored_lines) = ignored_lines {
+        new_value.ignored_lines = ignored_lines;
+    }
     map.insert(hash, new_value);
 }
 

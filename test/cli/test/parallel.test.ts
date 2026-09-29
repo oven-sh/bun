@@ -645,8 +645,14 @@ test("--parallel --reporter=junit carries a large per-file report intact over IP
 test("--parallel --coverage merges LCOV across workers", async () => {
   using dir = tempDir("parallel-coverage-lcov", {
     "shared.js": `export function hit() { return 1; }\nexport function miss() { return 2; }\n`,
-    "only-a.js": `export function fa() { return 1; }\n`,
-    "a.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; import {fa} from "./only-a.js"; test("a",()=>expect(hit()+fa()).toBe(2));`,
+    "only-a.ts": `export function fa(skip: boolean) {
+  if (!skip) return 1;
+  /* istanbul ignore next */
+  return 2;
+}
+export function unused() { return 3; }
+`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; import {fa} from "./only-a.ts"; test("a",()=>expect(hit()+fa(false)).toBe(2));`,
     "b.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; test("b",()=>expect(hit()).toBe(1));`,
   });
 
@@ -664,7 +670,7 @@ test("--parallel --coverage merges LCOV across workers", async () => {
   const lcov = await Bun.file(String(dir) + "/cov/lcov.info").text();
   // Both source files present, each exactly once (merged, not duplicated per worker).
   expect(lcov.match(/^SF:shared\.js$/gm)?.length).toBe(1);
-  expect(lcov.match(/^SF:only-a\.js$/gm)?.length).toBe(1);
+  expect(lcov.match(/^SF:only-a\.ts$/gm)?.length).toBe(1);
   // shared.js was loaded by both workers; merged DA hit counts must be > what
   // a single worker reports. We just assert the line was hit (>0).
   const sharedRecord = lcov.split("end_of_record").find(r => r.includes("SF:shared.js"))!;
@@ -674,6 +680,11 @@ test("--parallel --coverage merges LCOV across workers", async () => {
   // LH/LF recomputed from merged DA.
   expect(sharedRecord).toMatch(/^LF:\d+$/m);
   expect(sharedRecord).toMatch(/^LH:\d+$/m);
+
+  const onlyARecord = lcov.split("end_of_record").find(r => r.includes("SF:only-a.ts"))!;
+  expect(onlyARecord).not.toMatch(/^DA:4,/m);
+  // Directives affect line totals only; the uncalled function remains in the function metric.
+  expect(onlyARecord).toMatch(/^FNF:2\nFNH:1\n/m);
   expect(exitCode).toBe(0);
 });
 

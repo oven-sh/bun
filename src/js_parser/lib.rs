@@ -227,7 +227,7 @@ use bun_ast::{Ast, Ref};
 // the stack — one mimalloc-arena alloc per parsed module is far cheaper than
 // 4+ kilobyte memmoves. The other variants are already tiny.
 pub enum Result<'a> {
-    AlreadyBundled(AlreadyBundled),
+    AlreadyBundled(AlreadyBundled, Option<Box<[u32]>>),
     Cached,
     Ast(Box<Ast<'a>>),
 }

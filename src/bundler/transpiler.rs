@@ -986,6 +986,8 @@ pub struct ParseOptions<'a, 'b> {
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
+    /// Preserve coverage ignore-next comments while parsing this runtime file.
+    pub capture_coverage_directives: bool,
     /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
     /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
     pub jsx: crate::options_impl::jsx::Pragma,
@@ -1575,6 +1577,7 @@ impl<'a> Transpiler<'a> {
                 // below instead of pinned to `'static`.
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
+                    capture_coverage_directives: this_parse.capture_coverage_directives,
                     ts: loader.is_typescript(),
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
@@ -1736,8 +1739,12 @@ impl<'a> Transpiler<'a> {
                         empty: false,
                         source_contents_backing: source_backing,
                     },
-                    js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
-                        ast: bun_ast::Ast::empty_in(arena),
+                    js_ast::Result::AlreadyBundled(already_bundled, ignored_lines) => ParseResult {
+                        ast: {
+                            let mut ast = bun_ast::Ast::empty_in(arena);
+                            ast.coverage_ignore_next_lines = ignored_lines;
+                            ast
+                        },
                         already_bundled: match already_bundled {
                             js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
@@ -2962,6 +2969,7 @@ impl<'a> Transpiler<'a> {
                     arena: self.arena,
                     path: bun_paths::fs::Path::init(file_path_text),
                     loader,
+                    capture_coverage_directives: false,
                     dirname_fd,
                     file_descriptor: None,
                     file_fd_ptr: None,

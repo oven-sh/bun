@@ -499,32 +499,34 @@ describe("one readiness event of a listener does not empty a long queue", () => 
   // count of active libuv handles, not of the polls of the loop.
   const skipped = (kind: string) => isWindows && (kind.endsWith("unix") || acceptsWithoutJS.includes(kind));
 
-  it.each(Object.keys(kinds).filter(kind => !skipped(kind)))("%s", async kind => {
-    const order: string[] = [];
-    const { promise: done, resolve } = Promise.withResolvers<void>();
-    let accepted = 0;
-    const arrived: Arrived = (label = "c") => {
-      const id = ++accepted;
-      order.push(label + id);
-      setImmediate(() => {
-        order.push("i" + id);
-        if (id === count) resolve();
-      });
-    };
-    const watched = acceptsWithoutJS.includes(kind);
+  for (const kind of Object.keys(kinds)) {
+    it.skipIf(skipped(kind))(kind, async () => {
+      const order: string[] = [];
+      const { promise: done, resolve } = Promise.withResolvers<void>();
+      let accepted = 0;
+      const arrived: Arrived = (label = "c") => {
+        const id = ++accepted;
+        order.push(label + id);
+        setImmediate(() => {
+          order.push("i" + id);
+          if (id === count) resolve();
+        });
+      };
+      const watched = acceptsWithoutJS.includes(kind);
 
-    await using listener = await queued(kinds[kind], watched ? () => {} : arrived);
-    expect(listener.connected).toBe(true);
-    await Promise.all([done, watched ? watchPolls(arrived) : undefined]);
+      await using listener = await queued(kinds[kind], watched ? () => {} : arrived);
+      expect(listener.connected).toBe(true);
+      await Promise.all([done, watched ? watchPolls(arrived) : undefined]);
 
-    const label = (id: number) => {
-      if (kind === "node:net pauseOnConnect") return "paused" + id;
-      return (kind === "node:net maxConnections" && id > 1 ? "d" : "c") + id;
-    };
-    expect(order.filter(entry => !entry.startsWith("i"))).toEqual(
-      Array.from({ length: count }, (_, i) => label(i + 1)),
-    );
-    // The loop ran the immediate of the first connection before the listener took the last one.
-    expect(order.indexOf("i1")).toBeLessThan(order.indexOf(label(count)));
-  });
+      const label = (id: number) => {
+        if (kind === "node:net pauseOnConnect") return "paused" + id;
+        return (kind === "node:net maxConnections" && id > 1 ? "d" : "c") + id;
+      };
+      expect(order.filter(entry => !entry.startsWith("i"))).toEqual(
+        Array.from({ length: count }, (_, i) => label(i + 1)),
+      );
+      // The loop ran the immediate of the first connection before the listener took the last one.
+      expect(order.indexOf("i1")).toBeLessThan(order.indexOf(label(count)));
+    });
+  }
 });

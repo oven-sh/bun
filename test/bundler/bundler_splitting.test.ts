@@ -988,6 +988,38 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nreader app\nindex s\nsettings s" },
   });
+  // m.js stays behind the import of ext-setup. The chunk of plugin.js, which m.js imports, runs behind the hashed chunk.
+  itBundled("splitting/SharedCodeRunsBeforeLaterChunkOfOtherEntryWhenExternalImportComesFirst", {
+    files: {
+      "/app.js": /* js */ `
+        import "ext-setup";
+        import "./registry.js";
+        import "./m.js";
+        import { Store } from "./store.js";
+        console.log("app", new Store().name);
+        import("./route.js");
+      `,
+      "/admin.js": `import "./plugin.js"; console.log("admin");`,
+      "/registry.js": `console.log("registry"); globalThis.REGISTRY = new Map();`,
+      "/m.js": `import { plugin } from "./plugin.js"; console.log("m", plugin);`,
+      "/plugin.js": `globalThis.REGISTRY.set("plugin", 1); console.log("plugin"); export const plugin = 1;`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/route.js": `import "./registry.js"; import { Store } from "./store.js"; console.log("route", new Store().name);`,
+      "/node_modules/ext-setup/package.json": `{ "name": "ext-setup", "version": "1.0.0", "type": "module", "main": "index.js" }`,
+      "/node_modules/ext-setup/index.js": `globalThis.APP = { name: "app" };`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    external: ["ext-setup"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/app.js").toContain(`console.log("m"`);
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+    },
+    run: { file: "/out/app.js", stdout: "registry\nstore\nplugin\nm 1\napp s\nroute s" },
+  });
   // A browser build has no node:fs. The import loads nothing, so reader.js moves and runs ahead of store.js.
   itBundled("splitting/EntryFilesAfterDisabledImportRunBeforeSharedCode", {
     files: {
@@ -1077,6 +1109,56 @@ describe("bundler", () => {
     },
     run: { file: "/out/app.js", stdout: "registry\nplugin\napp 2 declared\nroute declared" },
   });
+  // Tree shaking may drop each of these when it is unused, so none of them says when its chunk runs.
+  const droppedWhenUnused = [
+    ["ObjectLiteral", "./v.js", { "/v.js": `export const v = { a: 1 };` }],
+    [
+      "PureCall",
+      "./v.js",
+      { "/v.js": `function make() { return { a: 1 }; }\nexport const v = /* @__PURE__ */ make();` },
+    ],
+    [
+      "NoSideEffectsPackage",
+      "pkg",
+      {
+        "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "sideEffects": false, "main": "index.js" }`,
+        "/node_modules/pkg/index.js": `export const v = Object.freeze({ a: 1 });`,
+      },
+    ],
+  ] as const;
+  // app.js imports v of the chunk of plugin.js first. That chunk still runs behind registry.js, so m.js stays.
+  for (const [name, from, files] of droppedWhenUnused) {
+    itBundled("splitting/EntryFileThatImportsLaterChunkOfOtherEntryStaysBehindCodeThatCanBeDropped/" + name, {
+      files: {
+        "/app.js": /* js */ `
+          import { v } from "${from}";
+          import "./registry.js";
+          import "./m.js";
+          import { Store } from "./store.js";
+          console.log("app", new Store().name, v.a);
+          import("./route.js");
+        `,
+        "/admin.js": `import { v } from "${from}"; import "./plugin.js"; console.log("admin", v.a);`,
+        "/registry.js": `console.log("registry"); globalThis.REGISTRY = new Map();`,
+        "/m.js": `import { plugin } from "./plugin.js"; console.log("m", plugin);`,
+        "/plugin.js": `globalThis.REGISTRY.set("plugin", 1); console.log("plugin"); export const plugin = 1;`,
+        "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+        "/route.js": `import "./registry.js"; import { Store } from "./store.js"; console.log("route", new Store().name);`,
+        ...files,
+      },
+      entryPoints: ["/app.js", "/admin.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        api.expectFile("/out/app.js").toContain(`console.log("m"`);
+        api.expectFile("/out/" + chunkContaining(api, `"registry"`)).not.toContain(chunkContaining(api, `"plugin"`));
+        for (const file of jsFilesIn(api))
+          api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+      },
+      run: { file: "/out/app.js", stdout: "registry\nstore\nplugin\nm 1\napp s 1\nroute s" },
+    });
+  }
   // With m.js the hashed chunk would import the chunk of plugin.js, so m.js stays. s1.js of the hashed chunk imports
   // y.js, which third.js loads too: the hashed chunk runs behind the chunk of y.js, and the chunk of plugin.js ahead of both.
   itBundled("splitting/SharedCodeRunsAfterChunkThatItImportsWhenEntryFileStays", {
@@ -1394,6 +1476,41 @@ describe("bundler", () => {
     },
     run: { file: "/out/app.js", stdout: "store undefined\nq ready\nw\napp s\nroute s" },
   });
+  // As above. app.js imports v of the chunk of w.cjs first, and that chunk still runs behind store.js.
+  for (const [name, from, files] of droppedWhenUnused) {
+    itBundled("splitting/CommonJSInChunkThatRunsStartsAfterSharedCodeBehindCodeThatCanBeDropped/" + name, {
+      files: {
+        "/app.js": /* js */ `
+          import { v } from "${from}";
+          import "./w.cjs";
+          import { Store } from "./store.js";
+          import "./q.js";
+          console.log("app", new Store().name, v.a);
+          import("./route.js");
+        `,
+        "/admin.js": `import { v } from "${from}"; import "./w.cjs"; import "./q.js"; console.log("admin", v.a);`,
+        "/w.cjs": `console.log("w"); globalThis.APP = { name: "app" };`,
+        "/q.js": `console.log("q", globalThis.STORE);`,
+        "/store.js": /* js */ `
+          console.log("store", globalThis.APP?.name);
+          globalThis.STORE = "ready";
+          export class Store { name = "s"; }
+        `,
+        "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+        ...files,
+      },
+      entryPoints: ["/app.js", "/admin.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        api.expectFile("/out/" + chunkContaining(api, `"store"`)).not.toContain("require_w");
+        for (const file of jsFilesIn(api))
+          api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+      },
+      run: { file: "/out/app.js", stdout: "store undefined\nq ready\nw\napp s 1\nroute s" },
+    });
+  }
   // The helpers of setup.cjs are in the chunk that index.js shares with admin.js. common.js runs when that chunk
   // loads, which is ahead of the hashed chunk as it is, so setup.cjs moves.
   itBundled("splitting/CommonJSImportBehindChunkOfOtherEntryStartsBeforeSharedCode", {
@@ -1456,6 +1573,50 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "common\nw\nsetup\nstore\nindex app\nsettings app" },
   });
+  // The helpers of setup.cjs are in the chunk that app.js shares with admin.js, and app.js imports v of that chunk
+  // first. later.js runs when that chunk loads, behind store.js. With setup.cjs the hashed chunk would import that
+  // chunk, so setup.cjs stays.
+  for (const [name, from, files] of droppedWhenUnused) {
+    itBundled("splitting/CommonJSImportWithHelpersInLaterChunkOfOtherEntryStays/" + name, {
+      files: {
+        "/app.js": /* js */ `
+          import { v } from "${from}";
+          import "./setup.cjs";
+          import { Store } from "./store.js";
+          import "./later.js";
+          console.log("app", new Store().name, v.a);
+          import("./route.js");
+        `,
+        "/admin.js": /* js */ `
+          import { v } from "${from}";
+          import "./later.js";
+          import other from "./other.cjs";
+          console.log("admin", v.a, other.v);
+        `,
+        "/later.js": `console.log("later", globalThis.STORE.length);`,
+        "/other.cjs": `module.exports = { v: 1 };`,
+        "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+        "/store.js": /* js */ `
+          console.log("store", globalThis.APP?.name);
+          globalThis.STORE = "ready";
+          export class Store { name = "s"; }
+        `,
+        "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+        ...files,
+      },
+      entryPoints: ["/app.js", "/admin.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        api.expectFile("/out/app.js").toContain(`console.log("setup")`);
+        api.expectFile("/out/" + chunkContaining(api, `"store"`)).not.toContain(chunkContaining(api, `"later"`));
+        for (const file of jsFilesIn(api))
+          api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(app|admin)\.js"/);
+      },
+      run: { file: "/out/app.js", stdout: "store undefined\nlater 5\nsetup\napp s 1\nroute s" },
+    });
+  }
   // setup.cjs requires plugin.cjs of the chunk that app.js shares with admin.js. registry.js runs when that chunk
   // loads, behind store.js. With x.js and setup.cjs the hashed chunk would import that chunk, so both stay.
   itBundled("splitting/EntryFileWhoseCommonJSImportRequiresLaterChunkOfOtherEntryStays", {

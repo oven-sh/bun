@@ -978,7 +978,9 @@ enum RunPoint {
 #[derive(Clone, Copy)]
 struct OpenCut {
     file: u32,
-    /// The lengths of `taken` and `repeated` at the start of the unit of the import.
+    /// The first run point of the unit of the import.
+    first: usize,
+    /// The lengths of `taken` and `repeated` at the start of that unit.
     taken: usize,
     repeated: usize,
 }
@@ -1296,14 +1298,14 @@ impl FileClasses {
 /// Says whether the parent chunk of a pinned entry point may load a file of another class. A chunk that runs something when it loads would run ahead of the whole parent chunk.
 struct ParentGuard {
     classes: Option<FileClasses>,
-    /// Files of a parent chunk behind a run point that the guard turned down. They do not rank their chunk again. A file that loads a chunk which has to run ahead of the parent chunk is not one of them.
+    /// Files of a parent chunk behind a run point that the list turned down: for the guard, for an external import or for a wrapped file that leads back to the entry point's file. They do not rank their chunk again. A file that loads a chunk which has to run ahead of the parent chunk is not one of them.
     ranks_once: AutoBitSet,
     entry_id: usize,
     /// Per class, once asked: `FileClasses::is_inert`.
     inert: Vec<Option<bool>>,
     /// `FileClasses::bound_by_parent`. The parent chunk imports the chunk of such a class as it is.
     bound: Option<AutoBitSet>,
-    /// Per class: one of its files runs ahead of every file of the parent chunk that runs.
+    /// Per class: one of its files ranks the chunk ahead of every file of the parent chunk that runs.
     ahead: Option<AutoBitSet>,
 }
 
@@ -1357,7 +1359,7 @@ impl ParentGuard {
         Ok(bound.is_set(class as usize))
     }
 
-    /// The chunk of `file` ranks ahead of the parent chunk as it is: a file of its class runs and is one of `ahead_of_parent`, or one that such a file loads.
+    /// The chunk of `file` ranks ahead of the parent chunk as it is: a file of its class ranks the chunk (`loading_file_has_no_side_effects` is false) and is one of `ahead_of_parent`, or one that such a file loads.
     fn runs_ahead(
         &mut self,
         this: &LinkerContext,
@@ -1379,7 +1381,7 @@ impl ParentGuard {
                         continue;
                     }
                     seen.set(from as usize);
-                    if !this.loading_file_only_declares(from) {
+                    if !this.loading_file_has_no_side_effects(from) {
                         runs.set(class as usize);
                     }
                     this.for_each_file_loaded_by(from, |other| stack.push(other));
@@ -1601,7 +1603,7 @@ fn files_that_leave_entry_chunk(
     // The files that the units moved, in the order of the units.
     let mut taken: Vec<u32> = Vec::new();
     let mut open_cuts: Vec<OpenCut> = Vec::new();
-    // The first run point of the unit that the guard turned down.
+    // The first run point of the unit that the list turned down: for the guard, for an external import or for a wrapped file that leads back to the entry point's file.
     let mut turned_down_from: Option<usize> = None;
     let mut pending: Vec<u32> = Vec::new();
     let mut later: Vec<u32> = Vec::new();
@@ -1632,6 +1634,8 @@ fn files_that_leave_entry_chunk(
                 RunPoint::Parent(file) => debug_assert!(!own(file)),
                 RunPoint::Cut(file) if leaves.is_set(file as usize) => {}
                 RunPoint::Cut(file) => {
+                    // The import ends the list when its file stays.
+                    turned_down = true;
                     if file == entry_source || leads_back.leads_back_to_entry(this, &own, file)? {
                         stuck = true;
                     } else {
@@ -1644,6 +1648,7 @@ fn files_that_leave_entry_chunk(
                             }
                             Some(_) => open_cuts.push(OpenCut {
                                 file,
+                                first,
                                 taken: taken_before,
                                 repeated: repeated_before,
                             }),
@@ -1678,6 +1683,7 @@ fn files_that_leave_entry_chunk(
                                 )?;
                             stuck = turned_down;
                         } else if leads_back.leads_back_to_entry(this, &own, wrapped)? {
+                            turned_down = true;
                             stuck = true;
                         } else {
                             pending.push(wrapped);
@@ -1700,9 +1706,10 @@ fn files_that_leave_entry_chunk(
                 taken.push(file);
                 this.for_each_file_loaded_by(file, |other| {
                     if !own(other) {
-                        // The chunk of a file that runs, met ahead of the parent, runs ahead of the parent as it is. A file that only declares does not say when its chunk runs.
+                        // A file with side effects ranks its chunk. Met ahead of the parent, its chunk runs ahead of the parent as it is. A file without them does not say when its chunk runs.
                         if let Some(&ahead_of) = outside.get(&other)
-                            && (ahead_of > first_parent || this.loading_file_only_declares(other))
+                            && (ahead_of > first_parent
+                                || this.loading_file_has_no_side_effects(other))
                         {
                             asked.push(other);
                         }
@@ -1768,7 +1775,7 @@ fn files_that_leave_entry_chunk(
         }
         repeated.truncate(open.repeated);
         open_cuts.truncate(index);
-        turned_down_from = None;
+        turned_down_from = Some(open.first);
     }
     // A file of the parent behind the run point does not rank the parent again: a chunk that the walk reaches in between stays behind the parent.
     // It does when it loads, through files of the parent, a chunk that the guard keeps the parent from loading: the parent has to run behind that chunk.

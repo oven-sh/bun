@@ -3374,6 +3374,32 @@ describe("bundler", () => {
       stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v","unused-param","unused-catch",null,"set",[5,{"b":1}],"k","sw","try","cls",["nested","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
     },
   });
+  // A name that a `with` body reads cannot change. The parameter "require_dep"
+  // meets the wrapper of dep.cjs, which the function calls, so it is numbered.
+  // It cannot take "require_dep2", the `var` that the `with` body reads.
+  itBundled("identifiers/NestedBindingRenamedAroundNameReadThroughWith", {
+    files: {
+      "/entry.js": /* js */ `
+        const { read } = require("./sloppy.cjs");
+        console.log(JSON.stringify([read("arg", {}), read("arg", { require_dep2: 9 })]));
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports.read = function (require_dep, obj) {
+          var require_dep2 = 1;
+          var seen = require_dep + "," + require("./dep.cjs").value;
+          with (obj) {
+            return [seen, require_dep2];
+          }
+        };
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports.value = "dep";
+      `,
+    },
+    format: "cjs",
+    minifyIdentifiers: false,
+    run: { stdout: `[["arg,dep",1],["arg,dep",9]]` },
+  });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
       "/entry.ts": /* js */ `

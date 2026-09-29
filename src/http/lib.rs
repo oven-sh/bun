@@ -1459,6 +1459,14 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 const US_HANDSHAKE_ECONNRESET: i32 = -46;
 
 /// Why a TLS handshake that reported failure failed.
+/// What a request fails with when the TLS engine gave up on its connection.
+pub(crate) fn tls_failure(error: bun_uws::us_tls_error_t) -> crate::Error {
+    match error.kind() {
+        bun_uws::TlsErrorKind::RenegotiationLimit => crate::Error::TLSRenegotiationLimit,
+        bun_uws::TlsErrorKind::RenegotiationRefused => crate::Error::TLSRenegotiationRefused,
+    }
+}
+
 pub(crate) fn handshake_failure(error_no: i32) -> crate::Error {
     match error_no {
         n if n > 0 => get_cert_error_from_no(n),

@@ -99,6 +99,11 @@ impl Drop for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
+    /// The TLS engine gave up on the connection. The close of the socket follows.
+    pub fn on_tls_error(&self, error: impl FnOnce(&JSGlobalObject) -> JSValue) {
+        self.fail_with_js_value(error(&self.global_object));
+    }
+
     pub fn server_identity(
         &self,
         ssl: &mut bun_boringssl_sys::SSL,

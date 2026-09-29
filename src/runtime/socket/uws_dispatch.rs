@@ -15,7 +15,9 @@ use bun_uws::NewSocketHandler;
 // `bun_uws` crate defines its own (distinct) mirrors of both; mixing them is a
 // type error.
 use bun_uws_sys::socket_group::VTable;
-use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, vtable};
+use bun_uws_sys::{
+    ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, us_tls_error_t, vtable,
+};
 
 use super::uws_handlers as handlers;
 
@@ -292,6 +294,101 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
         _ => Unchecked,
     };
     verdict as c_int
+}
+
+/// The TLS engine gave up on the connection of `s`. The owner fails what it
+/// has in flight, and openssl.c closes the socket when this returns. Only a
+/// TLS client can get here: a server refuses a renegotiation inside BoringSSL.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_tls_error(s: *mut us_socket_t, error: us_tls_error_t) {
+    use bun_uws_sys::thunk::ExtSlot;
+    let s_ref = us_socket_t::opaque_mut(s);
+    match s_ref.kind() {
+        SocketKind::BunSocketTls => {
+            type TLSSocket = super::NewSocket<true>;
+            let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+                return;
+            };
+            crate::dispatch::fold(TLSSocket::on_tls_error(
+                tls,
+                NewSocketHandler::<true>::from(s),
+                error,
+            ));
+        }
+        SocketKind::HttpClientTls => {
+            let Some(ext) = *s_ref.ext::<Option<core::ptr::NonNull<c_void>>>() else {
+                return;
+            };
+            bun_http::http_context::Handler::<true>::on_tls_error(
+                ext.as_ptr(),
+                NewSocketHandler::<true>::from(s),
+                error,
+            );
+        }
+        SocketKind::WsClientUpgradeTls => {
+            let Some(client) =
+                *s_ref.ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
+            else {
+                return;
+            };
+            handlers::WSUpgradeClient::<true>::handle_tls_error(client);
+        }
+        SocketKind::WsClientTls => {
+            let Some(client) =
+                *s_ref.ext::<Option<bun_ptr::ThisPtr<handlers::WSConnected<true>>>>()
+            else {
+                return;
+            };
+            let _guard = bun_ptr::RefPtr::from_this(client);
+            client.handle_tls_error();
+        }
+        SocketKind::PostgresTls => {
+            let connection = s_ref
+                .ext::<ExtSlot<bun_sql_jsc::postgres::PostgresSQLConnection>>()
+                .owner_ref();
+            if let Some(connection) = connection {
+                connection.on_tls_error(|global| super::uws_jsc::tls_error_to_js(error, global));
+            }
+        }
+        SocketKind::MysqlTls => {
+            let connection = s_ref
+                .ext::<ExtSlot<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>()
+                .owner_ref();
+            if let Some(connection) = connection {
+                connection.on_tls_error(|global| super::uws_jsc::tls_error_to_js(error, global));
+            }
+        }
+        SocketKind::ValkeyTls => {
+            let client = s_ref
+                .ext::<ExtSlot<crate::valkey_jsc::js_valkey::JSValkeyClient>>()
+                .owner_ref();
+            if let Some(client) = client {
+                crate::dispatch::fold(
+                    crate::valkey_jsc::js_valkey::SocketHandler::<true>::on_tls_error(
+                        client, error,
+                    ),
+                );
+            }
+        }
+        SocketKind::Invalid
+        | SocketKind::Dynamic
+        | SocketKind::BunSocketTcp
+        | SocketKind::BunListenerTcp
+        | SocketKind::BunListenerTls
+        | SocketKind::HttpClient
+        | SocketKind::WsClientUpgrade
+        | SocketKind::WsClient
+        | SocketKind::Postgres
+        | SocketKind::Mysql
+        | SocketKind::Valkey
+        | SocketKind::SpawnIpc
+        | SocketKind::UwsHttp
+        | SocketKind::UwsHttpTls
+        | SocketKind::UwsWs
+        | SocketKind::UwsWsTls => {
+            debug_assert!(false, "a TLS error report for a socket that is not a TLS client");
+        }
+    }
 }
 
 /// BoringSSL's new-session callback, routed to the owner of the socket in `SSL_read`: 1 asks for `us_dispatch_session`.

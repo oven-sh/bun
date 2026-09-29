@@ -327,6 +327,8 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
+    /// In the padding that follows the flag above.
+    pending_tls_error: Cell<PendingTlsError>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
     /// bound to this address before connecting. Always a literal IP.
@@ -349,6 +351,36 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) verify_error: JsCell<Option<StoredVerifyError>>,
     /// Owns one reference to the session the new-session callback gave last: TLS 1.3 never stores it on the `SSL`.
     pub(crate) latest_session: Cell<Option<ptr::NonNull<boringssl_sys::SSL_SESSION>>>,
+}
+
+/// The TLS error that the `close` handler reports, for a socket with no
+/// `error` handler. 0 is none.
+#[derive(Clone, Copy, Default)]
+struct PendingTlsError(u32);
+
+impl PendingTlsError {
+    /// No packed BoringSSL error has this value: its library byte is 0xff.
+    const LIMIT: u32 = u32::MAX;
+    /// `ERR_R_INTERNAL_ERROR` of the SSL library, for a refusal that left no error on the queue.
+    const REFUSED_NO_CAUSE: u32 = (16 << 24) | 68;
+
+    fn new(error: uws::us_tls_error_t) -> Self {
+        Self(match error.kind() {
+            uws::TlsErrorKind::RenegotiationLimit => Self::LIMIT,
+            uws::TlsErrorKind::RenegotiationRefused if error.ssl_error == 0 => {
+                Self::REFUSED_NO_CAUSE
+            }
+            uws::TlsErrorKind::RenegotiationRefused => error.ssl_error,
+        })
+    }
+
+    fn get(self) -> Option<uws::us_tls_error_t> {
+        match self.0 {
+            0 => None,
+            Self::LIMIT => Some(uws::us_tls_error_t::renegotiation_limit()),
+            ssl_error => Some(uws::us_tls_error_t::renegotiation_refused(ssl_error)),
+        }
+    }
 }
 
 /// Associated `Socket` handler type.
@@ -1748,6 +1780,55 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
+    /// The TLS engine gave up on the connection. That is not the result of a
+    /// handshake, so neither `handshake` nor `open` runs. The close follows.
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
+    pub(crate) fn on_tls_error(
+        this: bun_ptr::ThisPtr<Self>,
+        s: SocketHandler<SSL>,
+        error: uws::us_tls_error_t,
+    ) -> JsResult<()> {
+        jsc::mark_binding!();
+        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
+            return Ok(());
+        }
+        this.socket.set(s);
+        if this.socket.get().is_detached() {
+            return Ok(());
+        }
+        let _guard = RefPtr::from_this(this);
+        let handlers = this.get_handlers();
+        log!("onTlsError");
+
+        // Before the handler runs: no write path may use the connection.
+        this.update_flags(|f| {
+            f.remove(Flags::AUTHORIZED);
+            f.insert(Flags::REJECTED);
+        });
+        if let Some(twin) = this.twin.get().as_ref() {
+            twin.update_flags(|f| f.insert(Flags::REJECTED));
+        }
+
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            return Ok(());
+        }
+        if handlers.on_error().is_empty() {
+            this.pending_tls_error.set(PendingTlsError::new(error));
+            return Ok(());
+        }
+
+        let scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        let global = handlers.global_object;
+        let this_value = this.get_this_value(&global);
+        let error_value = super::uws_jsc::tls_error_to_js(error, &global);
+        let handled = handlers.call_tls_error_handler(this_value, error_value);
+        drop(scope);
+        handled
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub(crate) fn on_handshake(
         this: bun_ptr::ThisPtr<Self>,
@@ -2240,6 +2321,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if err > 2 {
             js_error =
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
+        } else if let Some(tls_error) = this.pending_tls_error.take().get() {
+            js_error = super::uws_jsc::tls_error_to_js(tls_error, &global);
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
@@ -4427,6 +4510,13 @@ impl DuplexUpgradeContext {
         }
     }
 
+    fn on_tls_error(this: bun_ptr::ThisPtr<Self>, error: uws::us_tls_error_t) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_tls_error(tls, socket, error));
+        }
+    }
+
     fn on_end(this: bun_ptr::ThisPtr<Self>) {
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
@@ -4874,6 +4964,10 @@ pub(crate) fn js_upgrade_duplex_to_tls(
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_handshake: |c: *mut (), ok, err| {
                     DuplexUpgradeContext::on_handshake(bun_ptr::ThisPtr::new(c.cast()), ok, err)
+                },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
+                on_tls_error: |c: *mut (), e| {
+                    DuplexUpgradeContext::on_tls_error(bun_ptr::ThisPtr::new(c.cast()), e)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_close: |c: *mut ()| {

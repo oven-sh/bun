@@ -91,6 +91,21 @@ pub(crate) fn create_bun_socket_error_to_js(
     }
 }
 
+/// The JS error of a TLS error report.
+pub(crate) fn tls_error_to_js(error: bun_uws::us_tls_error_t, global: &JSGlobalObject) -> JSValue {
+    match error.kind() {
+        bun_uws::TlsErrorKind::RenegotiationLimit => global
+            .err(
+                bun_jsc::ErrorCode::ERR_TLS_SESSION_ATTACK,
+                format_args!("TLS session renegotiation attack detected"),
+            )
+            .to_js(),
+        bun_uws::TlsErrorKind::RenegotiationRefused => {
+            crate::crypto::boringssl_jsc::err_to_js(global, error.ssl_error)
+        }
+    }
+}
+
 // LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
 // crate depends on) shares the single canonical impl instead of carrying a
 // verbatim copy.

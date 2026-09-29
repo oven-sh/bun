@@ -1420,6 +1420,8 @@ impl FetchTasklet {
                 self.connect_errno_name().unwrap_or_else(|| fail.name())
             }
             http::Error::TLSHandshakeFailed => "EPROTO",
+            http::Error::TLSRenegotiationLimit => "ERR_TLS_SESSION_ATTACK",
+            http::Error::TLSRenegotiationRefused => "ERR_SSL_NO_RENEGOTIATION",
             _ => fail.name(),
         };
 
@@ -1439,6 +1441,12 @@ impl FetchTasklet {
             http::Error::TLSHandshakeFailed => BunString::create_format(format_args!(
                 "{code}: The TLS handshake failed. Does the server speak TLS on this port?"
             )),
+            http::Error::TLSRenegotiationLimit => {
+                BunString::static_("TLS session renegotiation attack detected")
+            }
+            http::Error::TLSRenegotiationRefused => BunString::static_(
+                "The server asked for a TLS renegotiation that the client cannot start",
+            ),
             http::Error::RedirectURLInvalid => BunString::create_format(format_args!(
                 "{code}: Redirect URL in Location header is invalid."
             )),

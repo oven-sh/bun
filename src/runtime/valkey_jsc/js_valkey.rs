@@ -1899,6 +1899,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
         fn(&JSValkeyClient, SocketType<SSL>, i32, uws::us_bun_verify_error_t) -> JsResult<()>,
     > = if SSL { Some(Self::on_handshake) } else { None };
 
+    /// The TLS engine gave up on the connection. The close of the socket follows.
+    pub(crate) fn on_tls_error(this: &JSValkeyClient, error: uws::us_tls_error_t) -> JsResult<()> {
+        let _guard = this.ref_guard();
+        let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let err = crate::socket::uws_jsc::tls_error_to_js(error, &this.global_object);
+        Self::fail_handshake(this, this.client.get().vm, err)
+    }
+
     pub(crate) fn on_close(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,

@@ -232,6 +232,18 @@ impl WindowsNamedPipeContext {
         ));
     }
 
+    fn on_tls_error(this: *mut Self, error: bun_uws::us_tls_error_t) {
+        // SAFETY: see `on_open`.
+        let (socket, pipe) = unsafe { ((*this).socket, ptr::addr_of_mut!((*this).named_pipe)) };
+        if let SocketType::Tls(s) = socket {
+            crate::dispatch::fold(TLSSocket::on_tls_error(
+                s,
+                socket_from_named_pipe::<true>(pipe),
+                error,
+            ));
+        }
+    }
+
     fn on_end(this: *mut Self) {
         // SAFETY: see `on_open`.
         let (socket, pipe) = unsafe { ((*this).socket, ptr::addr_of_mut!((*this).named_pipe)) };
@@ -381,6 +393,7 @@ impl WindowsNamedPipeContext {
             on_error: |p, e| Self::on_error(p.cast::<Self>(), &e),
             on_timeout: |p| Self::on_timeout(p.cast::<Self>()),
             on_close: |p| Self::on_close(p.cast::<Self>()),
+            on_tls_error: |p, e| Self::on_tls_error(p.cast::<Self>(), e),
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
             server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),

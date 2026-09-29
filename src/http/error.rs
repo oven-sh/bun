@@ -103,6 +103,12 @@ pub enum Error {
     ProxyConnectFailed,
     #[error("TLSHandshakeFailed")]
     TLSHandshakeFailed,
+    /// The server asked for more renegotiations than the client allows.
+    #[error("TLSRenegotiationLimit")]
+    TLSRenegotiationLimit,
+    /// BoringSSL did not start the renegotiation that the server asked for.
+    #[error("TLSRenegotiationRefused")]
+    TLSRenegotiationRefused,
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -315,6 +321,8 @@ impl Error {
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::ProxyConnectFailed => "ProxyConnectFailed",
             Self::TLSHandshakeFailed => "TLSHandshakeFailed",
+            Self::TLSRenegotiationLimit => "TLSRenegotiationLimit",
+            Self::TLSRenegotiationRefused => "TLSRenegotiationRefused",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),

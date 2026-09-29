@@ -28,7 +28,7 @@ use core::cell::{Cell, OnceCell};
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
-use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
+use bun_uws::{NewSocketHandler, us_bun_verify_error_t, us_tls_error_t};
 
 use crate::websocket_client::ErrorCode;
 
@@ -183,6 +183,7 @@ impl WebSocketProxyTunnel {
                 on_data: Self::on_data,
                 on_handshake: Self::on_handshake,
                 on_close: Self::on_close,
+                on_tls_error: Self::on_tls_error,
                 write: Self::write_encrypted,
                 // No JS TLSSocket fronts the tunnel; opting out keeps the
                 // SSL off the parked session/keylog queues entirely.
@@ -334,6 +335,29 @@ impl WebSocketProxyTunnel {
 
         // TLS handshake successful - notify client to send WebSocket upgrade
         upgrade_client.on_proxy_tls_handshake_complete();
+    }
+
+    /// SSLWrapper callback: the TLS engine gave up on the connection. `on_close` follows.
+    fn on_tls_error(this: ThisPtr<Self>, _error: us_tls_error_t) {
+        let _guard = RefPtr::from_this(this);
+
+        bun_core::scoped_log!(WebSocketProxyTunnel, "onTlsError");
+
+        // Same snapshot as `on_close`: `fail()` and `terminate()` re-enter the tunnel.
+        let (connected_websocket, upgrade_client) =
+            (this.connected_websocket.get(), this.upgrade_client.get());
+
+        if let Some(ws) = connected_websocket {
+            let ws = ws.this_ptr();
+            let _guard = RefPtr::from_this(ws);
+            ws.fail(ErrorCode::TlsHandshakeFailed);
+            return;
+        }
+
+        let Some(upgrade_client) = upgrade_client else {
+            return;
+        };
+        upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
     }
 
     /// SSLWrapper callback: Called when connection is closing

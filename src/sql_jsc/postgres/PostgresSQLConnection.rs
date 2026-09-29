@@ -884,6 +884,11 @@ impl PostgresSQLConnection {
         self.start();
     }
 
+    /// The TLS engine gave up on the connection. The close of the socket follows.
+    pub fn on_tls_error(&self, error: impl FnOnce(&JSGlobalObject) -> JSValue) {
+        self.fail_with_js_value(error(self.global()));
+    }
+
     /// verify-full's name check, asked inside the handshake.
     pub fn server_identity(&self, ssl: &mut bun_boringssl_sys::SSL) -> BoringSSL::ServerIdentity {
         BoringSSL::server_identity(ssl, self.native_identity_hostname())

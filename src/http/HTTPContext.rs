@@ -1427,6 +1427,17 @@ impl<const SSL: bool> Handler<SSL> {
         HTTPContext::<SSL>::terminate_socket(socket);
     }
 
+    /// The TLS engine gave up on the connection. The close of the socket follows.
+    pub fn on_tls_error(ptr: *mut c_void, socket: HTTPSocket<SSL>, error: uws::us_tls_error_t) {
+        let active = HTTPContext::<SSL>::get_tagged(ptr);
+        if let Some(client) = active.client_mut() {
+            client.close_and_fail::<SSL>(crate::tls_failure(error), socket);
+            return;
+        }
+        // An HTTP/2 session fails its streams when the close arrives. A pooled socket has no request to fail.
+        let _ = socket;
+    }
+
     pub fn on_close(ptr: *mut c_void, socket: HTTPSocket<SSL>, _: c_int, _: Option<*mut c_void>) {
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         HTTPContext::<SSL>::mark_socket_as_dead(socket);

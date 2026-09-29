@@ -268,6 +268,28 @@ impl Handlers {
         false
     }
 
+    /// An error that the TLS engine raised, for a socket that has an `error`
+    /// handler. The third argument says that the socket is still open: its
+    /// close follows.
+    pub(crate) fn call_tls_error_handler(
+        &self,
+        this_value: JSValue,
+        error: JSValue,
+    ) -> JsResult<()> {
+        let global_object = self.global_object;
+        if global_object.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        global_object.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
+            self.on_error(),
+            &global_object,
+            this_value,
+            &[this_value, error, JSValue::TRUE],
+        );
+        Ok(())
+    }
+
     /// Route an error a socket handler produced to the `error` handler, or —
     /// with none registered — to the VM's uncaught-exception path. The `error`
     /// handler is a top-level call of its own: what *it* throws is reported here

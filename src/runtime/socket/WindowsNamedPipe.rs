@@ -114,6 +114,8 @@ pub(crate) struct Handlers {
     pub(crate) deref_ctx: fn(*mut c_void),
     pub(crate) on_open: fn(*mut c_void),
     pub(crate) on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t),
+    /// The TLS engine gave up on the connection. `on_close` follows.
+    pub(crate) on_tls_error: fn(*mut c_void, bun_uws::us_tls_error_t),
     pub(crate) on_data: fn(*mut c_void, &[u8]),
     pub on_close: fn(*mut c_void),
     pub(crate) on_end: fn(*mut c_void),
@@ -346,6 +348,10 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_handshake(ok, e)
     }
+    fn ssl_on_tls_error(this: *mut Self, e: bun_uws::us_tls_error_t) {
+        // SAFETY: see block note above.
+        unsafe { &*this }.on_tls_error(e)
+    }
     fn ssl_on_data(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
         unsafe { &*this }.on_data(d)
@@ -382,6 +388,7 @@ impl WindowsNamedPipe {
             on_handshake: Self::ssl_on_handshake,
             on_data: Self::ssl_on_data,
             on_close: Self::ssl_on_close,
+            on_tls_error: Self::ssl_on_tls_error,
             write: Self::ssl_write,
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
@@ -409,6 +416,12 @@ impl WindowsNamedPipe {
         if handshake_success && !self.is_shutdown() {
             (self.handlers.on_writable)(self.handlers.ctx);
         }
+    }
+
+    fn on_tls_error(&self, error: bun_uws::us_tls_error_t) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onTlsError");
+        let _keep_alive = self.keep_alive();
+        (self.handlers.on_tls_error)(self.handlers.ctx, error);
     }
 
     fn on_close(&self) {

@@ -710,7 +710,7 @@ const SocketHandlers = {
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
   },
-  error(socket, error) {
+  error(socket, error, tlsError) {
     const self = socket.data;
     if (!self) return;
     if (self._hadError) return;
@@ -722,6 +722,9 @@ const SocketHandlers = {
       callback(error);
     }
 
+    // The TLS engine closes the socket next, so what the stream holds stays readable.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L465-L495
+    if (tlsError && self._secureEstablished) return self._emitTLSError(error);
     self.emit("error", error);
   },
   open(socket) {
@@ -1596,7 +1599,7 @@ const SocketHandlers2 = {
     const { self } = socket.data;
     onClientHandshake(self, socket, success, verifyError);
   },
-  error(socket, error) {
+  error(socket, error, tlsError) {
     $debug("Bun.Socket error");
     if (socket.data === undefined) return;
     const { self } = socket.data;
@@ -1609,6 +1612,9 @@ const SocketHandlers2 = {
       callback(error);
     }
 
+    // The TLS engine closes the socket next, so what the stream holds stays readable.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L465-L495
+    if (tlsError && self._secureEstablished) return self._emitTLSError(error);
     if (!self.destroyed) process.nextTick(destroyNT, self, error);
   },
   timeout(socket) {

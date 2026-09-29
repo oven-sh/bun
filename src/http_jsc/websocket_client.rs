@@ -245,6 +245,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
+    /// The TLS engine gave up on the connection. The close of the socket follows.
+    pub fn handle_tls_error(&self) {
+        jsc::mark_binding!();
+        self.fail(ErrorCode::TlsHandshakeFailed);
+    }
+
     pub fn handle_handshake(
         &self,
         socket: Socket<SSL>,

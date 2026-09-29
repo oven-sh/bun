@@ -477,6 +477,16 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     }
 }
 
+/// `on_close` follows and fails the request with this error.
+fn on_tls_error(ctx: *mut HTTPClient, error: uws::us_tls_error_t) {
+    let this = client_from_ctx(ctx);
+    let Some(proxy_nn) = this.proxy_tunnel_ptr() else {
+        return;
+    };
+    scoped_log!(http_proxy_tunnel, "ProxyTunnel onTlsError");
+    ProxyTunnel::shutdown_err_of(proxy_nn).set(crate::tls_failure(error));
+}
+
 fn on_close(ctx: *mut HTTPClient) {
     // on_close is fired from inside SSLWrapper::shutdown (via close_raw) whose
     // caller may itself be a callback that already held `&mut *ctx`; that
@@ -505,7 +515,12 @@ fn on_close(ctx: *mut HTTPClient) {
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
     let mut fail_err: Option<crate::Error> = None;
-    if in_progress && this.state.is_body_complete_on_close() {
+    // A connection that the TLS engine gave up on does not end a body.
+    let tls_failed = matches!(
+        ProxyTunnel::shutdown_err_of(proxy_nn).get(),
+        crate::Error::TLSRenegotiationLimit | crate::Error::TLSRenegotiationRefused
+    );
+    if in_progress && !tls_failed && this.state.is_body_complete_on_close() {
         match this.state.finalize_body_on_eof() {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
@@ -605,6 +620,7 @@ impl ProxyTunnel {
                 on_data,
                 on_handshake,
                 on_close,
+                on_tls_error,
                 write: write_encrypted,
                 // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
                 // opting out keeps its SSL off the parked queues entirely.

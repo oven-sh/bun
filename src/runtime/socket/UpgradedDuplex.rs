@@ -101,6 +101,8 @@ pub(crate) struct Handlers {
     pub ctx: *mut (),
     pub(crate) on_open: fn(*mut ()),
     pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
+    /// The TLS engine gave up on the connection. `on_close` follows.
+    pub(crate) on_tls_error: fn(*mut (), bun_uws::us_tls_error_t),
     pub(crate) on_data: fn(*mut (), &[u8]),
     pub on_close: fn(*mut ()),
     pub(crate) on_end: fn(*mut ()),
@@ -209,6 +211,13 @@ impl UpgradedDuplex {
         if handshake_success && !this.is_shutdown() {
             (this.handlers.on_writable)(this.handlers.ctx);
         }
+    }
+
+    fn on_tls_error(this: *mut Self, error: bun_uws::us_tls_error_t) {
+        bun_output::scoped_log!(UpgradedDuplex, "onTlsError");
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        (this.handlers.on_tls_error)(this.handlers.ctx, error);
     }
 
     fn on_close(this: *mut Self) {
@@ -492,6 +501,7 @@ impl UpgradedDuplex {
             on_handshake: Self::on_handshake,
             on_data: Self::on_data,
             on_close: Self::on_close,
+            on_tls_error: Self::on_tls_error,
             write: Self::internal_write,
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),

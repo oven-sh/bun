@@ -448,6 +448,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        // The value that an entry takes away is dead code. The export that the entry injects is not.
+        macro_rules! inject_for_dead_value {
+            () => {
+                if mark_for_replace && !orig_dead {
+                    if let Some(entry) = p
+                        .options
+                        .features
+                        .replace_exports
+                        .get_ptr(b"default")
+                        .cloned()
+                        && !entry.is_replace()
+                    {
+                        let _ = p.inject_replacement_export(
+                            stmts,
+                            Ref::NONE,
+                            bun_ast::Loc::EMPTY,
+                            &entry,
+                        );
+                    }
+                }
+            };
+        }
+
         match &mut data.value {
             js_ast::StmtOrExpr::Expr(expr) => {
                 let was_anonymous_named_expr = expr.is_anonymous_named();
@@ -477,6 +500,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if p.is_control_flow_dead {
                     restore_dead!();
+                    inject_for_dead_value!();
                     record_on_exit!();
                     return Ok(());
                 }
@@ -661,6 +685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
                             restore_dead!();
+                            inject_for_dead_value!();
                             record_on_exit!();
                             return Ok(());
                         }
@@ -830,6 +855,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         if p.is_control_flow_dead {
                             restore_dead!();
+                            inject_for_dead_value!();
                             record_on_exit!();
                             return Ok(());
                         }

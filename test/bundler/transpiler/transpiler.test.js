@@ -2804,24 +2804,28 @@ export default class {
   describe("exports.eliminate", () => {
     // Side-effect-free `export class` / `export default` statements are hoisted to
     // the top of the file, but eliminating one leaves no part behind to hoist.
+    // [exports, source, printed module]
+    const keep = `export const keep = 1;\n`;
     const hoistable = [
-      ["class declaration", ["A"], `export class A {}\nexport const keep = 1;\n`],
-      ["default class", ["default"], `export default class A {}\nexport const keep = 1;\n`],
-      ["default anonymous class", ["default"], `export default class {}\nexport const keep = 1;\n`],
-      ["default function", ["default"], `export default function A() {}\nexport const keep = 1;\n`],
-      ["default arrow", ["default"], `export default () => {};\nexport const keep = 1;\n`],
-      ["default literal", ["default"], `export default 42;\nexport const keep = 1;\n`],
+      [{ eliminate: ["A"] }, `export class A {}\n${keep}`, keep],
+      [{ eliminate: ["default"] }, `export default class A {}\n${keep}`, keep],
+      [{ eliminate: ["default"] }, `export default class {}\n${keep}`, keep],
+      [{ eliminate: ["default"] }, `export default function A() {}\n${keep}`, keep],
+      [{ eliminate: ["default"] }, `export default () => {};\n${keep}`, keep],
+      [{ eliminate: ["default"] }, `export default 42;\n${keep}`, keep],
+      // An entry that injects takes the export away too, and its own export stays.
+      [{ replace: { default: ["N", 1] } }, `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
+      [{ replace: { default: ["N", 1] } }, `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
+      [{ replace: { default: ["N", 1] } }, `export default function A() {}\n${keep}`, `export var N = 1;\n${keep}`],
     ];
 
     // Each of these aborted the process, so they run in one subprocess.
-    it("eliminates a hoistable export", async () => {
+    it("takes a hoistable export away", async () => {
       const print = rows =>
-        rows.map(([, names, source]) =>
-          new Bun.Transpiler({ loader: "ts", exports: { eliminate: names } }).transformSync(source),
-        );
+        rows.map(([exports, source]) => new Bun.Transpiler({ loader: "ts", exports }).transformSync(source));
       const result = await bunRun(["-e", `console.log(JSON.stringify((${print})(${JSON.stringify(hoistable)})))`]);
       expect(result).toEqual({
-        stdout: JSON.stringify(hoistable.map(() => "export const keep = 1;\n")),
+        stdout: JSON.stringify(hoistable.map(([, , module]) => module)),
         stderr: "",
         exitCode: 0,
         signalCode: null,

@@ -4164,14 +4164,16 @@ Reo=
       // the connection open for reset().
       type Ending = "FIN" | "close" | "nothing";
 
-      function listenOptions(transport: Transport, dir: string, name: string) {
+      type Address = { path: string } | { port: number; host: string };
+
+      function listenOptions(transport: Transport, dir: string, name: string): Address {
         return transport === "unix" ? { path: join(dir, name) } : { port: 0, host: "127.0.0.1" };
       }
-      function addressOf(server: net.Server) {
+      function addressOf(server: net.Server): Address {
         const address = server.address();
         return typeof address === "string" ? { path: address } : { port: address!.port, host: "127.0.0.1" };
       }
-      function bunAddress(address: { path: string } | { port: number; host: string }) {
+      function bunAddress(address: Address) {
         return "path" in address ? { unix: address.path } : { hostname: address.host, port: address.port };
       }
 
@@ -4179,12 +4181,7 @@ Reo=
       // and the ClientHello is flight 1. The relay holds flight `holdFrom` and
       // all that its sender sends after it. deliver() writes that to every
       // connection in one tick.
-      async function holdingRelay(
-        server: { path: string } | { port: number; host: string },
-        listen: { path: string } | { port: number; host: string },
-        holdFrom: number,
-        fail: Fail,
-      ) {
+      async function holdingRelay(server: Address, listen: Address, holdFrom: number, fail: Fail) {
         const sockets: net.Socket[] = [];
         const receivers: { socket: net.Socket; held: Buffer[] }[] = [];
         const allHeld = Promise.withResolvers<void>();
@@ -4276,8 +4273,9 @@ Reo=
               );
             }
           } else {
+            const listen = listenOptions(transport, String(dir), "s.sock");
             const server = Bun.listen<Observed>({
-              ...bunAddress(listenOptions(transport, String(dir), "s.sock") as { path: string }),
+              ...bunAddress(listen),
               tls: { key: SERVER_KEY, cert: SERVER_CRT },
               socket: {
                 open(socket) {
@@ -4288,8 +4286,7 @@ Reo=
               },
             });
             cleanup.push(() => server.stop(true));
-            const address =
-              transport === "unix" ? { path: join(String(dir), "s.sock") } : { port: server.port, host: "127.0.0.1" };
+            const address = "path" in listen ? listen : { port: server.port, host: "127.0.0.1" };
             relay = await holdingRelay(address, listenOptions(transport, String(dir), "r.sock"), 3, fail);
             cleanup.push(relay.close);
             for (let i = 0; i < CONNECTIONS; i++) {

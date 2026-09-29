@@ -1638,33 +1638,43 @@ impl PipelineTask {
             }
         }
 
+        let Some(src_format) = codecs::Format::sniff(input) else {
+            self.result = TaskResult::Err(codecs::Error::UnknownFormat);
+            return;
+        };
+        let orient = if self.auto_orient && src_format == codecs::Format::Jpeg {
+            exif::read_jpeg(input)
+        } else {
+            exif::Orientation::Normal
+        };
+
         // Decode-time downscale hint. The IDCT picker constrains in *stored*
         // axes, so any 90/270 rotate that runs before resize — explicit OR
         // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        let hint: Option<(u32, u32)> = if let Some(r) = self.pipeline.resize {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
             let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
-            let swap_exif = self.auto_orient && {
-                let t = exif::read_jpeg(input).transform();
-                t.rotate == 90 || t.rotate == 270
-            };
+            let swap_exif = matches!(orient.transform().rotate, 90 | 270);
             if swap_explicit != swap_exif {
                 mem::swap(&mut tw, &mut th);
             }
-            codecs::DecodeHint {
-                target_w: tw,
-                target_h: th,
-            }
+            Some((tw, th))
         } else {
-            codecs::DecodeHint::default()
+            None
         };
 
-        let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
+        let decoded = if src_format == codecs::Format::Jpeg && hint.is_some() {
+            codecs::jpeg::open(input, self.max_pixels)
+                .and_then(|jpeg| codecs::jpeg::decode(jpeg, hint))
+        } else {
+            codecs::decode(src_format, input, self.max_pixels)
+        };
+        let mut decoded = match decoded {
             Ok(d) => d,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1673,17 +1683,12 @@ impl PipelineTask {
         };
         // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
 
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
-
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
-        if self.auto_orient && src_format == codecs::Format::Jpeg {
-            let orient = exif::read_jpeg(input);
-            if orient != exif::Orientation::Normal {
-                if let Err(e) = apply_orientation(&mut decoded, orient) {
-                    self.result = TaskResult::Err(e);
-                    return;
-                }
+        if orient != exif::Orientation::Normal {
+            if let Err(e) = apply_orientation(&mut decoded, orient) {
+                self.result = TaskResult::Err(e);
+                return;
             }
         }
 

@@ -87,6 +87,22 @@ it("consoleTableSizes() counts the running timers and the counted labels", () =>
   expect(started.countCapacity).toBeGreaterThanOrEqual(started.countEntries);
 });
 
+it("console.timeEnd and console.countReset give their table entry back", () => {
+  // Use both tables once, so that the loop is not what allocates them.
+  console.time("given back");
+  console.timeEnd("given back");
+  console.count("given back");
+  console.countReset("given back");
+  const before = consoleTableSizes();
+  for (let i = 0; i < 20; i++) {
+    console.time("timer " + i);
+    console.timeEnd("timer " + i);
+    console.count("count " + i);
+    console.countReset("count " + i);
+  }
+  expect(consoleTableSizes()).toEqual(before);
+});
+
 it("should log to console correctly", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), join(import.meta.dir, "console-timeLog.js")],

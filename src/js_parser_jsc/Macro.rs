@@ -854,6 +854,9 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
+                // The runner reads the rejection itself and reports it below. Nothing else
+                // may report it, also not while the loop turns in `wait_for_promise`.
+                promise.set_handled(vm.jsc_vm());
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
                 vm.as_mut()
                     .wait_for_promise(promise)
@@ -881,9 +884,6 @@ impl<'a> Run<'a> {
                         promise_result,
                         promise.as_value(),
                     );
-                    // The caller gets the rejection as a build error, so it is not reported
-                    // a second time when the microtask queue drains.
-                    promise.set_handled(vm.jsc_vm());
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;

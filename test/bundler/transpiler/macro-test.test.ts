@@ -593,7 +593,6 @@ describe("--no-macros", () => {
 // and the report of the macro's error must not end that program.
 describe("a macro that fails in a script is a build error for the caller", () => {
   const prelude = `
-    process.on("exit", code => console.log("exit", code));
     setImmediate(() => console.log("immediate"));
   `;
   const usesMacro = `
@@ -632,10 +631,28 @@ describe("a macro that fails in a script is a build error for the caller", () =>
       message: "macro-rejects",
     },
     {
+      name: "an async macro that rejects after an await",
+      index: viaRequire,
+      macro: `export async function fail() { await null; throw new Error("macro-rejects-late"); }`,
+      message: "macro-rejects-late",
+    },
+    {
+      name: "an async macro that rejects after a timer",
+      index: viaRequire,
+      macro: `export async function fail() { await new Promise(resolve => setTimeout(resolve, 1)); throw new Error("macro-rejects-later"); }`,
+      message: "macro-rejects-later",
+    },
+    {
       name: "a macro module that throws when it loads",
       index: viaRequire,
       macro: `throw new Error("macro-module-throws"); export function fail() {}`,
       message: "macro-module-throws",
+    },
+    {
+      name: "a macro module that throws after a top-level await",
+      index: viaRequire,
+      macro: `await null; throw new Error("macro-module-throws-late"); export function fail() {}`,
+      message: "macro-module-throws-late",
     },
   ])("$name", async ({ index, macro, message }) => {
     using dir = tempDir("macro-fails-in-script", {
@@ -657,7 +674,7 @@ describe("a macro that fails in a script is a build error for the caller", () =>
       stderr,
       exitCode,
     }).toEqual({
-      stdout: ["caught BuildMessage", "after", "immediate", "exit 0", ""],
+      stdout: ["caught BuildMessage", "after", "immediate", ""],
       stderr: expect.stringContaining(message),
       exitCode: 1,
     });

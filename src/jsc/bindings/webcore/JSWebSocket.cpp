@@ -1089,7 +1089,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrepare, (JSGlobalObject * lexicalGlobalObje
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    auto* context = globalObject->scriptExecutionContext();
+    auto* context = globalObject->currentScriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, callFrame->argument(0));

@@ -292,6 +292,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
+            nodeHttpClientRequestSimulated.finished = true;
             startWebSocket(ws, headers);
           }
           return nodeHttpClientRequestSimulated;

@@ -1014,19 +1014,21 @@ describe("WebSocket finishRequest", () => {
         return error.code;
       }
     };
-    const before = request.headersSent;
+    const before = { headersSent: request.headersSent, finished: request.finished };
     authorize(request);
     const after = {
       headersSent: request.headersSent,
+      finished: request.finished,
       setHeader: codeOf(() => request.setHeader("authorization", "late")),
       removeHeader: codeOf(() => request.removeHeader("authorization")),
       getHeader: request.getHeader("authorization"),
     };
 
     expect({ before, after, message: await message, upgrades }).toEqual({
-      before: false,
+      before: { headersSent: false, finished: false },
       after: {
         headersSent: true,
+        finished: true,
         setHeader: "ERR_HTTP_HEADERS_SENT",
         removeHeader: "ERR_HTTP_HEADERS_SENT",
         getHeader: "token",
@@ -1046,6 +1048,63 @@ describe("WebSocket finishRequest", () => {
     ws.terminate();
 
     expect({ upgrades, message }).toEqual({ upgrades: ["token"], message: "authorization=token" });
+  });
+
+  describe("in a Bun.ModuleGraph", () => {
+    const clients = /* js */ `
+      import { WebSocket } from "ws";
+      export const requests = [];
+      export const withoutFinishRequest = url => new WebSocket(url);
+      export const withFinishRequest = url => new WebSocket(url, { finishRequest: req => req.end() });
+      export const withLateEnd = url =>
+        new WebSocket(url, { finishRequest: req => void queueMicrotask(() => req.end()) });
+      export const withoutEnd = url => new WebSocket(url, { finishRequest: req => void requests.push(req) });
+    `;
+
+    // What the code of a graph makes belongs to the graph, with or without finishRequest.
+    it("dispose() stops the client", async () => {
+      const { server, url } = serve();
+      using _ = server;
+      using dir = tempDir("ws-finish-request-graph", { "clients.mjs": clients });
+
+      const readyStates: Record<string, number[]> = {};
+      for (const kind of ["withoutFinishRequest", "withFinishRequest", "withLateEnd"]) {
+        using graph = new Bun.ModuleGraph();
+        const made = await graph.import(path.join(String(dir), "clients.mjs"));
+        const ws: WebSocket = await graph.run(() => made[kind](url));
+        await firstMessage(ws);
+        const open = ws.readyState;
+        graph.dispose();
+        readyStates[kind] = [open, ws.readyState];
+      }
+
+      expect(readyStates).toEqual({
+        withoutFinishRequest: [WebSocket.OPEN, WebSocket.CLOSING],
+        withFinishRequest: [WebSocket.OPEN, WebSocket.CLOSING],
+        withLateEnd: [WebSocket.OPEN, WebSocket.CLOSING],
+      });
+    });
+
+    it("req.end() after dispose() sends no handshake", async () => {
+      const { server, upgrades, url } = serve();
+      using _ = server;
+      using dir = tempDir("ws-finish-request-graph", { "clients.mjs": clients });
+
+      using graph = new Bun.ModuleGraph();
+      const made = await graph.import(path.join(String(dir), "clients.mjs"));
+      const ws: WebSocket = await graph.run(() => made.withoutEnd(url));
+      const prepared = ws.readyState;
+      graph.dispose();
+      const returned = authorize(made.requests[0]) === made.requests[0];
+      await laterClient(url);
+
+      expect({ prepared, returned, readyState: ws.readyState, upgrades }).toEqual({
+        prepared: WebSocket.CONNECTING,
+        returned: true,
+        readyState: WebSocket.CLOSED,
+        upgrades: [null],
+      });
+    });
   });
 
   it.skipIf(isWindows)("connects over a unix socket", async () => {

@@ -81,8 +81,12 @@ export function asyncIterator(this: Console) {
         const firstResult = activeRead ?? reader.readMany();
         if ($isPromise(firstResult)) {
           activeRead = firstResult;
-          const result = await firstResult;
-          if (turn !== turns) await $newPromise();
+          var result: Bun.ReadableStreamDefaultReadManyResult<Uint8Array<ArrayBuffer>>;
+          try {
+            result = await firstResult;
+          } finally {
+            if (turn !== turns) await $newPromise();
+          }
           activeRead = undefined;
           ({ done, value } = result);
         } else {
@@ -131,7 +135,6 @@ export function asyncIterator(this: Console) {
         actualChunk = undefined!;
       }
     } catch (e) {
-      if (turn !== turns) await $newPromise();
       deferredError = e as Error;
     } finally {
       if (turn === turns) {

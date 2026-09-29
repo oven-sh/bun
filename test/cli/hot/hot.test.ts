@@ -1224,6 +1224,51 @@ describe.concurrent("stdin across a reload", () => {
     });
   });
 
+  it("a replaced generation that leaves its loop does not take stdin from the newest one", async () => {
+    // Generation 1 is in its loop body when the save lands. It leaves the loop after generation 2 took stdin.
+    const first =
+      start(1) +
+      `(async () => {
+         for await (const line of console) {
+           console.log("generation 1 got", JSON.stringify(line));
+           await new Promise(resolve => (globalThis.resumeGeneration1 = resolve));
+           break;
+         }
+         console.log("generation 1 left its loop");
+       })();`;
+    // Generation 2 lets generation 1 continue, then waits one turn of the event loop.
+    const second = consoleLoop(
+      2,
+      `if (line === "line-b") {
+         globalThis.resumeGeneration1();
+         await new Promise(resolve => setImmediate(resolve));
+       }`,
+    );
+    using dir = tempDir("hot-stdin-leave", { "entry.ts": first });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("line-a\n");
+    await hot.line('generation 1 got "line-a"');
+
+    await hot.save(second, "generation 2 start");
+    hot.send("line-b\n");
+    await hot.line("generation 1 left its loop");
+    hot.send("line-c\n");
+    await hot.line(/ got "line-c"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: [
+        'generation 1 got "line-a"',
+        'generation 2 got "line-b"',
+        "generation 1 left its loop",
+        'generation 2 got "line-c"',
+      ],
+      stderr: [],
+    });
+  });
+
   it("every save reloads when each generation starts its loop after a GC", async () => {
     // The timer runs after the load of the generation has settled. The GC then frees what the load left behind,
     // and the loop allocates promises that stay pending.

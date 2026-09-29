@@ -527,7 +527,7 @@ it.concurrent.each(["handshake, error", "handshake", "error"] as const)(
 // Plays an HTTP server and a WebSocket server by hand. For a plain request it renegotiates 4 times in a row before
 // it answers, so the client refuses the last one while it waits for the response. For a WebSocket it renegotiates
 // once for each frame of the client and answers with the text frame "done N". It answers a CONNECT request first,
-// so it can also play an HTTPS proxy.
+// so it can also play an HTTPS proxy. A RESP command (Valkey) gets the 4 renegotiations and no answer.
 const refusedRenegotiationHttpServer = /* js */ `
   const tls = require("tls");
   const crypto = require("crypto");
@@ -538,8 +538,23 @@ const refusedRenegotiationHttpServer = /* js */ `
     socket => {
       socket.on("error", () => {});
       let head = "";
+      const renegotiate4Times = answer => {
+        socket.resume();
+        let asked = 0;
+        (function ask() {
+          if (asked === 4) return answer();
+          asked++;
+          socket.renegotiate({ rejectUnauthorized: false }, err => {
+            if (!err) ask();
+          });
+        })();
+      };
       socket.on("data", function onHead(chunk) {
         head += chunk.toString("latin1");
+        if (head.startsWith("*")) {
+          socket.off("data", onHead);
+          return renegotiate4Times(() => {});
+        }
         if (!head.includes("\\r\\n\\r\\n")) return;
         if (head.startsWith("CONNECT ")) {
           head = "";
@@ -565,18 +580,9 @@ const refusedRenegotiationHttpServer = /* js */ `
           });
           return;
         }
-        socket.resume();
-        let asked = 0;
-        (function ask() {
-          if (asked === 4) {
-            socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
-            return;
-          }
-          asked++;
-          socket.renegotiate({ rejectUnauthorized: false }, err => {
-            if (!err) ask();
-          });
-        })();
+        renegotiate4Times(() =>
+          socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok"),
+        );
       });
     },
   );
@@ -652,6 +658,47 @@ it("https.request fails with the TLS error when the client refuses a renegotiati
   req.on("error", (err: NodeJS.ErrnoException) => outcome.resolve(`${err.code}: ${err.message}`));
   req.end();
   expect(await outcome.promise).toBe("ERR_TLS_SESSION_ATTACK: TLS session renegotiation attack detected");
+});
+
+// In a child process: with no error to report, an assert-enabled build aborts when it makes an Error with no message.
+it("a Valkey client fails its command with the TLS error when the client refuses a renegotiation", async () => {
+  await using server = spawnRefusedRenegotiationHttpServer();
+  const port = await portOf(server);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const client = new Bun.RedisClient("rediss://localhost:" + process.env.SERVER_PORT, {
+          tls: { ca: process.env.SERVER_CERT },
+          autoReconnect: false,
+        });
+        const outcome = await client.get("key").then(
+          value => "value " + value,
+          err => err.code + ": " + err.message,
+        );
+        console.log(outcome);
+        client.close();
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      SERVER_PORT: String(port),
+      SERVER_CERT: tls.cert,
+      // An abort of an ASAN build must not spend the test's time on symbols.
+      ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    stdout: "ERR_TLS_SESSION_ATTACK: TLS session renegotiation attack detected",
+    exitCode: 0,
+    signalCode: null,
+    stderr: expect.any(String),
+  });
 });
 
 // 1015 is the close code of a TLS failure. 1006 says only that the connection ended.

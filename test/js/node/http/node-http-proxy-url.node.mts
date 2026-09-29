@@ -328,11 +328,11 @@ describe(
     for (const { name, scheme, createProxy, trusted } of routes) {
       test(name, async () => {
         const defaults = trusted ? tls.getCACertificates("default") : undefined;
-        if (defaults) tls.setDefaultCACertificates([...defaults, cert]);
         const proxy = createProxy();
         const agent = proxiedAgent(`${scheme}://127.0.0.1:${await listenOnRandomPort(proxy)}`);
         const turns = countTurns(agent);
         try {
+          if (defaults) tls.setDefaultCACertificates([...defaults, cert]);
           const req = https.get({ ...target, agent });
           const ticks = turnsOf(req, turns);
           assert.deepStrictEqual(

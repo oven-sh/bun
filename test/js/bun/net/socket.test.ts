@@ -4131,7 +4131,9 @@ Reo=
       }
       const everyByte = {
         outcomes: { [`handshake success=true, data, close, ${PAYLOAD.length} bytes`]: CONNECTIONS },
-        closesPerIteration: [BUDGET, BUDGET, BUDGET, 1],
+        // Measured on epoll only. kqueue and libuv report the end of a
+        // connection in other ways, and the split there is not known.
+        closesPerIteration: isLinux ? [BUDGET, BUDGET, BUDGET, 1] : expect.any(Array),
       };
 
       // step() rejects when a socket of the test reports a failure.
@@ -4339,8 +4341,10 @@ Reo=
         const subject = role === "client" ? "client" : "accepted socket";
         const peer = role === "client" ? "server" : "client";
 
-        // On TCP the kernel reports no hangup for a socket that did not shut
-        // down: these two cases pass on epoll without the fix.
+        // epoll reports a hangup when both directions are down. A TCP socket
+        // that did not shut down has one direction up, so these two cases are
+        // controls on Linux: they pass there with no deferral. A unix socket
+        // whose peer closed reports the hangup with no shutdown().
         for (const transport of ["TCP", "unix"] as const) {
           for (const shutDown of [true, false]) {
             const state = shutDown ? "shut down" : "did not shut down";
@@ -4359,8 +4363,9 @@ Reo=
         }
 
         // The reset reaches sockets that wait in the queue. A socket that the
-        // loop holds back must still get its close. Which of the sockets read
-        // what their peer sent before the reset is not pinned here.
+        // loop holds back must still get its close. These pass on Linux with
+        // no deferral: they guard the backends that were not measured. Which
+        // sockets read what their peer sent before the reset is not pinned.
         for (const shutDown of [true, false]) {
           const state = shutDown ? "shut down" : "did not shut down";
           it(`every ${subject} that ${state} closes when its ${peer} resets the connection`, async () => {

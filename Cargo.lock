@@ -1253,6 +1253,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_exe_format",
  "bun_glob",
  "bun_hash",
  "bun_highway",

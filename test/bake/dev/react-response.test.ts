@@ -105,6 +105,32 @@ devTest("new Response with JSX and custom headers", {
   },
 });
 
+devTest("Response with JSX called without new", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function IndexPage() {
+        return Response(<h1>Hello World</h1>, {
+          status: 201,
+          headers: {
+            "X-Custom-Header": "test-value"
+          }
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    expect(response.status).toBe(201);
+    expect(response.headers.get("X-Custom-Header")).toBe("test-value");
+    const text = await response.text();
+    expect(text).toContain("<h1>Hello World</h1>");
+  },
+});
+
 // Test case 5: new Response with JSX when streaming = true (should error)
 devTest("new Response with JSX when streaming = true should error", {
   framework: "react",
@@ -115,6 +141,33 @@ devTest("new Response with JSX when streaming = true should error", {
 
       export default async function IndexPage() {
         return new Response(<h1>Hello World</h1>, {
+          status: 201,
+          headers: {
+            "X-Custom-Header": "test-value"
+          }
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    const fallback_message_container = getFallbackMessageContainer(text);
+    expect(fallback_message_container.problems?.exceptions[0].message).toContain(
+      '"new Response(<jsx />, { ... })" is not available when `export const streaming = true`',
+    );
+  },
+});
+
+devTest("Response with JSX called without new when streaming = true should error", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      export const streaming = true;
+      export const mode = "ssr";
+
+      export default async function IndexPage() {
+        return Response(<h1>Hello World</h1>, {
           status: 201,
           headers: {
             "X-Custom-Header": "test-value"

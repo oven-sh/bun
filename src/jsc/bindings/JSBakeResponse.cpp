@@ -23,14 +23,14 @@
 
 namespace Bun {
 
-extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*, JSC::EncodedJSValue);
+extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, bool isJSX, JSC::EncodedJSValue);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRender(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructRedirect(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 
-bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+static bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
 
     auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
@@ -59,11 +59,6 @@ bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObjec
     }
 
     return false;
-}
-
-extern "C" bool JSC__JSValue__isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
-{
-    return isJSXElement(JSValue0, globalObject);
 }
 
 extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES BakeResponse__createForSSR(Zig::GlobalObject* globalObject, void* ptr, uint8_t kind)
@@ -159,6 +154,36 @@ void JSBakeResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSBakeResponse);
 
+static ALWAYS_INLINE JSC::EncodedJSValue constructBakeResponse(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, JSC::Structure* structure)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue body = callFrame->argument(0);
+    bool isJSX = isJSXElement(JSValue::encode(body), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
+
+    void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, isJSX, JSValue::encode(instance));
+    if (scope.exception()) [[unlikely]] {
+        ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    instance->m_ctx = ptr;
+
+    if (isJSX) {
+        instance->wrapInnerComponent(globalObject, vm, body, callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    auto size = Response__estimatedSize(ptr);
+    vm.heap.reportExtraMemoryAllocated(instance, size);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+}
+
 class JSBakeResponseConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
@@ -192,51 +217,13 @@ public:
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
-
-        int arg_was_jsx = 0;
-        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, &arg_was_jsx, JSValue::encode(instance));
-        if (scope.exception()) [[unlikely]] {
-            ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
-            return JSValue::encode(JSC::jsUndefined());
-        }
-
-        instance->m_ctx = ptr;
-
-        if (arg_was_jsx == 1 && callFrame->argumentCount() > 0) {
-            JSValue arg = callFrame->argument(0);
-            JSValue responseOptions = callFrame->argumentCount() > 1 ? callFrame->argument(1) : JSC::jsUndefined();
-            instance->wrapInnerComponent(globalObject, vm, arg, responseOptions);
-        }
-
-        auto size = Response__estimatedSize(ptr);
-        vm.heap.reportExtraMemoryAllocated(instance, size);
-
-        auto value = JSValue::encode(instance);
-        RELEASE_AND_RETURN(scope, value);
+        RELEASE_AND_RETURN(scope, constructBakeResponse(globalObject, callFrame, structure));
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
     {
         Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-        JSC::VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        Structure* structure = globalObject->bakeAdditions().JSBakeResponseStructure(globalObject);
-        JSBakeResponse* instance = JSBakeResponse::create(vm, globalObject, structure, nullptr);
-
-        void* ptr = BakeResponseClass__constructForSSR(globalObject, callFrame, nullptr, JSValue::encode(instance));
-        if (scope.exception()) [[unlikely]] {
-            ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new Response() allocated memory without checking for exceptions.");
-            return JSValue::encode(JSC::jsUndefined());
-        }
-
-        instance->m_ctx = ptr;
-
-        auto size = Response__estimatedSize(ptr);
-        vm.heap.reportExtraMemoryAllocated(instance, size);
-
-        RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+        return constructBakeResponse(globalObject, callFrame, globalObject->bakeAdditions().JSBakeResponseStructure(globalObject));
     }
 
     template<typename CellType, JSC::SubspaceAccess>

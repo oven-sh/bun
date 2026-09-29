@@ -290,4 +290,42 @@ describe.concurrent('the Response of "bun:app" outside the dev server', () => {
     `);
     expect(result).toEqual({ stdout: "201 true\n", stderr: "", exitCode: 0 });
   });
+
+  test("Response() without new returns a Response", async () => {
+    const result = await run(`
+      for (const body of ["text", { a: 1 }]) {
+        const response = Response(body, { status: 201 });
+        console.log(response instanceof Response, response.status, await response.text());
+      }
+    `);
+    expect(result).toEqual({ stdout: "true 201 text\ntrue 201 [object Object]\n", stderr: "", exitCode: 0 });
+  });
+
+  test("Response(<jsx />) without new returns the element as a component", async () => {
+    const result = await run(`
+      const element = { $$typeof: Symbol.for("react.transitional.element"), type: "div", key: null, props: {} };
+      const response = Response(element, { status: 201 });
+      console.log(response instanceof Response, response.status, response.type() === element);
+    `);
+    expect(result).toEqual({ stdout: "true 201 true\n", stderr: "", exitCode: 0 });
+  });
+
+  test("an error from the $$typeof getter of the body propagates", async () => {
+    const result = await run(`
+      const body = {
+        get $$typeof() {
+          throw new Error("from the getter");
+        },
+      };
+      for (const construct of [() => new Response(body), () => Response(body)]) {
+        try {
+          construct();
+          console.log("no error");
+        } catch (error) {
+          console.log(error.message);
+        }
+      }
+    `);
+    expect(result).toEqual({ stdout: "from the getter\nfrom the getter\n", stderr: "", exitCode: 0 });
+  });
 });

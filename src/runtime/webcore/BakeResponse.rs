@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use crate::webcore::Response;
 use crate::webcore::response::{HeadersRef, Init};
@@ -61,12 +61,10 @@ bun_jsc::jsc_host_abi! {
     pub(crate) unsafe fn BakeResponseClass__constructForSSR(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
-        bake_ssr_has_jsx: *mut c_int,
+        is_jsx: bool,
         js_this: JSValue,
     ) -> *mut c_void {
-        // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
-        let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
-        match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
+        match constructor(global_object, call_frame, is_jsx, js_this) {
             Ok(response) => response.cast::<c_void>(),
             Err(JsError::Thrown) => core::ptr::null_mut(),
             Err(JsError::Terminated) => {
@@ -85,25 +83,19 @@ bun_jsc::jsc_host_abi! {
 fn constructor(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
-    bake_ssr_has_jsx: &mut c_int,
+    is_jsx: bool,
     js_this: JSValue,
 ) -> JsResult<*mut Response> {
-    let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
-
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
     // inside of a react component
-    if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
-        *bake_ssr_has_jsx = 0;
-        if arguments[0].is_jsx_element(global_this)? {
-            let vm = global_this.bun_vm().as_mut();
-            if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
-                assert_streaming_disabled(
-                    global_this,
-                    async_local_storage,
-                    b"new Response(<jsx />, { ... })",
-                )?;
-            }
-            *bake_ssr_has_jsx = 1;
+    if is_jsx {
+        let vm = global_this.bun_vm().as_mut();
+        if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
+            assert_streaming_disabled(
+                global_this,
+                async_local_storage,
+                b"new Response(<jsx />, { ... })",
+            )?;
         }
     }
 

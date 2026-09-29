@@ -80,9 +80,7 @@ static inline int lazyLoadSQLite()
 #define ENABLE_SQLITE_FAST_MALLOC (BENABLE(MALLOC_SIZE) && BENABLE(MALLOC_GOOD_SIZE))
 #endif
 
-// Per-thread so the malloc hooks do not write one shared cache line from
-// every Worker. The readers only want the delta across a synchronous call on
-// the current thread, which is what a thread-local gives them.
+// Read as a delta across one synchronous call, so per-thread is enough.
 static thread_local int64_t sqlite_malloc_amount = 0;
 
 static void enableFastMallocForSQLite()
@@ -138,12 +136,8 @@ extern "C" void Bun__initializeSQLite()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        // With memory statistics on, every sqlite3Malloc/sqlite3_free takes the
-        // process-wide SQLITE_MUTEX_STATIC_MEM mutex, so connections on
-        // different Worker threads serialize on it. Off, the counters stay 0
-        // and PRAGMA soft_heap_limit/hard_heap_limit bound nothing, as in
-        // Node (SQLITE_DEFAULT_MEMSTATUS=0). A runtime config also reaches
-        // the dlopen'd system or custom libsqlite3.
+        // Memory statistics put a process-wide mutex in every SQLite malloc/free.
+        // Node ships SQLITE_DEFAULT_MEMSTATUS=0 too.
         int returnCode = sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0);
         ASSERT_WITH_MESSAGE(returnCode == SQLITE_OK, "Unable to disable SQLite memory statistics");
         UNUSED_PARAM(returnCode);

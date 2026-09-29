@@ -2086,6 +2086,8 @@ pub(crate) fn merge_small_chunks(
             let entry_chunk = groups
                 .get_index(&group.bits.bytes(entry_points_len))
                 .expect("an entry point's class has its chunk");
+            // The parent would make the starts of the entry point ahead of files that stay.
+            starts_in_parent.retain(|&(entry_id, _)| !group.bits.is_set(entry_id as usize));
             fold(groups.values_mut(), group_index, entry_chunk);
         }
     }

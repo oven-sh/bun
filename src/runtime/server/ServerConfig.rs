@@ -1196,6 +1196,12 @@ impl ServerConfig {
             }
             args.on_node_http_request = on_request_;
             args.is_node_http_server = true;
+            if let Some(websocket) = args.websocket.as_mut() {
+                websocket
+                    .handler
+                    .flags
+                    .insert(super::web_socket_server_context::HandlerFlags::NODE_HTTP);
+            }
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {

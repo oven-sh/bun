@@ -627,7 +627,8 @@ describe("Server", () => {
       message(ws, data) {
         expect(ws).toBeDefined();
         expect(ws).toHaveProperty("data", { id: 0 });
-        expect(data).toBeDefined();
+        // The frame type is not an argument. node:http gets it for the ws package.
+        expect({ data, arguments: arguments.length }).toEqual({ data: "Hello", arguments: 2 });
         done();
       },
     }));

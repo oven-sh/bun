@@ -13,6 +13,7 @@ const ReadyState_CLOSED = 3;
 const EventEmitter = require("node:events");
 const ObjectDefineProperty = Object.defineProperty;
 const SymbolFunction = Symbol;
+const utf8Slice = Buffer.prototype.utf8Slice;
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -136,7 +137,8 @@ function normalizeData(data, opts) {
   if (isBinary === true && typeof data === "string") {
     data = Buffer.from(data);
   } else if (isBinary === false && $isTypedArrayView(data)) {
-    data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
+    // Decodes the view in place. A read of `data.buffer` makes the ArrayBuffer of a view that has none yet.
+    data = utf8Slice.$call(data);
   }
 
   return data;
@@ -144,7 +146,7 @@ function normalizeData(data, opts) {
 
 // npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
 function controlPayload(binaryType, data) {
-  return binaryType === "arraybuffer" ? Buffer.from(data) : data;
+  return binaryType === "arraybuffer" && !$isTypedArrayView(data) ? Buffer.from(data) : data;
 }
 
 // https://github.com/oven-sh/bun/issues/11866
@@ -1261,16 +1263,13 @@ class BunWebSocketMocked extends EventEmitter {
     this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
-  #message(ws, message) {
+  // A bridge that is not node:http's hands over what Bun.serve() gives: a string, and no frame type.
+  #message(ws, message, isBinary) {
     this.#ws = ws;
 
-    let isBinary = false;
-    if (typeof message === "string") {
-      // binaryType selects the shape of a binary frame only.
-      message = Buffer.from(message);
-    } else {
-      // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
-      isBinary = true;
+    if (isBinary === undefined) {
+      isBinary = typeof message !== "string";
+      if (!isBinary) message = Buffer.from(message);
     }
 
     this.emit("message", message, isBinary);

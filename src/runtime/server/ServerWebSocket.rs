@@ -10,12 +10,12 @@ use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
-use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
     JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::server::{WebSocketServerContext, WebSocketServerHandler};
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -497,6 +497,27 @@ impl ServerWebSocket {
         message: &[u8],
         opcode: Opcode,
     ) -> JsResult<()> {
+        self.deliver_message::<false>(ws, message, opcode)
+    }
+
+    /// `on_message` for handlers that came with `onNodeHTTPRequest`.
+    pub(crate) fn on_node_http_message(
+        &self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+    ) -> JsResult<()> {
+        self.deliver_message::<true>(ws, message, opcode)
+    }
+
+    /// `NODE_HTTP` selects the payloads of npm `ws`. A generic `on_message` costs the public path 3 instructions.
+    #[inline(always)]
+    fn deliver_message<const NODE_HTTP: bool>(
+        &self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
@@ -515,6 +536,8 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
+            // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L634-L655
+            Opcode::Text if NODE_HTTP => ArrayBuffer::create_buffer(global_object, message),
             Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
@@ -522,16 +545,24 @@ impl ServerWebSocket {
         // Converting the payload threw (or the VM is terminating): there is
         // no message to deliver; the handler's landing frame folds it.
         let data = data?;
-        let arguments = [
-            self.this_value
-                .get()
-                .try_get()
-                .unwrap_or(JSValue::UNDEFINED),
-            data,
-        ];
+        let this_value = self
+            .this_value
+            .get()
+            .try_get()
+            .unwrap_or(JSValue::UNDEFINED);
+        let arguments;
+        let arguments_with_frame_type;
+        let args: &[JSValue] = if NODE_HTTP {
+            let is_binary = JSValue::js_boolean(matches!(opcode, Opcode::Binary));
+            arguments_with_frame_type = [this_value, data, is_binary];
+            &arguments_with_frame_type
+        } else {
+            arguments = [this_value, data];
+            &arguments
+        };
 
         let mut corker = Corker {
-            args: &arguments,
+            args,
             global_object,
             this_value: JSValue::ZERO,
             callback: on_message_handler,
@@ -624,8 +655,32 @@ impl ServerWebSocket {
         }
     }
 
+    /// The payload of a ping or a pong.
+    #[inline(always)]
+    fn control_to_js<const NODE_HTTP: bool>(
+        &self,
+        global_this: &JSGlobalObject,
+        data: &[u8],
+    ) -> JsResult<JSValue> {
+        if NODE_HTTP {
+            // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L721
+            return ArrayBuffer::create_buffer(global_this, data);
+        }
+        self.binary_to_js(global_this, data)
+    }
+
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub(crate) fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
+        self.deliver_ping::<false>(data)
+    }
+
+    /// `on_ping` for handlers that came with `onNodeHTTPRequest`.
+    pub(crate) fn on_node_http_ping(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
+        self.deliver_ping::<true>(data)
+    }
+
+    #[inline(always)]
+    fn deliver_ping<const NODE_HTTP: bool>(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_ping;
@@ -639,7 +694,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let data = self.binary_to_js(global_this, data)?;
+        let data = self.control_to_js::<NODE_HTTP>(global_this, data)?;
         let args = [
             self.this_value
                 .get()
@@ -657,6 +712,16 @@ impl ServerWebSocket {
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub(crate) fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
+        self.deliver_pong::<false>(data)
+    }
+
+    /// `on_pong` for handlers that came with `onNodeHTTPRequest`.
+    pub(crate) fn on_node_http_pong(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
+        self.deliver_pong::<true>(data)
+    }
+
+    #[inline(always)]
+    fn deliver_pong<const NODE_HTTP: bool>(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_pong;
@@ -671,7 +736,7 @@ impl ServerWebSocket {
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let data = self.binary_to_js(global_this, data)?;
+        let data = self.control_to_js::<NODE_HTTP>(global_this, data)?;
         let args = [
             self.this_value
                 .get()
@@ -800,13 +865,34 @@ impl ServerWebSocket {
         Ok(())
     }
 
+    /// The callbacks of a route. The handlers select them once, when the route is registered.
     pub(crate) fn behavior<ServerType, const SSL: bool>(
-        opts: &WebSocketBehavior,
+        context: &WebSocketServerContext,
     ) -> WebSocketBehavior
     where
         ServerType: WebSocketUpgradeServer<SSL>,
     {
-        Wrap::<ServerType, Self, SSL>::apply(opts)
+        let opts = context.to_behavior();
+        if context.handler.flags.contains(HandlerFlags::NODE_HTTP) {
+            Wrap::<ServerType, NodeHTTPServerWebSocket, SSL>::apply(&opts)
+        } else {
+            Wrap::<ServerType, Self, SSL>::apply(&opts)
+        }
+    }
+
+    /// A reload can give handlers of `Bun.serve()` to a socket that a route of node:http opened.
+    #[inline]
+    fn has_node_http_handlers(&self) -> bool {
+        self.handler().flags.contains(HandlerFlags::NODE_HTTP)
+    }
+
+    /// The landing frame of each uWS callback. `this` is the live user-data slot of the socket.
+    #[inline(always)]
+    unsafe fn land(this: *mut Self, deliver: impl FnOnce(&Self) -> JsResult<()>) {
+        // SAFETY: per the contract of this function.
+        let this = unsafe { &*this };
+        let _context = this.enter_handlers_context();
+        crate::dispatch::fold(deliver(this));
     }
 
     // No `#[bun_jsc::host_fn]` here — the constructor extern shim is
@@ -1547,51 +1633,100 @@ impl ServerWebSocket {
 // Delegate straight to the inherent methods above.
 impl WebSocketHandler for ServerWebSocket {
     // R-2: trait keeps `*mut Self` (FFI userdata round-trip needs raw write
-    // provenance); the single `&*this` reborrow here is the ONE audited unsafe
+    // provenance); the single `&*this` reborrow in `land` is the ONE audited unsafe
     // boundary. Inherent `on_*` take `&self`, so the re-entrant JS dispatch
     // never stacks a `noalias` `&mut ServerWebSocket`. These are the uWS
-    // callbacks' landing frames: what a handler left pending is folded here.
+    // callbacks' landing frames: what a handler left pending is folded there.
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        let this = unsafe { &*this };
-        let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_open(ws));
+        unsafe { Self::land(this, |this| this.on_open(ws)) };
     }
     #[inline(always)]
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        let this = unsafe { &*this };
-        let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_message(ws, message, opcode));
+        unsafe { Self::land(this, |this| this.on_message(ws, message, opcode)) };
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        let this = unsafe { &*this };
-        let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_drain(ws));
+        unsafe { Self::land(this, |this| this.on_drain(ws)) };
     }
     #[inline(always)]
     unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        let this = unsafe { &*this };
-        let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_ping(ws, message));
+        unsafe { Self::land(this, |this| this.on_ping(ws, message)) };
     }
     #[inline(always)]
     unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        let this = unsafe { &*this };
-        let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_pong(ws, message));
+        unsafe { Self::land(this, |this| this.on_pong(ws, message)) };
     }
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        let this = unsafe { &*this };
-        let _context = this.enter_handlers_context();
-        crate::dispatch::fold(this.on_close(ws, code, message));
+        unsafe { Self::land(this, |this| this.on_close(ws, code, message)) };
+    }
+}
+
+/// The uWS callbacks of a route whose handlers came with `onNodeHTTPRequest`.
+#[repr(transparent)]
+struct NodeHTTPServerWebSocket(ServerWebSocket);
+
+impl WebSocketHandler for NodeHTTPServerWebSocket {
+    #[inline(always)]
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
+        // SAFETY: per trait contract; `Self` is a transparent `ServerWebSocket`.
+        unsafe { <ServerWebSocket as WebSocketHandler>::on_open(this.cast(), ws) };
+    }
+    #[inline(always)]
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+        // SAFETY: see `on_open`.
+        unsafe {
+            ServerWebSocket::land(this.cast(), |this| {
+                if this.has_node_http_handlers() {
+                    this.on_node_http_message(ws, message, opcode)
+                } else {
+                    this.on_message(ws, message, opcode)
+                }
+            })
+        };
+    }
+    #[inline(always)]
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
+        // SAFETY: see `on_open`.
+        unsafe { <ServerWebSocket as WebSocketHandler>::on_drain(this.cast(), ws) };
+    }
+    #[inline(always)]
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        unsafe {
+            ServerWebSocket::land(this.cast(), |this| {
+                if this.has_node_http_handlers() {
+                    this.on_node_http_ping(ws, message)
+                } else {
+                    this.on_ping(ws, message)
+                }
+            })
+        };
+    }
+    #[inline(always)]
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        unsafe {
+            ServerWebSocket::land(this.cast(), |this| {
+                if this.has_node_http_handlers() {
+                    this.on_node_http_pong(ws, message)
+                } else {
+                    this.on_pong(ws, message)
+                }
+            })
+        };
+    }
+    #[inline(always)]
+    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        unsafe { <ServerWebSocket as WebSocketHandler>::on_close(this.cast(), ws, code, message) };
     }
 }
 

@@ -2423,7 +2423,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             path,
                             ud,
                             1, // id 1 means is a user route
-                            ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                            ServerWebSocket::behavior::<Self, SSL>(&websocket),
                         );
                     }
                 }
@@ -2453,7 +2453,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
-                                ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                                ServerWebSocket::behavior::<Self, SSL>(&websocket),
                             );
                         }
                     }
@@ -2673,7 +2673,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
-                    ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                    ServerWebSocket::behavior::<Self, SSL>(&websocket),
                 );
             }
         }

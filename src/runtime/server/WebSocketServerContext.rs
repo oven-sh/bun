@@ -44,7 +44,7 @@ pub(crate) struct Handler {
     /// The context of the script that gave these handlers: a websocket event is dispatched inside it.
     pub(crate) context: bun_jsc::ContextId,
 
-    /// used by publish()
+    /// Read by publish(), by `ServerWebSocket::behavior`, and for each event of a socket of node:http.
     pub(crate) flags: HandlerFlags,
 }
 
@@ -54,7 +54,9 @@ bitflags::bitflags! {
     pub struct HandlerFlags: u8 {
         const SSL             = 1 << 0;
         const PUBLISH_TO_SELF = 1 << 1;
-        // remaining 6 bits: padding
+        /// The handlers came with `onNodeHTTPRequest`: they get the payloads that npm `ws` emits.
+        const NODE_HTTP       = 1 << 2;
+        // remaining 5 bits: padding
     }
 }
 

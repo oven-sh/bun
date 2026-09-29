@@ -819,9 +819,13 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         fetch(req, server) { if (server.upgrade(req)) return; return new Response("no"); },
         websocket: { message(ws, m) { ws.send(m); } },
       }).port,
-      wsConnectAndSend(port) {
+      wsConnectAndSend(port, frame = "text") {
         const ws = new WebSocket("ws://127.0.0.1:" + port + "/");
-        ws.onopen = () => ws.send("hi");
+        ws.onopen = () => {
+          if (frame === "ping") ws.ping();
+          else if (frame === "pong") ws.pong();
+          else ws.send(frame === "binary" ? new Uint8Array([1, 2, 3]) : "hi");
+        };
         ws.onerror = () => {};
       },
       fetch(port) { fetch("http://127.0.0.1:" + port + "/").then(r => r.text(), () => {}); },
@@ -881,6 +885,14 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         import readline from "node:readline";
         import { Readable } from "node:stream";
         import { Worker, MessageChannel } from "node:worker_threads";
+        import { WebSocketServer } from "ws";
+
+        // A listener of a \`ws\` server socket over node:http, for the frame that the host sends.
+        const wsServerSocket = (event, frame) => (boom, host) => {
+          const s = http.createServer();
+          new WebSocketServer({ server: s }).on("connection", ws => ws.on(event, boom));
+          s.listen(0, "127.0.0.1", () => host.wsConnectAndSend(s.address().port, frame));
+        };
 
         // Each case arranges for boom(name) to be called by the thing it names, with nobody to catch it.
         export const cases = {
@@ -903,6 +915,10 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
             host.wsConnectAndSend(Bun.serve({ port: 0, fetch(req, server) { if (server.upgrade(req)) return; return new Response("no"); }, websocket: { message: boom } }).port),
           "Bun.serve: websocket open": (boom, host) =>
             host.wsConnectAndSend(Bun.serve({ port: 0, fetch(req, server) { if (server.upgrade(req)) return; return new Response("no"); }, websocket: { open: boom, message() {} } }).port),
+          "ws server socket over node:http: 'message' of a text frame": wsServerSocket("message", "text"),
+          "ws server socket over node:http: 'message' of a binary frame": wsServerSocket("message", "binary"),
+          "ws server socket over node:http: 'ping'": wsServerSocket("ping", "ping"),
+          "ws server socket over node:http: 'pong'": wsServerSocket("pong", "pong"),
           "Bun.udpSocket: data": async (boom, host) => host.udpSend((await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data: boom } })).port),
           "node:net server: 'connection'": (boom, host) => { const s = net.createServer(boom); s.listen(0, "127.0.0.1", () => host.connectAndWrite(s.address().port)); },
           "node:net server socket: 'data'": (boom, host) => { const s = net.createServer(c => c.on("data", boom)); s.listen(0, "127.0.0.1", () => host.connectAndWrite(s.address().port)); },

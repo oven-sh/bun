@@ -589,7 +589,7 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
+ * "poll_start", "session_buffer", "vm_create"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
@@ -602,7 +602,8 @@ export type SocketFaultSyscall =
   | "accept"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer";
+  | "session_buffer"
+  | "vm_create";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -629,7 +630,7 @@ export type SocketFaultRule = {
   after?: number;
   /** fire this many times then disarm; -1 = forever. Default 1. */
   repeat?: number;
-  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer" and "session_buffer", which have no fd. */
+  /** match only this fd; -1 (default) = any. Rejected for "ssl_loop_buffer", "session_buffer" and "vm_create", which have no fd. */
   fd?: number;
 };
 
@@ -640,7 +641,7 @@ export const socketFaultInjection = {
     "TestingAPIs.jsSocketFaultInjectionAvailable",
     0,
   ) as () => boolean,
-  /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
+  /** Arm a process-wide fault rule for one `SocketFaultSyscall`. */
   set: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetSocketFault", 1) as (
     rule: SocketFaultRule,
   ) => boolean,

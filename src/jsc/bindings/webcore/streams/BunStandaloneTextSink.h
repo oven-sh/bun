@@ -99,9 +99,7 @@ struct BunTextAccumulator {
     }
 
 private:
-    // the pure-string fast-path rope. RecordOverflow: an append past
-    // StringImpl::MaxLength must surface as a catchable out-of-memory error at the
-    // write site, never as the default policy's process abort.
+    // RecordOverflow: an append past the string limit is an error at the write site, not an abort.
     WTF::StringBuilder m_rope { WTF::OverflowPolicy::RecordOverflow };
 };
 

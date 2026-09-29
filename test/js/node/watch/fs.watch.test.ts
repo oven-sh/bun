@@ -12,7 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -252,6 +252,121 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
+
+  // The OS hands over several events at once (a rename is two events from one
+  // syscall), and node still makes one callback per event: what the listener
+  // queued for one event has run by the time the next event arrives.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
+  function burstEndingWithLast(root: string) {
+    for (const name of ["a", "b", "c", "d", "e", "f", "g", "last"]) {
+      fs.writeFileSync(path.join(root, name + ".tmp"), "x");
+      fs.renameSync(path.join(root, name + ".tmp"), path.join(root, name));
+    }
+  }
+
+  test("nextTicks and microtasks queued by the listener run before the next event", async () => {
+    using dir = tempDir("fs-watch-checkpoint", {});
+    const root = String(dir);
+    const order: string[] = [];
+    const expected: string[] = [];
+    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
+    let events = 0;
+    const watcher = fs.watch(root, (_eventType, filename) => {
+      const i = events++;
+      expected.push(`event ${i}`, `nextTick ${i}`, `microtask ${i}`);
+      order.push(`event ${i}`);
+      process.nextTick(() => order.push(`nextTick ${i}`));
+      queueMicrotask(() => order.push(`microtask ${i}`));
+      if (filename === "last") resolve();
+    });
+    watcher.once("error", reject);
+    const interval = repeat(() => burstEndingWithLast(root));
+    try {
+      await sawLast;
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+    expect(order).toEqual(expected);
+  });
+
+  test("a once('change') listener re-armed after an await sees every event", async () => {
+    using dir = tempDir("fs-watch-once-loop", {});
+    const root = String(dir);
+    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
+    const watcher = fs.watch(root);
+    let emitted = 0;
+    watcher.on("change", (_eventType, filename) => {
+      emitted++;
+      if (filename === "last") resolve();
+    });
+    watcher.once("error", reject);
+
+    const stop = new AbortController();
+    let seen = 0;
+    const consumer = (async () => {
+      for (;;) {
+        await once(watcher, "change", { signal: stop.signal });
+        seen++;
+      }
+    })();
+    // Stays handled when the test fails before it gets to await the consumer.
+    consumer.catch(() => {});
+
+    const interval = repeat(() => burstEndingWithLast(root));
+    try {
+      await sawLast;
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+      stop.abort();
+    }
+    await expect(consumer).rejects.toMatchObject({ name: "AbortError" });
+    expect({ seen }).toEqual({ seen: emitted });
+  });
+
+  // `.resolves` spins the event loop until the promise settles. Here it runs
+  // after the first of the two events of one rename. A spin until "late" checks
+  // that the events that arrive while it spins do not overtake the second event.
+  // A spin until "after" checks that the second event arrives while it spins.
+  // Linux only: inotify watches from the moment fs.watch() returns and reports
+  // one rename as two events.
+  test.skipIf(!isLinux).each([
+    { spinSite: "the listener", until: "late" },
+    { spinSite: "a continuation of the listener", until: "late" },
+    { spinSite: "a continuation of the listener", until: "after" },
+  ])("an event loop spin in $spinSite until '$until' is seen gets the events in order", async ({ spinSite, until }) => {
+    using dir = tempDir("fs-watch-nested-spin", { "before": "x" });
+    const root = String(dir);
+    const seen: string[] = [];
+    const sawUntil = Promise.withResolvers<void>();
+    const sawEnd = Promise.withResolvers<void>();
+    let spun: Promise<void> | undefined;
+    async function spin() {
+      // A continuation resumes in the checkpoint that follows the first event.
+      if (spinSite !== "the listener") await undefined;
+      seen.push("spin");
+      if (until === "late") fs.writeFileSync(path.join(root, "late"), "x");
+      await expect(sawUntil.promise).resolves.toBeUndefined();
+      fs.writeFileSync(path.join(root, "end"), "x");
+    }
+    const watcher = fs.watch(root, (_eventType, filename) => {
+      seen.push(String(filename));
+      if (filename === until) sawUntil.resolve();
+      if (filename === "end") sawEnd.resolve();
+      // The listener runs again while spin() spins, so only the first event starts it.
+      if (seen.length === 1) spun = spin();
+    });
+    watcher.once("error", sawEnd.reject);
+    try {
+      fs.renameSync(path.join(root, "before"), path.join(root, "after"));
+      await sawEnd.promise;
+      await spun;
+    } finally {
+      watcher.close();
+    }
+    expect(seen.slice(0, 3)).toEqual(["before", "spin", "after"]);
+  });
 
   test("should error on invalid path", done => {
     try {
@@ -623,7 +738,12 @@ describe("fs.watch", () => {
   // The events of each step, for a watch on `root`. A sentinel file is created
   // after each step and events arrive in order, so its event marks the point
   // where every earlier event was delivered.
-  async function eventsOfEachStep(root: string, options: fs.WatchOptions, steps: (() => void | Promise<void>)[]) {
+  async function eventsOfEachStep(
+    root: string,
+    options: fs.WatchOptions,
+    steps: (() => void | Promise<void>)[],
+    makeSentinel = (sentinel: string) => fs.closeSync(fs.openSync(sentinel, "w")),
+  ) {
     const events: string[] = [];
     let sentinel: { name: string; resolve: () => void } | undefined;
     const failed = Promise.withResolvers<never>();
@@ -641,7 +761,7 @@ describe("fs.watch", () => {
         await Promise.race([step(), failed.promise]);
         const { promise, resolve } = Promise.withResolvers<void>();
         sentinel = { name: `sentinel-${i}`, resolve };
-        fs.closeSync(fs.openSync(path.join(root, sentinel.name), "w"));
+        makeSentinel(path.join(root, sentinel.name));
         await Promise.race([promise, failed.promise]);
         seen.push(events.splice(0).filter(event => !event.includes("sentinel-")));
       }
@@ -650,6 +770,604 @@ describe("fs.watch", () => {
       watcher.close();
     }
   }
+
+  // A sentinel that holds the JS thread, for a recursive watch: the watcher
+  // thread watches a new directory after it handled each earlier record, and
+  // /proc shows that watch. No listener runs before this returns.
+  function holdUntilWatched(sentinel: string) {
+    fs.mkdirSync(sentinel);
+    const inode = ` ino:${fs.statSync(sentinel, { bigint: true }).ino.toString(16)} `;
+    const inotify = fs.readdirSync("/proc/self/fd").filter(fd => {
+      try {
+        return fs.readlinkSync(`/proc/self/fd/${fd}`) === "anon_inode:inotify";
+      } catch {
+        // The descriptor that readdir used is closed.
+        return false;
+      }
+    });
+    const deadline = performance.now() + 4000;
+    while (!inotify.some(fd => fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8").includes(inode))) {
+      if (performance.now() > deadline) throw new Error(`the watcher thread does not watch ${sentinel}`);
+    }
+  }
+
+  // An event is not dropped after the listener ran. A record merges only into
+  // an identical event that the listener has not received, as the kernel
+  // merges a record into an identical unread one. Linux only: FSEvents decides
+  // what one macOS record holds, and Windows keeps the 1 ms rule.
+  describe.skipIf(!isLinux)("delivers each event for one name", () => {
+    for (const recursive of [false, true]) {
+      describe(recursive ? "recursive" : "not recursive", () => {
+        const options = { recursive };
+        const prefix = recursive ? "views/" : "";
+
+        test("a directory removed and created again", async () => {
+          using dir = tempDir("fs-watch-recreate-dir", { "sub": {}, "views": { "sub": {} } });
+          const sub = path.join(String(dir), prefix, "sub");
+          const recreate = () => {
+            fs.rmdirSync(sub);
+            fs.mkdirSync(sub);
+          };
+          // The second step shows that the new directory is watched.
+          const inside = () => fs.closeSync(fs.openSync(path.join(sub, "f.txt"), "w"));
+          expect(await eventsOfEachStep(String(dir), options, [recreate, inside])).toEqual([
+            [`rename:${prefix}sub`, `rename:${prefix}sub`],
+            recursive ? [`rename:${prefix}sub/f.txt`] : [],
+          ]);
+        });
+
+        test("a directory created and removed again", async () => {
+          using dir = tempDir("fs-watch-create-remove-dir", { "views": {} });
+          const sub = path.join(String(dir), prefix, "sub");
+          const act = () => {
+            fs.mkdirSync(sub);
+            fs.rmdirSync(sub);
+          };
+          expect(await eventsOfEachStep(String(dir), options, [act])).toEqual([
+            [`rename:${prefix}sub`, `rename:${prefix}sub`],
+          ]);
+        });
+
+        test("a file unlinked and created again", async () => {
+          using dir = tempDir("fs-watch-recreate-file", { "f.txt": "x", "views": { "f.txt": "x" } });
+          const file = path.join(String(dir), prefix, "f.txt");
+          const act = () => {
+            fs.unlinkSync(file);
+            fs.closeSync(fs.openSync(file, "w"));
+          };
+          expect(await eventsOfEachStep(String(dir), options, [act])).toEqual([
+            [`rename:${prefix}f.txt`, `rename:${prefix}f.txt`],
+          ]);
+        });
+
+        test("a file renamed away and back", async () => {
+          using dir = tempDir("fs-watch-rename-back", { "a": "x", "views": { "a": "x" } });
+          const a = path.join(String(dir), prefix, "a");
+          const b = path.join(String(dir), prefix, "b");
+          const act = () => {
+            fs.renameSync(a, b);
+            fs.renameSync(b, a);
+          };
+          expect(await eventsOfEachStep(String(dir), options, [act])).toEqual([
+            [`rename:${prefix}a`, `rename:${prefix}b`, `rename:${prefix}b`, `rename:${prefix}a`],
+          ]);
+        });
+
+        // IN_ATTRIB and IN_MODIFY both become "change".
+        test("a mode change and a write", async () => {
+          using dir = tempDir("fs-watch-chmod-append", { "f.txt": "x", "views": { "f.txt": "x" } });
+          const file = path.join(String(dir), prefix, "f.txt");
+          const act = () => {
+            fs.chmodSync(file, 0o600);
+            fs.appendFileSync(file, "y");
+          };
+          expect(await eventsOfEachStep(String(dir), options, [act])).toEqual([
+            [`change:${prefix}f.txt`, `change:${prefix}f.txt`],
+          ]);
+        });
+      });
+    }
+
+    // A watched file reports every event under its own name. The unlink ends
+    // the sequence: IN_ATTRIB, then the two rename self-events.
+    test("a mode change, a write and the unlink of a watched file", async () => {
+      using dir = tempDir("fs-watch-file-chmod-append", { "f.txt": "x" });
+      const file = path.join(String(dir), "f.txt");
+      const act = () => {
+        fs.chmodSync(file, 0o600);
+        fs.appendFileSync(file, "y");
+        fs.unlinkSync(file);
+      };
+      expect(await collectWatchEvents(file, 2, act)).toEqual([
+        ["change", "f.txt"],
+        ["change", "f.txt"],
+        ["change", "f.txt"],
+        ["rename", "f.txt"],
+        ["rename", "f.txt"],
+      ]);
+    });
+
+    test("fs.promises.watch: a directory removed and created again", async () => {
+      using dir = tempDir("fs-watch-promises-recreate", { "views": {} });
+      const views = path.join(String(dir), "views");
+      const iterator = fs.promises.watch(String(dir))[Symbol.asyncIterator]();
+      try {
+        // node opens the watch on the first next().
+        let next = iterator.next();
+        fs.rmdirSync(views);
+        fs.mkdirSync(views);
+        fs.mkdirSync(path.join(String(dir), "sentinel"));
+        const events: string[] = [];
+        for (;;) {
+          const { value, done } = await next;
+          if (done || value.filename === "sentinel") break;
+          events.push(`${value.eventType}:${value.filename}`);
+          next = iterator.next();
+        }
+        expect(events).toEqual(["rename:views", "rename:views"]);
+      } finally {
+        await iterator.return?.();
+      }
+    });
+
+    // The listener has run, so it may have read the state from before the next
+    // change. That change must reach it, however soon it comes.
+    describe("a change made after the listener ran", () => {
+      async function rounds(dir: string, count: number, change: (round: number) => void) {
+        const events: string[] = [];
+        let received = Promise.withResolvers<void>();
+        const failed = Promise.withResolvers<never>();
+        // An error between two rounds rejects the next wait.
+        failed.promise.catch(() => {});
+        const watcher = fs.watch(dir, (eventType, filename) => {
+          events.push(`${eventType}:${filename}`);
+          received.resolve();
+        });
+        watcher.on("error", failed.reject);
+        watcher.on("close", () => failed.reject(new Error("the watcher closed")));
+        try {
+          for (let round = 0; round < count; round++) {
+            received = Promise.withResolvers<void>();
+            change(round);
+            await Promise.race([received.promise, failed.promise]);
+          }
+          return events;
+        } finally {
+          watcher.close();
+        }
+      }
+
+      test("a write", async () => {
+        using dir = tempDir("fs-watch-after-write", { "f.txt": "x" });
+        const file = path.join(String(dir), "f.txt");
+        expect(await rounds(String(dir), 100, () => fs.appendFileSync(file, "y"))).toEqual(
+          Array.from({ length: 100 }, () => "change:f.txt"),
+        );
+      });
+
+      test("a removal, then a creation", async () => {
+        using dir = tempDir("fs-watch-after-recreate", { "views": {} });
+        const views = path.join(String(dir), "views");
+        const change = (round: number) => (round % 2 === 0 ? fs.rmdirSync(views) : fs.mkdirSync(views));
+        expect(await rounds(String(dir), 40, change)).toEqual(Array.from({ length: 40 }, () => "rename:views"));
+      });
+    });
+
+    // The JS thread is held until the watcher thread handled each record of the
+    // step. No listener ran by then, so what can merge did merge.
+    describe("records that arrive before the listener can run", () => {
+      const rows: [string, (root: string, spare: string) => void, string[]][] = [
+        [
+          "writes to one file merge",
+          root => {
+            for (let i = 0; i < 1000; i++) fs.appendFileSync(path.join(root, "f.txt"), "y");
+          },
+          ["change:f.txt"],
+        ],
+        [
+          "writes to two files do not merge",
+          root => {
+            fs.appendFileSync(path.join(root, "f.txt"), "y");
+            fs.appendFileSync(path.join(root, "g.txt"), "y");
+          },
+          ["change:f.txt", "change:g.txt"],
+        ],
+        [
+          "a mode change and a write do not merge",
+          root => {
+            fs.chmodSync(path.join(root, "f.txt"), 0o600);
+            fs.appendFileSync(path.join(root, "f.txt"), "y");
+          },
+          ["change:f.txt", "change:f.txt"],
+        ],
+        [
+          "a removal and a creation do not merge",
+          root => {
+            fs.rmdirSync(path.join(root, "sub"));
+            fs.mkdirSync(path.join(root, "sub"));
+          },
+          ["rename:sub", "rename:sub"],
+        ],
+        [
+          // The two records differ in the cookie, which the kernel does not compare:
+          // https://github.com/torvalds/linux/blob/028ef9c96e96197026887c0f092424679298aae8/fs/notify/inotify/inotify_fsnotify.c#L32-L47
+          "two moves onto one name merge",
+          (root, spare) => {
+            fs.renameSync(path.join(spare, "x"), path.join(root, "a"));
+            fs.renameSync(path.join(spare, "y"), path.join(root, "a"));
+          },
+          ["rename:a"],
+        ],
+      ];
+      test.each(rows)("%s", async (_, act, expected) => {
+        using dir = tempDir("fs-watch-held", {
+          "root": { "f.txt": "x", "g.txt": "x", "sub": {} },
+          "spare": { "x": "x", "y": "y" },
+        });
+        const root = path.join(String(dir), "root");
+        const step = () => act(root, path.join(String(dir), "spare"));
+        expect(await eventsOfEachStep(root, { recursive: true }, [step], holdUntilWatched)).toEqual([expected]);
+      });
+
+      // The watcher thread walks a new directory and reports what it finds. An
+      // entry that appears after the directory is watched is also in the kernel
+      // queue, as IN_CREATE or as IN_MOVED_TO.
+      describe("a new directory reports an entry once", () => {
+        const appear: [string, (entry: string, spare: string) => void][] = [
+          ["a file created in it", entry => fs.closeSync(fs.openSync(entry, "w"))],
+          ["a file moved into it", (entry, spare) => fs.renameSync(path.join(spare, "file"), entry)],
+          ["a directory moved into it", (entry, spare) => fs.renameSync(path.join(spare, "directory"), entry)],
+        ];
+        test.each(appear)("%s", async (_, act) => {
+          using dir = tempDir("fs-watch-walk", { "root": {}, "spare": {}, "busy": {} });
+          const root = path.join(String(dir), "root");
+          const busy = path.join(String(dir), "busy");
+          let large = path.join(String(dir), "spare", "large");
+          for (let i = 0; i < 200; i++) fs.mkdirSync(path.join(large, String(i)), { recursive: true });
+          const watchers = [fs.watch(busy, { recursive: true }, () => {})];
+          const rounds = 3;
+          const steps = Array.from({ length: rounds }, (_, round) => () => {
+            const spare = path.join(String(dir), "spare", String(round));
+            fs.mkdirSync(path.join(spare, "directory"), { recursive: true });
+            fs.writeFileSync(path.join(spare, "file"), "x");
+            fs.mkdirSync(path.join(spare, "new"));
+            // This watch is on the directory before the tree has it, so the kernel queues
+            // the record of the entry.
+            watchers.push(fs.watch(path.join(spare, "new"), () => {}));
+            // The watcher thread walks the 200 directories first, so the entry is there
+            // when it walks the new directory.
+            fs.renameSync(large, path.join(busy, `large-${round}`));
+            large = path.join(busy, `large-${round}`);
+            fs.renameSync(path.join(spare, "new"), path.join(root, `new-${round}`));
+            act(path.join(root, `new-${round}`, "entry"), spare);
+          });
+          try {
+            expect(await eventsOfEachStep(root, { recursive: true }, steps, holdUntilWatched)).toEqual(
+              Array.from({ length: rounds }, (_, round) => [`rename:new-${round}`, `rename:new-${round}/entry`]),
+            );
+          } finally {
+            for (const watcher of watchers) watcher.close();
+          }
+        });
+
+        test("a file moved over the entry that the walk found", async () => {
+          using dir = tempDir("fs-watch-walk-found", {
+            "root": {},
+            "gate": {},
+            "spare": { "new": { "entry": "x" }, "file": "y" },
+          });
+          const root = path.join(String(dir), "root");
+          const spare = path.join(String(dir), "spare");
+          // The watcher thread handles the records of the two watches in one queue.
+          const gate = fs.watch(path.join(String(dir), "gate"), { recursive: true }, () => {});
+          const step = () => {
+            fs.renameSync(path.join(spare, "new"), path.join(root, "new"));
+            holdUntilWatched(path.join(String(dir), "gate", "walked"));
+            fs.renameSync(path.join(spare, "file"), path.join(root, "new", "entry"));
+          };
+          try {
+            expect(await eventsOfEachStep(root, { recursive: true }, [step], holdUntilWatched)).toEqual([
+              ["rename:new", "rename:new/entry"],
+            ]);
+          } finally {
+            gate.close();
+          }
+        });
+      });
+    });
+
+    // The listener has the event of the first write when it makes the second
+    // one, so the second write is not merged into that event.
+    test("a change made while the listener runs", async () => {
+      using dir = tempDir("fs-watch-in-listener", { "f.txt": "x" });
+      const root = String(dir);
+      const file = path.join(root, "f.txt");
+      const events: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
+        try {
+          if (filename === "last") return resolve();
+          events.push(`${eventType}:${filename}`);
+          if (events.length > 1) return;
+          fs.appendFileSync(file, "y");
+          // The watcher thread handles the record of that write during this call.
+          holdUntilWatched(path.join(root, "held"));
+          fs.mkdirSync(path.join(root, "last"));
+        } catch (error) {
+          reject(error);
+        }
+      });
+      watcher.on("error", reject);
+      watcher.on("close", () => reject(new Error("the watcher closed")));
+      try {
+        fs.appendFileSync(file, "y");
+        await promise;
+        expect(events).toEqual(["change:f.txt", "change:f.txt", "rename:held"]);
+      } finally {
+        watcher.close();
+      }
+    });
+
+    // A loop on `once` puts its listener back in a continuation. The continuation
+    // runs between two events of one batch, so the loop gets the second one.
+    test("a once loop hears of a write that merged into the second event of a batch", async () => {
+      using dir = tempDir("fs-watch-once-merge", {
+        "root": { "f.txt": "x", "other.txt": "x" },
+        "busy": {},
+        "spare": {},
+      });
+      const root = path.join(String(dir), "root");
+      const busy = path.join(String(dir), "busy");
+      const large = path.join(String(dir), "spare", "large");
+      for (let i = 0; i < 200; i++) fs.mkdirSync(path.join(large, String(i)), { recursive: true });
+      const busyWatcher = fs.watch(busy, { recursive: true }, () => {});
+      const watcher = fs.watch(root, { recursive: true });
+      const last = Promise.withResolvers<void>();
+      watcher.on("change", (_eventType, filename) => {
+        if (filename === "last") last.resolve();
+      });
+      watcher.on("error", last.reject);
+      watcher.on("close", () => last.reject(new Error("the watcher closed")));
+      const stop = new AbortController();
+      const heard: string[] = [];
+      const consumer = (async () => {
+        for (;;) {
+          const [, filename] = await once(watcher, "change", { signal: stop.signal });
+          heard.push(filename);
+        }
+      })();
+      // Stays handled when the test fails before it gets to await the consumer.
+      consumer.catch(() => {});
+      try {
+        // The watcher thread walks the 200 directories first, so it reads the two
+        // records of the appends in one batch.
+        fs.renameSync(large, path.join(busy, "large"));
+        fs.appendFileSync(path.join(root, "other.txt"), "y");
+        fs.appendFileSync(path.join(root, "f.txt"), "y");
+        holdUntilWatched(path.join(busy, "handled"));
+        // This record merges into the event of f.txt.
+        fs.appendFileSync(path.join(root, "f.txt"), "y");
+        holdUntilWatched(path.join(root, "last"));
+        await last.promise;
+      } finally {
+        watcher.close();
+        busyWatcher.close();
+        stop.abort();
+      }
+      await expect(consumer).rejects.toMatchObject({ name: "AbortError" });
+      expect(heard.filter(filename => filename !== "last")).toEqual(["other.txt", "f.txt"]);
+    });
+
+    // The second script of https://github.com/oven-sh/bun/issues/44005.
+    test("a write made by the listener, 100 times", async () => {
+      using dir = tempDir("fs-watch-listener-writes", { "f.txt": "x" });
+      const root = String(dir);
+      const file = path.join(root, "f.txt");
+      const events: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const watcher = fs.watch(root, (eventType, filename) => {
+        try {
+          if (filename === "sentinel") return resolve();
+          events.push(`${eventType}:${filename}`);
+          if (events.length < 100) fs.appendFileSync(file, "y");
+          else fs.mkdirSync(path.join(root, "sentinel"));
+        } catch (error) {
+          reject(error);
+        }
+      });
+      watcher.on("error", reject);
+      watcher.on("close", () => reject(new Error("the watcher closed")));
+      try {
+        fs.appendFileSync(file, "y");
+        await promise;
+        expect(events).toEqual(Array.from({ length: 100 }, () => "change:f.txt"));
+      } finally {
+        watcher.close();
+      }
+    });
+
+    // The records of another process reach the watcher thread at any time,
+    // also during a listener call.
+    describe("the last listener call sees the last write of another process", () => {
+      const rounds = 10;
+      const appends = 200;
+      // For each byte on stdin: the appends, then the directory that ends the round.
+      const writer = `
+        const fs = require("fs");
+        const byte = Buffer.alloc(1);
+        for (let round = 0; fs.readSync(0, byte, 0, 1, null) === 1; round++) {
+          for (let i = 0; i < ${appends}; i++) fs.appendFileSync("f.txt", "y");
+          fs.mkdirSync("round-" + round);
+        }
+      `;
+
+      async function sizeAfterEachRound(root: string, staysInTheCall: boolean) {
+        const file = path.join(root, "f.txt");
+        let size = -1;
+        let round = 0;
+        let ended = Promise.withResolvers<void>();
+        const failed = Promise.withResolvers<never>();
+        // An error between two rounds rejects the next wait.
+        failed.promise.catch(() => {});
+        const watcher = fs.watch(root, (eventType, filename) => {
+          try {
+            if (filename === `round-${round}`) return ended.resolve();
+            if (filename !== "f.txt") return;
+            size = fs.statSync(file).size;
+            if (!staysInTheCall) return;
+            const deadline = performance.now() + 4000;
+            while (!fs.existsSync(path.join(root, `round-${round}`))) {
+              if (performance.now() > deadline) throw new Error(`round ${round} did not end`);
+            }
+          } catch (error) {
+            failed.reject(error);
+          }
+        });
+        watcher.on("error", failed.reject);
+        watcher.on("close", () => failed.reject(new Error("the watcher closed")));
+        try {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", writer],
+            env: bunEnv,
+            cwd: root,
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const output = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // The writer ends before the last round only when it failed.
+          output.then(
+            ([, stderr, exitCode]) => failed.reject(new Error(`the writer ended with code ${exitCode}: ${stderr}`)),
+            failed.reject,
+          );
+          const sizes: number[] = [];
+          for (round = 0; round < rounds; round++) {
+            ended = Promise.withResolvers<void>();
+            proc.stdin.write("g");
+            await proc.stdin.flush();
+            await Promise.race([ended.promise, failed.promise]);
+            sizes.push(size);
+          }
+          await proc.stdin.end();
+          const [stdout, stderr, exitCode] = await output;
+          return { sizes, stdout, stderr, exitCode };
+        } finally {
+          watcher.close();
+        }
+      }
+
+      const expected = {
+        sizes: Array.from({ length: rounds }, (_, round) => 1 + (round + 1) * appends),
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      };
+
+      test("with a listener that returns at once", async () => {
+        using dir = tempDir("fs-watch-child-writer", { "f.txt": "x" });
+        expect(await sizeAfterEachRound(String(dir), false)).toEqual(expected);
+      });
+
+      test("with a listener that is in the call while the writes arrive", async () => {
+        using dir = tempDir("fs-watch-child-writer-held", { "f.txt": "x" });
+        expect(await sizeAfterEachRound(String(dir), true)).toEqual(expected);
+      });
+    });
+
+    // The events of a watcher that a macro created go to the macro loop. The
+    // regular loop and a macro that waits both run them, in any order.
+    test("a change made after two batches ran in the other order", async () => {
+      using dir = tempDir("fs-watch-macro-order", {
+        "a": { "first.txt": "x", "second.txt": "x" },
+        "b": { "first.txt": "x", "second.txt": "x" },
+        "watch-macro.ts": `
+          import fs from "node:fs";
+          export function watchBoth() {
+            const g = globalThis as any;
+            g.watchers = ["a", "b"].map(name =>
+              fs.watch(name, (eventType: string, filename: string) => g.onEvent(name, eventType + ":" + filename)),
+            );
+            return 0;
+          }
+        `,
+        "spin-macro.ts": `
+          export async function untilSecond() {
+            await (globalThis as any).second.promise;
+            return 0;
+          }
+        `,
+        "spin.ts": `
+          import { untilSecond } from "./spin-macro.ts" with { type: "macro" };
+          export const spun = untilSecond();
+        `,
+        "main.ts": `
+          import { watchBoth } from "./watch-macro.ts" with { type: "macro" };
+          import fs from "node:fs";
+
+          watchBoth();
+          const g = globalThis as any;
+          // The watcher whose two batches run in the other order.
+          let target = "";
+          let round: { events: string[]; sentinel: string; done: () => void } | undefined;
+          const firsts: Record<string, PromiseWithResolvers<void>> = {
+            a: Promise.withResolvers<void>(),
+            b: Promise.withResolvers<void>(),
+          };
+          const spun = Promise.withResolvers<void>();
+
+          g.onEvent = (name: string, event: string) => {
+            if (event === "change:first.txt") firsts[name].resolve();
+            if (event === "change:second.txt") g.second?.resolve();
+            if (name === target && round) {
+              if (event === "rename:" + round.sentinel) round.done();
+              else round.events.push(event);
+            }
+            if (target === "") {
+              // The first batch of the other watcher waits behind this one in the regular loop.
+              target = name === "a" ? "b" : "a";
+              g.second = Promise.withResolvers<void>();
+              fs.appendFileSync(target + "/second.txt", "y");
+              // Its second batch runs in the macro loop, before the first one.
+              require("./spin.ts");
+              spun.resolve();
+            }
+          };
+
+          fs.appendFileSync("a/first.txt", "y");
+          fs.appendFileSync("b/first.txt", "y");
+
+          // The rounds start after the macro returned and each watcher got its first event.
+          await Promise.all([firsts.a.promise, firsts.b.promise, spun.promise]);
+          const rounds: string[][] = [];
+          for (let i = 0; i < 3; i++) {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            round = { events: [], sentinel: "sentinel-" + i, done: resolve };
+            fs.appendFileSync(target + "/second.txt", "y");
+            fs.mkdirSync(target + "/sentinel-" + i);
+            await promise;
+            rounds.push(round.events);
+          }
+          for (const watcher of g.watchers) watcher.close();
+          console.log(JSON.stringify(rounds));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A debug build also prints each macro call.
+      const rounds = stdout.split("\n").filter(line => !line.startsWith("[macro]"));
+      expect({ rounds, stderr, exitCode }).toEqual({
+        rounds: [JSON.stringify([["change:second.txt"], ["change:second.txt"], ["change:second.txt"]]), ""],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 
   // Under a recursive watch a subdirectory has an inotify watch of its own, and
   // the watch of its parent reports the subdirectory by name. A change to the

@@ -602,10 +602,10 @@ function insideTheCall(call) {
 }
 
 // Bun: close() comes first, the debugger thread then frees the sockets of the
-// frontends that left. Node v26.3.0 can abort in close() while a frontend is
-// attached ("pure virtual method called"), so it only exits. Its exit waits
-// until every frontend has left: the test closes its frontends when it has
-// read the report.
+// frontends that left. A Node v26.3.0 program that calls close() with a
+// frontend attached and then exits can abort ("pure virtual method called"),
+// so Node only exits. Its exit waits until every frontend has left: the test
+// closes its frontends when it has read the report.
 function finish(more = {}) {
   writeSync(1, JSON.stringify({ ranInsideTheCall: ranInsideTheCall.sort(), ...more }) + "\\n");
   if (process.versions.bun) inspector.close();

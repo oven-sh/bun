@@ -12,7 +12,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce, reportUncaughtException } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -809,6 +809,21 @@ function moveMessagePortToContext(port, _context) {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
+type TerminateCallback = (err: null, exitCode: number) => void;
+type PendingTerminate = PromiseWithResolvers<number> & {
+  // The callbacks of terminate(callback) (DEP0132).
+  callbacks?: TerminateCallback[];
+};
+
+// node also continues its exit handler after a 'message' listener throws: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1117-L1119
+function emitGuarded(worker: Worker, name: string, value: unknown) {
+  try {
+    worker.emit(name, value);
+  } catch (err) {
+    reportUncaughtException(err);
+  }
+}
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -823,12 +838,11 @@ class Worker extends EventEmitter {
   #stdout;
   #stderr;
 
-  // this is used by terminate();
-  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
-  #onExitPromise: Promise<number> | number | undefined = undefined;
+  // Made by the first terminate() on a Worker that has not exited. #onClose settles it after 'exit'.
+  #pendingTerminate: PendingTerminate | undefined = undefined;
   #urlToRevoke = "";
-  // threadId captured for cleaning up the messaging control port on close.
-  #messagingThreadId: number | undefined = undefined;
+  // A copy, because the native id is -1 when the worker's last messages are delivered and node's is not: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L511-L515
+  #threadId = -1;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -956,8 +970,8 @@ class Worker extends EventEmitter {
     }
     // threadId is only assigned once the WebWorker exists; register the hub-side
     // control port with the messaging hub now.
-    this.#messagingThreadId = this.#worker.threadId;
-    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain);
+    this.#threadId = this.#worker.threadId;
+    messaging.registerMainThreadPort(this.#threadId, portToMain);
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
@@ -1000,7 +1014,7 @@ class Worker extends EventEmitter {
   }
 
   get threadId() {
-    return this.#worker.threadId;
+    return this.#exited ? -1 : this.#threadId;
   }
 
   get threadName() {
@@ -1051,39 +1065,28 @@ class Worker extends EventEmitter {
     });
   }
 
+  // node settles the promise from once("exit"), so removeAllListeners() loses it. Here #onClose settles it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L476-L491
   terminate(callback?: unknown) {
-    if (typeof callback === "function") {
+    const hasCallback = typeof callback === "function";
+    if (hasCallback) {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
     }
+    // node: terminate() on an already-exited worker resolves with undefined.
+    if (this.#exited) return Promise.$resolve(undefined);
 
-    const onExitPromise = this.#onExitPromise;
-    // Not a truthy test: after exit #onExitPromise is the exit code, which can be 0;
-    // falling through would wait on a 'close' event that never fires again.
-    if (onExitPromise !== undefined) {
-      // node: terminate() on an already-exited worker resolves with undefined;
-      // an in-progress terminate (a promise) resolves with the exit code below.
-      return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(undefined);
+    let pending = this.#pendingTerminate;
+    if (pending === undefined) {
+      pending = this.#pendingTerminate = Promise.withResolvers<number>();
+      // Keep the event loop alive until the exit, so the promise of an unref()'ed worker resolves too.
+      this.#worker.ref();
+      this.#worker.terminate();
     }
-
-    const { resolve, promise } = Promise.withResolvers<number>();
-    this.#worker.addEventListener(
-      "close",
-      event => {
-        resolve(event.code);
-      },
-      { once: true },
-    );
-    // Keep the event loop alive until termination completes so the returned
-    // promise still resolves even if the worker was unref()'ed.
-    this.#worker.ref();
-    this.#worker.terminate();
-
-    return (this.#onExitPromise = promise);
+    if (hasCallback) (pending.callbacks ??= []).push(callback as TerminateCallback);
+    return pending.promise;
   }
 
   postMessage(...args: [any, any]) {
@@ -1157,7 +1160,7 @@ class Worker extends EventEmitter {
       if (includeObjectsCollectedByMinorGC !== undefined)
         validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
     }
-    if (this.#exited) {
+    if (this.#worker.threadId === -1) {
       return Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"));
     }
     // Bun has no allocation-sampling heap profiler; yield a valid but empty
@@ -1168,17 +1171,47 @@ class Worker extends EventEmitter {
   }
 
   #onClose(e) {
-    this.#exited = true;
+    const code: number = e.code;
+    try {
+      this.#exit(code);
+    } finally {
+      // A throw from a stdio listener ends #exit, as it ends node's kOnExit. terminate() settles on that path too.
+      this.#exited = true;
+      const pending = this.#pendingTerminate;
+      if (pending !== undefined) {
+        this.#pendingTerminate = undefined;
+        const callbacks = pending.callbacks;
+        if (callbacks !== undefined) {
+          for (let i = 0; i < callbacks.length; i++) {
+            try {
+              callbacks[i](null, code);
+            } catch (err) {
+              reportUncaughtException(err);
+            }
+          }
+        }
+        pending.resolve(code);
+      }
+    }
+  }
+
+  // The order of node's kOnExit: the last messages, the exit state, the stdio EOF, then 'exit'. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L393-L410
+  #exit(code: number) {
     // Revoke the eval blob: URL now that the worker has exited; the
     // FinalizationRegistry remains only as a GC safety net.
     if (this.#urlToRevoke) {
       URL.revokeObjectURL(this.#urlToRevoke);
       this.#urlToRevoke = "";
     }
-    if (this.#messagingThreadId !== undefined) {
-      messaging.destroyMainThreadPort(this.#messagingThreadId);
-      this.#messagingThreadId = undefined;
+    messaging.destroyMainThreadPort(this.#threadId);
+    {
+      let entry;
+      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
+        emitGuarded(this, "message", entry.message);
+      }
+      this.#publicPort.close();
     }
+    this.#exited = true;
     // End captured stdio readables when the worker exits, even if it was
     // terminated before its own streams finished.
     if (this.#stdout) {
@@ -1197,17 +1230,7 @@ class Worker extends EventEmitter {
       this.#stdin.destroy();
     }
     this.#stdinPort?.close();
-    // node delivers everything the worker posted before it exited ahead of
-    // 'exit' (kOnExit drains the public port), then closes the port.
-    {
-      let entry;
-      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-        this.emit("message", entry.message);
-      }
-      this.#publicPort.close();
-    }
-    this.#onExitPromise = e.code;
-    this.emit("exit", e.code);
+    emitGuarded(this, "exit", code);
   }
 
   #onError(event: ErrorEvent) {

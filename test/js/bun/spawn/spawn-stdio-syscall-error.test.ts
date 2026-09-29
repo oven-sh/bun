@@ -4,7 +4,8 @@
 // must be released the way EOF releases it, so a child that is still writing
 // gets EPIPE instead of blocking forever. The same holds for the commands
 // that read a child's output and wait for its exit: bun run --filter and
-// --parallel, bun test --parallel, bun install and Bun.cron.
+// --parallel, bun test --parallel, bun install and Bun.cron. They must also
+// not report success for a child whose output they lost.
 //
 // An LD_PRELOAD shim fails the Nth recv()/send() on each AF_UNIX socket (the
 // parent's end of a stdio socketpair) with EIO/ENOBUFS. The children write
@@ -489,6 +490,11 @@ beforeAll(async () => {
       scripts: {
         big: writer,
         sigpipe: `exec ${writer} sigpipe`,
+        small: "echo hi",
+        // This script exits with code 0 although its writer failed.
+        lost: `${writer}; true`,
+        postlost: "echo post",
+        next: "echo hi",
       },
     }),
     write("ws/second/package.json", {
@@ -498,6 +504,7 @@ beforeAll(async () => {
       scripts: { big: "echo from second" },
     }),
     installOf("install", writer),
+    installOf("install-swallow", `${writer}; true`),
     installOf("install-sigpipe", `exec ${writer} sigpipe`),
     installOf("install-optional", `exec ${writer} sigpipe`, "optionalDependencies"),
     installOf("install-scanned"),
@@ -667,31 +674,42 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
 });
 
 describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output", () => {
-  // The worker that writes 8 MB is not left blocked on a pipe that nobody reads, so the run ends.
-  describe("bun test --parallel", () => {
-    const summary = (lines: string[]) =>
-      lines.filter(line => /^\s*\d+ (pass|fail|errors?)$/.test(line)).map(line => line.trim());
-
-    test.skipIf(!canFailPipeRead)("a read of a worker's output fails", async () => {
-      const { stderr, exitCode, signalCode } = await runCommandWithFault(["test", "--parallel=2", "./tests"], ".", {
-        SPAWN_FAULT_PREADV2_AT: "5",
-      });
-      expect({ summary: summary(stderr), exitCode, signalCode }).toEqual({
-        summary: ["2 pass", "0 fail"],
-        exitCode: 0,
-        signalCode: null,
-      });
+  // Nothing that the worker prints can be read any more, so the worker is stopped and the file it ran fails.
+  test.skipIf(!canFailPipeRead)("bun test --parallel: the worker is stopped and its file fails", async () => {
+    const { stderr, exitCode, signalCode } = await runCommandWithFault(["test", "--parallel=2", "./tests"], ".", {
+      SPAWN_FAULT_PREADV2_AT: "5",
     });
+    expect({
+      killed: stderr.filter(line => line.includes("worker")),
+      summary: stderr.filter(line => /^\s*\d+ (pass|fail|errors?)$/.test(line)).map(line => line.trim()),
+      exitCode,
+      signalCode,
+    }).toEqual({
+      killed: ["✗ tests/noisy.test.ts (worker killed: failed to read its output: EIO)"],
+      summary: ["1 pass", "1 fail"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
 
-    test("the pipes of a worker fail to register", async () => {
-      const { stderr, exitCode, signalCode } = await runCommandWithFault(["test", "--parallel=2", "./tests"], ".", {
-        SPAWN_FAULT_EPOLL_AT: "1",
-      });
-      expect({ summary: summary(stderr), exitCode, signalCode }).toEqual({
-        summary: ["2 pass", "0 fail"],
-        exitCode: 0,
-        signalCode: null,
-      });
+  // The worker is stopped each time it starts, so no file runs, and the messages name the cause and not the kill.
+  test("bun test --parallel: a worker whose output cannot be read from its start is stopped", async () => {
+    const { stderr, exitCode, signalCode } = await runCommandWithFault(["test", "--parallel=2", "./tests"], ".", {
+      SPAWN_FAULT_EPOLL_AT: "1",
+    });
+    expect({
+      worker: stderr.filter(line => line.includes("test worker 1 ")),
+      files: stderr.filter(line => line.startsWith("✗")).sort(),
+      exitCode,
+      signalCode,
+    }).toEqual({
+      worker: [
+        "warn: test worker 1 exited during startup (failed to read its output: ENOMEM), retrying",
+        "error: test worker 1 exited during startup (failed to read its output: ENOMEM) 2 times",
+      ],
+      files: ["✗ tests/noisy.test.ts (no live workers)", "✗ tests/quiet.test.ts (no live workers)"],
+      exitCode: 1,
+      signalCode: null,
     });
   });
 
@@ -702,7 +720,7 @@ describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output
       test("--filter: the script gets EPIPE, and the next package runs", async () => {
         expect(await runCommandWithFault(["run", "--filter", "*", "big"], "ws", fault)).toEqual({
           stdout: ["first big: Exited with code 7", "second big: from second", "second big: Exited with code 0"],
-          stderr: [],
+          stderr: ['error: Failed to read big script output from "first" due to error 5 EIO'],
           exitCode: 7,
           signalCode: null,
         });
@@ -711,7 +729,7 @@ describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output
       test("--filter: a script that does not handle SIGPIPE is ended by it", async () => {
         expect(await runCommandWithFault(["run", "--filter", "first", "sigpipe"], "ws", fault)).toEqual({
           stdout: ["first sigpipe: Signaled with code SIGPIPE"],
-          stderr: [],
+          stderr: ['error: Failed to read sigpipe script output from "first" due to error 5 EIO'],
           exitCode: 141,
           signalCode: null,
         });
@@ -720,8 +738,59 @@ describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output
       test("--parallel: the script gets EPIPE", async () => {
         expect(await runCommandWithFault(["run", "--parallel", "big"], "ws/first", fault)).toEqual({
           stdout: [],
-          stderr: ["big | Exited with code 7"],
+          stderr: ["big | Failed to read stdout due to error 5 EIO", "big | Exited with code 7"],
           exitCode: 7,
+          signalCode: null,
+        });
+      });
+
+      // The script exits with code 0 after its output was lost. It counts as failed, so its post script
+      // and the next script do not start.
+      test("--sequential: a script that lost its output stops the scripts after it", async () => {
+        expect(await runCommandWithFault(["run", "--sequential", "lost", "next"], "ws/first", fault)).toEqual({
+          stdout: [],
+          stderr: ["lost | Failed to read stdout due to error 5 EIO", "lost | Exited with code 0"],
+          exitCode: 1,
+          signalCode: null,
+        });
+      });
+
+      test("--sequential --no-exit-on-error: only the post script of that script does not start", async () => {
+        const { stderr, ...rest } = await runCommandWithFault(
+          ["run", "--sequential", "--no-exit-on-error", "lost", "next"],
+          "ws/first",
+          fault,
+        );
+        expect({ stderr: stderr.map(line => line.replace(/Done in .*/, "Done")), ...rest }).toEqual({
+          stderr: ["lost | Failed to read stdout due to error 5 EIO", "lost | Exited with code 0", "next | Done"],
+          stdout: ["next | hi"],
+          exitCode: 1,
+          signalCode: null,
+        });
+      });
+    });
+
+    // The script has exited with code 0 by the time its output fails to read. What it wrote is
+    // lost, so the command fails.
+    describe.skipIf(!canFailPipeRead)("the output of a finished script is lost", () => {
+      const fault = { SPAWN_FAULT_PREADV2_AT: "1" };
+
+      test("--filter", async () => {
+        expect(await runCommandWithFault(["run", "--filter", "first", "small"], "ws", fault)).toEqual({
+          stdout: ["first small: Exited with code 0"],
+          stderr: ['error: Failed to read small script output from "first" due to error 5 EIO'],
+          exitCode: 1,
+          signalCode: null,
+        });
+      });
+
+      // FORCE_COLOR turns the terminal renderer on for a pipe.
+      test("--filter, terminal output", async () => {
+        const env = { ...fault, FORCE_COLOR: "1", NO_COLOR: "0" };
+        expect(await runCommandWithFault(["run", "--filter", "first", "small"], "ws", env)).toEqual({
+          stdout: ["first small $ echo hi", "└─ Exited with code 0"],
+          stderr: ['error: Failed to read small script output from "first" due to error 5 EIO'],
+          exitCode: 1,
           signalCode: null,
         });
       });
@@ -733,7 +802,7 @@ describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output
       test("--filter: the script gets EPIPE", async () => {
         expect(await runCommandWithFault(["run", "--filter", "first", "big"], "ws", fault)).toEqual({
           stdout: ["first big: Exited with code 7"],
-          stderr: [],
+          stderr: ['error: Failed to read big script output from "first" due to error 12 ENOMEM'],
           exitCode: 7,
           signalCode: null,
         });
@@ -742,7 +811,11 @@ describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output
       test("--parallel: the script gets EPIPE", async () => {
         expect(await runCommandWithFault(["run", "--parallel", "big"], "ws/first", fault)).toEqual({
           stdout: [],
-          stderr: ["big | Exited with code 7"],
+          stderr: [
+            "big | Failed to read stdout due to error 12 ENOMEM",
+            "big | Failed to read stderr due to error 12 ENOMEM",
+            "big | Exited with code 7",
+          ],
           exitCode: 7,
           signalCode: null,
         });
@@ -771,6 +844,15 @@ describe.concurrent.skipIf(!isLinux || !cc)("commands that read a child's output
           'error: postinstall script from "dep" exited with 7',
         ],
         exitCode: 7,
+        signalCode: null,
+      });
+    });
+
+    test("a lifecycle script that exits with code 0 after its output was lost fails the install", async () => {
+      const { stderr, exitCode, signalCode } = await runCommandWithFault(["install"], "install-swallow", fault);
+      expect({ errors: errors(stderr), exitCode, signalCode }).toEqual({
+        errors: ['error: Failed to read postinstall script output from "dep" due to error 5 EIO'],
+        exitCode: 1,
         signalCode: null,
       });
     });

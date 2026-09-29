@@ -261,7 +261,7 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) stdout: OutputReader,
     pub(crate) stderr: OutputReader,
     pub(crate) has_called_process_exit: bool,
-    /// A read of the current script's stdout or stderr failed, and bun closed that pipe under the script.
+    /// A read of the current script's stdout or stderr failed. The pipe was closed under the script, so exit code 0 does not say that it finished.
     pub(crate) read_failed: bool,
     /// Stored as `BackRef` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
@@ -848,21 +848,28 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         match status {
             Status::Exited(exit) => {
-                if exit.code > 0 {
+                if exit.code > 0 || self.read_failed {
                     if self.optional {
                         return self.skip_optional_package();
                     }
                     self.print_output();
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
-                        bstr::BStr::new(self.script_name()),
-                        bstr::BStr::new(&self.package_name),
-                        exit.code,
-                    );
+                    // With code 0 the read error, printed when it happened, is the failure.
+                    if exit.code > 0 {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
+                            bstr::BStr::new(self.script_name()),
+                            bstr::BStr::new(&self.package_name),
+                            exit.code,
+                        );
+                    }
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
-                    Global::exit(exit.code as u32);
+                    Global::exit(if exit.code > 0 {
+                        u32::from(exit.code)
+                    } else {
+                        1
+                    });
                 }
 
                 if !self.foreground

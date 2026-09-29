@@ -420,6 +420,11 @@ impl<'a> Coordinator<'a> {
     }
 
     pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
+        // A worker that is stopped for its unreadable output can still deliver buffered frames. It keeps the state that it had when the read failed, so `reap_worker` fails the file that it ran and sends it no other file.
+        if w.output_error().is_some() && matches!(kind, frame::Kind::Ready | frame::Kind::FileDone)
+        {
+            return;
+        }
         match kind {
             frame::Kind::Ready => {
                 w.reached_ready = true;
@@ -593,6 +598,7 @@ impl<'a> Coordinator<'a> {
         // bounds the respawn loop.
         let startup_failure = w.inflight.is_none() && !w.reached_ready;
         let worker_idx = w.idx;
+        let output_error = w.output_error().map(bun_sys::Error::name);
         if let Some(idx) = w.inflight {
             // The dead worker skipped the between-files cleanup of what its
             // test spawned; it led its own process group, so kill(-pid) does it.
@@ -625,6 +631,15 @@ impl<'a> Coordinator<'a> {
                         w.dispatched_at,
                         format_args!("worker killed: corrupt IPC frame, something wrote to fd 3"),
                     );
+                } else if !panicked && let Some(errno) = output_error {
+                    self.account_crash(
+                        idx,
+                        w.dispatched_at,
+                        format_args!(
+                            "worker killed: failed to read its output: {}",
+                            bstr::BStr::new(errno)
+                        ),
+                    );
                 } else {
                     let mut buf = [0u8; 32];
                     self.account_crash(
@@ -651,6 +666,14 @@ impl<'a> Coordinator<'a> {
             if is_panic_status(status) {
                 self.abort_on_worker_startup_panic(status);
             }
+        } else if let Some(errno) = output_error {
+            self.break_dots();
+            bun_core::pretty_error!(
+                "<r><yellow>warn<r>: failed to read the output of test worker {}: {}\n",
+                worker_idx + 1,
+                bstr::BStr::new(errno),
+            );
+            Output::flush();
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
@@ -667,7 +690,12 @@ impl<'a> Coordinator<'a> {
             // cap warrants the red error.
             self.break_dots();
             let mut buf = [0u8; 32];
-            let desc = bstr::BStr::new(describe_status(&mut buf, status));
+            // When the kill was ours, the cause says more than the SIGKILL.
+            let cause = output_error.map(|errno| [b"failed to read its output: ", errno].concat());
+            let desc = bstr::BStr::new(match &cause {
+                Some(cause) => cause.as_slice(),
+                None => describe_status(&mut buf, status),
+            });
             if can_respawn {
                 bun_core::pretty_error!(
                     "<r><yellow>warn<r>: test worker {} exited during startup ({}), retrying\n",

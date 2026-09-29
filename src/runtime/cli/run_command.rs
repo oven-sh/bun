@@ -97,6 +97,20 @@ pub(crate) struct ConfigureEnvOptions {
 pub(crate) struct RunCommand;
 
 impl RunCommand {
+    /// The exit code of a script that `--filter` and `--parallel` count as failed, or `None`. A script whose stdout or stderr failed to read counts as failed with code 0 too: bun closed that pipe under it, and what it wrote after that is lost.
+    pub(crate) fn script_failure_code(
+        status: &crate::api::bun_process::Status,
+        output_lost: bool,
+    ) -> Option<u8> {
+        use crate::api::bun_process::Status;
+        match status {
+            Status::Exited(exited) if exited.code != 0 => Some(exited.code),
+            Status::Exited(_) => output_lost.then_some(1),
+            Status::Signaled(signal) => Some(bun_sys::SignalCode(*signal).to_exit_code()),
+            _ => Some(1),
+        }
+    }
+
     /// `bun run --help` body.
     pub(crate) fn print_help(package_json: Option<&PackageJSON>) {
         // templates are passed as *string literals* so the

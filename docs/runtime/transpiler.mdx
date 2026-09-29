@@ -211,6 +211,7 @@ interface TranspilerOptions {
       eliminate?: string[];
       // A string, number, boolean, null or undefined becomes the value of the export
       // [name, value] replaces the export with an export called name, with that value
+      // For a pair or a map that you keep in a variable, write as const
       // Write each key as an identifier or default, and each name as an identifier
       // The constructor throws a TypeError for a key or a name such as a-b
       // The default key takes a value, and not a pair

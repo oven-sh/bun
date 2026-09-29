@@ -83,6 +83,32 @@ new Bun.Transpiler({
   new Bun.Transpiler({ exports: { replace: pairs } });
 }
 
+// A pair or a map in a variable. The call gives no type to a literal that is written before it.
+{
+  const constMap = { revalidate: 60, getStaticProps: ["__N_SSG", true] } as const;
+  new Bun.Transpiler({ exports: { replace: constMap } });
+
+  const mapWithConstPair = { revalidate: 60, getStaticProps: ["__N_SSG", true] as const };
+  new Bun.Transpiler({ exports: { replace: mapWithConstPair } });
+
+  const checkedMap = { revalidate: 60, getStaticProps: ["__N_SSG", true] } satisfies ExportsReplace;
+  new Bun.Transpiler({ exports: { replace: checkedMap } });
+
+  const typedPair: [string, boolean] = ["__N_SSG", true];
+  new Bun.Transpiler({ exports: { replace: { getStaticProps: typedPair } } });
+
+  const options: Bun.TranspilerOptions = { exports: { replace: { getStaticProps: ["__N_SSG", true] } } };
+  new Bun.Transpiler(options);
+
+  const inferredPair = ["__N_SSG", true];
+  // @ts-expect-error - without a type, TypeScript infers (string | boolean)[] for the pair
+  new Bun.Transpiler({ exports: { replace: { getStaticProps: inferredPair } } });
+
+  const inferredMap = { revalidate: 60, getStaticProps: ["__N_SSG", true] };
+  // @ts-expect-error - without a type, TypeScript infers (string | boolean)[] for the pair
+  new Bun.Transpiler({ exports: { replace: inferredMap } });
+}
+
 // The `default` key takes a value, and not a pair.
 {
   new Bun.Transpiler({ exports: { replace: { default: 60 } } });

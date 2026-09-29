@@ -3021,6 +3021,10 @@ declare module "bun" {
        *   `name`. The export has the value `value`, which is a string,
        *   number, boolean, `null` or `undefined`.
        *
+       * For a pair or a map that you keep in a variable, write `as const`:
+       * `const pair = ["__N_SSG", true] as const`. Without a type, TypeScript
+       * infers an array for the pair and reports an error.
+       *
        * Write each key as an identifier or `default`, and each `name` as an
        * identifier. The constructor throws a `TypeError` for a key or a
        * `name` such as `a-b`.

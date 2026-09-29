@@ -12,7 +12,10 @@ use std::collections::HashSet;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::dominator::compute_unconditional_blocks;
 use crate::hir::environment::Environment;
-use crate::hir::{HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type};
+use crate::hir::{
+    HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type,
+    is_set_state_identifier,
+};
 
 pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
@@ -33,16 +36,6 @@ pub(crate) fn validate_no_set_state_in_render(
         env.record_diagnostic(diag);
     }
     Ok(())
-}
-
-fn is_set_state_id(
-    identifier_id: IdentifierId,
-    identifiers: &[Identifier],
-    types: &[Type],
-) -> bool {
-    let ident = &identifiers[identifier_id.0 as usize];
-    let ty = &types[ident.type_.0 as usize];
-    crate::hir::is_set_state_type(ty)
 }
 
 fn validate_impl(
@@ -80,7 +73,7 @@ fn validate_impl(
                     // Check if any operand references a setState.
                     // For FunctionExpression/ObjectMethod, operands are the context captures.
                     let has_set_state_operand = inner_func.context.iter().any(|ctx_place| {
-                        is_set_state_id(ctx_place.identifier, identifiers, types)
+                        is_set_state_identifier(ctx_place.identifier, identifiers, types)
                             || unconditional_set_state_functions.contains(&ctx_place.identifier)
                     });
 
@@ -114,7 +107,7 @@ fn validate_impl(
                     active_manual_memo_id = None;
                 }
                 InstructionValue::CallExpression { callee, .. } => {
-                    if is_set_state_id(callee.identifier, identifiers, types)
+                    if is_set_state_identifier(callee.identifier, identifiers, types)
                         || unconditional_set_state_functions.contains(&callee.identifier)
                     {
                         if active_manual_memo_id.is_some() {

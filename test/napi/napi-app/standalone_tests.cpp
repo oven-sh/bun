@@ -198,6 +198,81 @@ test_napi_threadsafe_function_abort_blocked_producers_finalized(
   return Napi::Boolean::New(info.Env(), tsfn_abort_blocked_finalized);
 }
 
+static napi_threadsafe_function tsfn_abort_outstanding = nullptr;
+static std::atomic<bool> tsfn_abort_outstanding_finalized{false};
+static std::atomic<bool> tsfn_abort_outstanding_released_after_finalize{false};
+static std::atomic<int> tsfn_abort_outstanding_release_status{-1};
+
+static void tsfn_abort_outstanding_finalize(napi_env env, void *finalize_data,
+                                            void *finalize_hint) {
+  tsfn_abort_outstanding_finalized.store(true);
+}
+
+// Holds the second thread reference without making any call. It learns of the
+// abort from the finalizer (it could as well never release: after an abort no
+// other thread is to make further calls) and only then releases, which frees
+// the function. If the finalizer has not run after 2 seconds it releases
+// anyway, and records that it did not see the finalizer, so the process exits
+// and the test fails on the output instead of hanging.
+static void tsfn_abort_outstanding_holder() {
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!tsfn_abort_outstanding_finalized.load() &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  tsfn_abort_outstanding_released_after_finalize.store(
+      tsfn_abort_outstanding_finalized.load());
+  tsfn_abort_outstanding_release_status.store(napi_release_threadsafe_function(
+      tsfn_abort_outstanding, napi_tsfn_release));
+}
+
+// Create a tsfn with initial_thread_count=2, the second reference held by a
+// thread that makes no calls, then abort from this thread. The finalizer runs
+// from the abort's dispatch, on this thread, and the event-loop keepalive is
+// dropped with it: neither waits for the other thread's reference.
+static napi_value test_napi_threadsafe_function_abort_with_outstanding_ref(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name =
+      Napi::String::New(env, "abort_with_outstanding_ref");
+  tsfn_abort_outstanding_finalized.store(false);
+  tsfn_abort_outstanding_released_after_finalize.store(false);
+  tsfn_abort_outstanding_release_status.store(-1);
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ nullptr,
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 2, /* finalize data */ nullptr,
+                    tsfn_abort_outstanding_finalize, /* context */ nullptr,
+                    &noop_callback, &tsfn_abort_outstanding));
+  std::thread(tsfn_abort_outstanding_holder).detach();
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_outstanding,
+                                                      napi_tsfn_abort));
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_with_outstanding_ref_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(),
+                            tsfn_abort_outstanding_finalized.load());
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_with_outstanding_ref_release_status(
+    const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(),
+                           tsfn_abort_outstanding_release_status.load());
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(
+      info.Env(), tsfn_abort_outstanding_released_after_finalize.load());
+}
+
 static napi_threadsafe_function tsfn_abort_full = nullptr;
 static bool tsfn_abort_full_finalized = false;
 
@@ -241,6 +316,66 @@ static napi_value test_napi_threadsafe_function_abort_full_queue_finalized(
   return Napi::Boolean::New(info.Env(), tsfn_abort_full_finalized);
 }
 
+static napi_threadsafe_function tsfn_finalizer_handle = nullptr;
+static int tsfn_finalizer_context = 0;
+static int tsfn_finalizer_data = 0;
+static std::string tsfn_finalizer_report;
+
+// The finalizer of a threadsafe function runs before the function is freed
+// (Node: ThreadSafeFunction::Finalize deletes it once the callback returns), so
+// it may still use the handle, typically to read the context. Bun used to free
+// the function first.
+static void tsfn_finalizer_uses_handle(napi_env env, void *finalize_data,
+                                       void *finalize_hint) {
+  void *context = nullptr;
+  napi_status context_status =
+      napi_get_threadsafe_function_context(tsfn_finalizer_handle, &context);
+  napi_status unref_status =
+      napi_unref_threadsafe_function(env, tsfn_finalizer_handle);
+  // No thread reference is left by the time the finalizer runs.
+  napi_status release_status = napi_release_threadsafe_function(
+      tsfn_finalizer_handle, napi_tsfn_release);
+  char buf[256];
+  snprintf(buf, sizeof buf,
+           "context: status=%d matches=%d, hint is context=%d, data "
+           "matches=%d, unref status=%d, release status=%d",
+           static_cast<int>(context_status), context == &tsfn_finalizer_context,
+           finalize_hint == &tsfn_finalizer_context,
+           finalize_data == &tsfn_finalizer_data,
+           static_cast<int>(unref_status), static_cast<int>(release_status));
+  tsfn_finalizer_report = buf;
+  tsfn_finalizer_handle = nullptr;
+}
+
+// Creates a threadsafe function and releases its only thread reference, so
+// that it finalizes on a later turn of the event loop.
+static napi_value test_napi_threadsafe_function_finalizer_uses_handle(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "finalizer_uses_handle");
+  tsfn_finalizer_report.clear();
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, /* JavaScript function */ nullptr,
+                         /* async resource */ nullptr, resource_name,
+                         /* max queue size (unlimited) */ 0,
+                         /* initial thread count */ 1, &tsfn_finalizer_data,
+                         tsfn_finalizer_uses_handle, &tsfn_finalizer_context,
+                         &noop_callback, &tsfn_finalizer_handle));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_finalizer_handle,
+                                                      napi_tsfn_release));
+  return env.Undefined();
+}
+
+// What the finalizer saw, or undefined while it has not run yet.
+static napi_value test_napi_threadsafe_function_finalizer_uses_handle_report(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  if (tsfn_finalizer_report.empty()) {
+    return env.Undefined();
+  }
+  return Napi::String::New(env, tsfn_finalizer_report);
+}
+
 // Queue several items while the JS thread is parked here, so all of them run in
 // one dispatch. Microtasks queued by one callback must be drained before the
 // next callback runs (https://github.com/nodejs/node/pull/38506), and must not
@@ -261,6 +396,40 @@ static napi_value test_napi_threadsafe_function_microtask_order(
   for (int i = 0; i < 3; i++) {
     NODE_API_CALL(env, napi_call_threadsafe_function(tsfn, nullptr,
                                                      napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn, napi_tsfn_release));
+  return env.Undefined();
+}
+
+// A `call_js` that throws through Node-API. Each queued item's exception is
+// that item's uncaught exception (`process.on('uncaughtException')` sees all
+// three, in order), the remaining items still run, and a microtask queued by
+// the handler runs before the next item.
+static void tsfn_throwing_call_js(napi_env env, napi_value js_callback,
+                                  void *context, void *data) {
+  intptr_t i = reinterpret_cast<intptr_t>(data);
+  char message[32];
+  snprintf(message, sizeof(message), "call_js error %d", static_cast<int>(i));
+  napi_throw_error(env, nullptr, message);
+}
+
+static napi_value test_napi_threadsafe_function_call_js_throws(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "call_js_throws");
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ nullptr,
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    /* finalize callback */ nullptr, /* context */ nullptr,
+                    tsfn_throwing_call_js, &tsfn));
+  for (intptr_t i = 1; i <= 3; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           tsfn, reinterpret_cast<void *>(i),
+                           napi_tsfn_nonblocking));
   }
   NODE_API_CALL(env, napi_release_threadsafe_function(tsfn, napi_tsfn_release));
   return env.Undefined();
@@ -2760,6 +2929,76 @@ static napi_value test_external_buffer_with_pending_exception(
   return ok(env);
 }
 
+// External buffers for module.js's transfer tests
+// (test_external_buffer_untransferable, test_external_buffer_worker_exit).
+// The finalizer receives the env of the thread that created the buffer, so it
+// records whether it ran on that thread. The counters are process-wide: the
+// worker test creates its buffers in a worker and reads the counters from the
+// main thread after the worker has exited.
+static std::atomic<int> external_for_transfer_finalized{0};
+static std::atomic<int> external_for_transfer_finalized_off_thread{0};
+
+struct ExternalForTransfer {
+  std::thread::id creating_thread;
+};
+
+static void external_for_transfer_finalize(napi_env, void *data, void *hint) {
+  auto *owner = static_cast<ExternalForTransfer *>(hint);
+  if (owner->creating_thread != std::this_thread::get_id()) {
+    external_for_transfer_finalized_off_thread++;
+  }
+  external_for_transfer_finalized++;
+  delete owner;
+  free(data);
+}
+
+// The bytes are 1, 2, 3, ... so a copy made on another thread can be checked.
+// Never NULL, even for length 0: both runtimes treat a NULL pointer as its own
+// case (node runs the finalizer on the next loop turn).
+static uint8_t *external_for_transfer_bytes(size_t length) {
+  auto *bytes = static_cast<uint8_t *>(malloc(length == 0 ? 1 : length));
+  for (size_t i = 0; i < length; i++) {
+    bytes[i] = static_cast<uint8_t>(i + 1);
+  }
+  return bytes;
+}
+
+// create_external_arraybuffer_for_transfer(length): ArrayBuffer
+static napi_value
+create_external_arraybuffer_for_transfer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  size_t length = info[0].As<Napi::Number>().Uint32Value();
+  uint8_t *bytes = external_for_transfer_bytes(length);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_external_arraybuffer(
+                         env, bytes, length, external_for_transfer_finalize,
+                         new ExternalForTransfer{std::this_thread::get_id()},
+                         &result));
+  return result;
+}
+
+// create_external_buffer_for_transfer(length): Buffer
+static napi_value
+create_external_buffer_for_transfer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  size_t length = info[0].As<Napi::Number>().Uint32Value();
+  uint8_t *bytes = external_for_transfer_bytes(length);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_external_buffer(
+                         env, length, bytes, external_for_transfer_finalize,
+                         new ExternalForTransfer{std::this_thread::get_id()},
+                         &result));
+  return result;
+}
+
+static napi_value external_for_transfer_stats(const Napi::CallbackInfo &info) {
+  Napi::Object stats = Napi::Object::New(info.Env());
+  stats.Set("finalized", external_for_transfer_finalized.load());
+  stats.Set("finalizedOffThread",
+            external_for_transfer_finalized_off_thread.load());
+  return stats;
+}
+
 // With an exception pending (via napi_throw_error), every napi call that
 // Node.js gates with NAPI_PREAMBLE must return napi_pending_exception and
 // perform NO side effects. Before the fix, NAPI_PREAMBLE only consulted the
@@ -2918,6 +3157,209 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env, napi_delete_reference(env, ref));
 
   return ok(env);
+}
+
+// The ungated functions (see test_pending_exception_gate) whose bodies contain
+// an exception check: a bigint, a string and a symbol round trip, then an
+// array, a string and a typeof/is_array check (implemented separately in
+// Bun). Statuses are ignored on purpose.
+static void ungated_calls_round(napi_env env, napi_value bigint,
+                                napi_value string) {
+  int64_t i64 = 0;
+  uint64_t u64 = 0;
+  bool lossless = false;
+  napi_get_value_bigint_int64(env, bigint, &i64, &lossless);
+  napi_get_value_bigint_uint64(env, bigint, &u64, &lossless);
+
+  char utf8[16];
+  char16_t utf16[16];
+  size_t written = 0;
+  napi_get_value_string_utf8(env, string, utf8, sizeof utf8, &written);
+  napi_get_value_string_utf16(env, string, utf16, 16, &written);
+
+  napi_value out = nullptr;
+  napi_create_bigint_int64(env, i64, &out);
+  napi_create_bigint_uint64(env, u64, &out);
+  napi_create_symbol(env, string, &out);
+
+  bool is = false;
+  napi_create_array_with_length(env, 4, &out);
+  napi_is_array(env, out, &is);
+  napi_create_string_utf8(env, utf8, written, &out);
+  napi_create_int32(env, (int32_t)written, &out);
+  napi_get_boolean(env, is, &out);
+}
+
+// spin(bigint, string): a callback that does nothing but ungated calls, for a
+// script or worker to loop on while it gets terminated (node:vm `timeout`,
+// worker.terminate()). Several rounds per call, so the request nearly always
+// lands while one of these calls is running; the loop must still stop once
+// control is back in JS. A plain napi_callback rather than a Napi::Function so
+// that only the calls under test are made.
+static napi_value ungated_calls_spin(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2];
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok) {
+    return nullptr;
+  }
+  for (int i = 0; i < 32; i++) {
+    ungated_calls_round(env, argv[0], argv[1]);
+  }
+  return nullptr;
+}
+
+static napi_value make_ungated_calls_spinner(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value spin;
+  NODE_API_CALL(env, napi_create_function(env, "spin", NAPI_AUTO_LENGTH,
+                                          ungated_calls_spin, nullptr, &spin));
+  return spin;
+}
+
+// Leaves an exception pending on the engine itself, not just recorded by
+// napi_throw_error: Bun's napi_call_function raises the recorded exception
+// before refusing the call. Returns false if the setup failed (an error has
+// been thrown in that case).
+static bool arm_engine_exception(napi_env env) {
+  napi_value global, noop;
+  NODE_API_CALL_CUSTOM_RETURN(env, false, napi_get_global(env, &global));
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, false,
+      napi_create_function(
+          env, "noop", NAPI_AUTO_LENGTH,
+          [](napi_env, napi_callback_info) -> napi_value { return nullptr; },
+          nullptr, &noop));
+  NODE_API_CALL_CUSTOM_RETURN(
+      env, false, napi_throw_error(env, "EPENDING", "still pending"));
+  printf("napi_call_function: status=%d\n",
+         (int)napi_call_function(env, global, noop, 0, nullptr, nullptr));
+  return true;
+}
+
+// The ungated calls while an engine exception is pending must succeed
+// (test_pending_exception_gate checks the recorded case) and that exception
+// must still be the one pending afterwards.
+static napi_value
+test_ungated_calls_with_engine_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value bigint, string;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, -7, &bigint));
+  NODE_API_CALL(
+      env, napi_create_string_utf8(env, "ungated", NAPI_AUTO_LENGTH, &string));
+  if (!arm_engine_exception(env)) {
+    return nullptr;
+  }
+
+  int64_t i64 = 0;
+  uint64_t u64 = 0;
+  bool lossless = false;
+  char utf8[16] = {0};
+  size_t written = 0;
+  napi_value out;
+  napi_status st;
+  st = napi_get_value_bigint_int64(env, bigint, &i64, &lossless);
+  printf("napi_get_value_bigint_int64: status=%d value=%" PRId64 "\n", (int)st,
+         i64);
+  st = napi_get_value_bigint_uint64(env, bigint, &u64, &lossless);
+  printf("napi_get_value_bigint_uint64: status=%d lossless=%d\n", (int)st,
+         (int)lossless);
+  st = napi_get_value_string_utf8(env, string, utf8, sizeof utf8, &written);
+  printf("napi_get_value_string_utf8: status=%d value=%s\n", (int)st, utf8);
+  st = napi_create_bigint_int64(env, i64, &out);
+  printf("napi_create_bigint_int64: status=%d\n", (int)st);
+  st = napi_create_bigint_uint64(env, u64, &out);
+  printf("napi_create_bigint_uint64: status=%d\n", (int)st);
+  st = napi_create_symbol(env, string, &out);
+  printf("napi_create_symbol: status=%d\n", (int)st);
+  st = napi_create_array_with_length(env, 4, &out);
+  printf("napi_create_array_with_length: status=%d\n", (int)st);
+  bool is_array = false;
+  st = napi_is_array(env, out, &is_array);
+  printf("napi_is_array: status=%d is_array=%d\n", (int)st, (int)is_array);
+  st = napi_create_string_utf8(env, utf8, NAPI_AUTO_LENGTH, &out);
+  printf("napi_create_string_utf8: status=%d\n", (int)st);
+  st = napi_create_int32(env, 7, &out);
+  printf("napi_create_int32: status=%d\n", (int)st);
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf("exception pending after: %s\n", pending ? "true" : "false");
+
+  napi_value exception, code;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+  NODE_API_CALL(env, napi_get_named_property(env, exception, "code", &code));
+  char code_buf[32] = {0};
+  NODE_API_CALL(env, napi_get_value_string_utf8(env, code, code_buf,
+                                                sizeof code_buf, nullptr));
+  printf("pending exception code: %s\n", code_buf);
+  fflush(stdout);
+
+  return ok(env);
+}
+
+// ungated_calls_through_timeout(ms): run from a node:vm script whose `timeout`
+// is much shorter than `ms`. With an engine exception pending, loops through
+// the ungated calls for `ms`, so the timeout is requested while they run. None
+// of them may report it, the exception they found pending must still be the
+// (clearable) one pending afterwards, and the timeout must still stop the
+// script once this returns.
+static napi_value
+ungated_calls_through_timeout(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const auto duration =
+      std::chrono::milliseconds(info[0].As<Napi::Number>().Int64Value());
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value bigint, string;
+  NODE_API_CALL(env, napi_create_bigint_int64(env, -7, &bigint));
+  NODE_API_CALL(
+      env, napi_create_string_utf8(env, "ungated", NAPI_AUTO_LENGTH, &string));
+  if (!arm_engine_exception(env)) {
+    return nullptr;
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + duration;
+  unsigned failures = 0;
+  do {
+    int64_t i64;
+    uint64_t u64;
+    bool lossless;
+    char utf8[16];
+    napi_value out;
+    failures +=
+        napi_get_value_bigint_int64(env, bigint, &i64, &lossless) != napi_ok;
+    failures +=
+        napi_get_value_bigint_uint64(env, bigint, &u64, &lossless) != napi_ok;
+    failures += napi_get_value_string_utf8(env, string, utf8, sizeof utf8,
+                                           nullptr) != napi_ok;
+    failures += napi_create_bigint_int64(env, i64, &out) != napi_ok;
+    failures += napi_create_bigint_uint64(env, u64, &out) != napi_ok;
+    failures += napi_create_symbol(env, string, &out) != napi_ok;
+    failures += napi_create_array_with_length(env, 4, &out) != napi_ok;
+    failures += napi_is_array(env, out, &lossless) != napi_ok;
+    failures +=
+        napi_create_string_utf8(env, utf8, NAPI_AUTO_LENGTH, &out) != napi_ok;
+    failures += napi_create_int32(env, 7, &out) != napi_ok;
+  } while (std::chrono::steady_clock::now() < deadline);
+  printf("ungated call failures: %u\n", failures);
+
+  bool before = false, after = false;
+  napi_value exception;
+  napi_is_exception_pending(env, &before);
+  napi_get_and_clear_last_exception(env, &exception);
+  napi_is_exception_pending(env, &after);
+  printf("exception pending: before clear=%s after clear=%s\n",
+         before ? "true" : "false", after ? "true" : "false");
+  fflush(stdout);
+  return nullptr;
 }
 
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
@@ -4151,11 +4593,28 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(
       env, exports,
       test_napi_threadsafe_function_abort_blocked_producers_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_with_outstanding_ref);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_with_outstanding_ref_finalized);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_with_outstanding_ref_release_status);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize);
   REGISTER_FUNCTION(env, exports, test_napi_threadsafe_function_abort_full_queue);
   REGISTER_FUNCTION(
       env, exports, test_napi_threadsafe_function_abort_full_queue_finalized);
   REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_finalizer_uses_handle);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_finalizer_uses_handle_report);
+  REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_microtask_order);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_call_js_throws);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);
@@ -4196,7 +4655,13 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports, create_external_arraybuffer_for_transfer);
+  REGISTER_FUNCTION(env, exports, create_external_buffer_for_transfer);
+  REGISTER_FUNCTION(env, exports, external_for_transfer_stats);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
+  REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
+  REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);
+  REGISTER_FUNCTION(env, exports, ungated_calls_through_timeout);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_status);

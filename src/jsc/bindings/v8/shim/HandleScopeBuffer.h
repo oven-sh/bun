@@ -31,12 +31,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<HandleScopeBuffer, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForHandleScopeBuffer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForHandleScopeBuffer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<HandleScopeBuffer, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForHandleScopeBuffer, m_subspaceForHandleScopeBuffer));
     }
 
     TaggedPointer* createHandle(JSC::JSCell* object, const Map* map, JSC::VM& vm);

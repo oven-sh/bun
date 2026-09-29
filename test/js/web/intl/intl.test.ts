@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isMacOS } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -134,9 +134,102 @@ describe("Intl.Collator", () => {
 
   test("sensitivity:'base' equates case and diacritics", () => {
     const c = new Intl.Collator("en", { sensitivity: "base" });
-    expect(c.compare("a", "A")).toBe(0);
-    expect(c.compare("a", "á")).toBe(0);
-    expect(c.compare("a", "b")).toBeLessThan(0);
+    expect([c.compare("a", "A"), c.compare("a", "á"), c.compare("a", "b"), c.compare("b", "a")]).toEqual([0, 0, -1, 1]);
+  });
+
+  // The default locale must not be ICU's en_US_POSIX fallback (what an invalid
+  // platform language tag degrades to; bionic's default "C.UTF-8" used to
+  // produce exactly that): its case-first collation gives "a".localeCompare("B") === 1.
+  // Unix WTF maps the C locale to en-US. macOS and Windows report the UI
+  // language of the machine, the same one this test process sees.
+  // Concurrent: the children here run alongside the "locale variables" children below.
+  test.concurrent("default locale is a real locale, not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify([new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B")]))`,
+      ],
+      // whatever the environment says, including nothing at all
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_CTYPE: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const locale = isMacOS || isWindows ? new Intl.Collator().resolvedOptions().locale : "en-US";
+    expect(stdout).toBe(JSON.stringify([locale, -1]) + "\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Same path with the C locale spelled "C.UTF-8" (glibc/musl name for it, and
+  // what bionic reports by default): WTF must still treat it as C -> "en-US".
+  test.concurrent.skipIf(!isLinux)("default locale under C.UTF-8 is not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { setlocale: { args: ["i32", "cstring"], returns: "cstring" } });
+         const LC_CTYPE = 0; // glibc, musl and bionic; the category platformLanguage() reads
+         const set = libc.symbols.setlocale(LC_CTYPE, Buffer.from("C.UTF-8\\0"));
+         console.log(JSON.stringify([set, new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (12345.5).toLocaleString()]));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // setlocale returns null on a libc without a C.UTF-8 locale. The locale then
+    // stays "C", which must give the same en-US output as the test above.
+    const out = (set: string | null) => JSON.stringify([set, "en-US", -1, "12,345.5"]) + "\n";
+    expect(stdout).toBeOneOf([out("C.UTF-8"), out(null)]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// ICU reads its own default locale from LC_ALL, then LC_MESSAGES, then LANG the
+// first time a calendar or collator is opened. A value it cannot parse used to
+// leave that default unset, and the first Date#toString / localeCompare / Intl
+// constructor then crashed inside ICU. Bun's own default locale does not come
+// from these variables, so every value, parseable or not, must give the en-US
+// output. On Windows neither holds: ICU reads the system locale and JSC reports
+// the UI language of the machine.
+describe.skipIf(isWindows).concurrent("locale variables in the environment", () => {
+  const script = `console.log(JSON.stringify([
+    new Date(0).toString(),
+    "a".localeCompare("b"),
+    (1234.5).toLocaleString(),
+    new Intl.DateTimeFormat().resolvedOptions().locale,
+  ]))`;
+
+  test.each([
+    // eleven bytes is the longest language subtag ICU accepts
+    { LANG: "abcdefghijkl" },
+    { LANG: "/usr/lib/locale/en_US" },
+    // ICU turns the modifier into a variant before it parses the value, and a
+    // variant of 180 or more bytes is rejected. The value itself canonicalizes.
+    { LANG: "en_US@k=" + Buffer.alloc(200, "a").toString() },
+    { LC_MESSAGES: "abcdefghijkl" },
+    { LC_ALL: "abcdefghijkl", LANG: "en_US.UTF-8" },
+    // a parseable or empty variable in front of an unparseable one wins
+    { LC_ALL: "C", LANG: "abcdefghijkl" },
+    { LC_ALL: "", LANG: "abcdefghijkl" },
+    { LC_ALL: "de_DE.UTF-8" },
+  ])("%o", async vars => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      JSON.stringify(["Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)", -1, "1,234.5", "en-US"]) + "\n",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -287,12 +380,16 @@ describe("exhaustive locale sweep (every compressed item)", () => {
   for (const tree of Object.keys(probe) as Tree[]) {
     test(`${tree}/ — ${locales.length} locales, non-empty + locale-varying`, () => {
       const seen = new Set<string>();
+      // One assertion per tree: two expect() calls per locale cost 0.6 s across
+      // the five trees on a debug build, and a failure should name every broken
+      // locale at once.
+      const empty: string[] = [];
       for (const loc of locales) {
         const v = probe[tree](loc);
-        expect(typeof v).toBe("string");
-        expect(v!.length).toBeGreaterThan(0);
-        seen.add(v!);
+        if (typeof v !== "string" || v.length === 0) empty.push(loc);
+        else seen.add(v);
       }
+      expect(empty).toEqual([]);
       // Regional variants (en-GB, ar-AE, …) legitimately share strings with
       // their base locale, so the bar is "many distinct", not "all distinct".
       expect(seen.size).toBeGreaterThan(50);

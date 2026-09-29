@@ -1371,6 +1371,12 @@ impl<'a> Resolver<'a> {
                                     }
                                 };
                             }
+                            // An embedded package.json mapped the specifier to a builtin or an external.
+                            ResultUnion::Success(result) if result.flags.is_external() => {
+                                let _ = self.flush_debug_logs(FlushMode::Success);
+                                self.extension_order = original_order;
+                                return ResultUnion::Success(result);
+                            }
                             ResultUnion::Failure(err) => {
                                 let _ = self.flush_debug_logs(FlushMode::Fail);
                                 self.extension_order = original_order;

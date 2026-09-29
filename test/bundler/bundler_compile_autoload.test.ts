@@ -579,6 +579,34 @@ console.log("PRELOAD");
     }
   }
 
+  // The embedded root package.json "imports" map can point at a builtin.
+  itBundled("compile/EmbeddedPackageJsonImportsBuiltin", {
+    backend: "cli",
+    compile: { autoloadPackageJson: true },
+    files: {
+      "/entry.ts": /* js */ `
+        import { tmpdir } from "os";
+        process.chdir(tmpdir());
+        const s = (x: string) => x;
+        console.log(typeof require(s("#fs")).readFileSync, typeof (await import(s("#fs"))).readFileSync);
+      `,
+      "/assets.ts": /* js */ `
+        import a from "./package.json" with { type: "file" };
+        export default a;
+      `,
+      "/package.json": `{ "name": "app", "imports": { "#fs": "node:fs" } }`,
+    },
+    entryPointsRaw: ["./entry.ts", "./assets.ts"],
+    assetNaming: "[name].[ext]",
+    root: ".",
+    outfile: "dist/out",
+    run: {
+      stdout: "function function\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+
   // Test that autoloadBunfig: false works with execArgv (regression test for #25640)
   // When execArgv is present, bunfig should still be disabled if autoloadBunfig: false
   itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {

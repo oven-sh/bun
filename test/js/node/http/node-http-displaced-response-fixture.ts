@@ -128,26 +128,30 @@ async function displaced(trigger: string, use: string, secondRequest: "same read
 // handle is called. JS reaches these calls with a request or response that it kept.
 async function finished(call: string) {
   const handles: any[] = [];
+  const sockets: net.Socket[] = [];
   const server = createServer((req, res) => {
+    sockets.push(req.socket);
     handles.push(handleOf(res));
     res.end(req.url);
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const client = await connect(server);
   let received = "";
+  let sentSecond = false;
   const responses = Promise.withResolvers<void>();
   client.on("data", chunk => {
     received += chunk.toString("latin1");
-    if (received.includes("/first") && !received.includes("/second") && handles.length === 1) {
+    // The body of a response is the URL of its request, so it ends the response.
+    if (!sentSecond && received.endsWith("/first")) {
+      sentSecond = true;
       client.write(request("/second"));
     }
-    if (received.includes("/second")) responses.resolve();
+    if (received.endsWith("/second")) responses.resolve();
   });
-  const serverSocket = once(server, "connection");
   client.write(request("/first"));
-  const [socket] = await serverSocket;
   await responses.promise;
-  const replaced = handleOf(socket)?.response === handles[1];
+  const socket = sockets[0];
+  const replaced = sockets[1] === socket && handleOf(socket)?.response === handles[1];
 
   const closed = once(socket, "close");
   client.destroy();

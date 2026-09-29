@@ -3933,11 +3933,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
-    blob.offset.set(offset as SizeType); // intentional truncate
+    let offset = offset.min(MAX_SIZE); // a file store of unknown size has no other bound
+    blob.offset.set(offset);
     if let Some(size) = file_size {
         // resolve_size() clamps this to the actual file size on first use.
         if size != MAX_SIZE {
-            blob.size.set(size as SizeType);
+            blob.size.set(size.min(MAX_SIZE - offset));
             blob.size_is_explicit.set(true);
         }
     }

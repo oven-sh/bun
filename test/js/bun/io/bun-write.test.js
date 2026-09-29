@@ -836,6 +836,36 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect({ written, copied: fs.readFileSync(dst, "utf8") }).toEqual({ written: 5, copied: "abcde" });
     });
 
+    // `deserialize()` takes the offset from bytes that the caller controls.
+    it.each([
+      ["above MAX_SIZE", (1n << 52n) + 123n],
+      ["above i64::MAX", (1n << 63n) + 5n],
+      ["u64::MAX", (1n << 64n) - 1n],
+    ])("a window from a structured clone record with an offset %s", async (_, offset) => {
+      using dir = tempDir("bun-write-src-slice-crafted", { "src.txt": content });
+      const script = `
+        const { serialize, deserialize } = require("bun:jsc");
+        const [offset, src, dst] = process.argv.slice(-3);
+        const whole = new DataView(serialize(Bun.file(src)));
+        const wire = new DataView(serialize(Bun.file(src).slice(4)));
+        let at = 0;
+        while (wire.getBigUint64(at, true) !== 4n || whole.getBigUint64(at, true) !== 0n) at++;
+        wire.setBigUint64(at, BigInt(offset), true);
+        const written = await Bun.write(dst, deserialize(wire.buffer));
+        process.stdout.write(JSON.stringify({ written, copied: require("fs").readFileSync(dst, "utf8") }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script, String(offset), join(String(dir), "src.txt"), join(String(dir), "dst.txt")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify({ written: 0, copied: "" }), stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
     it("a window of a file descriptor", async () => {
       using dir = tempDir("bun-write-src-slice-fd", { "src.txt": content });
       const dst = join(String(dir), "dst.txt");

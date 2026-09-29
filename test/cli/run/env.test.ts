@@ -1503,4 +1503,25 @@ describe("JSC option environment variables", () => {
     expect(stderr).not.toContain("thresholdForJITAfterWarmUp=77");
     expect(exitCode).toBe(0);
   });
+  test.concurrent("BUN_JSC_jitPolicyScale is applied once, whatever else is set", async () => {
+    // JSC multiplies the tier-up thresholds by the scale every time it verifies an option change.
+    // The options are set without verification and verified once at the end, so the other
+    // BUN_JSC_ variables do not compound the scale: 1000 * 0.5 is 500, not 500 * 0.5 * 0.5.
+    const { stderr, exitCode } = await dumpOptions({
+      BUN_JSC_dumpOptions: "2",
+      BUN_JSC_jitPolicyScale: "0.5",
+      BUN_JSC_useConcurrentJIT: "0",
+    });
+    expect(stderr).toMatch(/^\s*thresholdForOptimizeAfterWarmUp=500$/m);
+    expect(exitCode).toBe(0);
+  });
+  test.concurrent("the verification pass runs once after every option is set", async () => {
+    // The pass derives other options from the ones that were set: useProfiler=1 turns on
+    // disassembly support and turns the concurrent JIT off. The options are only coherent after
+    // it, so nothing may check them for coherence before it runs, and it has to run at all.
+    const { stderr, exitCode } = await dumpOptions({ BUN_JSC_dumpOptions: "2", BUN_JSC_useProfiler: "1" });
+    expect(stderr).toMatch(/^\s*useProfiler=true/m);
+    expect(stderr).toMatch(/^\s*needDisassemblySupport=true$/m);
+    expect(exitCode).toBe(0);
+  });
 });

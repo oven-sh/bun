@@ -1,0 +1,184 @@
+---
+title: Code generation from strings
+description: Make eval(), new Function() and every other way a string becomes code throw, for the whole process, with --disallow-code-generation-from-strings.
+---
+
+`--disallow-code-generation-from-strings` stops a program from turning strings into code. The flag has two levels:
+
+| Flag                                             | What it refuses                                                       |
+| ------------------------------------------------ | --------------------------------------------------------------------- |
+| `--disallow-code-generation-from-strings`        | `eval()` and the `Function` constructors. The same as Node.js's flag. |
+| `--disallow-code-generation-from-strings=strict` | Every way a string becomes code in the process. Bun only.             |
+
+```bash icon="terminal" terminal
+bun --disallow-code-generation-from-strings=strict server.ts
+```
+
+```ts server.ts icon="/icons/typescript.svg"
+new Function("return 1 + 1"); // EvalError: Code generation from strings disallowed for this context
+```
+
+A refusal is a synchronous `EvalError` that you can catch. `import()` of a refused URL rejects with the same error. A library that probes with `try { new Function("") } catch {}` takes its fallback path.
+
+Two refusals reach you another way. `ShadowRealm.prototype.importValue()` of a refused URL rejects with a `TypeError` whose message contains the `EvalError`. A refused URL in a Worker's `preload` option is reported by the Worker's `error` event.
+
+## The flag applies to the whole process
+
+Bun reads the flag at startup. Nothing turns it off afterwards:
+
+- There is no API that re-enables code generation.
+- Every `Worker` has the level of the process, whatever `execArgv` you give the `Worker`.
+- Every realm and context the program creates later has it: `ShadowRealm`, `node:vm` contexts under `=strict`, and every [`Bun.ModuleGraph`](/runtime/module-graph).
+- The level a [compiled executable](#in-a-compiled-executable) is built with is a floor. `BUN_OPTIONS` can raise it and cannot lower it.
+
+When the flag appears more than once on a command line, the last one counts, as for any option. Bun reads `BUN_OPTIONS` before the command line, so the command line wins.
+
+A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXEC_ARGV`, as in Node.js, whether or not the process has the flag. Pass the flag to the process. `new Worker(file, { execArgv: process.execArgv })` throws in a process that has the flag, so leave the flag out of the list you pass on.
+
+### Workers whose code is a string
+
+`new Worker(code, { eval: true })` from `node:worker_threads` takes the Worker's source as a string. So does a `Worker` started from a `data:` or `blob:` URL.
+
+- With the flag and no value, the `Worker` starts, as in Node.js. `eval()` and `new Function()` throw inside it.
+- With `=strict`, the `Worker` constructor throws the `EvalError`. Put the Worker's code in a file and pass the file's path or URL.
+
+## What each level refuses
+
+| A string becomes code through                                                                         | Flag    | `=strict` |
+| ----------------------------------------------------------------------------------------------------- | ------- | --------- |
+| `eval()`, direct and indirect                                                                         | refused | refused   |
+| `new Function()`, and the async, generator and async generator function constructors, reached any way | refused | refused   |
+| `ShadowRealm.prototype.evaluate()`, and `eval()` inside a `ShadowRealm`                               | refused | refused   |
+| `new vm.Script()`, `vm.runInThisContext()`, `vm.runInContext()`, `vm.runInNewContext()`               | allowed | refused   |
+| `vm.compileFunction()`, `new vm.SourceTextModule()`                                                   | allowed | refused   |
+| `eval()` inside a `node:vm` context, including one made with `codeGeneration: { strings: true }`      | allowed | refused   |
+| `module._compile()`, and a `require.extensions` handler that calls it                                 | allowed | refused   |
+| Assigning a different `Module.wrapper`                                                                | allowed | refused   |
+| `import`, `import()` and `require()` of a `data:` or `blob:` URL                                      | allowed | refused   |
+| A `Worker` started from a `data:` or `blob:` URL, or with `eval: true`                                | allowed | refused   |
+| A [plugin](/runtime/plugins) that returns `contents` for the `js`, `jsx`, `ts` or `tsx` loader        | allowed | refused   |
+| `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc`                      | allowed | refused   |
+| `napi_run_script()` in a native addon                                                                 | allowed | refused   |
+
+With the flag and no value, Bun matches Node.js: `node:vm` is not affected, and a `node:vm` context decides for itself with its `codeGeneration` option.
+
+These keep working at both levels:
+
+- Importing module files, with literal or computed specifiers, and modules embedded in a [compiled executable](/bundler/executables).
+- `new Worker()` with a file.
+- `require()` and `createRequire()` of files and built-in modules.
+- `Bun.ModuleGraph`.
+- `JSON.parse()`, `RegExp`, and `eval()` of a value that is not a string.
+- WebAssembly.
+- Native addons and `bun:ffi`. See [What the flag does not cover](#what-the-flag-does-not-cover).
+- A plugin that returns an `exports` object, or `contents` for a data loader such as `json` or `toml`.
+- `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
+
+## The inspector
+
+The debugger evaluates the code its client sends, so `=strict` refuses it. Bun exits with an error at startup when you also pass `--inspect`, `--inspect-wait` or `--inspect-brk`, or when `BUN_INSPECT` is set:
+
+```txt
+error: BUN_INSPECT cannot be used with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings
+```
+
+Editors set `BUN_INSPECT_CONNECT_TO` for every process started from their terminals. Bun's VS Code extension does so by default. That variable does not mean that you asked to debug this program, so Bun prints a warning, does not connect, and runs the program:
+
+```txt
+warn: BUN_INSPECT_CONNECT_TO is ignored with --disallow-code-generation-from-strings=strict: the inspector evaluates code from strings
+```
+
+Every way to reach a debugger, and what `=strict` does with it:
+
+| Route                                                                  | With `=strict`                               |
+| ---------------------------------------------------------------------- | -------------------------------------------- |
+| `--inspect`, `--inspect-wait`, `--inspect-brk`, `BUN_INSPECT`          | Bun exits with an error at startup           |
+| `BUN_INSPECT_CONNECT_TO`                                               | Bun prints a warning and connects to nothing |
+| `inspector.open()` from `node:inspector`                               | throws                                       |
+| `startRemoteDebugger()` from `bun:jsc`                                 | throws                                       |
+| `new inspector.Session()` from `node:inspector`, which needs no server | evaluates nothing, with or without the flag  |
+| `$vm`, JavaScriptCore's debugging global (`BUN_JSC_useDollarVM=1`)     | not defined                                  |
+
+An in-process `Session` does not implement `Runtime.evaluate`, `Runtime.compileScript`, `Runtime.runScript`, `Runtime.callFunctionOn` or `Debugger.evaluateOnCallFrame`. Its other `Debugger` methods need `inspector.open()` first.
+
+Release builds of Bun do not include `$vm`, so `BUN_JSC_useDollarVM` has no effect on them. A debug build of Bun has it, and leaves it out at both levels of the flag.
+
+## Parts of Bun that stop working
+
+One part of Bun calls `new Function()` itself: the development server. Every other row is an API that compiles a string you give it.
+
+| Part of Bun                                                                              | Flag   | `=strict` |
+| ---------------------------------------------------------------------------------------- | ------ | --------- |
+| The development server: `import()` with import attributes of a module outside the bundle | throws | throws    |
+| `node:repl`: `repl.start()`, `REPLServer`                                                | works  | throws    |
+| `node:worker_threads`: `new Worker(code, { eval: true })`                                | works  | throws    |
+| `node:inspector`: `inspector.open()`                                                     | works  | throws    |
+| `bun:jsc`: `startRemoteDebugger()`                                                       | works  | throws    |
+| `node:vm`: everything that takes source text                                             | works  | throws    |
+| `node:module`: `module._compile()`, assigning `Module.wrapper`                           | works  | throws    |
+| `Bun.plugin()`: `onLoad` and `build.module()` that return source text                    | works  | throws    |
+
+Every built-in module still loads with `=strict`. `import { REPLServer } from "node:repl"` is the one import that fails, because it reads `REPLServer`.
+
+Tools that transpile through `require.extensions`, such as `ts-node` and `@babel/register`, do not work with `=strict`. Bun transpiles TypeScript and JSX itself, so a Bun program does not need them.
+
+## In a compiled executable
+
+Embed the flag when you compile. The executable then runs with it every time, with no arguments:
+
+```bash icon="terminal" terminal
+bun build --compile --compile-exec-argv="--disallow-code-generation-from-strings=strict" ./server.ts --outfile server
+```
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./server.ts"],
+  compile: {
+    execArgv: ["--disallow-code-generation-from-strings=strict"],
+    outfile: "./server",
+  },
+});
+```
+
+Write the value with `=`. In `--compile-exec-argv="--disallow-code-generation-from-strings strict"`, with a space, `strict` is a separate argument, which a compiled executable ignores. That executable runs with the flag and no value, and prints no error. The check in [Checking that the flag is on](#checking-that-the-flag-is-on) catches the mistake.
+
+`BUN_OPTIONS` can raise the level of a compiled executable. It cannot lower it.
+
+A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
+
+### `data:` URLs written in the source
+
+The bundler resolves a `data:` URL that is written as a literal when it builds. That module is part of the executable, like any file the program imports, so it loads at both levels. A `data:` URL that the program puts together at run time is a string that becomes code, so `=strict` refuses it:
+
+```ts server.ts icon="/icons/typescript.svg"
+await import("data:text/javascript,export default 1"); // bundled at build time: loads
+
+const url = ["data:text/javascript", "export default 1"].join(",");
+await import(url); // made at run time: EvalError
+```
+
+Without `--compile` there is no build step, so `=strict` refuses both.
+
+## Checking that the flag is on
+
+`process.execArgv` contains the flag:
+
+```ts server.ts icon="/icons/typescript.svg"
+if (!process.execArgv.includes("--disallow-code-generation-from-strings=strict")) {
+  throw new Error("refusing to start without --disallow-code-generation-from-strings=strict");
+}
+```
+
+A `Worker` inherits `process.execArgv`, so the same check works inside one. When you give a `Worker` its own `execArgv`:
+
+- With `=strict`, Bun adds the flag to the list the `Worker` sees.
+- With the flag and no value, the `Worker` sees the list you gave it, as in Node.js. The `Worker` still refuses `eval()` and `new Function()`.
+
+## What the flag does not cover
+
+- **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.
+- **Startup.** The entry point, a file given to `--preload`, `--import` or `--require`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs. A `data:` URL given to `--preload`, `--import` or `--require` is not a file, and `=strict` refuses it like any other `data:` URL.
+- **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
+- **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
+- **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
+- **Child processes.** A process that the program spawns has its own flags.

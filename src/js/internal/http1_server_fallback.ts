@@ -7,8 +7,8 @@ const AsyncContextFrame = require("internal/async_context_frame");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
-// Node does not count a connection as idle before its first message: closeIdleConnections() leaves it alone.
-const kHttp1HadRequest = Symbol("http1HadRequest");
+// Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
+const kHttp1MessageOpen = Symbol("http1MessageOpen");
 const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
@@ -384,9 +384,10 @@ function connectionListenerHTTP1(server, socket, options) {
   const connections = (server[kHttp1Connections] ??= new SafeSet());
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
-  socket[kHttp1HadRequest] = false;
+  socket[kHttp1MessageOpen] = false;
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
+  const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
@@ -410,6 +411,10 @@ function connectionListenerHTTP1(server, socket, options) {
   // Like node:_http_common: after the parser's first kOnHeaders flush (32 fields, or trailers), kOnHeadersComplete gets no headers and no url.
   let flushedHeaders = [];
   let flushedUrl = "";
+  parser[kOnMessageBegin] = function onHttp1MessageBegin() {
+    socket[kHttp1MessageOpen] = true;
+  };
+
   parser[kOnHeaders] = function onHttp1Headers(headers, url) {
     for (let i = 0; i < headers.length; i++) $arrayPush(flushedHeaders, headers[i]);
     flushedUrl += url;
@@ -436,7 +441,6 @@ function connectionListenerHTTP1(server, socket, options) {
     }
 
     socket[kHttp1ActiveRequests]++;
-    socket[kHttp1HadRequest] = true;
 
     req = new IncomingMessageClass(socket);
     req.socket = socket;
@@ -569,6 +573,7 @@ function connectionListenerHTTP1(server, socket, options) {
     if (req && !req._dumped) req.push(chunk);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
+    socket[kHttp1MessageOpen] = false;
     // Fields flushed after the header section are the trailers.
     const rawTrailers = flushedHeaders;
     if (rawTrailers.length !== 0) flushedHeaders = [];
@@ -705,7 +710,7 @@ function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
   for (const socket of connections) {
-    if (!socket[kHttp1ActiveRequests] && socket[kHttp1HadRequest] && !socket.destroyed) {
+    if (!socket[kHttp1ActiveRequests] && !socket[kHttp1MessageOpen] && !socket.destroyed) {
       socket.destroy();
     }
   }

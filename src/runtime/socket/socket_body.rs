@@ -4523,10 +4523,11 @@ impl DuplexUpgradeContext {
                     unsafe { Self::deinit(this.as_ptr()) };
                     return;
                 }
-                // The transport closed while this task was queued: an engine
-                // started now could never handshake, and nothing would free it.
+                // The transport or the socket closed while this task was queued:
+                // an engine started now could never handshake, and nothing
+                // would free it. A transport that is still open gets its end().
                 if this.upgrade.pending_close.replace(false) {
-                    Self::on_close(this);
+                    this.upgrade.finish_close();
                     return;
                 }
                 log!(

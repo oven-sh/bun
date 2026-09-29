@@ -118,6 +118,45 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
     `);
   });
 
+  test.each(["the duplex closes", "the socket is destroyed"])(
+    "when duplex.end() throws after close and %s before StartTLS",
+    async how => {
+      // No SSL wrapper exists yet, so the queued .StartTLS task carries the
+      // close out: TLSSocket.onClose frees the Handlers, then duplex.end()
+      // throws into onError.
+      await run(`
+      const tls = require("node:tls");
+      const { Duplex } = require("node:stream");
+
+      const duplex = new Duplex({
+        read() {},
+        write(chunk, enc, cb) { cb(); },
+        final(cb) { cb(); },
+      });
+      duplex.end = function () {
+        throw new Error("end() throws during close");
+      };
+
+      const sock = tls.connect({
+        socket: duplex,
+        rejectUnauthorized: false,
+      });
+      sock.on("error", () => {});
+      sock.on("close", () => {});
+
+      if (${JSON.stringify(how)} === "the duplex closes") duplex.emit("close");
+      else sock.destroy();
+
+      setImmediate(() => {
+        setImmediate(() => {
+          console.log("ok");
+          process.exit(0);
+        });
+      });
+    `);
+    },
+  );
+
   // The transport's EOF reaches the TLS socket when the transport ends, which
   // can be before the queued .StartTLS task has run. 'readable' is emitted
   // from inside that dispatch and 'end' one tick after it.

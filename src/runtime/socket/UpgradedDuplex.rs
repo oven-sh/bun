@@ -211,20 +211,24 @@ impl UpgradedDuplex {
     fn on_close(this: *mut Self) {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: see handler note above.
-        let this = unsafe { &*this };
+        unsafe { &*this }.finish_close();
+    }
 
+    /// Carries out a close: the engine's close callback, and the queued
+    /// `StartTLS` task for a close that came before the engine existed.
+    pub(super) fn finish_close(&self) {
         // Keep the wrapper (and so its visited `duplex*` slots) reachable
         // across `handlers.on_close`, which downgrades the socket's own strong
         // self-reference and re-enters JS.
-        let js_wrapper = this.js_wrapper;
+        let js_wrapper = self.js_wrapper;
         js_wrapper.ensure_still_alive();
 
-        (this.handlers.on_close)(this.handlers.ctx);
+        (self.handlers.on_close)(self.handlers.ctx);
         // closes the underlying duplex
-        this.call_write_or_end(None, false);
+        self.call_write_or_end(None, false);
 
         // Early teardown (struct itself is dropped later by parent).
-        this.teardown();
+        self.teardown();
         js_wrapper.ensure_still_alive();
     }
 

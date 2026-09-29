@@ -582,3 +582,75 @@ test("a bad record behind the client's Finished does not make a server accept an
   // Node reports the bad record. Its code depends on the cipher, so only the class of the error is fixed.
   assert.match(events[0], isBun ? /^tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT$/ : /^tlsClientError ERR_SSL_/);
 });
+
+// The loop does not read every socket of a burst in the same turn. Here the last flight of each client, its data and
+// its FIN wait at a server socket that called end(), before the loop reads that socket.
+test("in a burst, every server socket that end()ed reads the last flight and the data of its client", async () => {
+  const connections = 16;
+  const payload = Buffer.alloc(4096, "x");
+  const seen = { secureConnection: 0, bytes: 0 };
+  const accepted = [];
+  // A failure of a socket of the test rejects the step that waits.
+  const failure = Promise.withResolvers();
+  failure.promise.catch(() => {});
+  const step = promise => Promise.race([promise, failure.promise]);
+  const allClosed = Promise.withResolvers();
+  let closed = 0;
+  const server = tls.createServer({ key, cert }, socket => {
+    seen.secureConnection++;
+    socket.on("data", data => (seen.bytes += data.length));
+  });
+  server.on("tlsClientError", failure.reject);
+  server.on("connection", socket => {
+    accepted.push(socket);
+    socket.on("error", failure.reject);
+    socket.on("close", () => ++closed === connections && allClosed.resolve());
+  });
+  const clientsEnded = Promise.withResolvers();
+  const serversEnded = Promise.withResolvers();
+  let clientFins = 0;
+  let serverFins = 0;
+  const deliveries = [];
+  const { port, close } = await behindProxy(
+    server,
+    (downstream, upstream) => {
+      // The ClientHello goes through. The proxy holds what the client sends after the server's flight.
+      let sawServerFlight = false;
+      const held = [];
+      downstream.on("data", chunk => (sawServerFlight ? held.push(chunk) : upstream.write(chunk)));
+      upstream.on("data", chunk => {
+        sawServerFlight = true;
+        downstream.write(chunk);
+      });
+      downstream.on("end", () => ++clientFins === connections && clientsEnded.resolve());
+      upstream.on("end", () => ++serverFins === connections && serversEnded.resolve());
+      deliveries.push(() => upstream.end(Buffer.concat(held)));
+    },
+    { allowHalfOpen: true },
+  );
+  const clients = [];
+  for (let i = 0; i < connections; i++) {
+    const client = tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "agent1",
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3",
+    });
+    client.on("error", failure.reject);
+    client.on("secureConnect", () => client.end(payload));
+    clients.push(client);
+  }
+  try {
+    await step(clientsEnded.promise);
+    for (const socket of accepted) socket.end();
+    await step(serversEnded.promise);
+    // One turn of the loop finds all the server sockets readable.
+    for (const deliver of deliveries) deliver();
+    await step(allClosed.promise);
+    assert.deepStrictEqual(seen, { secureConnection: connections, bytes: connections * payload.length });
+  } finally {
+    for (const client of clients) client.destroy();
+    close();
+  }
+});

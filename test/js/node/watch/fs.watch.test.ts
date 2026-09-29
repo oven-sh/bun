@@ -1207,6 +1207,7 @@ describe("fs.watch", () => {
           wide: ["wide", ...fs.readdirSync(path.join(root, "wide")).map(name => path.join("wide", name))],
           mixed2: ["mixed2", ...listTree(path.join(root, "mixed2"), "mixed2")],
         },
+        errors: [],
       };
       const moves = Object.keys(expected.moved);
 
@@ -1215,7 +1216,7 @@ describe("fs.watch", () => {
       const watched = path.join(root, "watched");
       const existing = JSON.parse(process.env.WATCH_EXISTING);
       const moves = ${JSON.stringify(moves)};
-      const result = { unwatched: null, moved: {} };
+      const result = { unwatched: null, moved: {}, errors };
       let events = [], step = 0;
       // Renames the marker file: its event arrives after the events of this step.
       function endStep() {
@@ -1237,6 +1238,7 @@ describe("fs.watch", () => {
         fs.renameSync(path.join(root, moves[step - 1]), path.join(watched, moves[step - 1]));
         endStep();
       });
+      watcher.on("error", error => errors.push(error.code));
       writeInEvery(watched, existing);
       endStep();
     `;

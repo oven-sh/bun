@@ -718,6 +718,7 @@ pub fn write_node_inspector_line(line: &BunString) -> bool {
             return true;
         }
         // fd 2 is full and a wait runs no event loop, so a thread writes the rest when the reader has made room.
+        // SAFETY: the thread owns the bytes of the line and holds no state of a VM.
         std::thread::Builder::new()
             .name("InspectorLine".to_owned())
             .spawn(move || write_when_stderr_has_room(&bytes[written..]))

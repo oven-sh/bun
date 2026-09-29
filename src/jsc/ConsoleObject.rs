@@ -2174,18 +2174,8 @@ pub mod formatter {
                     });
                 }
 
-                // TODO: we print InternalFunction as Object because we have a lot
-                // of callable namespaces and printing the contents of it is better
-                // than [Function: namespace]. Ideally, we would print
-                // `[Function: namespace] { ... }` on all functions, internal and
-                // js. What we'll do later is rid of .Function and .Class and
-                // handle the prefix in the .Object formatter.
                 return Ok(TagResult {
-                    tag: if js_type == jsc::JSType::InternalFunction {
-                        TagPayload::Object
-                    } else {
-                        TagPayload::Function
-                    },
+                    tag: TagPayload::Function,
                     cell: js_type,
                 });
             }

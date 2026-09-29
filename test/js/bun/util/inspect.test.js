@@ -727,6 +727,29 @@ describe("console.logging function displays async and generator names", async ()
     });
   }
 });
+describe("console.logging a native function that is not a constructor", () => {
+  const { revoke } = Proxy.revocable({}, {});
+  const cases = [
+    ["the revoke function of Proxy.revocable()", revoke],
+    ["Function.prototype", Function.prototype],
+  ];
+
+  for (const [name, value] of cases) {
+    it(name, () => {
+      expect({ alone: Bun.inspect(value), nested: Bun.inspect({ value }) }).toEqual({
+        alone: "[Function]",
+        nested: "{\n  value: [Function],\n}",
+      });
+      // The printer of bun:test is a second implementation.
+      expect({ value }).toMatchInlineSnapshot(`
+        {
+          "value": [Function],
+        }
+      `);
+    });
+  }
+});
+
 describe("console.logging class displays names and extends", async () => {
   class A {}
   const cases = [A, class B extends A {}, class extends A {}, class {}];

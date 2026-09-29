@@ -3,8 +3,9 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tls } from "harness";
 import { createServer, request } from "http";
+import { createServer as createSecureServer } from "https";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
@@ -495,8 +496,8 @@ describe("WebSocketServer", () => {
       }
     });
 
-    // Adapters of frameworks upgrade through a Bun.serve() of their own, and pass its websocket
-    // events to the server socket of this module. They pass what those handlers get.
+    // A server socket of this module that gets its events from the handlers of a public Bun.serve()
+    // emits the same values as before: those handlers get a string for a text frame, and no frame type.
     it("takes the events of Bun.serve() from a bridge that is not node:http's", async () => {
       const wss = new WebSocketServer({ port: 0 });
       const connected = Promise.withResolvers<WebSocket>();
@@ -511,10 +512,15 @@ describe("WebSocketServer", () => {
       const internals = Symbol.for("::bunternal::");
       const socket = new ServerSocket("/", "", {});
       const received: Promise<Received>[] = [];
+      const pings: unknown[] = [];
       const all = Promise.withResolvers<void>();
+      let nativeSocket: unknown;
       socket.on("open", () => (socket.binaryType = "arraybuffer"));
       socket.on("error", all.reject);
-      socket.on("ping", data => received.push(describeReceived("ping", data)));
+      socket.on("ping", data => {
+        pings.push(data);
+        received.push(describeReceived("ping", data));
+      });
       socket.on("message", (data, isBinary) => {
         received.push(describeReceived("message", data, isBinary));
         if (received.length === 3) all.resolve();
@@ -529,7 +535,10 @@ describe("WebSocketServer", () => {
             : new Response("no upgrade", { status: 400 });
         },
         websocket: {
-          open: ws => ws.data.open(ws),
+          open: ws => {
+            nativeSocket = ws;
+            ws.data.open(ws);
+          },
           message: (ws, message) => ws.data.message(ws, message),
           close: (ws, code, reason) => ws.data.close(ws, code, reason),
           drain: ws => ws.data.drain(ws),
@@ -551,8 +560,127 @@ describe("WebSocketServer", () => {
           { event: "message", shape: "Buffer", bytes: [...Buffer.from("text")], isBinary: false },
           { event: "message", shape: "ArrayBuffer", bytes: [1, 2, 3], isBinary: true },
         ]);
+
+        // A payload that is a Buffer already is emitted as it is, with no copy.
+        const payload = Buffer.from([7]);
+        socket[internals].ping(nativeSocket, payload);
+        expect(pings.at(-1)).toBe(payload);
       } finally {
         client.terminate();
+      }
+    });
+
+    // What the native socket hands to the websocket handlers of node:http. The test upgrades with an
+    // object of its own, so no server socket of this module is between the two.
+    it.each([
+      ...binaryTypes.map(binaryType => ({ ...binaryType, secure: false })),
+      { ...binaryTypes[0], label: "nodebuffer", secure: true },
+    ])(
+      "$label, TLS $secure: the handlers of node:http get a Buffer for a text frame, a ping and a pong",
+      async ({ label, type, secure }) => {
+        type Handed = Received & { arguments: number };
+        const internals = Symbol.for("::bunternal::");
+        const server = secure ? createSecureServer({ ...tls }) : createServer();
+        const handed: Promise<Handed>[] = [];
+        const all = Promise.withResolvers<void>();
+        let messages = 0;
+        const record = (event: string, data: unknown, isBinary: boolean | undefined, count: number) =>
+          handed.push(describeReceived(event, data, isBinary).then(received => ({ ...received, arguments: count })));
+
+        server.on("upgrade", (req, socket) => {
+          socket.server[internals].upgrade(socket[internals], {
+            data: {
+              open(ws: { binaryType: string }) {
+                ws.binaryType = label;
+              },
+              message(ws: unknown, data: unknown, isBinary: boolean) {
+                record("message", data, isBinary, arguments.length);
+                if (++messages === strings.length + 2) all.resolve();
+              },
+              ping(ws: unknown, data: unknown) {
+                record("ping", data, undefined, arguments.length);
+              },
+              pong(ws: unknown, data: unknown) {
+                record("pong", data, undefined, arguments.length);
+              },
+              close() {},
+              drain() {},
+            },
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const { port } = server.address() as AddressInfo;
+        const client = new WebSocket(`${secure ? "wss" : "ws"}://127.0.0.1:${port}`, {
+          // The option of Bun. It trusts the self-signed certificate.
+          tls: { rejectUnauthorized: false },
+        });
+        client.on("error", all.reject);
+        client.on("open", () => {
+          client.ping(Buffer.from([4]));
+          client.pong(Buffer.from([5]));
+          for (const { message } of strings) client.send(message);
+          client.send(Buffer.from([1, 2, 3]));
+          client.send("");
+        });
+        try {
+          await all.promise;
+          expect(await Promise.all(handed)).toEqual([
+            { event: "ping", shape: "Buffer", bytes: [4], arguments: 2 },
+            { event: "pong", shape: "Buffer", bytes: [5], arguments: 2 },
+            ...strings.map(({ bytes }) => ({
+              event: "message",
+              shape: "Buffer",
+              bytes: [...bytes],
+              isBinary: false,
+              arguments: 3,
+            })),
+            { event: "message", shape: type.name, bytes: [1, 2, 3], isBinary: true, arguments: 3 },
+            { event: "message", shape: "Buffer", bytes: [], isBinary: false, arguments: 3 },
+          ]);
+        } finally {
+          client.terminate();
+          server.closeAllConnections();
+          server.close();
+        }
+      },
+    );
+
+    // send() decodes the view in place. Each kind of view must give the peer the text of its bytes.
+    it("send(view, { binary: false }) sends the bytes of each kind of view as a text frame", async () => {
+      const text = Buffer.from("text-\u4e16-\u{1f636}");
+      const padded = Buffer.concat([Buffer.from([0xff, 0xff]), text, Buffer.from([0xff])]);
+      const views = [
+        text,
+        new Uint8Array(text),
+        // a view with an offset into a larger buffer
+        new Uint8Array(padded.buffer, padded.byteOffset + 2, text.length),
+        new Int8Array(text.buffer.slice(text.byteOffset, text.byteOffset + text.length)),
+        new Uint16Array(new Uint8Array([0x68, 0x69, 0x68, 0x69]).buffer),
+      ];
+      const wss = new WebSocketServer({ port: 0 });
+      const { promise, resolve, reject } = Promise.withResolvers<{ isBinary: boolean; text: string }[]>();
+      const received: { isBinary: boolean; text: string }[] = [];
+      wss.on("connection", ws => {
+        ws.on("error", reject);
+        for (const view of views) ws.send(view, { binary: false });
+      });
+      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      client.on("error", reject);
+      client.on("message", (data, isBinary) => {
+        received.push({ isBinary, text: data.toString() });
+        if (received.length === views.length) resolve(received);
+      });
+      try {
+        expect(await promise).toEqual([
+          { isBinary: false, text: text.toString() },
+          { isBinary: false, text: text.toString() },
+          { isBinary: false, text: text.toString() },
+          { isBinary: false, text: text.toString() },
+          { isBinary: false, text: "hihi" },
+        ]);
+      } finally {
+        client.terminate();
+        wss.close();
       }
     });
 
@@ -1403,6 +1531,57 @@ describe.each([
       type: "close",
     });
   });
+});
+
+// A reload gives new handlers to a socket that stays open. A socket that node:http opened keeps the
+// native callbacks of node:http, so these look at the handlers that the socket has now.
+it("reload() from node:http to Bun.serve handlers: a socket that stays open gets the payloads of Bun.serve", async () => {
+  const httpServer = createServer();
+  const wss = new WebSocketServer({ server: httpServer });
+  let fromShim = Promise.withResolvers<unknown>();
+  wss.on("connection", ws => {
+    // The native socket keeps this over the reload.
+    ws.binaryType = "arraybuffer";
+    ws.on("message", (data, isBinary) => fromShim.resolve({ handler: "ws", data: shapeOf(data), isBinary }));
+  });
+  await once(httpServer.listen(0, "127.0.0.1"), "listening");
+  const client = new WebSocket("ws://127.0.0.1:" + (httpServer.address() as AddressInfo).port);
+  const seen: unknown[] = [];
+  const all = Promise.withResolvers<void>();
+  client.on("error", all.reject);
+  try {
+    await once(client, "open");
+    client.send("text");
+    const before = await fromShim.promise;
+
+    const record = (event: string) =>
+      function (ws: { ping(data: Uint8Array): void }, data: unknown) {
+        seen.push({ handler: "Bun.serve", event, data: shapeOf(data), arguments: arguments.length });
+        // The pong of the client answers this ping.
+        if (event === "ping") ws.ping(new Uint8Array([9]));
+        if (seen.length === 3) all.resolve();
+      };
+    (httpServer as any)[Symbol.for("::bunternal::")].reload({
+      fetch: () => new Response("no upgrade", { status: 400 }),
+      websocket: { message: record("message"), ping: record("ping"), pong: record("pong") },
+    });
+    client.send("text");
+    client.ping(Buffer.from([4]));
+    await all.promise;
+
+    expect({ before, seen }).toEqual({
+      before: { handler: "ws", data: "Buffer", isBinary: false },
+      seen: [
+        { handler: "Bun.serve", event: "message", data: "[object String]", arguments: 2 },
+        { handler: "Bun.serve", event: "ping", data: "ArrayBuffer", arguments: 2 },
+        { handler: "Bun.serve", event: "pong", data: "ArrayBuffer", arguments: 2 },
+      ],
+    });
+  } finally {
+    client.terminate();
+    httpServer.closeAllConnections();
+    httpServer.close();
+  }
 });
 
 // Under --hot one native server serves every generation of the file, and a socket stays open over

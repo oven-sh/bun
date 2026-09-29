@@ -13,6 +13,7 @@ const ReadyState_CLOSED = 3;
 const EventEmitter = require("node:events");
 const ObjectDefineProperty = Object.defineProperty;
 const SymbolFunction = Symbol;
+const utf8Slice = Buffer.prototype.utf8Slice;
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -136,7 +137,8 @@ function normalizeData(data, opts) {
   if (isBinary === true && typeof data === "string") {
     data = Buffer.from(data);
   } else if (isBinary === false && $isTypedArrayView(data)) {
-    data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
+    // Decodes the view in place. A read of `data.buffer` makes the ArrayBuffer of a view that has none yet.
+    data = utf8Slice.$call(data);
   }
 
   return data;

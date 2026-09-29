@@ -1350,6 +1350,47 @@ describe("bun test", () => {
     });
   });
 
+  test("compiles --test-name-pattern with the options JSC was given", () => {
+    // With this option JSC prints every regular expression it compiles. The
+    // pattern is one of them only if it is compiled after JSC has its options.
+    const stderr = runTest({
+      args: ["-t", "al+pha"],
+      env: { BUN_JSC_dumpCompiledRegExpPatterns: "1" },
+      input: `
+        import { test } from "bun:test";
+        test("alpha", () => {});
+        test("beta", () => {});
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("RegExp pattern for /al+pha/");
+    expect(stderr).toContain("(pass) alpha");
+    expect(stderr).not.toContain("(pass) beta");
+  });
+
+  test.concurrent.each([[[]], [["--parallel=2"]]])(
+    "rejects a --test-name-pattern that is not a regular expression, before any other output %j",
+    async args => {
+      using dir = tempDir("test-name-pattern-invalid", {
+        "alpha.test.ts": `import { test } from "bun:test"; test("alpha", () => {});`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, "-t", "(alpha"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A build with JSC assertions prints Yarr's own error line first.
+      expect({ stdout, stderr: stderr.trimEnd().split(/\r?\n/).at(-1), exitCode }).toEqual({
+        stdout: "",
+        stderr: 'error: --test-name-pattern expects a valid regular expression but received "(alpha"',
+        exitCode: 1,
+      });
+    },
+  );
+
   test("Prints error when no test matches", () => {
     const stderr = runTest({
       args: ["-t", "not-a-test"],

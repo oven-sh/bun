@@ -230,6 +230,99 @@ describe("matcher messages", () => {
   });
 });
 
+// The test runner prints the class name of a value before it reads the
+// properties. These pin that the text stays what console.log prints.
+describe("values that are not nodes", () => {
+  class Empty {}
+  class Widget {
+    a: unknown = 1;
+  }
+
+  function received(value: unknown): string {
+    const message = failureMessage(() => expect(value).toBe(null));
+    return message.slice(message.indexOf("Received: ") + "Received: ".length).replace(/\n$/, "");
+  }
+
+  test("no visible property", () => {
+    expect(received(new Empty())).toBe("Empty {}");
+    expect(received({})).toBe("{}");
+    expect(received(Object.create(null))).toBe("[Object: null prototype] {}");
+    expect(received({ constructor: 1 })).toBe("{}");
+  });
+
+  test("visible properties", () => {
+    expect(received(new Widget())).toBe("Widget {\n  a: 1,\n}");
+    expect(received({ a: 1 })).toBe("{\n  a: 1,\n}");
+    expect(received(Object.assign(Object.create(null), { a: 1 }))).toBe("[Object: null prototype] {\n  a: 1,\n}");
+  });
+
+  test("a function and a class print no class name prefix", () => {
+    function fn() {}
+    function fnWithProperty() {}
+    fnWithProperty.a = 1;
+    class Class {}
+    class ClassWithProperty {
+      static a = 1;
+    }
+    expect(received(fn)).toBe("[Function: fn]");
+    expect(received(fnWithProperty)).toBe("[Function: fnWithProperty]");
+    expect(received(Class)).toBe("[class Class]");
+    expect(received(ClassWithProperty)).toBe("[class ClassWithProperty]");
+    // Callable, and not a function to the formatter: the object printer prints it.
+    expect(received(Function.prototype)).toBe(Bun.inspect(Function.prototype));
+  });
+
+  test("past the depth limit", () => {
+    let value = new Widget();
+    for (let i = 0; i < 9; i++) {
+      const outer = new Widget();
+      outer.a = value;
+      value = outer;
+    }
+    let expected = "[Object ...]";
+    for (let depth = 8; depth >= 0; depth--) {
+      const indent = Buffer.alloc(depth * 2, " ").toString();
+      expected = `Widget {\n${indent}  a: ${expected},\n${indent}}`;
+    }
+    expect(received(value)).toBe(expected);
+  });
+
+  test("in an object, an array, a Map and a Set, beside a node", () => {
+    const value = {
+      object: { w: new Widget() },
+      array: [new Widget(), new Empty()],
+      map: new Map([["k", new Widget()]]),
+      set: new Set([new Empty()]),
+      node: document.createElement("br"),
+    };
+    expect(received(value)).toBe(
+      [
+        "{",
+        "  object: {",
+        "    w: Widget {",
+        "      a: 1,",
+        "    },",
+        "  },",
+        "  array: [",
+        "    Widget {",
+        "      a: 1,",
+        "    }, Empty {}",
+        "  ],",
+        "  map: Map(1) {",
+        '    "k": Widget {',
+        "      a: 1,",
+        "    },",
+        "  },",
+        "  set: Set(1) {",
+        "    Empty {},",
+        "  },",
+        "  node: <br />,",
+        "}",
+      ].join("\n"),
+    );
+  });
+});
+
 test("console.log and Bun.inspect still print the object", async () => {
   await using proc = Bun.spawn({
     cmd: [

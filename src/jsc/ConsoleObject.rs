@@ -2939,9 +2939,8 @@ pub mod formatter {
         pub(crate) i: usize,
         pub(crate) single_line: bool,
         pub(crate) always_newline: bool,
+        /// `JSValue::ZERO` when the caller already wrote the `Name ` prefix.
         pub(crate) parent: JSValue,
-        /// `parent.get_class_name()` if `print_object` already computed it.
-        pub(crate) class_name: Option<bun_core::String>,
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
@@ -2957,11 +2956,7 @@ pub mod formatter {
                     estimated_line_length: &mut self.formatter.estimated_line_length,
                 };
 
-                let name_str = match self.class_name.take() {
-                    Some(class_name) => object_name_for(global_this, value, class_name)?,
-                    None => get_object_name(global_this, value)?,
-                };
-                if let Some(name_str) = name_str {
+                if let Some(name_str) = get_object_name(global_this, value)? {
                     writer.print(format_args!("{name_str} "));
                 }
             }
@@ -3200,6 +3195,7 @@ pub mod formatter {
     }
 
     /// The `Name ` prefix of an object literal, given its class name.
+    #[inline(always)]
     fn object_name_for(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -4495,7 +4491,6 @@ pub mod formatter {
                         single_line,
                         parent: value,
                         i: i as usize,
-                        class_name: None,
                     };
                     value.for_each_property_non_indexed(
                         global_this,
@@ -5388,18 +5383,73 @@ pub mod formatter {
             let prev_always_newline_scope = self.always_newline_scope;
             let _ans = defer_restore!(self.always_newline_scope, prev_always_newline_scope);
 
-            // The DOM node printer lives in `bun_runtime` (test runner).
-            let mut class_name = None;
             if self.print_dom_nodes_as_markup {
-                if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
-                    let name = value.get_class_name(self.global_this)?;
-                    if (hooks.console_print_dom_node)(self, writer_, value, &name, C)? {
-                        return Ok(());
-                    }
-                    class_name = Some(name);
+                debug_assert!(!C, "the test runner formats without ANSI colors");
+                return self.print_object_for_test_runner(writer_, value, js_type);
+            }
+
+            let Some((iter_i, iter_always_newline)) =
+                self.print_object_properties::<C>(writer_, value, value)?
+            else {
+                return Ok(());
+            };
+            self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
+        }
+
+        /// `print_object` under `print_dom_nodes_as_markup`. A DOM node prints
+        /// as markup. For any other value, the class name that detection read
+        /// prints the `Name ` prefix here, so the shared path never carries it.
+        /// Without ANSI colors, like every formatter that sets the flag.
+        #[cold]
+        #[inline(never)]
+        fn print_object_for_test_runner(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            let class_name = value.get_class_name(self.global_this)?;
+            if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+                if (hooks.console_print_dom_node)(self, writer_, value, &class_name)? {
+                    return Ok(());
                 }
             }
 
+            // A class or a callable prints a prefix only if it has a visible
+            // property, so the property pass decides that one. `js_type` is a
+            // literal at some call sites: read the type from the value.
+            let mut parent = value;
+            if !self.depth_exceeded()
+                && (value.js_type() == jsc::JSType::FinalObject
+                    || (!value.is_class(self.global_this) && !value.is_callable()))
+            {
+                if let Some(name_str) = object_name_for(self.global_this, value, class_name)? {
+                    let _ = write!(writer_, "{name_str} ");
+                }
+                parent = JSValue::ZERO;
+            }
+
+            let Some((iter_i, iter_always_newline)) =
+                self.print_object_properties::<false>(writer_, value, parent)?
+            else {
+                return Ok(());
+            };
+            if iter_i == 0 && parent.is_empty() {
+                let _ = writer_.write_all(b"{}");
+                return Ok(());
+            }
+            self.print_object_tail::<false>(writer_, value, js_type, iter_i, iter_always_newline)
+        }
+
+        /// The depth check and the property pass of `print_object`. Returns
+        /// what `print_object_tail` needs, or `None` when nothing is left to print.
+        #[inline(always)]
+        fn print_object_properties<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            parent: JSValue,
+        ) -> JsResult<Option<(usize, bool)>> {
             // Hoist all `self.*` reads before constructing the iterator ctx —
             // `formatter: self` is a `&mut Self` reborrow, so once it's moved
             // into the struct literal we can no longer touch `self` until
@@ -5408,7 +5458,8 @@ pub mod formatter {
             let always_newline =
                 !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
             if self.depth_exceeded() {
-                return self.print_object_depth_exceeded::<C>(writer_, value);
+                self.print_object_depth_exceeded::<C>(writer_, value)?;
+                return Ok(None);
             }
             let ordered_properties = self.ordered_properties;
             let global_this = self.global_this;
@@ -5417,9 +5468,8 @@ pub mod formatter {
                 writer: writer_,
                 always_newline,
                 single_line,
-                parent: value,
+                parent,
                 i: 0,
-                class_name,
             };
 
             if ordered_properties {
@@ -5440,20 +5490,11 @@ pub mod formatter {
             // reborrows end here (NLL) and the tail can use `self`/`writer_` again.
             let iter_i = iter.i;
             let iter_always_newline = iter.always_newline;
-            let class_name = iter.class_name.take();
 
             if self.failed {
-                return Ok(());
+                return Ok(None);
             }
-
-            self.print_object_tail::<C>(
-                writer_,
-                value,
-                js_type,
-                iter_i,
-                iter_always_newline,
-                class_name,
-            )
+            Ok(Some((iter_i, iter_always_newline)))
         }
 
         #[inline(never)]
@@ -5514,7 +5555,6 @@ pub mod formatter {
             js_type: jsc::JSType,
             iter_i: usize,
             iter_always_newline: bool,
-            class_name: Option<bun_core::String>,
         ) -> JsResult<()> {
             if iter_i == 0 {
                 if value.is_class(self.global_this) {
@@ -5522,11 +5562,7 @@ pub mod formatter {
                 } else if value.is_callable() {
                     self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
                 } else {
-                    let name_str = match class_name {
-                        Some(class_name) => object_name_for(self.global_this, value, class_name)?,
-                        None => get_object_name(self.global_this, value)?,
-                    };
-                    if let Some(name_str) = name_str {
+                    if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");
                     }
                     let _ = writer_.write_all(b"{}");

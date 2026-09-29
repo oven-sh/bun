@@ -2837,12 +2837,12 @@ pub struct RuntimeHooks {
     ) -> JsResult<bool>,
     /// `print_object` arm for `Formatter::print_dom_nodes_as_markup`.
     /// Returns `Ok(true)` when `value` is a DOM node and was printed as markup.
+    /// Prints without ANSI colors: every formatter that sets the flag does.
     pub console_print_dom_node: for<'a, 'f> fn(
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,
         value: JSValue,
         class_name: &bun_core::String,
-        enable_ansi_colors: bool,
     ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
     /// worker's transpiler. `graph` is the same trait object stored in

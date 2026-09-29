@@ -129,9 +129,7 @@ pub(crate) trait NodePrinter<W: bun_io::Write + ?Sized, const ANSI: bool> {
     fn print_value(&mut self, writer: &mut W, value: JSValue) -> JsResult<()>;
 }
 
-impl<'f, 'w, const ANSI: bool> NodePrinter<dyn bun_io::Write + 'w, ANSI>
-    for bun_jsc::Formatter<'f>
-{
+impl<'f, 'w> NodePrinter<dyn bun_io::Write + 'w, false> for bun_jsc::Formatter<'f> {
     fn write_indent(&self, writer: &mut (dyn bun_io::Write + 'w)) {
         let _ = bun_jsc::Formatter::write_indent(self, writer);
     }
@@ -161,7 +159,7 @@ impl<'f, 'w, const ANSI: bool> NodePrinter<dyn bun_io::Write + 'w, ANSI>
     ) -> JsResult<()> {
         let global = self.global_this;
         let tag = bun_jsc::console_object::formatter::Tag::get(value, global)?;
-        self.format::<ANSI>(tag, writer, value, global)
+        self.format::<false>(tag, writer, value, global)
     }
 }
 

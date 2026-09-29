@@ -1877,20 +1877,13 @@ fn console_print_dom_node<'a, 'f>(
     writer: &'a mut dyn bun_io::Write,
     value: JSValue,
     class_name: &bun_core::String,
-    enable_ansi_colors: bool,
 ) -> JsResult<bool> {
     use crate::test_runner::dom_node;
     let global = formatter.global_this;
     let Some(kind) = dom_node::node_kind(global, value, class_name)? else {
         return Ok(false);
     };
-    if enable_ansi_colors {
-        dom_node::print_node::<_, dyn bun_io::Write, true>(formatter, global, writer, value, kind)?;
-    } else {
-        dom_node::print_node::<_, dyn bun_io::Write, false>(
-            formatter, global, writer, value, kind,
-        )?;
-    }
+    dom_node::print_node::<_, dyn bun_io::Write, false>(formatter, global, writer, value, kind)?;
     Ok(true)
 }
 

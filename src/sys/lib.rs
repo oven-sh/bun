@@ -1934,29 +1934,35 @@ mod posix_impl {
         }
         openat(dir, path, flags, mode)
     }
-    pub fn close(fd: Fd) -> Maybe<()> {
-        // Call close ONCE; never retry on EINTR (Linux may have already
-        // released the fd, retrying would close someone else's). Only EBADF surfaces.
-        // Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
+    /// `close(2)`, once. Linux releases the fd even on EINTR, so a retry could close another thread's fd. `Err` is the errno.
+    #[inline]
+    pub(crate) fn close_once(fd: Fd) -> core::result::Result<(), i32> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return match super::linux_syscall::close(fd.native()) {
-                Err(e) if e == libc::EBADF => {
-                    Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd))
-                }
-                _ => Ok(()),
-            };
+            super::linux_syscall::close(fd.native())
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
+            // Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
             #[cfg(target_os = "macos")]
             let rc = super::nocancel::close(fd.native());
             #[cfg(not(target_os = "macos"))]
             let rc = safe_libc::close(fd.native());
-            if rc < 0 && last_errno() == libc::EBADF {
-                return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
-            }
-            Ok(())
+            if rc < 0 { Err(last_errno()) } else { Ok(()) }
+        }
+    }
+    /// Closes `fd` and returns the error that callers see. Only EBADF surfaces.
+    #[inline]
+    pub(crate) fn close_error(fd: Fd) -> Option<Error> {
+        match close_once(fd) {
+            Err(libc::EBADF) => Some(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd)),
+            _ => None,
+        }
+    }
+    pub fn close(fd: Fd) -> Maybe<()> {
+        match close_error(fd) {
+            Some(err) => Err(err),
+            None => Ok(()),
         }
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {

@@ -3768,32 +3768,52 @@ Reo=
       server.close();
     }
 
-    // The peer ends the connection, and the handshake can never complete. A
-    // socket that sent its FIN first gets `close` and no other call, as it
-    // does when the peer resets the connection.
-    describe("the peer ends the connection before the handshake completes", () => {
+    // The peer closes the connection, and the handshake can never complete.
+    // `close` is the only call when the peer resets the connection, and when
+    // the peer ends the connection of a socket that sent its FIN first.
+    describe("the peer closes the connection before the handshake completes", () => {
       const failed = "handshake success=false code=ECONNRESET";
-      for (const { shutDown, handshakeHandler, calls } of [
-        { shutDown: false, handshakeHandler: true, calls: ["open", failed, "close"] },
-        { shutDown: true, handshakeHandler: true, calls: ["open", "close"] },
+      const reset = "close ECONNRESET";
+
+      // step() rejects when a socket of the test reports a failure.
+      function failures() {
+        const failure = Promise.withResolvers<never>();
+        // A failure after the last step is not an unhandled rejection.
+        failure.promise.catch(() => {});
+        return {
+          fail: failure.reject,
+          step: <T>(promise: Promise<T>) => Promise.race([promise, failure.promise]),
+        };
+      }
+      const leave = (how: string, socket: net.Socket) => (how === "resets" ? socket.resetAndDestroy() : socket.end());
+      const closeCall = (error?: Error) => (error ? `close ${(error as NodeJS.ErrnoException).code}` : "close");
+
+      for (const { how, shutDown, handshakeHandler, calls } of [
+        { how: "ends", shutDown: false, handshakeHandler: true, calls: ["open", failed, "close"] },
+        { how: "ends", shutDown: true, handshakeHandler: true, calls: ["open", "close"] },
         // With no `handshake` handler, `open` takes its place.
-        { shutDown: false, handshakeHandler: false, calls: ["open", "close"] },
-        { shutDown: true, handshakeHandler: false, calls: ["close"] },
+        { how: "ends", shutDown: false, handshakeHandler: false, calls: ["open", "close"] },
+        { how: "ends", shutDown: true, handshakeHandler: false, calls: ["close"] },
+        { how: "resets", shutDown: false, handshakeHandler: true, calls: ["open", reset] },
+        { how: "resets", shutDown: true, handshakeHandler: true, calls: ["open", reset] },
+        { how: "resets", shutDown: false, handshakeHandler: false, calls: [reset] },
+        { how: "resets", shutDown: true, handshakeHandler: false, calls: [reset] },
       ]) {
         const state = shutDown ? "shut down" : "did not shut down";
         const handler = handshakeHandler ? "a handshake handler" : "no handshake handler";
-        it(`a client that ${state}, with ${handler}: ${calls.join(", ")}`, async () => {
+        it(`the peer ${how} the connection of a client that ${state}, with ${handler}: ${calls.join(", ")}`, async () => {
           const events: string[] = [];
+          const { fail, step } = failures();
           const closed = Promise.withResolvers<void>();
           const sawClientHello = Promise.withResolvers<void>();
-          // Never answers. Ends the connection after the ClientHello, or after the client's FIN.
+          // Never answers. Leaves after the ClientHello, or after the client's FIN.
           const peer = net.createServer({ allowHalfOpen: true }, socket => {
-            socket.on("error", () => {});
+            socket.on("error", fail);
             socket.once("data", () => {
               sawClientHello.resolve();
-              if (!shutDown) socket.end();
+              if (!shutDown) leave(how, socket);
             });
-            socket.on("end", () => socket.end());
+            socket.on("end", () => leave(how, socket));
           });
           await once(peer.listen(0, "127.0.0.1"), "listening");
           try {
@@ -3811,19 +3831,21 @@ Reo=
                   },
                 }),
                 data() {},
-                close() {
-                  events.push("close");
+                close(_socket, error) {
+                  events.push(closeCall(error));
                   closed.resolve();
                 },
-                error() {},
-                connectError(_socket, err) {
-                  closed.reject(err);
+                error(_socket, error) {
+                  fail(error);
+                },
+                connectError(_socket, error) {
+                  fail(error);
                 },
               },
             });
-            await sawClientHello.promise;
+            await step(sawClientHello.promise);
             if (shutDown) client.shutdown();
-            await closed.promise;
+            await step(closed.promise);
             expect(events).toEqual(calls);
           } finally {
             peer.close();
@@ -3831,12 +3853,16 @@ Reo=
         });
       }
 
-      for (const { shutDown, calls } of [
-        { shutDown: false, calls: ["open", failed, "close"] },
-        { shutDown: true, calls: ["open", "close"] },
+      for (const { how, shutDown, calls } of [
+        { how: "ends", shutDown: false, calls: ["open", failed, "close"] },
+        { how: "ends", shutDown: true, calls: ["open", "close"] },
+        { how: "resets", shutDown: false, calls: ["open", reset] },
+        { how: "resets", shutDown: true, calls: ["open", reset] },
       ]) {
-        it(`an accepted socket that ${shutDown ? "shut down" : "did not shut down"}: ${calls.join(", ")}`, async () => {
+        const state = shutDown ? "shut down" : "did not shut down";
+        it(`the peer ${how} the connection of an accepted socket that ${state}: ${calls.join(", ")}`, async () => {
           const events: string[] = [];
+          const { fail, step } = failures();
           const closed = Promise.withResolvers<void>();
           const accepted = Promise.withResolvers<Socket>();
           using server = Bun.listen({
@@ -3854,16 +3880,18 @@ Reo=
                 );
               },
               data() {},
-              close() {
-                events.push("close");
+              close(_socket, error) {
+                events.push(closeCall(error));
                 closed.resolve();
               },
-              error() {},
+              error(_socket, error) {
+                fail(error);
+              },
             },
           });
           // The peer is a TLS client. Only its ClientHello reaches the server.
           const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
-          raw.on("error", () => {});
+          raw.on("error", fail);
           const sawServerFlight = Promise.withResolvers<void>();
           const sawServerFin = Promise.withResolvers<void>();
           raw.once("data", () => sawServerFlight.resolve());
@@ -3878,15 +3906,15 @@ Reo=
             },
           });
           const client = tlsConnect({ socket: transport, rejectUnauthorized: false });
-          client.on("error", () => {});
+          client.on("error", fail);
           try {
-            await sawServerFlight.promise;
+            await step(sawServerFlight.promise);
             if (shutDown) {
-              (await accepted.promise).shutdown();
-              await sawServerFin.promise;
+              (await step(accepted.promise)).shutdown();
+              await step(sawServerFin.promise);
             }
-            raw.end();
-            await closed.promise;
+            leave(how, raw);
+            await step(closed.promise);
             expect(events).toEqual(calls);
           } finally {
             client.destroy();

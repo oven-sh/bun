@@ -6776,20 +6776,20 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Shuts down one half of the connection.
+     * With no argument, the socket sends a FIN and enters a half-closed state where it can
+     * still receive data but can no longer send data. With `true`, the socket stops
+     * receiving data and can still send data.
      * Calls the `shutdown(2)` syscall internally.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
      * socket.shutdown();
+     *
+     * // Stop receiving data, but allow sending
+     * socket.shutdown(true);
      * ```
      */
     shutdown(halfClose?: boolean): void;
@@ -7202,7 +7202,7 @@ declare module "bun" {
     /**
      * Called when the socket connects. For TLS sockets with no `handshake`
      * handler, this is called when `handshake` would be: after the handshake
-     * completes or fails.
+     * completes or fails. Only a `handshake` handler gets the result.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;

@@ -88,5 +88,6 @@ setInterval(() => {
     const micros = cpu.user - last.cpu.user + (cpu.system - last.cpu.system);
     console.log(`${count} requests, ${(micros / count).toFixed(1)} us of CPU per request`);
   }
-  last = { requests, cpu };
+  // Read after the report, so that the next interval does not pay for this one's log line.
+  last = { requests, cpu: process.cpuUsage() };
 }, 1000);

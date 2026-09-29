@@ -59,14 +59,22 @@ impl<'a> Lookup<'a> {
     ) -> Option<Self> {
         // SAFETY: the caller's contract.
         let options = unsafe { &(*transpiler).options };
+        if !options.minify_syntax {
+            return None;
+        }
         // A native plugin can replace the source of any file, and a client module is a reference, not its code.
-        if !options.minify_syntax
-            || options.server_components
-            || options.has_dev_server()
-            || ctx
-                .plugins_ref()
-                .is_some_and(|plugins| plugins.has_on_before_parse_plugins())
-        {
+        let native_plugin = ctx
+            .plugins_ref()
+            .is_some_and(|plugins| plugins.has_on_before_parse_plugins());
+        if options.server_components || options.has_dev_server() || native_plugin {
+            bun_core::scoped_log!(
+                const_call,
+                "{}: no lookup, server components: {}, development server: {}, native plugin: {}",
+                bstr::BStr::new(importer.text),
+                options.server_components,
+                options.has_dev_server(),
+                native_plugin
+            );
             return None;
         }
         Some(Self {

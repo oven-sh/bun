@@ -99,6 +99,35 @@ fn module_preload_registration(
     Ok(code)
 }
 
+/// The chunk's module record covers a start, whose call the printer does not print: the chunk declares the wrapper or its cross-chunk prefix imports it, and the call does not await.
+fn module_record_covers_start(
+    c: &LinkerContext,
+    js: &crate::chunk::JavaScriptChunk,
+    chunk_index: usize,
+    wrapped: IndexInt,
+) -> bool {
+    let flags = c.graph.meta.items_flags()[wrapped as usize];
+    if flags.wrap == crate::WrapKind::Esm && flags.is_async_or_has_async_dependency {
+        return false;
+    }
+    let wrapper_ref = c
+        .graph
+        .symbols
+        .follow(c.graph.ast.items_wrapper_ref()[wrapped as usize]);
+    let declared_in = c
+        .graph
+        .symbols
+        .get_const(wrapper_ref)
+        .and_then(|symbol| symbol.chunk_index());
+    declared_in.is_some_and(|declared_in| {
+        declared_in as usize == chunk_index
+            || js
+                .imports_from_other_chunks
+                .get(&declared_in)
+                .is_some_and(|items| items.iter().any(|item| item.r#ref == wrapper_ref))
+    })
+}
+
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
@@ -699,6 +728,10 @@ pub(crate) fn post_process_js_chunk(
         let Some(&(_, wrapped)) = next_start else {
             break;
         };
+        debug_assert!(
+            module_record_covers_start(c, chunk.content.javascript(), chunk_index, wrapped),
+            "chunk {chunk_index} starts file {wrapped}, which its module record does not cover"
+        );
         // `require_x();` / `init_x();`, not a statement of a part: a part range prints its init calls ahead of its statements.
         let wrapper_ref = c.graph.ast.items_wrapper_ref()[wrapped as usize];
         let call_end: &[u8] = if c.options.minify_whitespace {

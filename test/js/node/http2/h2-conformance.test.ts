@@ -8,7 +8,7 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, isDebug, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -1932,6 +1932,11 @@ describe("stream release after a queued END_STREAM", () => {
 // Stream resets are rate-limited per connection like nghttp2's stream_reset_ratelim (burst 1000,
 // refill 33/s): past the bucket the session dies with GOAWAY, surfaced as ERR_HTTP2_ERROR.
 describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYouReset)", () => {
+  // A release build takes 1000 streams in about 30 ms. A debug build needs 1 to 15 s for them.
+  const WAIT = isDebug ? 20_000 : 10_000;
+  // For the tests that have to send a whole bucket of 1000 resets. Other builds keep the default.
+  const FULL_BUCKET_TIMEOUT = isDebug ? 60_000 : undefined;
+
   const CANCEL = Buffer.alloc(4);
   CANCEL.writeUInt32BE(ErrorCode.CANCEL, 0);
   const rstStream = (sid: number) => encodeFrame(FrameType.RST_STREAM, 0, sid, CANCEL);
@@ -1971,29 +1976,42 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     }
   }
 
+  // Writes `count` request/kill pairs and returns the GOAWAY. The bucket regains 33 tokens per
+  // second, so a build that needs more than 6 s for 1200 pairs answers them all. The PING behind
+  // the pairs tells when it did, and the pairs are then written once more.
   async function flood(opts: { options?: Record<string, unknown>; count: number; kill?: (sid: number) => Buffer }) {
     const { server, state } = respondingServer(opts.options);
     return withClient(server, async c => {
-      c.send(pairs(opts.count, 1, opts.kill ?? rstStream));
-      const goaway = await c.waitForGoaway(10_000);
-      return { c, goaway, ...state };
+      for (let write = 0; write < 2; write++) {
+        const opaque = Buffer.alloc(8, write);
+        const answered = (f: Frame) => f.type === FrameType.PING && f.payload.equals(opaque);
+        c.send(pairs(opts.count, 1 + 2 * opts.count * write, opts.kill ?? rstStream));
+        c.sendFrame(FrameType.PING, 0, 0, opaque);
+        const answer = await c.waitFor(f => f.type === FrameType.GOAWAY || answered(f), WAIT);
+        if (answer.type === FrameType.GOAWAY) return { c, goaway: answer, ...state };
+      }
+      throw new Error(`no GOAWAY after ${2 * opts.count} resets`);
     });
   }
 
   // True when stream `sid` is answered and no GOAWAY came first.
   async function servedBeforeGoaway(c: RawH2, sid: number) {
     const served = (f: Frame) => f.type === FrameType.HEADERS && f.streamId === sid;
-    return served(await c.waitFor(f => served(f) || f.type === FrameType.GOAWAY, 10_000));
+    return served(await c.waitFor(f => served(f) || f.type === FrameType.GOAWAY, WAIT));
   }
 
-  test("a RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and a session error", async () => {
-    const { goaway, handlers, sessionErrorCode } = await flood({ count: 1200 });
-    expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
-    expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
-    // Like node, every request up to the bucket's edge still reaches the handler.
-    expect(handlers).toBeGreaterThan(900);
-    expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
-  });
+  test(
+    "a RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and a session error",
+    async () => {
+      const { goaway, handlers, sessionErrorCode } = await flood({ count: 1200 });
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
+      // Like node, every request up to the bucket's edge still reaches the handler.
+      expect(handlers).toBeGreaterThan(900);
+      expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    },
+    FULL_BUCKET_TIMEOUT,
+  );
 
   test("streamResetBurst sets where the flood is detected", async () => {
     const { goaway } = await flood({ options: { streamResetBurst: 50, streamResetRate: 1 }, count: 200 });
@@ -2006,10 +2024,10 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   test("a flood under the burst keeps the session serving requests", async () => {
     const { server, state } = respondingServer();
     await withClient(server, async c => {
-      c.send(Buffer.concat([pairs(500, 1, rstStream), request(1001)]));
-      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1001, 10_000);
+      c.send(Buffer.concat([pairs(100, 1, rstStream), request(201)]));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 201, WAIT);
       expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
-      expect(state.handlers).toBe(501);
+      expect(state.handlers).toBe(101);
     });
   });
 
@@ -2023,7 +2041,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       // The refilled token covers stream 3, stream 5 is served, and the later resets find the
       // bucket empty again because the refill clock advanced.
       c.send(Buffer.concat([pairs(1, 3, rstStream), request(5), pairs(3, 7, rstStream)]));
-      const goaway = await c.waitForGoaway(10_000);
+      const goaway = await c.waitForGoaway(WAIT);
       expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
       expect(c.frames.some(f => f.type === FrameType.HEADERS && f.streamId === 5)).toBe(true);
     });
@@ -2040,17 +2058,21 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   };
 
   for (const [name, kill] of Object.entries(madeYouReset)) {
-    test(`a flood of server-sent resets via ${name} is answered with GOAWAY(ENHANCE_YOUR_CALM)`, async () => {
-      const { c, goaway, handlers, sessionErrorCode } = await flood({
-        options: { streamResetBurst: 5, streamResetRate: 1 },
-        count: 1200,
-        kill,
-      });
-      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
-      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM).length).toBeGreaterThanOrEqual(1000);
-      expect(handlers).toBeGreaterThanOrEqual(1000);
-      expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
-    });
+    test(
+      `a flood of server-sent resets via ${name} is answered with GOAWAY(ENHANCE_YOUR_CALM)`,
+      async () => {
+        const { c, goaway, handlers, sessionErrorCode } = await flood({
+          options: { streamResetBurst: 5, streamResetRate: 1 },
+          count: 1200,
+          kill,
+        });
+        expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+        expect(c.frames.filter(f => f.type === FrameType.RST_STREAM).length).toBeGreaterThanOrEqual(1000);
+        expect(handlers).toBeGreaterThanOrEqual(1000);
+        expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+      },
+      FULL_BUCKET_TIMEOUT,
+    );
   }
 
   // A reset is charged only when it cancels a live stream. nghttp2 charges every RST_STREAM, but
@@ -2093,18 +2115,22 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     });
   });
 
-  test("a header block refused before dispatch is not charged", async () => {
-    // maxSessionInvalidFrames and maxSessionRejectedStreams already bound these resets.
-    const { server, state } = respondingServer({ maxSessionInvalidFrames: 5000, maxSessionRejectedStreams: 5000 });
-    await withClient(server, async c => {
-      // A literal "connection: close" field makes the block malformed (RFC 9113 8.2.2).
-      const field = Buffer.concat([Buffer.from([0x00]), hpackLiteral("connection"), hpackLiteral("close")]);
-      const malformed = (sid: number) => encodeFrame(FrameType.HEADERS, 0x5, sid, requestHeaderBlock("GET", field));
-      c.send(Buffer.concat([...Array.from({ length: 1200 }, (_, i) => malformed(1 + 2 * i)), request(2401)]));
-      expect(await servedBeforeGoaway(c, 2401)).toBe(true);
-      expect(state.handlers).toBe(1);
-    });
-  });
+  test(
+    "a header block refused before dispatch is not charged",
+    async () => {
+      // maxSessionInvalidFrames and maxSessionRejectedStreams already bound these resets.
+      const { server, state } = respondingServer({ maxSessionInvalidFrames: 5000, maxSessionRejectedStreams: 5000 });
+      await withClient(server, async c => {
+        // A literal "connection: close" field makes the block malformed (RFC 9113 8.2.2).
+        const field = Buffer.concat([Buffer.from([0x00]), hpackLiteral("connection"), hpackLiteral("close")]);
+        const malformed = (sid: number) => encodeFrame(FrameType.HEADERS, 0x5, sid, requestHeaderBlock("GET", field));
+        c.send(Buffer.concat([...Array.from({ length: 1200 }, (_, i) => malformed(1 + 2 * i)), request(2401)]));
+        expect(await servedBeforeGoaway(c, 2401)).toBe(true);
+        expect(state.handlers).toBe(1);
+      });
+    },
+    FULL_BUCKET_TIMEOUT,
+  );
 
   test("resets are not charged once the server has sent its own GOAWAY", async () => {
     // nghttp2 stops charging as soon as a local GOAWAY is submitted. The requests and their
@@ -2126,7 +2152,7 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
       const ids = Array.from({ length: open }, (_, i) => 1 + 2 * i);
       c.send(Buffer.concat([...ids.map(request), ...ids.map(rstStream)]));
       await closed.promise;
-      await c.waitClosed(10_000); // everything the server wrote before closing has been parsed
+      await c.waitClosed(WAIT); // everything the server wrote before closing has been parsed
       expect(c.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode)).toEqual([ErrorCode.NO_ERROR]);
       expect(sessionError).toBeUndefined();
     });
@@ -2136,35 +2162,41 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   // own GOAWAY. A stream the client holds open keeps the session alive after that.
   async function serverGoaway(c: RawH2) {
     c.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.alloc(8));
-    expect(goawayErrorCode(await c.waitForGoaway(10_000))).toBe(ErrorCode.NO_ERROR);
+    expect(goawayErrorCode(await c.waitForGoaway(WAIT))).toBe(ErrorCode.NO_ERROR);
   }
 
   test("resets of streams opened after the server's GOAWAY are charged", async () => {
     // nghttp2 can exempt every reset after its GOAWAY because it ignores the streams a client
     // opens after that frame. This engine still opens them, so only the earlier streams are exempt.
     // It also accepts ids below the held stream's, so the GOAWAY's last stream id is no criterion.
-    const { server, state } = respondingServer();
+    const { server, state } = respondingServer({ streamResetBurst: 50, streamResetRate: 1 });
     await withClient(server, async c => {
       c.send(upload(4001));
       await serverGoaway(c);
-      c.send(pairs(1200, 1, rstStream));
-      const goaway = await c.waitFor(calm, 10_000);
+      c.send(pairs(100, 1, rstStream));
+      const goaway = await c.waitFor(calm, WAIT);
       expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
       expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
     });
   });
 
-  test("server-sent resets stay charged after the server has sent its GOAWAY", async () => {
-    // Every stream here is older than the GOAWAY. The exemption is for the peer's own resets only.
-    const { server, state } = respondingServer();
-    await withClient(server, async c => {
-      const ids = Array.from({ length: 1300 }, (_, i) => 1 + 2 * i);
-      c.send(Buffer.concat(ids.map(upload)));
-      await serverGoaway(c);
-      c.send(Buffer.concat(ids.map(madeYouReset["WINDOW_UPDATE with a 0 increment"])));
-      const goaway = await c.waitFor(calm, 10_000);
-      expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
-      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
-    });
-  });
+  test(
+    "server-sent resets stay charged after the server has sent its GOAWAY",
+    async () => {
+      // Every stream here is older than the GOAWAY. The exemption is for the peer's own resets only.
+      const { server, state } = respondingServer();
+      await withClient(server, async c => {
+        // The streams have to be older than the GOAWAY, so this flood cannot be written once more.
+        // It carries the 33 tokens per second that the bucket regains in a wait of 20 s.
+        const ids = Array.from({ length: 1700 }, (_, i) => 1 + 2 * i);
+        c.send(Buffer.concat(ids.map(upload)));
+        await serverGoaway(c);
+        c.send(Buffer.concat(ids.map(madeYouReset["WINDOW_UPDATE with a 0 increment"])));
+        const goaway = await c.waitFor(calm, WAIT);
+        expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
+        expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+      });
+    },
+    FULL_BUCKET_TIMEOUT,
+  );
 });

@@ -928,6 +928,268 @@ impl LeadsBack {
     }
 }
 
+/// The load class of each live JS file. Rule 1 folds the files of a class into one chunk.
+struct FileClasses {
+    /// Per file: the index of its class (`u32::MAX`: not a live JS file).
+    of_file: Vec<u32>,
+    bits: Vec<AutoBitSet>,
+    files: Vec<Vec<u32>>,
+}
+
+impl FileClasses {
+    fn new(
+        this: &LinkerContext,
+        load_class: &mut impl FnMut(&AutoBitSet) -> crate::Result<AutoBitSet>,
+    ) -> crate::Result<FileClasses> {
+        let entry_points_len = this.graph.entry_points.len();
+        let keys = this.graph.files.items_entry_bits();
+        let css = this.graph.ast.items_css();
+        let mut classes = FileClasses {
+            of_file: vec![u32::MAX; keys.len()],
+            bits: Vec::new(),
+            files: Vec::new(),
+        };
+        let mut of_key: ArrayHashMap<&[u8], u32> = ArrayHashMap::new();
+        let mut of_bits: ArrayHashMap<Box<[u8]>, u32> = ArrayHashMap::new();
+        for source_index in this.graph.reachable_files.iter() {
+            let file = source_index.get();
+            if !this.graph.files_live.is_set(file as usize) || css[file as usize].is_some() {
+                continue;
+            }
+            let key = keys[file as usize].bytes(entry_points_len);
+            let class = match of_key.get(&key) {
+                Some(&class) => class,
+                None => {
+                    let bits = load_class(&keys[file as usize])?;
+                    let class = match of_bits.entry(bits.bytes(entry_points_len).into()) {
+                        MapEntry::Occupied(known) => *known.get(),
+                        MapEntry::Vacant(new) => {
+                            let class = classes.bits.len() as u32;
+                            new.insert(class);
+                            classes.bits.push(bits);
+                            classes.files.push(Vec::new());
+                            class
+                        }
+                    };
+                    of_key.put(key, class)?;
+                    class
+                }
+            };
+            classes.of_file[file as usize] = class;
+            classes.files[class as usize].push(file);
+        }
+        Ok(classes)
+    }
+
+    /// `inert_chunks`, asked of the chunk that `class` folds into. A file has to only declare, and a chunk that has run when entry point `entry_id` loads runs nothing.
+    fn is_inert(
+        &self,
+        this: &LinkerContext,
+        known: &mut [Option<bool>],
+        entry_id: usize,
+        class: u32,
+    ) -> bool {
+        if let Some(inert) = known[class as usize] {
+            return inert;
+        }
+        // The classes that `class` leads to. They are inert when it is.
+        let mut reached = vec![class];
+        known[class as usize] = Some(true);
+        let mut inert = true;
+        let mut next = 0;
+        'classes: while let Some(&from) = reached.get(next) {
+            next += 1;
+            for &file in &self.files[from as usize] {
+                if !this.loading_file_only_declares(file) {
+                    inert = false;
+                    break 'classes;
+                }
+                this.for_each_file_loaded_by(file, |other| {
+                    let other = self.of_file[other as usize];
+                    if other == u32::MAX || !self.bits[other as usize].is_set(entry_id) {
+                        return;
+                    }
+                    match known[other as usize] {
+                        Some(verdict) => inert = inert && verdict,
+                        None => {
+                            known[other as usize] = Some(true);
+                            reached.push(other);
+                        }
+                    }
+                });
+                if !inert {
+                    break 'classes;
+                }
+            }
+        }
+        if !inert {
+            for &other in &reached {
+                known[other as usize] = None;
+            }
+            known[class as usize] = Some(false);
+        }
+        inert
+    }
+
+    /// Per class: a file that lives in the parent chunk of entry point `entry_id` uses a symbol of the class, as `CrossChunkDependencies::walk` sees it.
+    fn bound_by_parent(&self, this: &LinkerContext, entry_id: usize) -> crate::Result<AutoBitSet> {
+        let mut bound = AutoBitSet::init_empty(self.bits.len())?;
+        let keys = this.graph.files.items_entry_bits();
+        let parts = this.graph.ast.items_parts();
+        let flags = this.graph.meta.items_flags();
+        let wrapper_refs = this.graph.ast.items_wrapper_ref();
+        let imports_to_bind = this.graph.meta.items_imports_to_bind();
+        let symbols = &this.graph.symbols;
+        for (class, bits) in self.bits.iter().enumerate() {
+            if bits.count() != 1 || !bits.is_set(entry_id) {
+                continue;
+            }
+            for &file in &self.files[class] {
+                // A file with one bit is an own file. It lives in the chunk of the entry point.
+                if keys[file as usize].count() == 1 {
+                    continue;
+                }
+                let parts_live = &this.graph.parts_live[file as usize];
+                for (part_index, part) in parts[file as usize].as_slice().iter().enumerate() {
+                    if !parts_live.is_set(part_index) {
+                        continue;
+                    }
+                    for &used in part.symbol_uses.keys() {
+                        let mut used = used;
+                        let Some(mut symbol) = symbols.get_const(used) else {
+                            continue;
+                        };
+                        if symbol.kind == bun_ast::symbol::Kind::Unbound
+                            || symbol.import_item_status == bun_ast::ImportItemStatus::Missing
+                        {
+                            continue;
+                        }
+                        if let Some(import) = imports_to_bind[file as usize].get(&used) {
+                            used = import.data.import_ref;
+                            let Some(imported) = symbols.get_const(used) else {
+                                continue;
+                            };
+                            symbol = imported;
+                        } else if flags[file as usize].wrap == WrapKind::Cjs
+                            && used.eql(wrapper_refs[file as usize])
+                        {
+                            continue;
+                        }
+                        if let Some(namespace_alias) = &symbol.namespace_alias {
+                            used = namespace_alias.namespace_ref;
+                        }
+                        if let Some(&other) = self.of_file.get(used.source_index() as usize)
+                            && other != u32::MAX
+                        {
+                            bound.set(other as usize);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(bound)
+    }
+}
+
+/// Says whether the parent chunk of a pinned entry point may load a file of another class. A chunk that runs something when it loads would run ahead of the whole parent chunk.
+struct ParentGuard {
+    classes: Option<FileClasses>,
+    /// Files of a parent chunk behind a run point that the guard turned down. They do not rank their chunk again.
+    ranks_once: AutoBitSet,
+    entry_id: usize,
+    /// Per class, once asked: `FileClasses::is_inert`.
+    inert: Vec<Option<bool>>,
+    /// `FileClasses::bound_by_parent`. The parent chunk imports the chunk of such a class as it is.
+    bound: Option<AutoBitSet>,
+    /// Per class: one of its files runs ahead of every file of the parent chunk that runs.
+    ahead: Option<AutoBitSet>,
+}
+
+impl ParentGuard {
+    fn new(files_len: usize) -> crate::Result<ParentGuard> {
+        Ok(ParentGuard {
+            classes: None,
+            ranks_once: AutoBitSet::init_empty(files_len)?,
+            entry_id: 0,
+            inert: Vec::new(),
+            bound: None,
+            ahead: None,
+        })
+    }
+
+    /// The verdicts are those of one pinned entry point.
+    fn enter(&mut self, entry_id: usize) {
+        self.entry_id = entry_id;
+        self.inert.clear();
+        self.bound = None;
+        self.ahead = None;
+    }
+
+    /// The chunk of `file` is the parent chunk, has run when the entry point loads, runs nothing, or is imported by the parent chunk as it is.
+    fn allows(
+        &mut self,
+        this: &LinkerContext,
+        load_class: &mut impl FnMut(&AutoBitSet) -> crate::Result<AutoBitSet>,
+        file: u32,
+    ) -> crate::Result<bool> {
+        let classes = match &mut self.classes {
+            Some(classes) => classes,
+            classes => classes.insert(FileClasses::new(this, load_class)?),
+        };
+        let class = classes.of_file[file as usize];
+        if class == u32::MAX {
+            return Ok(true);
+        }
+        let bits = &classes.bits[class as usize];
+        if !bits.is_set(self.entry_id) || bits.count() == 1 {
+            return Ok(true);
+        }
+        self.inert.resize(classes.bits.len(), None);
+        if classes.is_inert(this, &mut self.inert, self.entry_id, class) {
+            return Ok(true);
+        }
+        let bound = match &mut self.bound {
+            Some(bound) => bound,
+            bound => bound.insert(classes.bound_by_parent(this, self.entry_id)?),
+        };
+        Ok(bound.is_set(class as usize))
+    }
+
+    /// The chunk of `file` ranks ahead of the parent chunk as it is: a file of its class runs and is one of `ahead_of_parent`, or one that such a file loads.
+    fn runs_ahead(
+        &mut self,
+        this: &LinkerContext,
+        ahead_of_parent: impl Iterator<Item = u32>,
+        file: u32,
+    ) -> crate::Result<bool> {
+        let Some(classes) = &self.classes else {
+            return Ok(false);
+        };
+        let ahead = match &mut self.ahead {
+            Some(ahead) => ahead,
+            ahead => {
+                let mut runs = AutoBitSet::init_empty(classes.bits.len())?;
+                let mut seen = AutoBitSet::init_empty(classes.of_file.len())?;
+                let mut stack: Vec<u32> = ahead_of_parent.collect();
+                while let Some(from) = stack.pop() {
+                    let class = classes.of_file[from as usize];
+                    if class == u32::MAX || seen.is_set(from as usize) {
+                        continue;
+                    }
+                    seen.set(from as usize);
+                    if !this.loading_file_only_declares(from) {
+                        runs.set(class as usize);
+                    }
+                    this.for_each_file_loaded_by(from, |other| stack.push(other));
+                }
+                ahead.insert(runs)
+            }
+        };
+        let class = classes.of_file[file as usize];
+        Ok(class != u32::MAX && ahead.is_set(class as usize))
+    }
+}
+
 /// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the entry point's own files that must run before a file of the parent. `starts` gets (entry point id, wrapped file) per start that the parent must make for a file that stays.
 fn files_that_leave_entry_chunk(
     this: &LinkerContext,
@@ -936,7 +1198,9 @@ fn files_that_leave_entry_chunk(
     entered: &mut [u32],
     leaves: &mut AutoBitSet,
     starts: &mut Vec<(u32, u32)>,
+    guard: &mut ParentGuard,
 ) -> crate::Result<()> {
+    guard.enter(entry_id);
     let entry_points_len = this.graph.entry_points.len();
     let entry_source = this.graph.entry_points.items_source_index()[entry_id];
     let bits = this.graph.files.items_entry_bits();
@@ -956,8 +1220,8 @@ fn files_that_leave_entry_chunk(
     // The own files that make a start, and those of them that run nothing else.
     let mut makes_start: ArrayHashMap<u32, ()> = ArrayHashMap::new();
     let mut only_starts: ArrayHashMap<u32, ()> = ArrayHashMap::new();
-    // The wrapped files of another class.
-    let mut outside: ArrayHashMap<u32, ()> = ArrayHashMap::new();
+    // The files of another class that the walk met, each with the count of the run points ahead of it.
+    let mut outside: ArrayHashMap<u32, usize> = ArrayHashMap::new();
     // The external imports of the file that the walk is in: (part, edges that the part makes ahead of the import).
     let mut externals: Vec<(u32, u32)> = Vec::new();
     let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
@@ -1012,9 +1276,7 @@ fn files_that_leave_entry_chunk(
             };
             // A chunk of another class runs before both, and so does what it imports.
             if !in_class {
-                if flags[file as usize].wrap != WrapKind::None {
-                    outside.put(file, ())?;
-                }
+                outside.put(file, points.len())?;
                 continue;
             }
         }
@@ -1102,13 +1364,23 @@ fn files_that_leave_entry_chunk(
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
     let mut later: Vec<u32> = Vec::new();
+    let mut asked: Vec<u32> = Vec::new();
+    // The first file of the parent that runs. A file that moves loads a file that the source runs behind it only when the guard allows that.
+    let first_parent = points
+        .iter()
+        .position(|point| matches!(point, RunPoint::Parent(_)))
+        .unwrap_or(points.len());
     let mut next = 0;
     'list: while next < cut {
         taken.clear();
         let repeated_before = repeated.len();
+        let first = next;
         let mut end = next + 1;
         while next < end {
             let mut stuck = false;
+            let mut turned_down = false;
+            // The files move for a start that the parent makes. The guard has to allow every file that they load.
+            let mut strict = false;
             match points[next] {
                 RunPoint::Own(file) => {
                     // Such a file stays and the list goes on: the parent makes its calls.
@@ -1155,10 +1427,13 @@ fn files_that_leave_entry_chunk(
                     }
                     if stays {
                         if !own(wrapped) {
-                            stuck = outside.contains(&wrapped);
+                            turned_down = outside.contains(&wrapped)
+                                && !guard.allows(this, load_class, wrapped)?;
+                            stuck = turned_down;
                         } else if leads_back.leads_back_to_entry(this, &own, wrapped)? {
                             stuck = true;
                         } else {
+                            strict = true;
                             pending.push(wrapped);
                         }
                         if !stuck {
@@ -1178,8 +1453,15 @@ fn files_that_leave_entry_chunk(
                 leaves.set(file as usize);
                 taken.push(file);
                 this.for_each_file_loaded_by(file, |other| {
-                    if !own(other) || css[other as usize].is_some() || leaves.is_set(other as usize)
-                    {
+                    if !own(other) {
+                        if let Some(&ahead_of) = outside.get(&other)
+                            && (strict || ahead_of > first_parent)
+                        {
+                            asked.push(other);
+                        }
+                        return;
+                    }
+                    if css[other as usize].is_some() || leaves.is_set(other as usize) {
                         return;
                     }
                     if other == entry_source {
@@ -1190,6 +1472,23 @@ fn files_that_leave_entry_chunk(
                         later.push(other);
                     }
                 });
+                for other in asked.drain(..) {
+                    if !stuck
+                        && !guard.allows(this, load_class, other)?
+                        && (strict
+                            || !guard.runs_ahead(
+                                this,
+                                outside
+                                    .iter()
+                                    .filter(|&(_, &ahead_of)| ahead_of <= first_parent)
+                                    .map(|(&met, _)| met),
+                                other,
+                            )?)
+                    {
+                        turned_down = true;
+                        stuck = true;
+                    }
+                }
                 if !later.is_empty() {
                     index_own_files(&points, &mut position)?;
                 }
@@ -1208,6 +1507,14 @@ fn files_that_leave_entry_chunk(
                     leaves.unset(file as usize);
                 }
                 repeated.truncate(repeated_before);
+                // A file of the parent behind the run point does not rank the parent again: a chunk that the walk reaches in between stays behind the parent.
+                if turned_down {
+                    for point in &points[first..] {
+                        if let RunPoint::Parent(file) = *point {
+                            guard.ranks_once.set(file as usize);
+                        }
+                    }
+                }
                 break 'list;
             }
         }
@@ -1524,6 +1831,7 @@ pub(crate) fn merge_small_chunks(
     };
     let mut leaves_entry_chunk = AutoBitSet::init_empty(files_len)?;
     let mut starts_in_parent: Vec<(u32, u32)> = Vec::new();
+    let mut guard = ParentGuard::new(files_len)?;
     {
         // Only an entry point that precedes an `import()` target has a class with a parent.
         let mut precedes = AutoBitSet::init_empty(entry_points_len + 1)?;
@@ -1545,6 +1853,7 @@ pub(crate) fn merge_small_chunks(
                     entered,
                     &mut leaves_entry_chunk,
                     &mut starts_in_parent,
+                    &mut guard,
                 )?;
             }
         }
@@ -1781,7 +2090,7 @@ pub(crate) fn merge_small_chunks(
         }
     }
     if !fold_pure {
-        rekey_files(this, group_of_file, groups.values())?;
+        rekey_files(this, group_of_file, groups.values(), &guard.ranks_once)?;
         debug!(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
@@ -2176,7 +2485,7 @@ pub(crate) fn merge_small_chunks(
         this.inits_already_done = Some(done);
     }
 
-    rekey_files(this, group_of_file, groups)?;
+    rekey_files(this, group_of_file, groups, &guard.ranks_once)?;
     debug!(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
         folded_same, folded_pure, passes, min_chunk_size
@@ -2188,11 +2497,13 @@ fn rekey_files(
     this: &mut LinkerContext,
     group_of_file: &[usize],
     groups: &[Group],
+    ranks_once: &AutoBitSet,
 ) -> crate::Result<()> {
     let mut ranks_chunk_again = AutoBitSet::init_empty(group_of_file.len())?;
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index != usize::MAX
             && groups[resolve(groups, group_index)].parent_of_pinned_entry
+            && !ranks_once.is_set(source_index)
             && !this.loading_file_only_declares(source_index as u32)
         {
             ranks_chunk_again.set(source_index);

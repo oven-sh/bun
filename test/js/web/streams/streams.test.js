@@ -703,6 +703,19 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
       chunks: () => ["a\uD800b", new TextEncoder().encode("c")],
       text: "a\uFFFDbc",
     },
+    "lone surrogate in a string chunk after bytes": {
+      chunks: () => [new TextEncoder().encode("c"), "a\uD800b"],
+      text: "ca\uFFFDb",
+    },
+    "a surrogate pair split across string chunks": { chunks: () => ["\uD83D", "\uDE00"], text: "\u{1F600}" },
+    "Latin-1 strings then a 16-bit string": {
+      chunks: () => ["caf\u00E9", "\u4F60\u597D"],
+      text: "caf\u00E9\u4F60\u597D",
+    },
+    "empty chunks": {
+      chunks: () => ["", "a", new Uint8Array(0), "", new TextEncoder().encode("b"), ""],
+      text: "ab",
+    },
   };
   for (const [name, { chunks, text }] of Object.entries(textCases)) {
     it(`text: ${name}`, async () => {
@@ -711,7 +724,6 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   }
 
-  // The same chunks through the text sink of a direct stream.
   const directSource = chunks =>
     new ReadableStream({
       type: "direct",
@@ -720,50 +732,12 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
         controller.end();
       },
     });
+  // A direct stream keeps the BOM of this case. Other streams remove it.
+  const { "a BOM string chunk before bytes": _, ...sharedTextCases } = textCases;
   const directTextCases = {
-    "only strings": { chunks: () => ["hé", "llo"], text: "héllo" },
-    "Latin-1 strings then a 16-bit string": {
-      chunks: () => ["caf\u00E9", "\u4F60\u597D"],
-      text: "caf\u00E9\u4F60\u597D",
-    },
-    "only bytes": {
-      chunks: () => [new TextEncoder().encode("a\u00e9"), new TextEncoder().encode("b")],
-      text: "aéb",
-    },
-    "strings and bytes in turns": {
-      chunks: () => ["1", new TextEncoder().encode("2"), "3", new TextEncoder().encode("4"), "5"],
-      text: "12345",
-    },
-    "strings then an ArrayBuffer": {
-      chunks: () => ["ab", "cd", new TextEncoder().encode("ef").buffer],
-      text: "abcdef",
-    },
-    "16-bit strings then bytes": {
-      chunks: () => ["\u4F60", "\u597D", new TextEncoder().encode("!")],
-      text: "\u4F60\u597D!",
-    },
-    "empty chunks": {
-      chunks: () => ["", "a", new Uint8Array(0), "", new TextEncoder().encode("b"), ""],
-      text: "ab",
-    },
-    "single string with a BOM": { chunks: () => ["\uFEFFabc"], text: "abc" },
+    ...sharedTextCases,
+    // A direct stream removes one BOM here. Other streams remove two.
     "a BOM split across string chunks": { chunks: () => ["\uFEFF", "\uFEFFabc"], text: "\uFEFFabc" },
-    "a BOM string chunk after bytes": { chunks: () => [new TextEncoder().encode("ab"), "\uFEFFcd"], text: "abcd" },
-    "lone surrogate in a string chunk": { chunks: () => ["a\uD800b"], text: "a\uD800b" },
-    "lone surrogate in a string chunk before bytes": {
-      chunks: () => ["a\uD800b", new TextEncoder().encode("c")],
-      text: "a\uFFFDbc",
-    },
-    "lone surrogate in a string chunk after bytes": {
-      chunks: () => [new TextEncoder().encode("c"), "a\uD800b"],
-      text: "ca\uFFFDb",
-    },
-    "a surrogate pair split across string chunks": { chunks: () => ["\uD83D", "\uDE00"], text: "\u{1F600}" },
-    "a surrogate pair split across string chunks after bytes": {
-      chunks: () => [new TextEncoder().encode("x"), "\uD83D", "\uDE00"],
-      text: "x\u{1F600}",
-    },
-    "invalid UTF-8 bytes": { chunks: () => [new Uint8Array([0x61, 0xff, 0x62])], text: "a\uFFFDb" },
   };
   for (const [name, { chunks, text }] of Object.entries(directTextCases)) {
     it(`direct stream text: ${name}`, async () => {

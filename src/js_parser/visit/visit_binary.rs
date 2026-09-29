@@ -119,9 +119,16 @@ impl BinaryExpressionVisitor {
             matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
+        let is_named_assignment = matches!(
+            e_.op,
+            Op::Code::BinAssign
+                | Op::Code::BinNullishCoalescingAssign
+                | Op::Code::BinLogicalOrAssign
+                | Op::Code::BinLogicalAndAssign
+        ) && was_anonymous_named_expr;
 
         // Propagate name for anonymous decorated class expressions in assignments
-        if e_.op == Op::Code::BinAssign && was_anonymous_named_expr {
+        if is_named_assignment {
             if let ExprData::EClass(class) = &e_.right.data {
                 if class.should_lower_standard_decorators {
                     if let ExprData::EIdentifier(ident) = e_.left.data {
@@ -662,19 +669,6 @@ impl BinaryExpressionVisitor {
             }
 
             // ---------------------------------------------------------------------------------------------------
-            Op::Code::BinAssign => {
-                // Optionally preserve the name
-                if let ExprData::EIdentifier(ident) = e_.left.data {
-                    // reshaped for borrowck — copy the `StoreStr` out of
-                    // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
-                    let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
-                    e_.right = p.maybe_keep_expr_symbol_name(
-                        e_.right,
-                        name.slice(),
-                        was_anonymous_named_expr,
-                    );
-                }
-            }
             Op::Code::BinNullishCoalescingAssign | Op::Code::BinLogicalOrAssign => {
                 // Special case `{}.field ??= value` to minify to `value`
                 // This optimization is specifically to target this pattern in HMR:
@@ -690,6 +684,13 @@ impl BinaryExpressionVisitor {
                 }
             }
             _ => {}
+        }
+
+        if is_named_assignment {
+            if let ExprData::EIdentifier(ident) = e_.left.data {
+                let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
+                e_.right = p.keep_expr_symbol_name(e_.right, name.slice());
+            }
         }
 
         Expr {

@@ -5284,6 +5284,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_: Ref,
         name: &'a [u8],
     ) -> Stmt {
+        // The minifier must see this synthetic read before inlining the binding.
+        self.record_usage(ref_);
         let name_expr = self.new_expr(E::String::init(name), loc);
         let args = self
             .arena

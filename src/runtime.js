@@ -110,11 +110,14 @@ var __moduleCache;
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
 export var __name = (target, name) => {
-  Object.defineProperty(target, "name", {
-    value: name,
-    enumerable: false,
-    configurable: true,
-  });
+  // Preserve user-defined static methods and accessors named `name`.
+  var desc = __getOwnPropDesc(target, "name");
+  if (!desc || (desc.writable === false && desc.configurable))
+    Object.defineProperty(target, "name", {
+      value: name,
+      enumerable: false,
+      configurable: true,
+    });
 
   return target;
 };

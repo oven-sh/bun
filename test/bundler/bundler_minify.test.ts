@@ -172,6 +172,66 @@ describe("bundler", () => {
     keepNames: true,
     target: "bun",
   });
+  itBundled("minify/KeepNamesBlockFunctionBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        { function Foo() {} console.log(Foo.name); }
+        export {};
+      `,
+    },
+    run: { stdout: "Foo" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesNoBundleBun", {
+    files: {
+      "/entry.js": /* js */ `
+        function outer() { function nestedName() {} return nestedName.name; }
+        console.log(outer());
+      `,
+    },
+    bundling: false,
+    run: { stdout: "nestedName" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesLogicalAssignment", {
+    files: {
+      "/entry.js": /* js */ `
+        let fnNullish, clsOr, fnAnd = true;
+        fnNullish ??= () => {};
+        clsOr ||= class {};
+        fnAnd &&= function() {};
+        console.log(fnNullish.name, clsOr.name, fnAnd.name);
+      `,
+    },
+    run: { stdout: "fnNullish clsOr fnAnd" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesDecoratedClassLockedName", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(value) {
+          Object.defineProperty(value, "name", { value: "locked", configurable: false });
+          return value;
+        }
+        const Model = @dec class {};
+        console.log(Model.name);
+      `,
+    },
+    run: { stdout: "locked" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
   itBundled("minify/KeepNamesTreeShakesUnused", {
     files: {
       "/entry.js": /* js */ `
@@ -185,6 +245,40 @@ describe("bundler", () => {
     dce: true,
     dceKeepMarkerCount: false,
     minifySyntax: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesSplittingDynamicImport", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Model } from "./model.ts";
+        const mod = await import("./model.ts");
+        console.log(Model.name, mod.Model === Model);
+      `,
+      "/model.ts": `export class Model {}`,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+    run: { file: "/out/entry.js", stdout: "Model true" },
+  });
+  itBundled("minify/KeepNamesStaticNameMember", {
+    files: {
+      "/entry.js": /* js */ `
+        const key = globalThis.String("name");
+        class Method { static name() { return "method"; } }
+        class Accessor { static get [key]() { return "getter"; } }
+        class Field { static [key] = "field"; }
+        console.log(Method.name(), Accessor.name, Field.name);
+      `,
+    },
+    run: { stdout: "method getter field" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
     keepNames: true,
     target: "bun",
   });

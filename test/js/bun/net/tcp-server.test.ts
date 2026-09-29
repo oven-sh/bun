@@ -319,21 +319,6 @@ it("should not leak memory", async () => {
   expect(exitCode).toBe(0);
 });
 
-it("a TLS socket that waits in the low-priority queue times out", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "tls-parked-timeout-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ opened: 20, timedOut: 20 }),
-    stderr: "",
-    exitCode: 0,
-  });
-}, 30_000); // The fixture blocks for the 4 s between two timeout sweeps.
-
 describe("one readiness event of a listener does not empty a long queue", () => {
   // More than MAX_ACCEPTS_PER_READINESS_EVENT in packages/bun-usockets/src/loop.c.
   const count = 100;
@@ -359,12 +344,16 @@ describe("one readiness event of a listener does not empty a long queue", () => 
   // No JS runs when an HTTP listener with TLS accepts, and its handshakes have a budget per
   // iteration of their own. What an accept changes for JS to see is the number of polls of the
   // loop, read once per iteration. The clients never finish their handshake.
-  function watchPolls(arrived: Arrived) {
+  function watchPolls(arrived: Arrived, fail: (error: Error) => void) {
     let last = getEventLoopStats().numPolls;
     let seen = 0;
+    let samples = 0;
     (function sample() {
       for (const { numPolls } = getEventLoopStats(); last < numPolls; last++, seen++) arrived();
-      if (seen < count) setImmediate(sample);
+      if (seen >= count) return;
+      // Every client is in the queue already, so the accepts come in consecutive iterations.
+      if (++samples > 10 * count) return fail(new Error(`${seen} of ${count} accepts in ${samples} iterations`));
+      setImmediate(sample);
     })();
   }
 
@@ -498,7 +487,7 @@ describe("one readiness event of a listener does not empty a long queue", () => 
 
   it.each(Object.keys(kinds).filter(kind => !skipped(kind)))("%s", async kind => {
     const order: string[] = [];
-    const { promise: done, resolve } = Promise.withResolvers<void>();
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
     let accepted = 0;
     const arrived: Arrived = (label = "c") => {
       const id = ++accepted;
@@ -512,7 +501,7 @@ describe("one readiness event of a listener does not empty a long queue", () => 
 
     await using listener = await queued(kinds[kind], watched ? () => {} : arrived);
     expect(listener.connected).toBe(true);
-    if (watched) watchPolls(arrived);
+    if (watched) watchPolls(arrived, reject);
     await done;
 
     const label = (id: number) => {

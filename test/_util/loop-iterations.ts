@@ -61,7 +61,7 @@ export async function firstUsable<T extends object>(
 ) {
   const deadline = performance.now() + seconds * 1000;
   for (let attempt = 1; ; attempt++) {
-    const secondsLeft = Math.max(1, (deadline - performance.now()) / 1000);
+    const secondsLeft = Math.max(0, (deadline - performance.now()) / 1000);
     const run = await scenario(secondsLeft);
     if (usable(run) || attempt === attempts || performance.now() > deadline) return { ...run, attempt };
   }

@@ -100,8 +100,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_WROTE_DATE_HEADER = 64, // used
         HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128, // used
 
-        /* The request was HTTP/1.0 or older: no keep-alive and no chunked
-         * framing, so a body without Content-Length is delimited by close. */
+        /* The request was HTTP/1.0 or older: no keep-alive. Unless node:http
+         * states a chunk-framed body, a body without Content-Length is raw and
+         * the close delimits it. */
         HTTP_ANCIENT_REQUEST = 1 << 8,
         /* The response carries no body framing at all: no Content-Length, no
          * chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
@@ -169,6 +170,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
+        /* node:http stated how the body of this response is framed (Node's
+         * chunkedEncoding), in the head. The writer frames the body by it,
+         * whatever the header bits and the request version say. At most one
+         * of the two is set, and each new response clears them. */
+        HTTP_NODE_BODY_CHUNKED = 1 << 23,
+        HTTP_NODE_BODY_RAW = 1 << 24,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -191,6 +198,19 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* A response is in flight again (a new request dispatched, or a queued
          * pipelined response activated), so the connection is not idle. */
         this->isIdle = false;
+    }
+
+    /* Whether the body is chunk-framed. node:http states it. Every other
+     * response derives it: chunk-framed unless one of rawBits is set. */
+    bool isBodyChunked(uint32_t rawBits) const {
+        if (state & (HTTP_NODE_BODY_CHUNKED | HTTP_NODE_BODY_RAW)) {
+            return state & HTTP_NODE_BODY_CHUNKED;
+        }
+        return !(state & rawBits);
+    }
+
+    void setNodeBodyChunked(bool chunked) {
+        state = (state & ~(HTTP_NODE_BODY_CHUNKED | HTTP_NODE_BODY_RAW)) | (chunked ? HTTP_NODE_BODY_CHUNKED : HTTP_NODE_BODY_RAW);
     }
 
     /* Set or clear a flag from a runtime bool. */

@@ -91,7 +91,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
             break;
           case "transfer-encoding":
             hasTransferEncoding = true;
-            if (String(value).toLowerCase().includes("chunked")) chunked = true;
             break;
           case "date":
             hasDate = true;
@@ -126,6 +125,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         autoContentLength = contentLength;
       }
     }
+    // Node's chunkedEncoding, as renderNativeHeaders decided it: bit 32 is a chunk-framed body, bit 64 is a raw body.
+    const stated = autoBits & 96;
+    if (stated !== 0) chunked = stated === 32;
     // Mirror native writeAutoHeaders: each line written iff its bit is set, so sendDate=false /
     // removeHeader / suppressed Keep-Alive round-trip identically. A head-less write (no writeHead
     // on this handle — only off node:http's ServerResponse) keeps the old defaults.

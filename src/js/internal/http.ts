@@ -392,7 +392,7 @@ function utcDate() {
 }
 
 // The framing that Node's _storeHeader decides after it matched the header lines: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L481-L557
-function decideFraming(msg, hasContentLength, hasTransferEncoding, hasTrailer) {
+function decideFraming(msg, hasContentLength, hasTransferEncoding, hasTrailer, lengthKnown?: boolean) {
   if (msg.chunkedEncoding && (msg.statusCode === 204 || msg.statusCode === 304)) {
     msg.chunkedEncoding = false;
     msg.shouldKeepAlive = false;
@@ -403,7 +403,7 @@ function decideFraming(msg, hasContentLength, hasTransferEncoding, hasTrailer) {
       msg.chunkedEncoding = false;
     } else if (!msg.useChunkedEncodingByDefault) {
       framing = NodeHTTPFraming.closeDelimited;
-    } else if (!hasTrailer && !msg._removedContLen && typeof msg._contentLength === "number") {
+    } else if (!hasTrailer && !msg._removedContLen && (lengthKnown ?? typeof msg._contentLength === "number")) {
       framing = NodeHTTPFraming.contentLength;
     } else if (!msg._removedTE) {
       framing = NodeHTTPFraming.transferEncodingChunked;

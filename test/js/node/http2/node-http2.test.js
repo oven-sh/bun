@@ -5504,6 +5504,164 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+// The fallback handle frames the body like the native one: by res.chunkedEncoding, which a Transfer-Encoding line
+// sets when its value has the chunked coding. Each expected value is what node v26.3.0 puts on the wire.
+describe("http2 allowHTTP1 fallback frames the body by the value of Transfer-Encoding", () => {
+  const GET = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+
+  // Returns every byte that the server sends until it closes the connection. With `end`, the last bytes of the
+  // first response, a second request follows on the same connection.
+  async function wire(respond, request = GET, end) {
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+      if (req.url === "/second") res.end("two");
+      else respond(res);
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const socket = tls.connect(
+        { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+        () => socket.write(request),
+      );
+      let raw = "";
+      let sentSecond = false;
+      socket.on("error", reject);
+      socket.on("data", chunk => {
+        raw += chunk.toString("latin1");
+        if (end !== undefined && !sentSecond && raw.includes(end)) {
+          sentSecond = true;
+          socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        }
+      });
+      socket.on("close", () => resolve(raw));
+      return (await promise).replace(/^Date: .*$/gm, "Date: <D>");
+    } finally {
+      server.close();
+    }
+  }
+
+  it.each([
+    [
+      "identity, write() + end(data)",
+      res => {
+        res.setHeader("Transfer-Encoding", "identity");
+        res.write("o");
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "xchunked, end(data)",
+      res => {
+        res.setHeader("Transfer-Encoding", "xchunked");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: xchunked\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "Content-Length + chunked, end(data)",
+      res => {
+        res.setHeader("Content-Length", "2");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "Content-Length + [gzip, chunked], write() + end(data)",
+      res => {
+        res.setHeader("Content-Length", "2");
+        res.setHeader("Transfer-Encoding", ["gzip", "chunked"]);
+        res.write("o");
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n",
+    ],
+    [
+      "identity in writeHead(), then chunkedEncoding = true",
+      res => {
+        res.writeHead(200, { "Transfer-Encoding": "identity" });
+        res.chunkedEncoding = true;
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "204, chunked",
+      res => {
+        res.statusCode = 204;
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.end();
+      },
+      "HTTP/1.1 204 No Content\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "a Trailer header with identity throws, and the handler answers with the code",
+      res => {
+        res.setHeader("Transfer-Encoding", "identity");
+        res.setHeader("Trailer", "X-Foo");
+        try {
+          res.end("ok");
+        } catch (error) {
+          res.removeHeader("Trailer");
+          res.end(error.code);
+        }
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nERR_HTTP_TRAILER_INVALID",
+    ],
+  ])("%s", async (_, respond, expected) => {
+    expect(await wire(respond)).toBe(expected);
+  });
+
+  it.each([
+    [
+      "HEAD, Content-Length + chunked",
+      res => {
+        res.setHeader("Content-Length", "2");
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+      "HEAD / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "HTTP/1.0, chunked",
+      res => {
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.write("o");
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n",
+      "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n",
+    ],
+  ])("%s", async (_, respond, expected, request) => {
+    expect(await wire(respond, request)).toBe(expected);
+  });
+
+  it.each([
+    [
+      "chunked",
+      res => {
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.end("one");
+      },
+      "0\r\n\r\n",
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n3\r\none\r\n0\r\n\r\nHTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 3\r\n\r\ntwo",
+    ],
+    [
+      "identity",
+      res => {
+        res.setHeader("Transfer-Encoding", "identity");
+        res.end("one");
+      },
+      "\r\n\r\none",
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\noneHTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 3\r\n\r\ntwo",
+    ],
+  ])("the connection stays open after a response with Transfer-Encoding: %s", async (_, respond, end, expected) => {
+    expect(await wire(respond, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", end)).toBe(expected);
+  });
+});
+
 function connectOverHttp1(port) {
   const { promise, resolve, reject } = Promise.withResolvers();
   const socket = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] }, () =>

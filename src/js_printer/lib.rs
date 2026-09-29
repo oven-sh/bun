@@ -2632,7 +2632,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2645,7 +2645,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -5089,10 +5089,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
-                        self.print(c);
-                        self.print_string_characters_utf16(key_str.slice16(), c);
-                        self.print(c);
+                        self.print_string_literal_e_string(&key_str, false);
                     }
                 }
                 _ => {
@@ -8165,4 +8162,48 @@ pub fn serialize_module_info_body(
         .serialize_body(&mut buf, table_count, |id| table_ids[id as usize])
         .expect("Vec<u8> write");
     buf.into_boxed_slice()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_json_uses_json_escaping_for_utf16_keys_and_values() {
+        let mut ast_memory = bun_ast::ASTMemoryAllocator::default();
+        let _scope = ast_memory.enter();
+        let key = bun_ast::E::String::init_utf16(&[b'"' as u16, 0x000B]);
+        let mut properties = bun_alloc::AstAlloc::vec();
+        properties.push(bun_ast::G::Property {
+            key: Some(bun_ast::Expr::init(key, bun_ast::Loc::EMPTY)),
+            value: Some(bun_ast::Expr::init(
+                bun_ast::E::String::init_utf16(&[0x000B]),
+                bun_ast::Loc::EMPTY,
+            )),
+            ..Default::default()
+        });
+        let expr = bun_ast::Expr::init(
+            bun_ast::E::Object {
+                properties,
+                is_single_line: true,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let source = bun_ast::Source::init_empty_file(b"print-json.test.js" as &[u8]);
+        let mut writer = BufferPrinter::init(BufferWriter::init());
+
+        print_json(
+            &mut writer,
+            expr,
+            &source,
+            PrintJsonOptions {
+                minify_whitespace: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(writer.ctx.written(), br#"{"\"\u000B":"\u000B"}"#);
+    }
 }

@@ -3086,11 +3086,8 @@ unsafe extern "C" {
     ) -> *mut JSInternalPromise;
 }
 
-/// The one time origin of the process. `process.hrtime()`, `process.uptime()`,
-/// `Bun.nanoseconds()`, `performance.now()` and `performance.timeOrigin` count
-/// from it on every thread, so a reading in a worker compares with one in the
-/// main thread (node reads one `uv_hrtime()` clock everywhere). The main
-/// thread's `VirtualMachine::init` captures it; a worker VM inherits it.
+/// The process-wide time origin shared by every thread's `process.hrtime()`,
+/// `process.uptime()`, `Bun.nanoseconds()` and `performance`, as in node.
 pub(crate) struct ProcessOrigin {
     pub(crate) monotonic: std::time::Instant,
     /// Wall-clock nanoseconds since Y2K (`ORIGIN_RELATIVE_EPOCH`), so that it fits in a u64.
@@ -3203,8 +3200,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
-            // Seed the process origin now: the main thread's VM is the first
-            // one, so `process.uptime()` keeps its start point.
+            // The first VM is the main thread's, so this seeds the origin at process start.
             let _ = process_origin();
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each

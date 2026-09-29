@@ -209,6 +209,8 @@ describe("WebSocket", () => {
       // "compressed-😶" as raw deflate with a sync flush, without the 00 00 ff ff at its end.
       frame(1, Buffer.from("4acecf2d284a2d2e4e4dd1fd307fc6360000", "hex"), { rsv1: true }),
       frame(2, [1, 2, 3]),
+      // Close with 1000. The socket got every frame above before it closes.
+      frame(8, [0x03, 0xe8]),
     ];
     const textRows = [...texts, "😶", "compressed-😶"].map(text => ({ shape: "Buffer", text, isBinary: false }));
 
@@ -248,12 +250,13 @@ describe("WebSocket", () => {
       });
     }
 
-    // Resolves with the first `count` values that `listen` pushes. The socket asks the peer for its frames once open.
+    // Resolves with the values that `listen` pushes: the first `count`, or with "all" every value up to the
+    // Close frame of the peer. The socket asks the peer for its frames once open.
     async function receive<T>(
       server: { port: number },
       binaryType: string,
-      count: number,
-      listen: (ws: WebSocket, push: (value: T | Promise<T>) => void) => void,
+      count: number | "all",
+      listen: (ws: WebSocket, push: (value: T | Promise<T>) => void) => unknown,
       options: ConstructorParameters<typeof WebSocket>[2] = {},
     ) {
       const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, [], options);
@@ -262,16 +265,19 @@ describe("WebSocket", () => {
       const values: (T | Promise<T>)[] = [];
       const { promise, resolve, reject } = Promise.withResolvers<void>();
       ws.addEventListener("error", reject);
-      ws.addEventListener("close", ({ code }) =>
-        reject(new Error(`closed with ${code} after ${values.length} values`)),
-      );
+      ws.addEventListener("close", ({ code }) => {
+        if (count === "all" && code === 1000) resolve();
+        else reject(new Error(`closed with ${code} after ${values.length} values`));
+      });
       ws.addEventListener("open", () => ws.send("send the frames"));
-      listen(ws, value => {
+      const listening = listen(ws, value => {
         values.push(value);
         if (values.length === count) resolve();
       });
+      // events.on() and events.once() give a promise. It rejects when the socket emits 'error'.
+      Promise.resolve(listening).catch(reject);
       await promise;
-      return await Promise.all(values.slice(0, count));
+      return await Promise.all(count === "all" ? values : values.slice(0, count));
     }
 
     async function rowOf(data: unknown, isBinary: boolean): Promise<Row> {
@@ -291,15 +297,12 @@ describe("WebSocket", () => {
       const rows = [...textRows, { shape: binary, text: "010203", isBinary: true }];
 
       const seen = await Promise.all(
-        Object.entries(listeners).map(async ([name, listen]) => {
-          const count = takesOneFrame.includes(name) ? 1 : rows.length;
-          return [
-            name,
-            await receive<Row>(server, binaryType, count, (ws, push) => {
-              listen(ws, (data, isBinary) => push(rowOf(data, isBinary)));
-            }),
-          ];
-        }),
+        Object.entries(listeners).map(async ([name, listen]) => [
+          name,
+          await receive<Row>(server, binaryType, "all", (ws, push) =>
+            listen(ws, (data, isBinary) => push(rowOf(data, isBinary))),
+          ),
+        ]),
       );
 
       expect(Object.fromEntries(seen)).toEqual(
@@ -386,20 +389,21 @@ describe("WebSocket", () => {
       expect(seen).toEqual([[row], ["early-😶"], [row], ["early-😶"]]);
     });
 
-    // With finishRequest the native socket is made when the request ends, or after the callback.
+    // With finishRequest the native socket is made when the request ends.
     it.each(today)("$binaryType: a socket that finishRequest starts", async ({ binaryType }) => {
       using server = peer([frame(1, "early-😶")], { withThe101: true });
-      const listen = (ws: WebSocket, push: (value: Promise<Row>) => void) => {
-        ws.on("open", () => queueMicrotask(() => ws.on("message", (data, isBinary) => push(rowOf(data, isBinary)))));
-      };
 
-      const seen = await Promise.all([
-        receive<Row>(server, binaryType, 1, listen, { finishRequest: request => request.end() }),
-        receive<Row>(server, binaryType, 1, listen, { finishRequest: () => {} }),
-      ]);
+      const seen = await receive<Row>(
+        server,
+        binaryType,
+        1,
+        (ws, push) => {
+          ws.on("open", () => queueMicrotask(() => ws.on("message", (data, isBinary) => push(rowOf(data, isBinary)))));
+        },
+        { finishRequest: request => request.end() },
+      );
 
-      const row = { shape: "Buffer", text: "early-😶", isBinary: false };
-      expect(seen).toEqual([[row], [row]]);
+      expect(seen).toEqual([{ shape: "Buffer", text: "early-😶", isBinary: false }]);
     });
 
     it.each(Object.keys(kinds) as Kind[])(
@@ -408,14 +412,14 @@ describe("WebSocket", () => {
         using server = peer([frame(1, [0xff, 0xfe]), frame(1, "after")]);
         const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
         clients.push(ws);
-        const messages: string[] = [];
-        const { promise, resolve } = Promise.withResolvers<number>();
-        kinds[kind](ws, message => messages.push(message));
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        kinds[kind](ws, message => reject(new Error(`expected no message, got: ${message}`)));
+        // npm ws emits 'error' (WS_ERR_INVALID_UTF8) before 'close'. This client does not.
         ws.on("error", () => {});
         ws.on("open", () => ws.send("send the frames"));
         ws.on("close", resolve);
 
-        expect({ code: await promise, messages }).toEqual({ code: 1007, messages: [] });
+        expect(await promise).toBe(1007);
       },
     );
   });

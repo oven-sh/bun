@@ -841,8 +841,10 @@ class Worker extends EventEmitter {
   // Made by the first terminate() on a Worker that has not exited. #onClose settles it after 'exit'.
   #pendingTerminate: PendingTerminate | undefined = undefined;
   #urlToRevoke = "";
-  // A copy, because the native id is -1 when the worker's last messages are delivered and node's is not: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L511-L515
+  // The thread id for the exit handler, where the native one is already -1.
   #threadId = -1;
+  // True from the start of the exit handler: threadId then reads #threadId until the exit state is stored, as node reads a live handle. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L511-L515
+  #exiting = false;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -1014,7 +1016,8 @@ class Worker extends EventEmitter {
   }
 
   get threadId() {
-    return this.#exited ? -1 : this.#threadId;
+    if (this.#exited) return -1;
+    return this.#exiting ? this.#threadId : this.#worker.threadId;
   }
 
   get threadName() {
@@ -1172,6 +1175,7 @@ class Worker extends EventEmitter {
 
   #onClose(e) {
     const code: number = e.code;
+    this.#exiting = true;
     try {
       this.#exit(code);
     } finally {

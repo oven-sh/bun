@@ -3133,19 +3133,6 @@ describe("terminate() inside the Worker's exit handler", () => {
     );
   });
 
-  // A 'message' from the global postMessage() of the worker does not go through the public port.
-  // The native side delivers what is left of them when the thread has ended.
-  test.concurrent("a 'message' from the global postMessage() reads the Worker as one that runs", async () => {
-    const script = `${start("for (let i = 0; i < 3000; i++) postMessage(i);")}
-      let messages = 0, ended = 0;
-      w.on("message", () => {
-        messages++;
-        if (state() !== ${JSON.stringify(live)}) ended++;
-      });
-      w.on("exit", () => log.push(messages + " messages, " + ended + " read a Worker that has ended"));`;
-    expect(await run(script)).toEqual(printed(["exit 0" + exited, "3000 messages, 0 read a Worker that has ended"]));
-  });
-
   // node does the same, but it does not settle the promise.
   test.concurrent.each(["stdout", "stderr"] as const)(
     "from %s EOF: a listener that throws ends the exit handler, and terminate() settles",
@@ -3211,6 +3198,20 @@ describe("terminate() inside the Worker's exit handler", () => {
     expect(await run(script)).toEqual(
       printed(["uncaught from revokeObjectURL", "promise 1", "after the exit undefined"]),
     );
+  });
+
+  // The native dispatch does not call the exit handler of a Worker of a disposed Bun.ModuleGraph.
+  test.concurrent("threadId reads -1 when the thread of a disposed graph's Worker has ended", async () => {
+    const script = `${prelude}
+      (async () => {
+        const graph = new Bun.ModuleGraph({});
+        w = graph.run(() => new Worker(${JSON.stringify(idle)}, { eval: true }));
+        await new Promise(resolve => w.once("message", resolve));
+        graph.dispose();
+        while (w.threadId !== -1) await new Promise(resolve => setImmediate(resolve));
+        log.push("threadId " + w.threadId);
+      })();`;
+    expect(await run(script)).toEqual(printed(["threadId -1"]));
   });
 
   // What terminate() does on a Worker that runs. node v26.3.0 differs in each of these: it

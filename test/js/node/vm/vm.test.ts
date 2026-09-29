@@ -1968,9 +1968,9 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
   expect(exitCode).toBe(0);
 });
 
-// A call with no receiver, `callee()`, whose callee is read from a variable that a closure captures
-// reaches a native function with the scope object that holds the variable in its `this` slot. A JS
-// function sees `undefined` there, and the error of these functions must describe that.
+// A call with no receiver, `callee(context)`, whose callee is read from a variable that a closure
+// captures reaches a native function with the scope object that holds the variable in its `this`
+// slot. A JS function sees `undefined` there, and the error of these functions must describe that.
 describe("node:vm Script functions called without a receiver", () => {
   // The three methods and the getters of the four accessors that check their receiver.
   function scriptNatives(Script: any) {
@@ -1995,9 +1995,14 @@ describe("node:vm Script functions called without a receiver", () => {
   }
 
   const natives: Record<string, Function> = scriptNatives(Script);
-  const viaCallUndefined = Object.fromEntries(
-    Object.entries(natives).map(([name, native]) => [name, errorOf(() => native.call(undefined))]),
-  );
+  // Every call gets a context, so that the receiver is all that is wrong with the call.
+  const context = createContext({});
+  const receiverError = {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'this' must be a Script. Received undefined",
+  };
+  const expected = Object.fromEntries(Object.keys(natives).map(name => [name, receiverError]));
 
   test("throw what .call(undefined) throws and do not read the variables of the caller", () => {
     // A variable is part of the scope object only when a closure captures it.
@@ -2016,26 +2021,29 @@ describe("node:vm Script functions called without a receiver", () => {
           },
         };
         closures.push(() => [$$typeof, type, props]);
-        return [name, errorOf(() => callee())];
+        return [name, errorOf(() => callee(context))];
       }),
     );
-    expect(Object.values(viaCallUndefined).map(error => error.name)).toEqual(Array(7).fill("TypeError"));
-    expect({ bare, reads }).toEqual({ bare: viaCallUndefined, reads: 0 });
+    const viaCallUndefined = Object.fromEntries(
+      Object.entries(natives).map(([name, native]) => [name, errorOf(() => native.call(undefined, context))]),
+    );
+    expect({ viaCallUndefined, bare, reads }).toEqual({ viaCallUndefined: expected, bare: expected, reads: 0 });
   });
 
   test("do not fail on a variable of the caller that is not initialized", async () => {
     const fixture = `
-      const { Script } = require("node:vm");
+      const { Script, createContext } = require("node:vm");
       ${scriptNatives}
       (function caller() {
         const results = {};
+        const context = createContext({});
         let callee;
         const $$typeof = Symbol.for("react.element");
         const type = "div";
         for (const [name, native] of Object.entries(scriptNatives(Script))) {
           callee = native;
           try {
-            results[name] = { returned: String(callee()) };
+            results[name] = { returned: String(callee(context)) };
           } catch (e) {
             results[name] = { name: e.name, code: e.code, message: e.message };
           }
@@ -2056,7 +2064,7 @@ describe("node:vm Script functions called without a receiver", () => {
     try {
       results = JSON.parse(stdout);
     } catch {}
-    expect({ results, stderr, exitCode }).toEqual({ results: viaCallUndefined, stderr: "", exitCode: 0 });
+    expect({ results, stderr, exitCode }).toEqual({ results: expected, stderr: "", exitCode: 0 });
   });
 });
 

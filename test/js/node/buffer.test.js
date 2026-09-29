@@ -5840,6 +5840,7 @@ describe("read*/write* called without a receiver", () => {
           console.log(JSON.stringify({
             returned,
             outcomes: [...outcomes],
+            compiled: compiles[0] >= 1,
             compiledAgain: compiles[0] !== compiles[1],
           }));
           let constructor;
@@ -5854,6 +5855,7 @@ describe("read*/write* called without a receiver", () => {
       results: {
         returned: 4950,
         outcomes: [`ERR_INVALID_ARG_TYPE: ${receiverError("undefined").message}`],
+        compiled: true,
         compiledAgain: false,
       },
       stderr: "",

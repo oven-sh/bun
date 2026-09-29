@@ -118,6 +118,10 @@ function createWindow(windowUrl) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
+    // happy-dom's fetch checks ArrayBuffer with instanceof across the window/Node realms.
+    if (util.types.isArrayBuffer(options?.body)) {
+      options = { ...options, body: new Uint8Array(options.body) };
+    }
     return await original_window_fetch(url, options);
   };
 

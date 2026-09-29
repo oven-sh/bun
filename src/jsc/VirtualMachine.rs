@@ -6134,6 +6134,7 @@ impl VirtualMachine {
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
         use crate::zig_stack_frame::LineColumn;
+        use bun_core::strings;
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
@@ -6164,11 +6165,19 @@ impl VirtualMachine {
                 !probe.is_empty()
             };
 
-            // Route through `bun_core::pretty_fmt!` with a local wrapper that
-            // dispatches on the runtime `allow_ansi_colors` flag.
+            let dim_frame = allow_ansi_colors
+                && strings::last_index_of_any(file, b"/\\").is_some_and(|end| {
+                    strings::split_any(&file[..end], b"/\\")
+                        .any(|component| component == b"node_modules")
+                });
+            let frame_colors = allow_ansi_colors && !dim_frame;
+            if dim_frame {
+                writer.write_all(bun_core::pretty_fmt!("<r><d>", true).as_bytes())?;
+            }
+
             macro_rules! pretty_write {
                 ($fmt:literal $(, $arg:expr)* $(,)?) => {
-                    if allow_ansi_colors {
+                    if frame_colors {
                         write!(writer, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
                     } else {
                         write!(writer, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
@@ -6177,26 +6186,30 @@ impl VirtualMachine {
             }
             if has_name && !frame.position.is_invalid() {
                 pretty_write!(
-                    "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
-                    frame.name_formatter(allow_ansi_colors),
-                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
+                    "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>",
+                    frame.name_formatter(frame_colors),
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, frame_colors)
                 )?;
             } else if !frame.position.is_invalid() {
                 pretty_write!(
-                    "<r>      <d>at <r>{}\n",
-                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
+                    "<r>      <d>at <r>{}",
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, frame_colors)
                 )?;
             } else if has_name {
                 pretty_write!(
-                    "<r>      <d>at <r>{}<d>\n",
-                    frame.name_formatter(allow_ansi_colors)
+                    "<r>      <d>at <r>{}<d>",
+                    frame.name_formatter(frame_colors)
                 )?;
             } else {
                 pretty_write!(
-                    "<r>      <d>at <r>{}<d>\n",
-                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
+                    "<r>      <d>at <r>{}<d>",
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, frame_colors)
                 )?;
             }
+            if dim_frame {
+                writer.write_all(bun_core::pretty_fmt!("<r>", true).as_bytes())?;
+            }
+            writer.write_all(b"\n")?;
         }
         Ok(())
     }

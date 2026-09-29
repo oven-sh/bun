@@ -510,3 +510,78 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("node_modules stack frame styling", () => {
+  test.concurrent.each([
+    ["node_modules/dependency/index.js", true],
+    ["vendor/node_modules/dependency/index.js", true],
+    ["my_node_modules/dependency/index.js", false],
+    ["node_modules_backup/dependency/index.js", false],
+  ])("%s", async (file, dim) => {
+    using dir = tempDir("inspect-library-frames", {
+      [file]: 'export function dependencyFrame() { throw new Error("dependency failed"); }',
+      "main.js": `
+        import { dependencyFrame } from ${JSON.stringify("./" + file)};
+        function userFrame() { dependencyFrame(); }
+        try { userFrame(); } catch (error) {
+          console.log(JSON.stringify({
+            colored: Bun.inspect(error, { colors: true }),
+            plain: Bun.inspect(error, { colors: false }),
+          }));
+          console.error(error);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { colored, plain } = JSON.parse(stdout);
+    expect(Bun.stripANSI(colored)).toBe(plain);
+
+    for (const output of [colored, stderr]) {
+      const lines = output.split(/\r?\n/);
+      const dependency = lines.find(line => Bun.stripANSI(line).trim().startsWith("at dependencyFrame "));
+      const user = lines.find(line => Bun.stripANSI(line).trim().startsWith("at userFrame "));
+      expect(dependency).toBeDefined();
+      expect(user).toBeDefined();
+      if (dim) {
+        expect(dependency).toBe(`\x1b[0m\x1b[2m${Bun.stripANSI(dependency)}\x1b[0m`);
+      } else {
+        expect(dependency).toContain("at \x1b[0m");
+      }
+      expect(user).toContain("at \x1b[0m");
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["node_modules/dependency/index.js", true],
+    ["node_modules\\dependency\\index.js", true],
+    ["C:\\project\\node_modules\\dependency\\index.js", true],
+    ["C:/project/node_modules\\dependency/index.js", true],
+    ["file:///project/node_modules/dependency/index.js", true],
+    ["/project/my_node_modules/dependency/index.js", false],
+    ["/project/node_modules_backup/dependency/index.js", false],
+    ["/project/node_modules", false],
+  ])("sourceURL %s", (file, dim) => {
+    const error = new Function(`return new Error("sourceURL frame");\n//# sourceURL=${file}`)();
+    const colored = Bun.inspect(error, { colors: true });
+    const plain = Bun.inspect(error, { colors: false });
+    expect(Bun.stripANSI(colored)).toBe(plain);
+    const frame = colored.split(/\r?\n/).find(line => {
+      const text = Bun.stripANSI(line);
+      return text.trim().startsWith("at ") && text.includes(file);
+    });
+    expect(frame).toBeDefined();
+    if (dim) {
+      expect(frame).toBe(`\x1b[0m\x1b[2m${Bun.stripANSI(frame)}\x1b[0m`);
+    } else {
+      expect(frame).toContain("at \x1b[0m");
+    }
+  });
+});

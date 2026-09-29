@@ -656,6 +656,24 @@ export const namedPipeInternals = {
    */
   liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
 };
+
+/** Replays appends (`n >= 0`) and drains (`n < 0`) on a fresh queue of unsent node:net bytes. */
+export const pendingWritesReplayProbe = $newRustFunction("runtime/socket/pending_writes.rs", "replayProbe", 1) as (
+  schedule: number[],
+) => {
+  /** Every byte sent was the next byte of the appended stream. */
+  intact: boolean;
+  sent: number;
+  unsent: number;
+  /** Times the unsent bytes changed address in a drain, and in an append. */
+  movesOnDrain: number;
+  movesOnAppend: number;
+  /** Unsent bytes that changed address, summed over all moves. */
+  bytesMoved: number;
+  /** The allocation at the end of the schedule, and its peak. */
+  capacity: number;
+  peakCapacity: number;
+};
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,

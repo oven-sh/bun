@@ -901,6 +901,15 @@ An addon that links a shared library next to it (through `$ORIGIN` or `@loader_p
 bun build --compile ./index.ts --asset ./lib --outfile myapp
 ```
 
+Only the user who runs the executable can read or write that directory. When the search path of a library climbs above the library (`$ORIGIN/../../lib`, for example), Bun puts the layout that many levels below the directory, so the search stays inside it.
+
+A library can also build a path in its own code. On a machine with other users, such a path can reach the temp directory, where those users can put files. To prevent this, set `TMPDIR` to a directory that only you can write, and that is not inside a shared directory:
+
+```bash terminal icon="terminal"
+mkdir -p ~/.cache/myapp
+TMPDIR=~/.cache/myapp ./myapp
+```
+
 ### Embed directories
 
 Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.

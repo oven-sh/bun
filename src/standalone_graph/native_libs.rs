@@ -7,8 +7,16 @@
 //! directory that mirrors the embedded layout. The writer records the set and
 //! its hash once, at build time, so the runtime never has to page in and hash
 //! every embedded library to find out what to write and where.
+//!
+//! The directory has to hold every path a library searches relative to
+//! itself, too. Its parent is the temp directory, which other users can write
+//! on a shared machine, and a search path such as `$ORIGIN/../../lib` climbs
+//! out of the library's directory. So the layout sits as many levels below
+//! the mirror directory as the search paths of its libraries climb
+//! ([`mirror_depth`]).
 
 use bun_core::strings;
+use bun_exe_format::loader_search_climb::{self, SearchClimb, Unreadable};
 
 use crate::StandaloneModuleGraph::{BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX};
 
@@ -32,8 +40,8 @@ pub struct NativeLibrarySet {
     /// the set into, so two executables with the same libraries at the same
     /// paths share one directory and any other difference gets its own.
     pub set_hash: u64,
-    /// How many levels the layout sits below the mirror directory
-    /// ([`mirror_relative_path`]).
+    /// [`mirror_depth`] of the members that are not an alias: how many levels
+    /// the layout sits below the mirror directory.
     pub mirror_depth: u32,
 }
 
@@ -97,10 +105,6 @@ pub fn is_shared_library_name(name: &[u8]) -> bool {
 /// sibling relations hold. `None` when nothing is left of the name, or the path
 /// does not fit in `buf`.
 pub fn mirror_relative_path<'a>(name: &[u8], depth: u32, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    let rel = name
-        .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
-        .or_else(|| name.strip_prefix(BASE_PUBLIC_PATH.as_bytes()))
-        .unwrap_or(name);
     let mut len = 0;
     let mut push = |segment: &[u8]| -> Option<()> {
         let needed = len + usize::from(len > 0) + segment.len();
@@ -119,12 +123,8 @@ pub fn mirror_relative_path<'a>(name: &[u8], depth: u32, buf: &'a mut [u8]) -> O
         push(MIRROR_LEVEL)?;
     }
     let mut named = false;
-    for segment in strings::split(rel, b"/") {
-        push(match segment {
-            b"" | b"." => continue,
-            b".." => b"_.._",
-            other => other,
-        })?;
+    for segment in layout_segments(name) {
+        push(segment)?;
         named = true;
     }
     named.then(|| &buf[..len])
@@ -133,11 +133,83 @@ pub fn mirror_relative_path<'a>(name: &[u8], depth: u32, buf: &'a mut [u8]) -> O
 /// The name of one level above the layout.
 const MIRROR_LEVEL: &[u8] = b"_";
 
-/// The set hash: each member's relative name and content hash, in file-table
-/// order. The writer and the runtime's single-file fallback both use it, so
-/// the two never disagree on a directory name.
-pub fn hash_set<'a>(members: impl IntoIterator<Item = (&'a [u8], u64)>) -> u64 {
+/// The segments of `name` inside the layout.
+fn layout_segments(name: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let rel = name
+        .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
+        .or_else(|| name.strip_prefix(BASE_PUBLIC_PATH.as_bytes()))
+        .unwrap_or(name);
+    strings::split(rel, b"/").filter_map(|segment| match segment {
+        b"" | b"." => None,
+        b".." => Some(&b"_.._"[..]),
+        other => Some(other),
+    })
+}
+
+/// What the search paths of one library ask of the depth of its set.
+pub struct MemberClimb {
+    /// Directories between the layout root and the library.
+    directories: u32,
+    climb: Result<SearchClimb, Unreadable>,
+}
+
+impl MemberClimb {
+    /// For the library stored as `name`. `None` for a name that
+    /// [`mirror_relative_path`] has no place for.
+    pub fn of(name: &[u8], contents: &[u8]) -> Option<Self> {
+        let directories = layout_segments(name).count().checked_sub(1)?;
+        Some(Self {
+            directories: u32::try_from(directories).unwrap_or(u32::MAX),
+            climb: loader_search_climb::scan(contents),
+        })
+    }
+
+    /// False when the search paths of the library could not be read, and the
+    /// set gets [`UNREADABLE_MEMBER_DEPTH`] for it.
+    pub fn is_readable(&self) -> bool {
+        self.climb.is_ok()
+    }
+}
+
+/// The depth a set gets for a library whose search paths cannot be read.
+pub const UNREADABLE_MEMBER_DEPTH: u32 = 8;
+
+/// How many levels the layout of `members` has to sit below the mirror
+/// directory, so that every search path a member declares relative to itself
+/// stays inside that directory: the most levels one of them climbs above the
+/// layout root. 0 for libraries that search next to or below themselves, which
+/// is most of them.
+pub fn mirror_depth(members: &[MemberClimb]) -> u32 {
+    let below_rpath = members
+        .iter()
+        .filter_map(|member| member.climb.ok())
+        .map(|climb| climb.below_rpath)
+        .max()
+        .unwrap_or(0);
+    members
+        .iter()
+        .map(|member| match member.climb {
+            Ok(climb) => climb
+                .direct
+                .max(
+                    climb
+                        .rpath
+                        .map_or(0, |rpath| rpath.saturating_add(below_rpath)),
+                )
+                .saturating_sub(member.directories),
+            Err(Unreadable) => UNREADABLE_MEMBER_DEPTH,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// The set hash: the depth of the layout, then each member's relative name and
+/// content hash, in file-table order. The writer and the runtime's single-file
+/// fallback both use it, so the two never disagree on a directory name, and
+/// two layouts never share one directory.
+pub fn hash_set<'a>(mirror_depth: u32, members: impl IntoIterator<Item = (&'a [u8], u64)>) -> u64 {
     let mut hasher = bun_wyhash::Wyhash::init(0);
+    hasher.update(&mirror_depth.to_le_bytes());
     for (name, content_hash) in members {
         hasher.update(&(name.len() as u32).to_le_bytes());
         hasher.update(name);
@@ -215,10 +287,121 @@ mod tests {
 
     #[test]
     fn set_hash_depends_on_names_and_contents() {
-        let a = hash_set([(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]);
-        assert_eq!(a, hash_set([(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]));
-        assert_ne!(a, hash_set([(&b"lib/a.so"[..], 1), (b"lib/b.so", 3)]));
-        assert_ne!(a, hash_set([(&b"lib/a.so"[..], 1), (b"other/b.so", 2)]));
-        assert_ne!(a, hash_set([(&b"lib/a.so"[..], 1)]));
+        let a = hash_set(0, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]);
+        assert_eq!(a, hash_set(0, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]));
+        assert_ne!(a, hash_set(0, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 3)]));
+        assert_ne!(a, hash_set(0, [(&b"lib/a.so"[..], 1), (b"other/b.so", 2)]));
+        assert_ne!(a, hash_set(0, [(&b"lib/a.so"[..], 1)]));
+        assert_ne!(a, hash_set(1, [(&b"lib/a.so"[..], 1), (b"lib/b.so", 2)]));
+    }
+
+    fn member(name: &[u8], climb: Result<SearchClimb, Unreadable>) -> MemberClimb {
+        MemberClimb {
+            climb,
+            ..MemberClimb::of(name, b"").unwrap()
+        }
+    }
+
+    fn direct(levels: u32) -> Result<SearchClimb, Unreadable> {
+        Ok(SearchClimb {
+            direct: levels,
+            ..SearchClimb::default()
+        })
+    }
+
+    #[test]
+    fn mirror_depths() {
+        assert_eq!(mirror_depth(&[]), 0);
+        assert!(MemberClimb::of(b"", b"").is_none());
+        assert!(MemberClimb::of(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b"").is_none());
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes().to_vec();
+        assert_eq!(
+            MemberClimb::of(&[&root[..], b"./lib//addon.node"].concat(), b"")
+                .unwrap()
+                .directories,
+            1
+        );
+
+        // A library that is not an image asks for nothing.
+        let text = MemberClimb::of(b"lib/notes.so", b"INPUT(libfoo.so.1)").unwrap();
+        assert!(text.is_readable());
+        assert_eq!(mirror_depth(&[text]), 0);
+
+        assert_eq!(mirror_depth(&[member(b"addon.node", direct(0))]), 0);
+        assert_eq!(mirror_depth(&[member(b"lib/addon.node", direct(1))]), 0);
+        assert_eq!(mirror_depth(&[member(b"addon.node", direct(1))]), 1);
+        assert_eq!(mirror_depth(&[member(b"lib/addon.node", direct(2))]), 1);
+        assert_eq!(mirror_depth(&[member(b"addon.node", direct(9))]), 9);
+        // sharp's five-climb entry, at the depths `--asset` puts the addon.
+        for (name, depth) in [
+            (&b"sharp-linux-x64.node"[..], 5),
+            (b"lib/sharp-linux-x64.node", 4),
+            (b"@img/sharp-linux-x64/lib/sharp-linux-x64.node", 2),
+            (
+                b"node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node",
+                1,
+            ),
+            (
+                b"a/node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64.node",
+                0,
+            ),
+        ] {
+            assert_eq!(
+                mirror_depth(&[member(name, direct(5))]),
+                depth,
+                "{}",
+                bstr::BStr::new(name)
+            );
+        }
+        // The member that reaches highest above the root decides.
+        assert_eq!(
+            mirror_depth(&[
+                member(b"a/b/c/deep.so", direct(4)),
+                member(b"lib/addon.node", direct(3)),
+                member(b"lib/libfoo.so", direct(0)),
+            ]),
+            2
+        );
+
+        let unreadable = MemberClimb::of(b"lib/addon.node", b"\x7fELF").unwrap();
+        assert!(!unreadable.is_readable());
+        assert_eq!(mirror_depth(&[unreadable]), UNREADABLE_MEMBER_DEPTH);
+        assert_eq!(
+            mirror_depth(&[
+                member(b"lib/addon.node", Err(Unreadable)),
+                member(b"addon.node", direct(UNREADABLE_MEMBER_DEPTH + 3)),
+            ]),
+            UNREADABLE_MEMBER_DEPTH + 3
+        );
+    }
+
+    #[test]
+    fn mirror_depth_of_rpath_install_names() {
+        let rpath = |levels: u32, below_rpath: u32| {
+            Ok(SearchClimb {
+                direct: 0,
+                rpath: Some(levels),
+                below_rpath,
+            })
+        };
+        let names_only = |below_rpath: u32| {
+            Ok(SearchClimb {
+                direct: 0,
+                rpath: None,
+                below_rpath,
+            })
+        };
+        assert_eq!(mirror_depth(&[member(b"lib/a.dylib", rpath(2, 0))]), 1);
+        assert_eq!(mirror_depth(&[member(b"lib/a.dylib", rpath(2, 3))]), 4);
+        // An `@rpath/` name of one library goes on the LC_RPATH of another.
+        assert_eq!(
+            mirror_depth(&[
+                member(b"lib/addon.node", rpath(1, 0)),
+                member(b"lib/libfoo.dylib", names_only(2)),
+            ]),
+            2
+        );
+        // No LC_RPATH of the set starts at a library: the names have nothing to add to.
+        assert_eq!(mirror_depth(&[member(b"a.dylib", names_only(4))]), 0);
     }
 }

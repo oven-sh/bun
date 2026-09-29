@@ -959,9 +959,9 @@ bitflags::bitflags! {
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
-        /// After the linked-payload record: `u64 set_hash`, `u32 count`, then `count` x `{ u32 file_index,
-        /// u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the runtime can mirror
-        /// the set to disk before `dlopen` without hashing it first.
+        /// After the linked-payload record: `u64 set_hash`, `u32 count`, `u32 mirror_depth`, then `count` x
+        /// `{ u32 file_index, u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the
+        /// runtime can mirror the set to disk before `dlopen` without hashing or reading it first.
         const HAS_NATIVE_LIBRARY_SET        = 1 << 14;
         // _padding: u17
     }
@@ -969,8 +969,8 @@ bitflags::bitflags! {
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
-/// `Flags::HAS_NATIVE_LIBRARY_SET` record: `u64 set_hash`, `u32 count`, then the members.
-const NATIVE_LIBRARY_SET_HEADER: usize = size_of::<u64>() + size_of::<u32>();
+/// `Flags::HAS_NATIVE_LIBRARY_SET` record: `u64 set_hash`, `u32 count`, `u32 mirror_depth`, then the members.
+const NATIVE_LIBRARY_SET_HEADER: usize = size_of::<u64>() + 2 * size_of::<u32>();
 /// One member: `u32 file_index`, `u32 alias_index`.
 const NATIVE_LIBRARY_MEMBER_SIZE: usize = 2 * size_of::<u32>();
 
@@ -1216,6 +1216,7 @@ impl StandaloneModuleGraph {
             let set_hash =
                 u64::from(read_u32(record_at)) | (u64::from(read_u32(record_at + 4)) << 32);
             let count = read_u32(record_at + 8) as usize;
+            let mirror_depth = read_u32(record_at + 12);
             record_at += NATIVE_LIBRARY_SET_HEADER;
             if count <= modules_list_count
                 && record_at + count * NATIVE_LIBRARY_MEMBER_SIZE <= raw_len
@@ -1243,7 +1244,7 @@ impl StandaloneModuleGraph {
                     native_library_set = NativeLibrarySet {
                         members,
                         set_hash,
-                        mirror_depth: 0,
+                        mirror_depth,
                     };
                 }
             }
@@ -1529,10 +1530,12 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
 /// `[name]-[hash].node`, and the `--asset` tree carries the same file next to the
 /// libraries it links. The `--asset` copy (deepest, then first, if several) is the one
 /// the runtime loads, every other copy aliases it, and the executable stores the bytes once.
+/// The copies the runtime writes decide how deep their layout sits (`native_libs::mirror_depth`).
 fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
     struct Candidate<'a> {
         file_index: u32,
         rel_name: &'a [u8],
+        contents: &'a [u8],
         real_path: Option<Vec<u8>>,
         /// `--asset` copies rank above hoisted ones, then deeper above shallower,
         /// then the first in table order.
@@ -1557,16 +1560,18 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
                 .ok()
                 .map(<[u8]>::to_vec)
         });
+        let contents = output_file.value.as_slice();
         candidates.push(Candidate {
             file_index: i as u32,
             rel_name,
+            contents,
             real_path: real_path.flatten(),
             rank: (
                 output_file.source_index.is_none(),
                 strings::count_char(rel_name, b'/'),
                 core::cmp::Reverse(i),
             ),
-            content_hash: bun_wyhash::hash(output_file.value.as_slice()),
+            content_hash: bun_wyhash::hash(contents),
             alias_index: NativeLibrarySet::NO_ALIAS,
         });
     }
@@ -1588,7 +1593,26 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
             candidates[i].alias_index = candidates[best].file_index;
         }
     }
-    let set_hash = native_libs::hash_set(candidates.iter().map(|c| (c.rel_name, c.content_hash)));
+    let climbs: Vec<native_libs::MemberClimb> = candidates
+        .iter()
+        .filter(|c| c.alias_index == NativeLibrarySet::NO_ALIAS)
+        .filter_map(|c| {
+            let climb = native_libs::MemberClimb::of(c.rel_name, c.contents)?;
+            if !climb.is_readable() {
+                bun_core::warn!(
+                    "could not read the library search paths of {}. The embedded shared libraries are extracted {} levels below their directory.",
+                    bstr::BStr::new(c.rel_name),
+                    native_libs::UNREADABLE_MEMBER_DEPTH,
+                );
+            }
+            Some(climb)
+        })
+        .collect();
+    let mirror_depth = native_libs::mirror_depth(&climbs);
+    let set_hash = native_libs::hash_set(
+        mirror_depth,
+        candidates.iter().map(|c| (c.rel_name, c.content_hash)),
+    );
     NativeLibrarySet {
         members: candidates
             .iter()
@@ -1598,7 +1622,7 @@ fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibr
             })
             .collect(),
         set_hash,
-        mirror_depth: 0,
+        mirror_depth,
     }
 }
 
@@ -2089,6 +2113,7 @@ pub(crate) fn to_bytes(
         );
         record.extend_from_slice(&native_library_set.set_hash.to_le_bytes());
         record.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        record.extend_from_slice(&native_library_set.mirror_depth.to_le_bytes());
         for member in members {
             record.extend_from_slice(&member.file_index.to_le_bytes());
             record.extend_from_slice(&member.alias_index.to_le_bytes());

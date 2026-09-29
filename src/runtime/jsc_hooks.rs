@@ -4508,7 +4508,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 /// hash dedupes across calls, Worker VMs, and restarts (#29585). The bundler's
 /// hoisted `[name]-[hash].node` resolves to its `--asset` copy (`alias_index`).
 /// A file the record does not list, or a set that cannot be written in full,
-/// is mirrored on its own.
+/// is mirrored on its own, at the depth its own search paths ask for.
 pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]) -> Option<usize> {
     if input_path.is_empty() {
         return None;
@@ -4536,12 +4536,11 @@ pub(crate) fn resolve_embedded_file_to_buf(input_path: &[u8], out_buf: &mut [u8]
             return Some(len);
         }
     }
+    let contents = target.contents.as_bytes();
+    let depth = native_libs::mirror_depth(&[native_libs::MemberClimb::of(target.name, contents)?]);
     let single = MirrorSet {
-        hash: native_libs::hash_set([(
-            target.display_name(),
-            bun_wyhash::hash(target.contents.as_bytes()),
-        )]),
-        depth: 0,
+        hash: native_libs::hash_set(depth, [(target.display_name(), bun_wyhash::hash(contents))]),
+        depth,
         members: MirrorMembers::Single(target),
     };
     single.materialise(&tmpdir, uid, target, out_buf)

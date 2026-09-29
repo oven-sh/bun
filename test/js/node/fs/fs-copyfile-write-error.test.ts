@@ -10,7 +10,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
-import { constants, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -38,13 +38,16 @@ for (const api of apis) {
 console.log(JSON.stringify(out));
 `;
 
+// A reflink (btrfs, XFS) writes nothing, so RLIMIT_FSIZE would not stop it.
+const noReflink = { ...bunEnv, BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1" };
+
 describe.skipIf(isWindows)("copy that fails partway removes the destination", () => {
   // On Linux the default path is copy_file_range(); with it disabled the copy
   // goes through sendfile() and then the read/write loop, which is the path a
   // cross-filesystem copy takes.
   const variants = isLinux ? (["copy_file_range", "sendfile"] as const) : (["default"] as const);
   const cases = [
-    ...["copyFileSync", "promises.copyFile", "copyFile", "cpSync", "promises.cp"].map(api => ({
+    ...["copyFileSync", "copyFile", "promises.copyFile", "cpSync", "promises.cp"].map(api => ({
       limit: 100,
       apis: [api],
     })),
@@ -65,12 +68,7 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
           await using proc = Bun.spawn({
             cmd: ["/bin/sh", "-c", `ulimit -f ${limit}; exec "$0" "$@"`, bunExe(), "copy.mjs", "src.bin", ...apis],
             cwd: String(dir),
-            env: {
-              ...bunEnv,
-              // A reflink (btrfs, XFS) writes nothing, so RLIMIT_FSIZE would not stop it.
-              BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
-              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: variant === "sendfile" ? "1" : undefined,
-            },
+            env: { ...noReflink, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: variant === "sendfile" ? "1" : undefined },
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -97,41 +95,77 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
     expect(existsSync(file) && readFileSync(file, "utf8")).toBe("hello world");
   });
 
-  // Only a regular file is removed. Node also removes a fifo and a device node.
-  it("keeps a destination that is a fifo", async () => {
-    using dir = tempDir("copyfile-fifo", {
-      "copy.mjs": /* js */ `
-        const fs = require("node:fs");
-        let code;
-        try { fs.copyFileSync("src.bin", "fifo"); code = "ok"; } catch (e) { code = e.code; }
-        let dest;
-        try { dest = fs.lstatSync("fifo").isFIFO() ? "fifo" : "not a fifo"; } catch { dest = "removed"; }
-        console.log(JSON.stringify({ code, dest }));
-      `,
-    });
-    const fifo = join(String(dir), "fifo");
-    // A pipe holds less than this, so the copy cannot finish while nothing reads.
-    writeFileSync(join(String(dir), "src.bin"), Buffer.alloc(120 * 1024, "S"));
-    mkfifo(fifo, 0o666);
+  describe.concurrent("destination that is not a plain file", () => {
+    // The unlink removes the link. The target is the same file under another
+    // name, and it must hold only bytes of the source, not its old tail.
+    it("a symlink: the link is removed and its target keeps no old bytes", async () => {
+      using dir = tempDir("copyfile-symlink", {
+        "copy.mjs": /* js */ `
+          const fs = require("node:fs");
+          let code;
+          try { fs.copyFileSync("src.bin", "link"); code = "ok"; } catch (e) { code = e.code; }
+          const target = fs.readFileSync("target.bin");
+          console.log(JSON.stringify({
+            code,
+            linkExists: fs.existsSync("link"),
+            targetIsSourcePrefix: target.length < ${120 * 1024} && target.every(byte => byte === 0x53),
+          }));
+        `,
+      });
+      writeFileSync(join(String(dir), "src.bin"), Buffer.alloc(120 * 1024, "S"));
+      writeFileSync(join(String(dir), "target.bin"), Buffer.alloc(200 * 1024, "D"));
+      symlinkSync("target.bin", join(String(dir), "link"));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "copy.mjs"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -f 100; exec "$0" "$@"`, bunExe(), "copy.mjs"],
+        cwd: String(dir),
+        env: noReflink,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ code: "EFBIG", linkExists: false, targetIsSourcePrefix: true });
+      expect(exitCode).toBe(0);
     });
-    // This open returns when the child has the fifo open for writing. With the
-    // reader gone, the child's write fails with EPIPE.
-    const reader = open(fifo, "r");
-    const childExitedFirst = await Promise.race([reader.then(() => false), proc.exited.then(() => true)]);
-    // A child that exits before it opens the fifo leaves the open pending. A writer releases it.
-    if (childExitedFirst) await (await open(fifo, constants.O_WRONLY | constants.O_NONBLOCK)).close();
-    await (await reader).close();
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ code: "EPIPE", dest: "fifo" });
-    expect(exitCode).toBe(0);
+    // Only a regular file is removed. Node also removes a fifo and a device node.
+    it("a fifo: it is kept", async () => {
+      using dir = tempDir("copyfile-fifo", {
+        "copy.mjs": /* js */ `
+          const fs = require("node:fs");
+          let code;
+          try { fs.copyFileSync("src.bin", "fifo"); code = "ok"; } catch (e) { code = e.code; }
+          let dest;
+          try { dest = fs.lstatSync("fifo").isFIFO() ? "fifo" : "not a fifo"; } catch { dest = "removed"; }
+          console.log(JSON.stringify({ code, dest }));
+        `,
+      });
+      const fifo = join(String(dir), "fifo");
+      // More than a pipe holds, so the copy cannot finish while nothing reads. A Linux
+      // pipe holds 16 pages: 1 MB with 64 KB pages. macOS needs a source under 128 KB.
+      writeFileSync(join(String(dir), "src.bin"), Buffer.alloc(isLinux ? 2 * 1024 * 1024 : 120 * 1024, "S"));
+      mkfifo(fifo, 0o666);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "copy.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // This open returns when the child has the fifo open for writing. With the
+      // reader gone, the child's write fails with EPIPE.
+      const reader = open(fifo, "r");
+      const childExitedFirst = await Promise.race([reader.then(() => false), proc.exited.then(() => true)]);
+      // A child that exits before it opens the fifo leaves the open pending. A writer releases it.
+      if (childExitedFirst) await (await open(fifo, constants.O_WRONLY | constants.O_NONBLOCK)).close();
+      await (await reader).close();
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ code: "EPIPE", dest: "fifo" });
+      expect(exitCode).toBe(0);
+    });
   });
 });

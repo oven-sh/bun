@@ -4912,28 +4912,29 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Ok: trim dest (no O_TRUNC at open) to `wrote`. Err: remove dest. Then close.
+    /// Trims dest (no O_TRUNC at open) to `wrote` and closes it. After a failed copy it also unlinks dest.
     #[cfg(not(windows))]
     fn close_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat, wrote: u64, ok: bool) {
+        let len = (wrote & ((1u64 << 63) - 1)) as i64;
         if ok {
-            let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
+            let _ = Syscall::ftruncate(dest_fd, len);
             let _ = Syscall::fchmod(dest_fd, src_stat.st_mode as Mode);
-        } else {
-            Self::unlink_failed_copy_dest(dest, dest_fd, src_stat);
+        } else if Self::may_remove_copy_dest(dest_fd, src_stat) {
+            // The unlink removes one name. A hard link or a symlink's target must not keep the old tail.
+            let _ = Syscall::ftruncate(dest_fd, len);
+            let _ = Syscall::unlink(dest);
         }
         dest_fd.close();
     }
 
-    /// Unlinks only a regular file that is not the source: never a fifo or a device node.
+    /// True only for a regular file that is not the source: never a fifo or a device node.
     #[cfg(not(windows))]
-    fn unlink_failed_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat) {
-        let Ok(d) = Syscall::fstat(dest_fd) else {
-            return;
-        };
-        let is_src = d.st_dev == src_stat.st_dev && d.st_ino == src_stat.st_ino;
-        if sys::S::ISREG(d.st_mode as u32) && !is_src {
-            let _ = Syscall::unlink(dest);
-        }
+    fn may_remove_copy_dest(dest_fd: FD, src_stat: &sys::Stat) -> bool {
+        matches!(
+            Syscall::fstat(dest_fd),
+            Ok(d) if sys::S::ISREG(d.st_mode as u32)
+                && !(d.st_dev == src_stat.st_dev && d.st_ino == src_stat.st_ino)
+        )
     }
 
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
@@ -5133,7 +5134,9 @@ impl NodeFS {
                     E::EINTR => continue,
                     E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break 'cfr,
                     e => {
-                        Self::unlink_failed_copy_dest(dest, dest_fd, &stat_);
+                        if Self::may_remove_copy_dest(dest_fd, &stat_) {
+                            let _ = sys::unlink(dest);
+                        }
                         return Err(sys::Error {
                             errno: e as _,
                             syscall: sys::Tag::copyfile,
@@ -5152,7 +5155,9 @@ impl NodeFS {
                 stat_.st_size.max(0) as usize,
                 &mut wrote,
             ) {
-                Self::unlink_failed_copy_dest(dest, dest_fd, &stat_);
+                if Self::may_remove_copy_dest(dest_fd, &stat_) {
+                    let _ = sys::unlink(dest);
+                }
                 return Err(err);
             }
             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);

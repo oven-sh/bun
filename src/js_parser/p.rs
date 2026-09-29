@@ -292,14 +292,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// So we'll need to add a `import { Response } from 'bun:app'` to the
     /// top of the file
     ///
-    /// We need to declare this `response_ref` upfront. Outside hot reloading
-    /// it is registered in `is_import_item` before the visit, like any other
-    /// import item.
+    /// We need to declare this `response_ref` upfront
     pub(crate) response_ref: Ref,
-    /// The namespace ref of the `bun:app` import. Only hot reloading attaches
-    /// it to `response_ref` as a `namespace_alias` before the visit: that
-    /// module format reads every import off its namespace object. The linker
-    /// owns the alias in every other format.
+    /// The namespace ref for `bun:app`. Only hot reloading attaches it to
+    /// `response_ref` as a namespace alias.
     pub(crate) bun_app_namespace_ref: Ref,
 
     /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.

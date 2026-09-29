@@ -480,9 +480,7 @@ impl<'a> ImportScanner<'a> {
                             let name: LocRef = item.name;
                             let name_ref = name.ref_;
 
-                            // Only the linker gives an import item a namespace alias
-                            // here, because it also declares that namespace. An alias
-                            // from the parser prints a read of an undeclared name.
+                            // Only the linker declares the namespace that an alias reads.
                             debug_assert!(
                                 HOT_MODULE_RELOADING_TRANSFORMATIONS
                                     || p.symbols[name_ref.inner_index() as usize]

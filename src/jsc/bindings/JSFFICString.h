@@ -15,6 +15,11 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
+    // `new CString(ptr)` evaluates to a string primitive, which no constructor may return. This puts
+    // JSCell::getConstructData in the method table, so CString is a constructor to nothing that asks first
+    // (Array.of, Array.from, species, Reflect.construct, bind, Proxy, extends). `new CString()` does not ask.
+    using JSC::JSCell::getConstructData;
+
     DECLARE_INFO;
 
     static JSFFICStringConstructor* create(JSC::VM&, JSC::JSGlobalObject*);

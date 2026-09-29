@@ -123,8 +123,11 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
     });
     // This open returns when the child has the fifo open for writing. With the
     // reader gone, the child's write fails with EPIPE.
-    const reader = await open(fifo, "r");
-    await reader.close();
+    const reader = open(fifo, "r");
+    const childExitedFirst = await Promise.race([reader.then(() => false), proc.exited.then(() => true)]);
+    // A child that exits before it opens the fifo leaves the open pending. A writer releases it.
+    if (childExitedFirst) await (await open(fifo, constants.O_WRONLY | constants.O_NONBLOCK)).close();
+    await (await reader).close();
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");

@@ -959,6 +959,299 @@ describe("fs.watch", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // The tests below are about the crawl of a recursive watch on Linux: the
+  // walk that adds a watch for every directory of the tree, when the watch
+  // starts and when a directory appears in it. The crawl kept every directory
+  // on its way down open, and it recursed with 8 KiB of stack for every level.
+
+  // Runs `fixture` in a child after a shell applied `limits`, a list of
+  // `ulimit` arguments.
+  async function runWithLimits(limits: string[], fixture: string, env: Record<string, string>) {
+    const script = [...limits.map(limit => `ulimit ${limit}`), 'exec "$0" "$@"'].join("; ");
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", script, bunExe(), "-e", fixture],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Fixture source. inotify queues events in the order they happen, so a
+  // fixture knows that a step is complete when the event of a later action
+  // arrives. Paths are relative to the watched directory, like event names.
+  const crawlFixture = /* js */ `
+    const fs = require("fs"), path = require("path");
+    const root = process.env.WATCH_ROOT;
+    const seen = new Set(), errors = [];
+
+    // The directories top/name, top/name/name, ..., \`levels\` deep.
+    function chain(top, name, levels) {
+      const dirs = [];
+      for (let dir = top; dirs.length < levels; ) dirs.push((dir = path.join(dir, name)));
+      return dirs;
+    }
+    function writeInEvery(watched, dirs) {
+      for (const dir of dirs) fs.writeFileSync(path.join(watched, dir, "f.txt"), "x");
+    }
+    // The directories, by their place in \`dirs\`, whose file has no event.
+    function unwatched(dirs) {
+      return dirs.flatMap((dir, i) => (seen.has(path.join(dir, "f.txt")) ? [] : [i + 1]));
+    }
+  `;
+
+  // fs.rmSync(dir, { recursive: true }) takes seconds on a chain of 600
+  // directories, so the tests remove a deep chain from its bottom.
+  function removeChain(top: string, name: string, levels: number) {
+    const dirs = [top];
+    for (let level = 0; level < levels; level++) dirs.push(path.join(dirs[level], name));
+    for (const dir of dirs.reverse()) fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  for (const { title, limits, levels, checked } of [
+    // The crawl stopped where the process had no descriptor left, and the
+    // watch covered nothing below that depth.
+    { title: "a tree deeper than the open-file limit", limits: ["-n 64"], levels: 100, checked: 10 },
+    // The recursion needed 5 MiB of stack for this tree.
+    { title: "a tree 600 levels deep on a 4 MiB stack", limits: ["-s 4096"], levels: 600, checked: 1 },
+  ]) {
+    test.concurrent.skipIf(!isLinux)(`recursive watch covers ${title}`, async () => {
+      using dir = tempDir("fs-watch-deep-tree", {});
+      const root = String(dir);
+      fs.mkdirSync(path.join(root, ...Array(levels).fill("a")), { recursive: true });
+
+      const fixture = /* js */ `
+        ${crawlFixture}
+        // The deepest directories of the chain.
+        const dirs = chain("", "a", ${levels}).slice(-${checked});
+        const watcher = fs.watch(root, { recursive: true }, (type, name) => {
+          seen.add(name);
+          if (type === "rename" && name === "last.txt") {
+            watcher.close();
+            console.log(JSON.stringify({ unwatched: unwatched(dirs), errors }));
+          }
+        });
+        watcher.on("error", error => errors.push(error.code));
+        writeInEvery(root, dirs);
+        fs.writeFileSync(path.join(root, "last.txt"), "x");
+      `;
+
+      try {
+        const { stdout, stderr, exitCode } = await runWithLimits(limits, fixture, { WATCH_ROOT: root });
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ unwatched: [], errors: [] }),
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        removeChain(root, "a", levels);
+      }
+    });
+  }
+
+  // A directory that moves into a recursive watch is crawled on the inotify
+  // reader thread, which reports every entry that it finds.
+  for (const { title, limits, levels } of [
+    { title: "a tree deeper than the open-file limit", limits: ["-n 64"], levels: 100 },
+    // The recursion overflowed the 2 MiB stack of the reader thread, and the
+    // process died with SIGSEGV.
+    { title: "a tree 300 levels deep", limits: [], levels: 300 },
+  ]) {
+    test.concurrent.skipIf(!isLinux)(`recursive watch covers ${title} that moves into it`, async () => {
+      using dir = tempDir("fs-watch-deep-move", { "watched": {} });
+      const root = String(dir);
+      fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
+
+      const fixture = /* js */ `
+        ${crawlFixture}
+        const watched = path.join(root, "watched");
+        const dirs = chain("moved", "a", ${levels});
+        const bottomFile = path.join(dirs.at(-1), "f.txt");
+        const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+          seen.add(name);
+          if (type !== "rename") return;
+          // The reader thread crawls the directory while it handles the move.
+          if (name === "crawled.txt") {
+            fs.writeFileSync(path.join(watched, bottomFile), "x");
+            fs.writeFileSync(path.join(watched, "last.txt"), "x");
+          } else if (name === "last.txt") {
+            watcher.close();
+            console.log(JSON.stringify({
+              unreported: dirs.flatMap((dir, i) => (seen.has(dir) ? [] : [i + 1])),
+              bottomFile: seen.has(bottomFile),
+              errors,
+            }));
+          }
+        });
+        watcher.on("error", error => errors.push(error.code));
+        fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+        fs.writeFileSync(path.join(watched, "crawled.txt"), "x");
+      `;
+
+      try {
+        const { stdout, stderr, exitCode } = await runWithLimits(limits, fixture, { WATCH_ROOT: root });
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        removeChain(path.join(root, "watched", "moved"), "a", levels);
+        removeChain(path.join(root, "src"), "a", levels);
+      }
+    });
+  }
+
+  // One descriptor is all a crawl needs, at any depth. fs.watch() also kept the
+  // descriptor that it resolves the path with open across the first crawl.
+  test.concurrent.skipIf(!isLinux)("recursive watch with one free descriptor covers every level", async () => {
+    const initialLevels = 12;
+    const movedLevels = 10;
+    using dir = tempDir("fs-watch-one-descriptor", { "watched": { "before.txt": "" } });
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "watched", "tree", ...Array(initialLevels).fill("a")), { recursive: true });
+    fs.mkdirSync(path.join(root, "src", ...Array(movedLevels).fill("b")), { recursive: true });
+
+    const fixture = /* js */ `
+      ${crawlFixture}
+      const watched = path.join(root, "watched");
+      const initial = chain("tree", "a", ${initialLevels});
+      const moved = chain("moved", "b", ${movedLevels});
+
+      // The first watcher of a process creates the inotify descriptor that
+      // every later watcher shares.
+      fs.watch(root, () => {}).close();
+      // Take every descriptor that the limit allows, then free one.
+      const held = [];
+      try {
+        for (;;) held.push(fs.openSync("/dev/null", "r"));
+      } catch (error) {
+        if (error.code !== "EMFILE") throw error;
+      }
+      fs.closeSync(held.pop());
+
+      const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+        seen.add(name);
+        if (type !== "rename") return;
+        if (name === "initial.txt") {
+          // A rename needs no descriptor, so the crawl on the reader thread has
+          // the free one. The second rename is reported after that crawl.
+          fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+          fs.renameSync(path.join(watched, "before.txt"), path.join(watched, "after.txt"));
+        } else if (name === "after.txt") {
+          writeInEvery(watched, moved);
+          fs.writeFileSync(path.join(watched, "last.txt"), "x");
+        } else if (name === "last.txt") {
+          watcher.close();
+          console.log(JSON.stringify({ initial: unwatched(initial), moved: unwatched(moved), errors }));
+        }
+      });
+      watcher.on("error", error => errors.push(error.code));
+      writeInEvery(watched, initial);
+      fs.writeFileSync(path.join(watched, "initial.txt"), "x");
+    `;
+
+    const { stdout, stderr, exitCode } = await runWithLimits(["-n 64"], fixture, { WATCH_ROOT: root });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ initial: [], moved: [], errors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The crawl reads a directory to its end before it visits the first
+  // subdirectory, and it keeps its buffers from one crawl to the next. The
+  // events of a tree that moves in still come in the order of a walk that reads
+  // and visits entry by entry.
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch reports a tree with files and directories in walk order",
+    async () => {
+      using dir = tempDir("fs-watch-mixed-tree", { "watched": { "marker-0": "" } });
+      const root = String(dir);
+
+      // Files and directories side by side on three levels.
+      function makeTree(top: string, depth: number) {
+        fs.mkdirSync(top, { recursive: true });
+        for (const name of ["f0.txt", "f1.txt", "f2.txt"]) fs.writeFileSync(path.join(top, name), "");
+        fs.mkdirSync(path.join(top, "empty"));
+        if (depth < 2) for (const name of ["sub0", "sub1"]) makeTree(path.join(top, name), depth + 1);
+        for (const name of ["g0.txt", "g1.txt"]) fs.writeFileSync(path.join(top, name), "");
+      }
+      // The entries below `top`, an entry before its contents, in readdir order.
+      function listTree(top: string, rel: string): string[] {
+        return fs.readdirSync(top, { withFileTypes: true }).flatMap(entry => {
+          const name = path.join(rel, entry.name);
+          return entry.isDirectory() ? [name, ...listTree(path.join(top, entry.name), name)] : [name];
+        });
+      }
+
+      makeTree(path.join(root, "watched", "existing"), 0);
+      makeTree(path.join(root, "mixed1"), 0);
+      makeTree(path.join(root, "mixed2"), 0);
+      // The listing of this directory is larger than the buffer that the reader
+      // thread keeps between crawls.
+      const wideName = Buffer.alloc(252, "d").toString();
+      fs.mkdirSync(path.join(root, "wide"));
+      for (let i = 0; i < 257; i++) fs.mkdirSync(path.join(root, "wide", wideName + String(i).padStart(3, "0")));
+
+      const existing = ["existing", ...listTree(path.join(root, "watched", "existing"), "existing")].filter(name =>
+        fs.statSync(path.join(root, "watched", name)).isDirectory(),
+      );
+      const expected = {
+        unwatched: [],
+        moved: {
+          mixed1: ["mixed1", ...listTree(path.join(root, "mixed1"), "mixed1")],
+          // Its directories are empty.
+          wide: ["wide", ...fs.readdirSync(path.join(root, "wide")).map(name => path.join("wide", name))],
+          mixed2: ["mixed2", ...listTree(path.join(root, "mixed2"), "mixed2")],
+        },
+      };
+      const moves = Object.keys(expected.moved);
+
+      const fixture = /* js */ `
+      ${crawlFixture}
+      const watched = path.join(root, "watched");
+      const existing = JSON.parse(process.env.WATCH_EXISTING);
+      const moves = ${JSON.stringify(moves)};
+      const result = { unwatched: null, moved: {} };
+      let events = [], step = 0;
+      // Renames the marker file: its event arrives after the events of this step.
+      function endStep() {
+        fs.renameSync(path.join(watched, "marker-" + step), path.join(watched, "marker-" + (step + 1)));
+        step++;
+      }
+      const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+        seen.add(name);
+        if (!name.startsWith("marker-")) events.push(name);
+        if (name !== "marker-" + step) return;
+        if (step === 1) result.unwatched = unwatched(existing);
+        else result.moved[moves[step - 2]] = events;
+        events = [];
+        if (step - 1 === moves.length) {
+          watcher.close();
+          console.log(JSON.stringify(result));
+          return;
+        }
+        fs.renameSync(path.join(root, moves[step - 1]), path.join(watched, moves[step - 1]));
+        endStep();
+      });
+      writeInEvery(watched, existing);
+      endStep();
+    `;
+
+      const { stdout, stderr, exitCode } = await runWithLimits([], fixture, {
+        WATCH_ROOT: root,
+        WATCH_EXISTING: JSON.stringify(existing),
+      });
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: expected,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {

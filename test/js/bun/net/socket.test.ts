@@ -6293,3 +6293,120 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
   });
   expect(exitCode).toBe(0);
 });
+
+describe("a pending end(data) tail", () => {
+  const N = 16 * 1024 * 1024;
+
+  it("is sent before the FIN of a shutdown() that follows end(data)", async () => {
+    const payload = randomFillSync(Buffer.allocUnsafe(N));
+    const received = Promise.withResolvers<void>();
+    let got = 0;
+    let mismatchAt = -1;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(_, chunk) {
+          if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+          got += chunk.byteLength;
+        },
+        close: () => received.resolve(),
+      },
+    });
+    const closed = Promise.withResolvers<void>();
+    let endReturned = -2;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          endReturned = s.end(payload);
+          s.shutdown();
+        },
+        data() {},
+        close: () => closed.resolve(),
+      },
+    });
+    await Promise.all([received.promise, closed.promise]);
+    expect({ endReturned, got, mismatchAt }).toEqual({ endReturned: N, got: N, mismatchAt: -1 });
+  });
+
+  it.each(["unref() then end(data)", "end(data) then unref()"] as const)(
+    "keeps the process alive until it is sent: %s",
+    async order => {
+      const received = Promise.withResolvers<number>();
+      let got = 0;
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(_, chunk) {
+            got += chunk.byteLength;
+          },
+          close: () => received.resolve(got),
+        },
+      });
+      const src = /* js */ `
+        const N = ${N};
+        const unrefFirst = ${JSON.stringify(order.startsWith("unref"))};
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${server.port},
+          socket: {
+            open(s) {
+              if (unrefFirst) s.unref();
+              console.log("end " + s.end(Buffer.alloc(N, 120)));
+              if (!unrefFirst) s.unref();
+            },
+            data() {},
+          },
+        });
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode, serverGot] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+        received.promise,
+      ]);
+      expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr.slice(-2000), serverGot }).toEqual({
+        stdout: "end " + N,
+        stderr: "",
+        serverGot: N,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("is freed when the socket closes with the tail unsent", async () => {
+    const sawFin = Promise.withResolvers<Socket>();
+    const closed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(s) {
+          s.end(Buffer.alloc(N, 120));
+        },
+        end: s => sawFin.resolve(s),
+        close: () => closed.resolve(),
+        error() {},
+      },
+    });
+    // The peer sends its request and its FIN, and never reads.
+    const peer = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    peer.on("error", () => {});
+    peer.pause();
+    peer.on("connect", () => peer.end("request\n"));
+    const socket = await sawFin.promise;
+    const held = estimateShallowMemoryUsageOf(socket);
+    peer.destroy();
+    await closed.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const afterClose = estimateShallowMemoryUsageOf(socket);
+    expect({ heldTail: held > 4 * 1024 * 1024, afterClose: afterClose < 64 * 1024 }).toEqual({
+      heldTail: true,
+      afterClose: true,
+    });
+  });
+});

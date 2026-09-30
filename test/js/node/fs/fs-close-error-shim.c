@@ -8,6 +8,9 @@
 // CLOSE_FAULT_READERS set, a descriptor that is open for reading counts too
 // (FUSE calls flush for each close).
 //
+// With CLOSE_FAULT_FICLONE set, the FICLONE ioctl reports success and copies
+// nothing, so a copy takes bun's reflink exits on any file system.
+//
 // bun closes through syscall(SYS_close, fd), so syscall() is the symbol to
 // interpose. glibc only.
 #define _GNU_SOURCE
@@ -23,6 +26,7 @@
 #include <unistd.h>
 
 #define SUFFIX ".close-fault"
+#define FICLONE_REQUEST 0x40049409L /* _IOW(0x94, 9, int) */
 
 static long (*next_syscall)(long, ...);
 
@@ -52,6 +56,7 @@ long syscall(long nr, ...) {
   long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
   va_end(ap);
   if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+  if (nr == SYS_ioctl && a2 == FICLONE_REQUEST && getenv("CLOSE_FAULT_FICLONE")) return 0;
   if (nr != SYS_close) return next_syscall(nr, a1, a2, a3, a4, a5, a6);
 
   int fault = fault_for((int)a1);

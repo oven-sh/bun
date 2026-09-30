@@ -1064,3 +1064,77 @@ it("object loader: an error thrown by a getter on the exports object rejects the
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });
+
+// https://github.com/oven-sh/bun/issues/9987
+it.concurrent("onLoad loader: 'object' provides a default export when exports has no 'default' key", async () => {
+  using dir = tempDir("plugin-object-loader-default", {
+    "preload.ts": `
+      Bun.plugin({
+        name: "object-loader-default",
+        setup(build) {
+          build.onLoad({ filter: /\\.nodef$/ }, () => ({
+            exports: { name: "Tom", age: 10 },
+            loader: "object",
+          }));
+          build.onLoad({ filter: /\\.withdef$/ }, () => ({
+            exports: { default: "EXPLICIT", named: "NAMED" },
+            loader: "object",
+          }));
+          build.onLoad({ filter: /\\.asyncnodef$/ }, async () => {
+            await Promise.resolve();
+            return { exports: { kind: "async" }, loader: "object" };
+          });
+        },
+      });
+    `,
+    "data.nodef": ``,
+    "data.withdef": ``,
+    "data.asyncnodef": ``,
+    "entry.ts": `
+      import data from "./data.nodef";
+      import { name, age } from "./data.nodef";
+      import * as ns from "./data.nodef";
+      import explicit, { named } from "./data.withdef";
+      import asyncData, { kind } from "./data.asyncnodef";
+      const required = require("./data.nodef");
+      console.log(
+        JSON.stringify({
+          data,
+          name,
+          age,
+          nsDefault: ns.default,
+          nsKeys: Object.keys(ns).sort(),
+          explicit,
+          named,
+          asyncData,
+          kind,
+          requiredName: required.name,
+          requiredDefault: required.default,
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    data: { name: "Tom", age: 10 },
+    name: "Tom",
+    age: 10,
+    nsDefault: { name: "Tom", age: 10 },
+    nsKeys: ["age", "default", "name"],
+    explicit: "EXPLICIT",
+    named: "NAMED",
+    asyncData: { kind: "async" },
+    kind: "async",
+    requiredName: "Tom",
+    requiredDefault: { name: "Tom", age: 10 },
+  });
+  expect(exitCode).toBe(0);
+});

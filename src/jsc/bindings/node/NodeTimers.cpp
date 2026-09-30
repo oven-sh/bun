@@ -264,8 +264,7 @@ static JSValue createTimerFunction(VM& vm, JSObject* owner, ASCIILiteral name, N
 {
     auto* globalObject = owner->globalObject();
     auto* timerFunction = JSFunction::create(vm, globalObject, 1, name, function, ImplementationVisibility::Public);
-    // Node's lib/timers.js shape: enumerable, non-configurable, getter only (setInterval is a Bun extension, #7148).
-    // Not a CustomGetterSetter: the three timers share one Structure, and the inline cache caches a CustomAccessor getter per Structure.
+    // Node's lib/timers.js shape: an enumerable, non-configurable, getter-only accessor. A CustomAccessor getter is cached per Structure, so each timer needs its own GetterSetter.
     auto* getter = JSFunction::create(vm, globalObject, 0, "get"_s, promisifyCustomGetter, ImplementationVisibility::Public);
     timerFunction->putDirectAccessor(globalObject,
         Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s)),

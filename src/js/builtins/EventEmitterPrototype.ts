@@ -81,6 +81,222 @@ export function applyHandlers(handlers, emitter, args) {
   }
 }
 
+// A builtin begins with "use strict", which a function with a rest parameter may not contain: `emit` is the
+// function that this one returns.
+export function createEmit() {
+  return function emit(this: any, type, ...args) {
+    $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
+
+    if (type === "error") {
+      return $nodeEventsEmitError(this, args);
+    }
+    var { _events: events } = this;
+    if (events === undefined) return false;
+    var handler = events[type];
+    if (handler === undefined) return false;
+    // For performance reasons Function.call(...) is used whenever possible.
+    if (typeof handler === "function") {
+      switch (args.length) {
+        case 0:
+          handler.$call(this);
+          break;
+        case 1:
+          handler.$call(this, args[0]);
+          break;
+        case 2:
+          handler.$call(this, args[0], args[1]);
+          break;
+        case 3:
+          handler.$call(this, args[0], args[1], args[2]);
+          break;
+        default:
+          handler.$apply(this, args);
+          break;
+      }
+      return true;
+    }
+    // No defensive clone: stored arrays are never mutated in place (mutators
+    // install a copy), so this list stays stable for the whole loop even if a
+    // listener adds/removes listeners.
+    for (let i = 0, { length } = handler; i < length; i++) {
+      const listener = handler[i];
+      switch (args.length) {
+        case 0:
+          listener.$call(this);
+          break;
+        case 1:
+          listener.$call(this, args[0]);
+          break;
+        case 2:
+          listener.$call(this, args[0], args[1]);
+          break;
+        case 3:
+          listener.$call(this, args[0], args[1], args[2]);
+          break;
+        default:
+          listener.$apply(this, args);
+          break;
+      }
+    }
+    return true;
+  };
+}
+
+// Returns the `emit` that the constructor gives an emitter that captures rejections.
+export function createEmitWithRejectionCapture() {
+  function addCatch(emitter, promise, type, args) {
+    promise.then(undefined, function (err) {
+      // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+      process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+    });
+  }
+
+  function emitUnhandledRejectionOrErr(emitter, err, type, args) {
+    if (typeof emitter[$nodeEventsKRejection] === "function") {
+      emitter[$nodeEventsKRejection](err, type, ...args);
+    } else {
+      // If the error handler throws, it is not catchable and it will end up in 'uncaughtException'.
+      // We restore the previous value of kCapture in case the uncaughtException is present
+      // and the exception is handled.
+      try {
+        emitter[$nodeEventsKCapture] = false;
+        emitter.emit("error", err);
+      } finally {
+        emitter[$nodeEventsKCapture] = true;
+      }
+    }
+  }
+
+  return function emit(this: any, type, ...args) {
+    $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
+    if (type === "error") {
+      return $nodeEventsEmitError(this, args);
+    }
+    var { _events: events } = this;
+    if (events === undefined) return false;
+    var handler = events[type];
+    if (handler === undefined) return false;
+    // For performance reasons Function.call(...) is used whenever possible.
+    if (typeof handler === "function") {
+      let result;
+      switch (args.length) {
+        case 0:
+          result = handler.$call(this);
+          break;
+        case 1:
+          result = handler.$call(this, args[0]);
+          break;
+        case 2:
+          result = handler.$call(this, args[0], args[1]);
+          break;
+        case 3:
+          result = handler.$call(this, args[0], args[1], args[2]);
+          break;
+        default:
+          result = handler.$apply(this, args);
+          break;
+      }
+      if (result !== undefined && $isPromise(result)) {
+        addCatch(this, result, type, args);
+      }
+      return true;
+    }
+    // No defensive clone: stored arrays are never mutated in place (mutators
+    // install a copy), so this list stays stable for the whole loop even if a
+    // listener adds/removes listeners.
+    for (let i = 0, { length } = handler; i < length; i++) {
+      const listener = handler[i];
+      let result;
+      switch (args.length) {
+        case 0:
+          result = listener.$call(this);
+          break;
+        case 1:
+          result = listener.$call(this, args[0]);
+          break;
+        case 2:
+          result = listener.$call(this, args[0], args[1]);
+          break;
+        case 3:
+          result = listener.$call(this, args[0], args[1], args[2]);
+          break;
+        default:
+          result = listener.$apply(this, args);
+          break;
+      }
+      if (result !== undefined && $isPromise(result)) {
+        addCatch(this, result, type, args);
+      }
+    }
+    return true;
+  };
+}
+
+$overriddenName = "_addListener";
+export function internalAddListener(target, type, fn, prepend) {
+  if (typeof fn !== "function") require("internal/validators").validateFunction(fn, "listener");
+  var events = target._events;
+  if (!events) {
+    events = target._events = Object.create(null);
+    target._eventsCount = 0;
+  } else if (events.newListener) {
+    target.emit("newListener", type, fn.listener ?? fn);
+    // A newListener handler can replace `_events` (e.g. a once wrapper's
+    // removeListener dropping the count to 0 installs a fresh object).
+    events = target._events;
+  }
+  var existing = events[type];
+  if (existing === undefined) {
+    // A single listener is stored bare, like node, so this allocates nothing.
+    events[type] = fn;
+    target._eventsCount++;
+    return;
+  }
+  var handlers;
+  if (typeof existing === "function") {
+    handlers = events[type] = prepend ? [fn, existing] : [existing, fn];
+  } else {
+    handlers = events[type] = $nodeEventsCopyWithInserted(existing, fn, prepend);
+  }
+  var m = target?._maxListeners ?? $nodeEventsDefaultMaxListeners;
+  if (m > 0 && handlers.length > m && !handlers.warned) {
+    $nodeEventsOverflowWarning(target, type, handlers);
+  }
+}
+
+$overriddenName = "addListener";
+$constructor;
+export function addListener(this: any, type, fn) {
+  $nodeEventsAddListener(this, type, fn, false);
+  return this;
+}
+
+$overriddenName = "prependListener";
+$constructor;
+export function prependListener(this: any, type, fn) {
+  $nodeEventsAddListener(this, type, fn, true);
+  return this;
+}
+
+// Copy-on-write: emit iterates stored arrays with no clone, so new listeners
+// land in a fresh array; `warned` carries over so the leak warning fires once.
+// An inline loop beats concat/slice here ~10x (host-call boundary).
+$overriddenName = "copyWithInserted";
+export function copyWithInserted(list, fn, prepend) {
+  const n = list.length;
+  const copy: ListenerList = $newArrayWithSize(n + 1);
+  // Two straight copies, not a per-element ternary (measured ~25% slower).
+  if (prepend) {
+    copy[0] = fn;
+    for (let i = 0; i < n; i++) copy[i + 1] = list[i];
+  } else {
+    for (let i = 0; i < n; i++) copy[i] = list[i];
+    copy[n] = fn;
+  }
+  if (list.warned) copy.warned = true;
+  return copy;
+}
+
 $overriddenName = "overflowWarning";
 export function overflowWarning(emitter, type, handlers) {
   const inspect: (value: unknown, opts?: object) => string = require("internal/util/inspect").inspect;
@@ -93,6 +309,100 @@ export function overflowWarning(emitter, type, handlers) {
   warn.type = type;
   warn.count = handlers.length;
   process.emitWarning(warn);
+}
+
+// A closure over (target, type, listener, fired) rather than a state object
+// plus onceWrapper.bind(state): one allocation instead of two per once().
+$overriddenName = "_onceWrap";
+export function internalOnceWrap(target, type, listener) {
+  let fired = false;
+  // Named `onceWrapper` so inspect/rawListeners() output tracks node's.
+  const wrapped = function onceWrapper() {
+    if (!fired) {
+      fired = true;
+      // Drop closure refs so anything that retains the fired wrapper (a cached
+      // rawListeners() result, the COW array emit() is iterating) does not
+      // retain the emitter. `wrapped.listener` stays: node asserts it survives.
+      const t = target;
+      const l = listener;
+      target = undefined;
+      listener = undefined;
+      t.removeListener(type, wrapped);
+      if (arguments.length === 0) return l.$call(t);
+      return l.$apply(t, arguments);
+    }
+  };
+  wrapped.listener = listener;
+  return wrapped;
+}
+
+$overriddenName = "once";
+$constructor;
+export function once(this: any, type, fn) {
+  if (typeof fn !== "function") require("internal/validators").validateFunction(fn, "listener");
+  this.on(type, $nodeEventsOnceWrap(this, type, fn));
+  return this;
+}
+
+$overriddenName = "prependOnceListener";
+$constructor;
+export function prependOnceListener(this: any, type, fn) {
+  if (typeof fn !== "function") require("internal/validators").validateFunction(fn, "listener");
+  this.prependListener(type, $nodeEventsOnceWrap(this, type, fn));
+  return this;
+}
+
+$overriddenName = "removeListener";
+$constructor;
+export function removeListener(this: any, type, listener) {
+  if (typeof listener !== "function") require("internal/validators").validateFunction(listener, "listener");
+
+  const events = this._events;
+  if (events === undefined) return this;
+
+  const list = events[type];
+  if (list === undefined) return this;
+
+  if (typeof list === "function") {
+    // Bare single listener.
+    if (list !== listener && list.listener !== listener) return this;
+    this._eventsCount--;
+    if (this[$nodeEventsKShapeMode]) {
+      // Keep the preallocated slot; just clear it.
+      events[type] = undefined;
+    } else if (this._eventsCount === 0) {
+      // Fresh object: drops any add/delete transition history rather than
+      // letting a long-lived emitter's Structure chain grow toward dictionary.
+      this._events = Object.create(null);
+    } else {
+      delete events[type];
+    }
+    if (events.removeListener !== undefined) this.emit("removeListener", type, list.listener ?? listener);
+    return this;
+  }
+
+  let position = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] === listener || list[i].listener === listener) {
+      position = i;
+      break;
+    }
+  }
+  if (position < 0) return this;
+
+  // Copy-remove (arrays are never mutated in place), and store a lone
+  // survivor bare like node does, so `_events[type]` shape matches theirs.
+  const n = list.length;
+  const copy: ListenerList = $newArrayWithSize(n - 1);
+  for (let i = 0, j = 0; i < n; i++) {
+    if (i !== position) copy[j++] = list[i];
+  }
+  if (list.warned) copy.warned = true;
+  events[type] = copy.length === 1 ? copy[0] : copy;
+
+  if (events.removeListener !== undefined) this.emit("removeListener", type, listener.listener ?? listener);
+
+  return this;
 }
 
 $overriddenName = "removeAllListeners";

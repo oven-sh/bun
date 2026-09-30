@@ -3,7 +3,7 @@ import { buildSync } from "esbuild";
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { supportedPlatforms } from "../../../packages/bun-release/src/platform";
-import { bunEnv, bunExe, isWindows, tempDir } from "../../../test/harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("npm postinstall preserves the optional executable across repeated runs", async () => {
   using dir = tempDir("bun-npm-postinstall", {
@@ -37,12 +37,8 @@ test("npm postinstall preserves the optional executable across repeated runs", a
     define: { version: '"0.0.0"', module: '"bun"', owner: '"@oven"' },
   });
   for (let run = 0; run < 3; run++) {
-    const proc = Bun.spawn({ cmd: [bunExe(), script], cwd: root, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    await using proc = Bun.spawn({ cmd: [bunExe(), script], cwd: root, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(readFileSync(source).toString("base64")).toBe(original.toString("base64"));
     expect(readFileSync(join(root, "bin/bun.exe")).toString("base64")).toBe(original.toString("base64"));

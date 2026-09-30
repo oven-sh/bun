@@ -1,4 +1,4 @@
-// checker.go:553-906 (layer STRUCT): Program with the methods of Host that the checker calls, and the Checker. A field of upstream keeps its name and its place. Before those fields come what the port adds: the tree context, the stores of the records that upstream names by pointer, the lists that the checker makes, and the sinks for what upstream does with a panic.
+// checker.go:553-906 (layer STRUCT): Program with the methods of Host that the checker calls, and the Checker. A field of upstream keeps its name, and its place after `program` and `compilerOptions`, which the caller gives. Before those fields come what the port adds: the tree context, the stores of the records that upstream names by pointer, the lists that the checker makes, and the sinks for what upstream does with a panic.
 use crate::ast::stable::Stable;
 use crate::ast::{
     Arg, Ast, DiagnosticId, DiagnosticStore, DiagnosticsCollection, FlowNodeId, ModifierFlags,

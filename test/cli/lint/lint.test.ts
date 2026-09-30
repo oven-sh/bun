@@ -260,3 +260,55 @@ describe("bun --lint operands", () => {
     expect(all.exitCode).toBe(2);
   });
 });
+
+describe("a token that starts with `-` after the first file", () => {
+  // Read, each of these files is reported and the exit code is 2.
+  const files = { "a.ts": "let x = ;\n", "-b.ts": "\nlet y = ;\n", "c.ts": "\n\nlet z = ;\n" };
+
+  test.concurrent.each([
+    ["--lint a.ts -b.ts", "-b.ts"],
+    ["run --lint a.ts -b.ts", "-b.ts"],
+    ["--lint a.ts c.ts -b.ts", "-b.ts"],
+    ["--lint a.ts --fix", "--fix"],
+    ["--lint a.ts -", "-"],
+    // The one `--` directly after the first file is dropped, a later one is a token.
+    ["--lint a.ts -- -b.ts", "-b.ts"],
+    ["--lint a.ts c.ts -- -b.ts", "--"],
+  ])("`bun %s` is refused and no file is read", async (command, token) => {
+    using dir = tempDir("lint-dash-token", files);
+    expect(await bun(String(dir), command.split(" "))).toEqual({
+      stdout: "",
+      stderr: `error: --lint cannot be used with "${token}" after the first file\n`,
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("without the variable that turns `--lint` on, the refusal is about that variable", async () => {
+    using dir = tempDir("lint-dash-gate", files);
+    const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+    expect(await bun(String(dir), ["--lint", "a.ts", "-b.ts"], withoutVariable)).toEqual({
+      stdout: "",
+      stderr:
+        "error: --lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it\n",
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("a file named `-b.ts` is checked as `./-b.ts`, and as the first file after `--`", async () => {
+    using dir = tempDir("lint-dash-file", files);
+    const cwd = String(dir);
+    const [prefixed, first, firstOfRun] = await Promise.all([
+      bun(cwd, ["--lint", "a.ts", "./-b.ts"]),
+      bun(cwd, ["--lint", "--", "-b.ts"]),
+      bun(cwd, ["run", "--lint", "--", "-b.ts"]),
+    ]);
+    expect(prefixed.stdout).toBe("");
+    expect(positions(prefixed.stderr)).toEqual(["-b.ts:2:9", "a.ts:1:9"]);
+    expect(prefixed.exitCode).toBe(2);
+    for (const result of [first, firstOfRun]) {
+      expect(result.stdout).toBe("");
+      expect(positions(result.stderr)).toEqual(["-b.ts:2:9"]);
+      expect(result.exitCode).toBe(2);
+    }
+  });
+});

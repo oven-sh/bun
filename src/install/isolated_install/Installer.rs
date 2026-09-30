@@ -33,7 +33,6 @@ use super::hardlinker::Hardlinker;
 use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
 use super::symlinker::{self, Symlinker};
-use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
@@ -2741,9 +2740,7 @@ impl<'a> Installer<'a> {
                     ));
                     buf.append(b"node_modules");
                     if pkg_name.is_empty() {
-                        buf.append(paths::basename(
-                            bun_fs::FileSystem::instance().top_level_dir(),
-                        ));
+                        buf.append(paths::basename(bun_core::cwd::get()));
                     } else {
                         buf.append(pkg_name.slice(string_buf));
                     }
@@ -2803,9 +2800,7 @@ impl<'a> Installer<'a> {
             ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
                     if pkg_names[pkg_id as usize].is_empty() {
-                        return Some(paths::basename(
-                            bun_fs::FileSystem::instance().top_level_dir(),
-                        ));
+                        return Some(paths::basename(bun_core::cwd::get()));
                     }
                     return Some(pkg_names[pkg_id as usize].slice(string_buf));
                 }

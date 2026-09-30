@@ -170,6 +170,8 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 
     use_mimalloc_in_dependencies();
 
+    bun_core::cwd::startup();
+
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
     // valid disposition; called once on the main thread before any other

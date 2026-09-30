@@ -638,9 +638,9 @@ impl RuntimeTranspilerCache {
 
         // The inline `bun_resolver::fs::FileSystem` surface only exposes
         // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
-        // underlying joiner with the same `top_level_dir` + `Loose` platform
-        // that `absBufZ` used.
-        let top = FileSystem::instance().top_level_dir;
+        // underlying joiner with the same base + `Loose` platform that
+        // `absBufZ` used.
+        let top = bun_core::cwd::get();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];

@@ -241,9 +241,7 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
 /// Absolute, because the PE metadata operations need an absolute path.
 fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
     let mut outbuf = paths::path_buffer_pool::get();
-    // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-    // initialized during VM startup before any `Bun.build` is reachable.
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_core::cwd::get();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
     let joined: &[u8] = if !outdir_slice.is_empty() {
@@ -763,9 +761,7 @@ impl JSBundleCompletionTask {
                     && bun_paths::is_absolute(&this.config.outdir.list);
                 let outdir = this.config.outdir.list.clone();
                 let dir = this.config.dir.list.clone();
-                // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-                // initialized during VM startup before any `Bun.build` is reachable.
-                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let top_level_dir = bun_core::cwd::get();
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
@@ -1255,11 +1251,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
             entry_points: config.entry_points.keys().to_vec(),
             target: Some(config.target.to_api()),
-            absolute_working_dir: if !config.dir.list.is_empty() {
-                Some(Box::from(config.dir.list.as_slice()))
-            } else {
-                None
-            },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
             // Also read by `Macro::init`, which creates the macro VM from these.

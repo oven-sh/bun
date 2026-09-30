@@ -343,6 +343,78 @@ it("process.env defineProperty routes through the env setter for accessor-backed
   expect({ ny, utcAgain, exitCode }).toEqual({ ny: (utc + 24 - 5) % 24, utcAgain: utc, exitCode: 0 });
 });
 
+describe("after process.chdir()", () => {
+  async function run(dir, script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode };
+  }
+
+  it.concurrent("everything that reads the working directory has the new one", async () => {
+    using dir = tempDir("process-chdir-readers", { "a/f.txt": "in a", "b/f.txt": "in b" });
+    const script = `
+      const path = require("node:path");
+      const root = process.cwd();
+      const read = async () => ({
+        cwd: path.relative(root, process.cwd()),
+        resolve: path.relative(root, path.resolve("f.txt")),
+        resolveSync: path.relative(root, Bun.resolveSync("./f.txt", ".")),
+        glob: [...new Bun.Glob("*.txt").scanSync({ absolute: true })].map(p => path.relative(root, p)),
+        file: await Bun.file("f.txt").text(),
+        shell: path.relative(root, (await Bun.$\`pwd\`.quiet()).stdout.toString().trim()),
+      });
+      const out = [];
+      // Back to "a" at the end: a directory the process has been in before.
+      for (const to of ["a", "../b", "../a"]) {
+        process.chdir(to);
+        out.push(await read());
+      }
+      console.log(JSON.stringify(out));
+    `;
+    const inDir = name => ({
+      cwd: name,
+      resolve: join(name, "f.txt"),
+      resolveSync: join(name, "f.txt"),
+      glob: [join(name, "f.txt")],
+      file: "in " + name,
+      shell: name,
+    });
+    expect(await run(dir, script)).toEqual({ out: [inDir("a"), inDir("b"), inDir("a")], stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("a failed process.chdir() names the current directory as process.cwd() does", async () => {
+    using dir = tempDir("process-chdir-error-path", { "a/.keep": "" });
+    const script = `
+      process.chdir("a");
+      const cwd = process.cwd();
+      let error;
+      try {
+        process.chdir("missing");
+      } catch (e) {
+        error = e;
+      }
+      console.log(JSON.stringify({
+        code: error.code,
+        syscall: error.syscall,
+        path: error.path === cwd,
+        message: error.message.includes("chdir '" + cwd + "' -> 'missing'"),
+        cwd: process.cwd() === cwd,
+      }));
+    `;
+    expect(await run(dir, script)).toEqual({
+      out: { code: "ENOENT", syscall: "chdir", path: true, message: true, cwd: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

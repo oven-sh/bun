@@ -1409,7 +1409,7 @@ impl<'a> SpawnArgs<'a> {
 
             override_env: false,
             env_array: Vec::new(),
-            cwd: event_loop.top_level_dir(),
+            cwd: bun_core::cwd::get(),
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
             redirect_stdout: None,
             redirect_stderr: None,

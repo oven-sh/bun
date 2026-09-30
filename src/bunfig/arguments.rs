@@ -212,20 +212,7 @@ pub fn load_config(
             None
         }
     } else {
-        if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = bun_paths::path_buffer_pool::get();
-            let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
-                Ok(n) => n,
-                Err(_) => return Ok(()),
-            };
-            ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
-        }
-
-        join_config_path(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
-            config_path_,
-            &mut config_buf,
-        )
+        join_config_path(bun_core::cwd::get(), config_path_, &mut config_buf)
     };
     let Some(config_path) = config_path else {
         return unreadable_config(

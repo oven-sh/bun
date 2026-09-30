@@ -803,7 +803,6 @@ mod holder {
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
 // RacyCell. `ROOT_PACKAGE_JSON_PATH` is a slice into the buf above it; written
 // once in `init()`, read on main + CLI commands afterwards.
-static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
 pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
@@ -1086,16 +1085,11 @@ fn configure_env_for_scripts_run(
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(
-                FileSystem::instance().top_level_dir(),
-            )),
+            value: Box::<[u8]>::from(strings::without_trailing_slash(bun_core::cwd::get())),
         };
     }
 
-    // The resolver-tier
-    // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
-    let paths_fs = bun_paths::fs::FileSystem::instance();
-    this.env_mut().load_ccache_path(paths_fs);
+    this.env_mut().load_ccache_path();
 
     {
         // Run node-gyp jobs in parallel.
@@ -1116,10 +1110,8 @@ fn configure_env_for_scripts_run(
 
     {
         let mut node_path = bun_paths::path_buffer_pool::get();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+        if let Some(node_path_z) = this.env_mut().get_node_path(&mut node_path) {
+            let _ = this.env_mut().load_node_js_config(node_path_z.as_ref())?;
         } else {
             'brk: {
                 let current_path = this.env().get(b"PATH").unwrap_or(b"");
@@ -1132,7 +1124,7 @@ fn configure_env_for_scripts_run(
                     break 'brk;
                 }
                 this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                let _ = this.env_mut().load_node_js_config(bun_path)?;
             }
         }
     }
@@ -1287,7 +1279,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
+            let normalized = normalizer.resolve_z(bun_core::cwd::get(), abs_ca_z);
             if !bun_sys::exists_z(normalized) {
                 Output::err(
                     "HTTPThread",
@@ -1496,36 +1488,10 @@ pub fn init(
         bun_sys::fchdir(global_dir)?;
     }
 
-    // Registers the resolver-tier singleton
-    // and seeds `top_level_dir` from `getcwd`.
-    bun_resolver::fs::FileSystem::init(None)?;
+    let top_level_dir_no_trailing_slash =
+        strings::without_trailing_slash(bun_core::cwd::require()?);
+    bun_resolver::fs::FileSystem::init();
     let fs = FileSystem::instance();
-    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
-    // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
-    // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
-    unsafe {
-        let cwd_ptr = CWD_BUF.get().cast::<u8>();
-        #[cfg(windows)]
-        {
-            let _ = bun_paths::path_to_posix_buf::<u8>(
-                top_level_dir_no_trailing_slash,
-                &mut *CWD_BUF.get(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            // Avoid memcpy alias when source and dest are the same
-            if cwd_ptr.cast_const() != top_level_dir_no_trailing_slash.as_ptr() {
-                core::ptr::copy_nonoverlapping(
-                    top_level_dir_no_trailing_slash.as_ptr(),
-                    cwd_ptr,
-                    top_level_dir_no_trailing_slash.len(),
-                );
-            }
-        }
-        #[cfg(windows)]
-        let _ = cwd_ptr;
-    }
 
     // Per-cfg const literal, no runtime alloc.
     #[cfg(windows)]
@@ -1563,7 +1529,7 @@ pub fn init(
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
     let mut no_project = false;
-    let root_package_json_file = 'root_package_json_file: {
+    let (root_dir, root_package_json_file) = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
         let child_json: bun_sys::File = 'child: {
@@ -1808,9 +1774,6 @@ pub fn init(
                             let maybe_workspace_path = child_path;
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
-                                // Intern via the resolver's DirnameStore so the slice is
-                                // process-lifetime (`set_top_level_dir` requires `'static`).
-                                fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
                                 #[cfg(windows)]
                                 {
@@ -1818,7 +1781,10 @@ pub fn init(
                                 }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
-                                break 'root_package_json_file json_file;
+                                break 'root_package_json_file (
+                                    ZBox::from_bytes(parent),
+                                    json_file,
+                                );
                             }
                         }
 
@@ -1830,13 +1796,10 @@ pub fn init(
             }
         }
 
-        // Intern via DirnameStore so the slice is process-lifetime.
-        fs.set_top_level_dir(fs.dirname_store().append(child_cwd)?);
-        break 'root_package_json_file child_json;
+        break 'root_package_json_file (ZBox::from_bytes(child_cwd), child_json);
     };
 
-    let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
-    bun_sys::chdir(&top_level_dir_z)?;
+    bun_sys::chdir(&root_dir)?;
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
@@ -1847,15 +1810,6 @@ pub fn init(
     )?;
     // SAFETY: main-thread global
     unsafe {
-        let tld = fs.top_level_dir();
-        let cwd = &mut *CWD_BUF.get();
-        cwd[..tld.len()].copy_from_slice(tld);
-        cwd[tld.len()] = 0;
-        // Route through the FsVTable setter so the resolver's cached cwd is
-        // rebound to the process-lifetime CWD_BUF (it was a transient slice
-        // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
-        // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
         // bun_sys exposes the non-Z `get_fd_path`;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
@@ -1873,7 +1827,7 @@ pub fn init(
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match fs.read_directory(bun_core::cwd::get(), 0, true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -2201,13 +2155,13 @@ pub fn init(
             let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
             // Set ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
-            // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
+            // `init_global(env)` (e.g. from `bun pm pack` /
             // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
             // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
+            // with env/uv-loop fully wired, then that becomes the
             // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
+            // *this* embedded mini instead — which was constructed without env
+            // and (on Windows) without going through
             // `init_global`'s uv-loop setup. The shell's IOWriter then opens
             // stdout/stderr against an under-initialised loop → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
@@ -2429,7 +2383,7 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+    let root_dir = match fs_instance.read_directory(bun_core::cwd::get(), 0, true)? {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
@@ -2450,8 +2404,7 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let top_level_dir_no_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(bun_core::cwd::get());
     let mut original_package_json_path =
         vec![0u8; top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1];
     original_package_json_path[..top_level_dir_no_trailing_slash.len()]

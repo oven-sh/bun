@@ -880,6 +880,30 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
+/// Changes the process's working directory, and records in [`bun_core::cwd`]
+/// what the OS calls the new one. On `Err` neither has changed. Main thread
+/// only.
+pub fn chdir(path: &ZStr) -> Maybe<()> {
+    chdir_os(path)?;
+    record_cwd()
+}
+
+/// After the process's working directory changed. If the OS cannot name the
+/// new one, goes back to the recorded one and returns that error.
+fn record_cwd() -> Maybe<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    match getcwd(&mut buf[..]) {
+        Ok(len) => {
+            bun_core::cwd::set(&buf[..len]);
+            Ok(())
+        }
+        Err(err) => {
+            let _ = chdir_os(bun_core::cwd::get_z());
+            Err(err)
+        }
+    }
+}
+
 /// Read cwd into a stack
 /// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
 pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
@@ -3000,14 +3024,15 @@ mod posix_impl {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
+    pub(crate) fn chdir_os(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         Ok(())
     }
+    /// [`chdir`](super::chdir) to an open directory.
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
-        Ok(())
+        super::record_cwd()
     }
     pub fn umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on
@@ -4284,7 +4309,7 @@ mod windows_impl {
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
+    pub(crate) fn chdir_os(path: &ZStr) -> Maybe<()> {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
@@ -4297,6 +4322,7 @@ mod windows_impl {
         }
         Ok(())
     }
+    /// [`chdir`](super::chdir) to an open directory.
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = super::get_fd_path(fd, &mut buf)?;
@@ -4304,7 +4330,7 @@ mod windows_impl {
         zb.0[..p.len()].copy_from_slice(p);
         zb.0[p.len()] = 0;
         // SAFETY: NUL-terminated above.
-        chdir(ZStr::from_buf(&zb.0[..], p.len()))
+        super::chdir(ZStr::from_buf(&zb.0[..], p.len()))
     }
     pub fn umask(mode: Mode) -> Mode {
         unsafe extern "C" {

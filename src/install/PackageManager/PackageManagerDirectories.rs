@@ -354,7 +354,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         unsafe {
             (*this).cache_directory_path =
                 ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    bun_core::cwd::get(),
                     &[b"node_modules", b".cache"],
                 ))
         };

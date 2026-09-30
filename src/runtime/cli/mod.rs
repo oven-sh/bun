@@ -1392,6 +1392,7 @@ pub(crate) mod command {
             // If no compile_exec_argv, skip executable name if present
             offset_for_passthrough = 1.min(bun::argv().len());
 
+            bun_core::cwd::require()?;
             break 'brk write_context_no_parse(log);
         };
 

@@ -1000,7 +1000,7 @@ impl<'a> Linker<'a> {
         // always unlink the old one. If it fails for any reason then exit
         // early.
         let mut tmpname_buf = [0u8; 1024];
-        let Ok(tmpname) = path::fs::FileSystem::tmpname(
+        let Ok(tmpname) = path::fs::tmpname(
             path::basename(abs_target.as_bytes()),
             &mut tmpname_buf,
             bun_wyhash::hash(chunk_without_newline),

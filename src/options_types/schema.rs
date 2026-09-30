@@ -63,8 +63,6 @@ pub mod api {
         pub tsconfig_override: Option<Box<[u8]>>,
         /// origin
         pub origin: Option<Box<[u8]>>,
-        /// absolute_working_dir
-        pub absolute_working_dir: Option<Box<[u8]>>,
         /// define
         pub define: Option<StringMap>,
         /// drop

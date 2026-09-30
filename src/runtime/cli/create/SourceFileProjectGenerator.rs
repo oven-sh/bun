@@ -13,7 +13,6 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser::js_lexer;
 use bun_paths as path;
-use bun_paths::fs::FileSystem;
 use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
 
@@ -184,7 +183,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
     let process = match spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         envp: None,
-        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+        cwd: Box::<[u8]>::from(bun_core::cwd::get()),
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
@@ -192,7 +191,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },
@@ -248,7 +247,7 @@ pub(crate) fn generate_files(
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
         resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
-            FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             entry_point,
         )
     } else {
@@ -358,7 +357,7 @@ pub(crate) fn generate_files(
                 let shadcn_process = match spawn_sync::spawn(&spawn_sync::Options {
                     argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                     envp: None,
-                    cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+                    cwd: Box::<[u8]>::from(bun_core::cwd::get()),
                     stderr: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stdin: spawn_sync::SyncStdio::Inherit,
@@ -366,7 +365,7 @@ pub(crate) fn generate_files(
                     #[cfg(windows)]
                     windows: bun_process::WindowsOptions {
                         loop_: bun_jsc::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                            bun_event_loop::MiniEventLoop::init_global(None),
                         ),
                         ..Default::default()
                     },
@@ -420,7 +419,7 @@ pub(crate) fn generate_files(
             Box::<[u8]>::from(&b"dev"[..]),
         ],
         envp: None,
-        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+        cwd: Box::<[u8]>::from(bun_core::cwd::get()),
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
@@ -428,7 +427,7 @@ pub(crate) fn generate_files(
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },

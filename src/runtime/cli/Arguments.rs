@@ -865,24 +865,18 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
-    // so we dupe into a plain `Box<[u8]>`.
-    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = bun_paths::path_buffer_pool::get();
+    if let Some(cwd_arg) = args.option(b"--cwd") {
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            bun_core::getcwd(&mut outbuf)?.as_bytes()
+            bun_core::cwd::require()?
         };
         let mut spill = Vec::new();
         let out =
             resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
-        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
-        if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
+        if let bun_sys::Result::Err(err) = bun_sys::chdir(&bun_core::ZBox::from_bytes(out)) {
             Output::err(
                 err,
                 "Could not change directory to \"{}\"\n",
@@ -890,27 +884,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
-        // Store the post-chdir physical path (mirrors process.chdir) so
-        // process.cwd(), path.resolve, and the resolver agree on one form.
-        let mut phys = bun_paths::path_buffer_pool::get();
-        match bun_core::getcwd(&mut phys) {
-            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
-            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
-        }
-    } else if matches!(
+    } else if !matches!(
         cmd,
+        // A deleted cwd must not abort the runtime (Node boots and lets
+        // `process.cwd()` throw later).
         CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
     ) {
-        // A deleted cwd must not abort the runtime (Node boots and lets
-        // `process.cwd()` throw later); fall back to the executable's dir.
-        let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
-    } else {
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
-        let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
-    };
+        bun_core::cwd::require()?;
+    }
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
     // (uses_global_options=false). bunx picks up no-orphans via the
@@ -953,7 +936,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         parse_test_command_options(&args, ctx);
     }
 
-    ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
     if command::LOADS_CONFIG[cmd] {
@@ -1007,7 +989,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
         let mut spill = Vec::new();
         Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            bun_core::cwd::get(),
             &mut spill,
             &[ts],
         ))

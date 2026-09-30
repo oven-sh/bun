@@ -3,7 +3,6 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::AbsPath;
-use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
 use bun_install::Features;
@@ -171,7 +170,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 use bun_core::ZStr;
                 use bun_paths::{platform, resolve_path};
                 // create the junction
-                let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
+                let top_level = bun_core::cwd::get();
                 let mut link_path_buf = bun_paths::path_buffer_pool::get();
                 link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
                 link_path_buf.0[top_level.len()] = 0;
@@ -199,7 +198,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             {
                 // create the symlink
                 if let Err(e) = node_modules.sym_link(
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
+                    bun_core::cwd::get(),
                     name,
                     // is_directory
                     true,

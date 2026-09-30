@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use crate::Error;
 use crate::ShellCompletions;
-use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
@@ -515,7 +514,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        strings::without_trailing_slash(bun_core::cwd::get());
 
     let mut root_package_json_path_buf = bun_paths::path_buffer_pool::get();
     let root_package_json_path: &ZStr = 'root_package_json_path: {
@@ -891,13 +890,8 @@ pub fn update_package_json_and_install_and_cli(
                         // have a binary called "esbuild" in /tmp/TeST and you
                         // install esbuild, it will not detect that case if we naively
                         // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
-                        bun_which::which(
-                            &mut path_buf,
-                            path_env,
-                            FileSystem::instance().top_level_dir(),
-                            basename,
-                        )
-                        .is_none()
+                        bun_which::which(&mut path_buf, path_env, bun_core::cwd::get(), basename)
+                            .is_none()
                     } else {
                         true
                     };

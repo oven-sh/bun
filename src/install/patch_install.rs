@@ -737,7 +737,7 @@ impl PatchTask {
                 logger: Log::init(),
             }),
             manager: bun_ptr::BackRef::new_mut(manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: bun_core::cwd::get(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
@@ -812,7 +812,7 @@ impl PatchTask {
                 install_context: None,
             }),
             manager: bun_ptr::BackRef::new_mut(pkg_manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: bun_core::cwd::get(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,

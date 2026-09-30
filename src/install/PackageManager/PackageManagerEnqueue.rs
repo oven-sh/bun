@@ -4,7 +4,6 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::bun_fs::FileSystem;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths as Path;
@@ -2133,7 +2132,7 @@ fn enqueue_local_tarball(
             None => (path, true),
             Some(base_dir) => (
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    bun_core::cwd::get(),
                     &mut abs_buf,
                     &[base_dir, path],
                 ),
@@ -2905,7 +2904,7 @@ fn get_or_put_resolved_package(
                         folder_path
                     } else {
                         Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                            FileSystem::instance().top_level_dir(),
+                            bun_core::cwd::get(),
                             &mut buf2,
                             &[folder_path],
                         )
@@ -3010,7 +3009,7 @@ fn get_or_put_resolved_package(
                 workspace_path
             } else {
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    bun_core::cwd::get(),
                     &mut buf2,
                     &[workspace_path],
                 )

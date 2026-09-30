@@ -110,7 +110,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_NO_BODY_STATUS = 1 << 9,
         /* The response body is delimited by connection close: write it raw with
          * no Content-Length and no chunked framing, then close. Used by node:http
-         * when the user removed the framing headers. */
+         * for a body that has no framing header and is not chunk-framed. */
         HTTP_CLOSE_DELIMITED = 1 << 10,
 
         /* The node:http bits below are only ever set on a node:http compat
@@ -152,6 +152,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* node:http stated how the body of this response is framed (Node's
+         * chunkedEncoding), in the head. The writer frames the body by it,
+         * whatever the header bits and the request version say. At most one
+         * of the two is set, and each new response clears them. */
+        HTTP_NODE_BODY_CHUNKED = 1 << 24,
+        HTTP_NODE_BODY_RAW = 1 << 25,
         /* Close this connection the next time it is idle (no request being
          * received, no response in flight or queued). Set by
          * App::closeIdle(true) on connections that were busy during a graceful
@@ -170,12 +176,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
-        /* node:http stated how the body of this response is framed (Node's
-         * chunkedEncoding), in the head. The writer frames the body by it,
-         * whatever the header bits and the request version say. At most one
-         * of the two is set, and each new response clears them. */
-        HTTP_NODE_BODY_CHUNKED = 1 << 23,
-        HTTP_NODE_BODY_RAW = 1 << 24,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -200,7 +200,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         this->isIdle = false;
     }
 
-    /* Whether the body is chunk-framed. node:http states it. Every other
+    /* Whether the body is chunk-framed. node:http states it, except for the
+     * head that gets the automatic Content-Length of internalEnd(). Every other
      * response derives it: chunk-framed unless one of rawBits is set. */
     bool isBodyChunked(uint32_t rawBits) const {
         if (state & (HTTP_NODE_BODY_CHUNKED | HTTP_NODE_BODY_RAW)) {
@@ -308,9 +309,9 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     uint64_t lastMessageStartMs = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the
-     * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces
-     * chunked framing for the response body. HTTP_NODE_HAS_RESPONSE_TRAILERS in
-     * the shared flags word mirrors !empty(). */
+     * final CRLF of a chunked response (RFC 9112 7.1.2). node:http sets them
+     * only for a body that it stated as chunk-framed. HTTP_NODE_HAS_RESPONSE_TRAILERS
+     * in the shared flags word mirrors !empty(). */
     std::string nodeHttpResponseTrailers;
     /* Raw bytes of the trailer section received after the final 0-size chunk
      * of the current request's chunked body, including its terminating CRLF.

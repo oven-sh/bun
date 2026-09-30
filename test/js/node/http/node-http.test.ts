@@ -3755,6 +3755,79 @@ it("standalone ServerResponse answers 204 + explicit chunked TE with Connection:
   expect(out).toEndWith("\r\n\r\n");
 });
 
+// A ServerResponse with no native handle writes through _storeHeader, which decides the framing and validates the
+// Trailer header as in Node. Each expected value but the last is what node v26.3.0 writes to the socket.
+describe("standalone ServerResponse framing", () => {
+  function standalone() {
+    const chunks: Buffer[] = [];
+    const socket = new Writable({
+      write(chunk, encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      },
+    });
+    const res: any = new ServerResponse({
+      method: "GET",
+      httpVersionMajor: 1,
+      httpVersionMinor: 1,
+      headers: {},
+    } as any);
+    res.assignSocket(socket);
+    return {
+      res,
+      written: () =>
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .replace(/^Date: .*\r\n/m, ""),
+    };
+  }
+
+  it("discards the trailers of addTrailers() on a body that is not chunk-framed", async () => {
+    const { res, written } = standalone();
+    res.addTrailers({ "X-T": "1" });
+    res.setHeader("Content-Length", "2");
+    res.end("ok");
+    await once(res, "finish");
+    expect(written()).toBe("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
+  });
+
+  it("chunk-frames a body that has a Trailer header and an empty Transfer-Encoding array", async () => {
+    const { res, written } = standalone();
+    res.setHeader("Transfer-Encoding", []);
+    res.setHeader("Trailer", "X-T");
+    res.end("ok");
+    await once(res, "finish");
+    expect(written()).toBe(
+      "HTTP/1.1 200 OK\r\nTrailer: X-T\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    );
+  });
+
+  it("has sent no headers after writeHead() throws ERR_HTTP_TRAILER_INVALID", async () => {
+    const { res, written } = standalone();
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader("Trailer", "X-T");
+    expect(() => res.writeHead(204)).toThrow(expect.objectContaining({ code: "ERR_HTTP_TRAILER_INVALID" }));
+    expect(res.headersSent).toBe(false);
+    res.removeHeader("Trailer");
+    res.writeHead(500).end();
+    await once(res, "finish");
+    expect(written()).toBe("HTTP/1.1 500 No Content\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+  });
+
+  // Node keeps a Trailer header that setHeader() stored, so its next end() throws again. Bun removes the header,
+  // as on a response with a native handle.
+  it("removes the Trailer header when it throws ERR_HTTP_TRAILER_INVALID, so the next end() answers", async () => {
+    const { res, written } = standalone();
+    res.setHeader("Trailer", "X-T");
+    res.setHeader("Content-Length", "2");
+    expect(() => res.writeHead(200)).toThrow(expect.objectContaining({ code: "ERR_HTTP_TRAILER_INVALID" }));
+    expect(res.getHeader("trailer")).toBeUndefined();
+    res.end("ok");
+    await once(res, "finish");
+    expect(written()).toBe("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
+  });
+});
+
 it("removing transfer-encoding on a HEAD response keeps the connection alive", async () => {
   // _hasBody === false means there is no body to close-delimit; Node leaves
   // the connection open (its _storeHeader checks !_hasBody first).

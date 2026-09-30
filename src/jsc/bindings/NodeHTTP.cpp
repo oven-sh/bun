@@ -468,7 +468,7 @@ static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
-// Not header lines: how node:http frames the body (Node's chunkedEncoding). At most one of the two is set.
+// Not header lines: how node:http frames the body (Node's chunkedEncoding). At most one of the two is set. Neither is set for the head that gets the writer's automatic Content-Length.
 static constexpr uint32_t kAutoHeaderBodyChunked = 1 << 5;
 static constexpr uint32_t kAutoHeaderBodyRaw = 1 << 6;
 
@@ -535,6 +535,8 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
         // Same state the flat-array path sets when it sees the header: the writer adds no Content-Length.
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
     }
+    // A stated raw body stops the writer's own framing line, so the head must not need one.
+    ASSERT(!(autoHeaderBits & kAutoHeaderBodyRaw) || (response->getHttpResponseData()->state & (uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER | uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED | uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS)));
 }
 
 template<bool isSSL>

@@ -2498,6 +2498,79 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
       },
       "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nok",
     ],
+    [
+      "no framing header, empty write() then end(data)",
+      (res: any) => {
+        res.write("");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "chunked, gzip",
+      (res: any) => {
+        res.setHeader("Transfer-Encoding", "chunked, gzip");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "addTrailers(), writeHead(200, Content-Length), end(data)",
+      (res: any) => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.writeHead(200, { "Content-Length": "2" });
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "addTrailers(), writeHead(200, identity), end(data)",
+      (res: any) => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.writeHead(200, { "Transfer-Encoding": "identity" });
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "addTrailers(), writeHead(204), end()",
+      (res: any) => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.writeHead(204);
+        res.end();
+      },
+      "HTTP/1.1 204 No Content\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "a status line that the server refuses, then identity",
+      (res: any) => {
+        res.statusCode = 99;
+        res.setHeader("Transfer-Encoding", "chunked");
+        try {
+          res.end("no");
+        } catch {
+          res.statusCode = 200;
+          res.setHeader("Transfer-Encoding", "identity");
+          res.end("ok");
+        }
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "a status line that the server refuses in write(), then identity",
+      (res: any) => {
+        res.statusCode = 99;
+        res.setHeader("Transfer-Encoding", "chunked");
+        try {
+          res.write("no");
+        } catch {
+          res.statusCode = 200;
+          res.setHeader("Transfer-Encoding", "identity");
+          res.end("ok");
+        }
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
   ] as Row[])("%s", async (_, respond, expected) => {
     expect(await wire((req, res) => respond(res))).toBe(expected);
   });
@@ -2547,8 +2620,108 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
       },
       "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
     ],
+    [
+      "addTrailers(), writeHead(200), end()",
+      (res: any) => {
+        res.addTrailers({ "Content-MD5": "7895bf4b8828b55ceaf47747b4bca667" });
+        res.writeHead(200);
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "a writeHead() wrapper, addTrailers(), end(data)",
+      (res: any) => {
+        const writeHead = res.writeHead;
+        res.writeHead = function (...args) {
+          return writeHead.apply(this, args);
+        };
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    ],
+    [
+      "chunked, write() in a later turn, end()",
+      (res: any) => {
+        res.setHeader("Transfer-Encoding", "chunked");
+        setImmediate(() => {
+          res.write("o");
+          setImmediate(() => {
+            res.write("k");
+            res.end();
+          });
+        });
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n",
+    ],
   ] as Row[])("an HTTP/1.0 request: %s", async (_, respond, expected) => {
     expect(await wire((req, res) => respond(res), GET_1_0)).toBe(expected);
+  });
+
+  // The ServerResponse constructor reads the TE header of an HTTP/1.0 request into useChunkedEncodingByDefault: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L212-L215
+  test.concurrent.each([
+    [
+      "write() + end(data)",
+      (res: any) => {
+        res.write("o");
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n",
+    ],
+    [
+      "end(data)",
+      (res: any) => {
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+    ],
+    [
+      "writeHead(200), end(data)",
+      (res: any) => {
+        res.writeHead(200);
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "flushHeaders(), write() + end(data)",
+      (res: any) => {
+        res.flushHeaders();
+        res.write("o");
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n",
+    ],
+    [
+      "removeHeader(Content-Length), write() + end()",
+      (res: any) => {
+        res.removeHeader("Content-Length");
+        res.write("ok");
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "Trailer, write() + addTrailers() + end(data)",
+      (res: any) => {
+        res.setHeader("Trailer", "X-Foo");
+        res.write("o");
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("k");
+      },
+      "HTTP/1.1 200 OK\r\nTrailer: X-Foo\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\nX-Foo: bar\r\n\r\n",
+    ],
+    [
+      "addTrailers(), end(data)",
+      (res: any) => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
+    ],
+  ] as Row[])("an HTTP/1.0 request that has TE: chunked: %s", async (_, respond, expected) => {
+    expect(await wire((req, res) => respond(res), "GET / HTTP/1.0\r\nHost: x\r\nTE: chunked\r\n\r\n")).toBe(expected);
   });
 
   test.concurrent.each([
@@ -2577,6 +2750,35 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
         res.end("ok");
       },
       "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "addTrailers(), writeHead(200), end()",
+      (res: any) => {
+        res.addTrailers({ "Content-MD5": "7895bf4b8828b55ceaf47747b4bca667" });
+        res.writeHead(200);
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "addTrailers(), flushHeaders(), end(data)",
+      (res: any) => {
+        res.addTrailers({ "X-Foo": "bar" });
+        res.flushHeaders();
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "chunked + Trailer, write() + addTrailers() + end()",
+      (res: any) => {
+        res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Trailer", "X-Foo");
+        res.write("ok");
+        res.addTrailers({ "X-Foo": "bar" });
+        res.end();
+      },
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-Foo\r\nDate: <D>\r\nConnection: close\r\n\r\n",
     ],
   ] as Row[])("a HEAD request: %s", async (_, respond, expected) => {
     expect(await wire((req, res) => respond(res), HEAD)).toBe(expected);
@@ -2675,6 +2877,21 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
 
   // Node validates the Trailer header in every call that stores the head. The call throws before it sends a byte,
   // so the handler can still answer.
+  async function wireCaught(respond: (res: any) => void, request: string) {
+    const seen: Record<string, unknown> = {};
+    const sent = await wire((req, res) => {
+      try {
+        respond(res);
+      } catch (error: any) {
+        seen.code = error.code;
+        seen.headersSent = res.headersSent;
+        res.removeHeader("Trailer");
+        res.end("ok");
+      }
+    }, request);
+    return { ...seen, sent };
+  }
+
   test.concurrent.each([
     [
       "Transfer-Encoding: identity, end(data)",
@@ -2706,18 +2923,62 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
   ] as Row[])(
     "a Trailer header on a body that is not chunk-framed throws ERR_HTTP_TRAILER_INVALID: %s",
     async (_, respond, expected) => {
-      const seen: Record<string, unknown> = {};
-      const sent = await wire((req, res) => {
-        try {
-          respond(res);
-        } catch (error: any) {
-          seen.code = error.code;
-          seen.headersSent = res.headersSent;
-          res.removeHeader("Trailer");
-          res.end("ok");
-        }
+      expect(await wireCaught(respond, GET)).toEqual({
+        code: "ERR_HTTP_TRAILER_INVALID",
+        headersSent: false,
+        sent: expected,
       });
-      expect({ ...seen, sent }).toEqual({ code: "ERR_HTTP_TRAILER_INVALID", headersSent: false, sent: expected });
+    },
+  );
+
+  // These bodies are not chunk-framed because of the request or the status. The handler sets no framing header.
+  test.concurrent.each([
+    [
+      "a HEAD request, write(data)",
+      (res: any) => {
+        res.setHeader("Trailer", "X-Foo");
+        res.write("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+      HEAD,
+    ],
+    [
+      "an HTTP/1.0 request, end(data)",
+      (res: any) => {
+        res.setHeader("Trailer", "X-Foo");
+        res.end("ok");
+      },
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+      GET_1_0,
+    ],
+    [
+      "204, end()",
+      (res: any) => {
+        res.statusCode = 204;
+        res.setHeader("Trailer", "X-Foo");
+        res.end();
+      },
+      "HTTP/1.1 204 No Content\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+      GET,
+    ],
+    [
+      "304, flushHeaders()",
+      (res: any) => {
+        res.statusCode = 304;
+        res.setHeader("Trailer", "X-Foo");
+        res.flushHeaders();
+      },
+      "HTTP/1.1 304 Not Modified\r\nDate: <D>\r\nConnection: close\r\n\r\n",
+      GET,
+    ],
+  ] as [string, (res: any) => void, string, string][])(
+    "a Trailer header on a body that is not chunk-framed throws ERR_HTTP_TRAILER_INVALID: %s",
+    async (_, respond, expected, request) => {
+      expect(await wireCaught(respond, request)).toEqual({
+        code: "ERR_HTTP_TRAILER_INVALID",
+        headersSent: false,
+        sent: expected,
+      });
     },
   );
 
@@ -2991,6 +3252,79 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
         second: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok",
       },
     ],
+    [
+      "statusCode assigned after write()",
+      (res: any) => {
+        res.write("a");
+        res.statusCode = 404;
+        res.end("b");
+      },
+      {
+        queued: true,
+        second:
+          "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+      },
+    ],
+    [
+      "writeHead(404) after write() throws ERR_HTTP_HEADERS_SENT",
+      (res: any) => {
+        res.write("a");
+        let code = null;
+        try {
+          res.writeHead(404);
+        } catch (error: any) {
+          code = error.code;
+        }
+        res.end("b");
+        return { code };
+      },
+      {
+        queued: true,
+        code: "ERR_HTTP_HEADERS_SENT",
+        second:
+          "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+      },
+    ],
+    [
+      "writeContinue() after write() throws ERR_HTTP_HEADERS_SENT",
+      (res: any) => {
+        res.write("a");
+        let code = null;
+        try {
+          res.writeContinue();
+        } catch (error: any) {
+          code = error.code;
+        }
+        res.end("b");
+        return { code };
+      },
+      {
+        queued: true,
+        code: "ERR_HTTP_HEADERS_SENT",
+        second:
+          "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+      },
+    ],
+    [
+      "a status code that is not valid throws from write()",
+      (res: any) => {
+        res.statusCode = 99;
+        let code = null;
+        try {
+          res.write("a");
+        } catch (error: any) {
+          code = error.code;
+        }
+        res.statusCode = 500;
+        res.end("b");
+        return { code };
+      },
+      {
+        queued: true,
+        code: "ERR_HTTP_INVALID_STATUS_CODE",
+        second: "HTTP/1.1 500 Internal Server Error\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 1\r\n\r\nb",
+      },
+    ],
   ] as [string, (res: any) => object | void, object][])(
     "a response that is queued behind a pipelined one: %s",
     async (_, respond, expected) => {
@@ -3021,4 +3355,286 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
   ] as Row[])("https: %s", async (_, respond, expected) => {
     expect(await wire((req, res) => respond(res), GET, {}, true)).toBe(expected);
   });
+
+  // Node's write() counts the bytes that it gives to the socket against the high-water mark: the chunk, and the
+  // chunk-size line with its two CRLF when the body is chunk-framed. The head goes out in an earlier turn, so only
+  // the body counts. 3 bytes under the mark, the 8 bytes of chunk framing decide what write() returns.
+  const chunkFramed = { returned: false, overhead: 8, needDrain: true, drained: true };
+  const raw = { returned: true, overhead: 0, needDrain: false, drained: false };
+  test.concurrent.each([
+    ["no framing header", GET, (res: any) => {}, chunkFramed],
+    ["Transfer-Encoding: chunked", GET, (res: any) => res.setHeader("Transfer-Encoding", "chunked"), chunkFramed],
+    [
+      "Content-Length + Transfer-Encoding: chunked",
+      GET,
+      (res: any) => {
+        res.setHeader("Content-Length", String(1 << 20));
+        res.setHeader("Transfer-Encoding", "chunked");
+      },
+      chunkFramed,
+    ],
+    ["Transfer-Encoding: identity", GET, (res: any) => res.setHeader("Transfer-Encoding", "identity"), raw],
+    ["Content-Length", GET, (res: any) => res.setHeader("Content-Length", String(1 << 20)), raw],
+    [
+      "a removed Transfer-Encoding",
+      GET,
+      (res: any) => {
+        res.setHeader("Transfer-Encoding", "x");
+        res.removeHeader("Transfer-Encoding");
+      },
+      raw,
+    ],
+    ["an HTTP/1.0 request, no framing header", GET_1_0, (res: any) => {}, raw],
+    [
+      "an HTTP/1.0 request, Transfer-Encoding: chunked",
+      GET_1_0,
+      (res: any) => res.setHeader("Transfer-Encoding", "chunked"),
+      chunkFramed,
+    ],
+    [
+      "an HTTP/1.0 request, Transfer-Encoding: identity",
+      GET_1_0,
+      (res: any) => res.setHeader("Transfer-Encoding", "identity"),
+      raw,
+    ],
+  ] as [string, string, (res: any) => void, typeof chunkFramed][])(
+    "write() counts the chunk framing of a chunk-framed body only: %s",
+    async (_, request, prepare, expected) => {
+      const seen = Promise.withResolvers<typeof chunkFramed>();
+      await using server = createServer(async (req, res: any) => {
+        try {
+          prepare(res);
+          res.flushHeaders();
+          await new Promise(resolve => setImmediate(resolve));
+          let drained = false;
+          res.on("drain", () => (drained = true));
+          const size = res.writableHighWaterMark - 3;
+          const returned = res.write(Buffer.alloc(size, "a"));
+          const overhead = res.writableLength - size;
+          const needDrain = res.writableNeedDrain;
+          // 'drain' follows a write() that returned false. After one that returned true, the next turn shows that none comes.
+          if (!returned) await once(res, "drain");
+          else await new Promise(resolve => setImmediate(resolve));
+          seen.resolve({ returned, overhead, needDrain, drained });
+        } catch (error) {
+          seen.reject(error);
+        } finally {
+          res.destroy();
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const socket = connect((server.address() as AddressInfo).port, "127.0.0.1", () => socket.write(request));
+      socket.on("error", () => {});
+      socket.resume();
+      try {
+        expect(await seen.promise).toEqual(expected);
+      } finally {
+        socket.destroy();
+      }
+    },
+  );
+
+  // renderNativeHeaders() leaves the framing of a head in module slots for its caller. Code that runs in end() after
+  // the render, here a getter for the status message, can render the head of another response.
+  test.concurrent("a response keeps its framing when another response is rendered inside its end()", async () => {
+    const parked: any[] = [];
+    const allParked = Promise.withResolvers<void>();
+    const endIdentity = (res: any) => {
+      res.setHeader("Transfer-Encoding", "identity");
+      res.end("b");
+    };
+    await using server = createServer((req, res: any) => {
+      if (req.url === "/parked") {
+        parked.push(res);
+        if (parked.length === 4) allParked.resolve();
+        return;
+      }
+      res.setHeader("Content-Length", "2");
+      res.setHeader("Transfer-Encoding", "chunked");
+      Object.defineProperty(res, "statusMessage", {
+        configurable: true,
+        get() {
+          const other = parked.pop();
+          if (other) endIdentity(other);
+          return "OK";
+        },
+        set() {},
+      });
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const request = (path: string) => {
+      const done = Promise.withResolvers<string>();
+      const socket = connect(port, "127.0.0.1", () =>
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`),
+      );
+      const chunks: Buffer[] = [];
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("error", done.reject);
+      socket.on("close", () =>
+        done.resolve(
+          Buffer.concat(chunks)
+            .toString("latin1")
+            .replace(/^Date: .*$/gm, "Date: <D>"),
+        ),
+      );
+      return done.promise;
+    };
+    const others = [request("/parked"), request("/parked"), request("/parked"), request("/parked")];
+    await allParked.promise;
+    const sent = await request("/");
+    // The responses that no call of the getter ended.
+    parked.forEach(endIdentity);
+    expect({ sent, others: await Promise.all(others) }).toEqual({
+      sent: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+      others: Array(4).fill(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nb",
+      ),
+    });
+  });
+});
+
+// Each expected value in this block is what Bun sends, and the comment gives what node v26.3.0 sends.
+describe("differences from Node in the framing of a response body that stay", () => {
+  async function wire(respond: (res: any) => void) {
+    await using server = createServer((req, res) => respond(res));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const done = Promise.withResolvers<string>();
+    const socket = connect(port, "127.0.0.1", () =>
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+    );
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", done.reject);
+    socket.on("close", () =>
+      done.resolve(
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .replace(/^Date: .*$/gm, "Date: <D>"),
+      ),
+    );
+    return await done.promise;
+  }
+
+  // The request does not ask for a close. `end` is the last bytes of the response. When they are in, a second
+  // request shows that the connection is still open, and that request asks for the close.
+  async function wireKeepAlive(respond: (res: any) => void, end: string) {
+    await using server = createServer((req, res) => {
+      if (req.url === "/probe") res.end("probe");
+      else respond(res);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const done = Promise.withResolvers<string>();
+    const socket = connect(port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+    let raw = "";
+    let probed = false;
+    socket.on("data", chunk => {
+      raw += chunk.toString("latin1");
+      if (!probed && raw.includes(end)) {
+        probed = true;
+        socket.write("GET /probe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      }
+    });
+    // The probe written after the server's close may be answered with an RST.
+    socket.on("error", () => {});
+    socket.on("close", () => done.resolve(raw.replace(/^Date: .*$/gm, "Date: <D>")));
+    return await done.promise;
+  }
+
+  const probeResponse = "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nContent-Length: 5\r\n\r\nprobe";
+
+  // Node: `Connection: keep-alive` and `Keep-Alive: timeout=5`, and then it closes the connection.
+  test.concurrent("a close-delimited response says Connection: close", async () => {
+    const sent = await wireKeepAlive(res => {
+      res.removeHeader("Transfer-Encoding");
+      res.write("o");
+      res.end("k");
+    }, "\r\n\r\nok");
+    expect(sent).toBe("HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\n\r\nok");
+  });
+
+  // Node: `Content-Length: 2` and the body `ok`. It discards the trailers.
+  test.concurrent("addTrailers() and end(data) with no framing header send the trailers", async () => {
+    const sent = await wire(res => {
+      res.addTrailers({ "X-Foo": "bar" });
+      res.end("ok");
+    });
+    expect(sent).toBe(
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\nX-Foo: bar\r\n\r\n",
+    );
+  });
+
+  // Node keeps the Trailer header, so its second end(data) throws too.
+  test.concurrent("the Trailer header does not stay after ERR_HTTP_TRAILER_INVALID", async () => {
+    const codes: string[] = [];
+    const sent = await wire(res => {
+      res.setHeader("Content-Length", "2");
+      res.setHeader("Trailer", "X-Foo");
+      try {
+        res.end("ok");
+      } catch (error: any) {
+        codes.push(error.code);
+        res.end("ok");
+      }
+    });
+    expect({ codes, sent }).toEqual({
+      codes: ["ERR_HTTP_TRAILER_INVALID"],
+      sent: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <D>\r\nConnection: close\r\n\r\nok",
+    });
+  });
+
+  // Node decides `Content-Length: 2` in the end() that throws, and sends the 8 bytes of the write() under that head.
+  test.concurrent("write() after an end(data) that threw gets a chunk-framed body", async () => {
+    const sent = await wireKeepAlive(res => {
+      try {
+        res.end("ok", "bogus-encoding");
+      } catch {
+        res.write("fallback");
+        res.end();
+      }
+    }, "0\r\n\r\n");
+    expect(sent).toBe(
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nfallback\r\n0\r\n\r\n" +
+        probeResponse,
+    );
+  });
+
+  // Node sends `Content-Length: 2` in these two heads, also when the wrapper wrote one byte more. In Bun only the
+  // end() that sends the head can give it a Content-Length. The catch is there because this end() throws
+  // ERR_HTTP_HEADERS_SENT in Bun when the wrapper sent the head.
+  test.concurrent.each([
+    [
+      "flushHeaders()",
+      (res: any) => res.flushHeaders(),
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+    [
+      "write()",
+      (res: any) => res.write("w"),
+      "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nw\r\n2\r\nok\r\n0\r\n\r\n",
+    ],
+  ] as [string, (res: any) => void, string][])(
+    "end(data) behind a writeHead() wrapper that calls %s gets a chunk-framed body",
+    async (_, inWrapper, expected) => {
+      let chunkedEncoding: unknown;
+      const sent = await wireKeepAlive(res => {
+        const writeHead = res.writeHead;
+        res.writeHead = function (...args: any[]) {
+          const result = writeHead.apply(this, args);
+          inWrapper(this);
+          return result;
+        };
+        try {
+          res.end("ok");
+        } catch {
+          res.end("ok");
+        }
+        chunkedEncoding = res.chunkedEncoding;
+      }, "0\r\n\r\n");
+      expect({ chunkedEncoding, sent }).toEqual({ chunkedEncoding: true, sent: expected + probeResponse });
+    },
+  );
 });

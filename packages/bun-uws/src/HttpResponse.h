@@ -257,8 +257,9 @@ public:
         }
 
         /* if write was called and there was previously no Content-Length header set.
-         * node:http compat: pending response trailers (addTrailers) also force chunked
-         * framing, since trailer fields can only be sent on a chunked body. */
+         * node:http compat: response trailers (addTrailers) follow the last chunk.
+         * node:http sets them only for a body that it stated as chunk-framed, and
+         * end() entered chunked mode for that body before this point. */
         if ((httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS))
             && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NO_BODY_STATUS)
             && httpResponseData->isBodyChunked(HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED)) {
@@ -692,7 +693,7 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && httpResponseData->isBodyChunked(HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
             /* Write mark on first call to write */
             writeMark();
 
@@ -722,7 +723,7 @@ public:
 
         /* Close-delimited responses must not re-add the Transfer-Encoding
          * header the user removed; their body is raw, so take the else path. */
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_NO_BODY_STATUS) && httpResponseData->isBodyChunked(HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED)) {
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */
                 writeMark();
@@ -797,8 +798,9 @@ public:
         size_t chunkHeadLength = 0;
         std::string_view chunkTail;
 
-        /* Close-delimited responses (the user removed the framing headers)
-         * write raw bytes with no chunk framing, like the else path. */
+        /* A body that is not chunk-framed (Content-Length, HTTP/1.0,
+         * close-delimited, or stated raw by node:http) is written raw, in the
+         * else path. */
         if (httpResponseData->isBodyChunked(HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED)) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 /* Write mark on first call to write */

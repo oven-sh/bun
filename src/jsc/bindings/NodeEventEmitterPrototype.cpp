@@ -45,24 +45,15 @@ static constexpr NodeEventsHelper nodeEventsHelpers[] = {
     { WebCore::BunBuiltinNames::Name::k_nodeEventsOverflowWarning, WebCore::eventEmitterPrototypeOverflowWarningCodeGenerator },
 };
 
-// A helper, or the `emit` that captures rejections, becomes a function when it is first read.
-JSC_DEFINE_CUSTOM_GETTER(getNodeEventsFunction, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name))
+// Only a call into JS creates the `emit` that captures rejections, so its name is this getter until the first read.
+JSC_DEFINE_CUSTOM_GETTER(getNodeEventsEmitWithRejectionCapture, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& names = WebCore::builtinNames(vm);
-    constexpr unsigned attributes = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
-
-    for (auto& helper : nodeEventsHelpers) {
-        if (name == names.privateName(helper.name))
-            return JSValue::encode(globalObject->putDirectBuiltinFunction(vm, globalObject, name, helper.generator(vm), attributes | PropertyAttribute::Builtin));
-    }
-
-    ASSERT(name == names.nodeEventsEmitWithRejectionCapturePrivateName());
     JSValue emit = callFactory(vm, globalObject, WebCore::eventEmitterPrototypeCreateEmitWithRejectionCaptureCodeGenerator(vm));
     RETURN_IF_EXCEPTION(scope, {});
-    globalObject->putDirect(vm, name, emit, attributes);
+    globalObject->putDirect(vm, name, emit, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return JSValue::encode(emit);
 }
 
@@ -82,11 +73,15 @@ static void putState(VM& vm, Zig::GlobalObject* globalObject)
     globalObject->putDirect(vm, names.nodeEventsKErrorMonitorPrivateName(), Symbol::create(vm, vm.symbolRegistry().symbolForKey("events.errorMonitor"_s)), constant);
     globalObject->putDirect(vm, names.nodeEventsKRejectionPrivateName(), Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.rejection"_s)), constant);
 
-    auto* lazyFunction = CustomGetterSetter::create(vm, getNodeEventsFunction, nullptr);
-    constexpr unsigned lazy = PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue;
+    // Functions from the start, which costs little: a builtin is not compiled before its first call. A getter that
+    // its first read replaces with the function changes the attributes of a property of the global object. That
+    // gives the global object a new Structure, and all optimized code that reads a global variable has to adapt to it.
     for (auto& helper : nodeEventsHelpers)
-        globalObject->putDirectCustomAccessor(vm, names.privateName(helper.name), lazyFunction, lazy);
-    globalObject->putDirectCustomAccessor(vm, names.nodeEventsEmitWithRejectionCapturePrivateName(), lazyFunction, lazy);
+        globalObject->putDirectBuiltinFunction(vm, globalObject, names.privateName(helper.name), helper.generator(vm), constant);
+
+    // The one name that has such a getter.
+    constexpr unsigned lazy = PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue;
+    globalObject->putDirectCustomAccessor(vm, names.nodeEventsEmitWithRejectionCapturePrivateName(), CustomGetterSetter::create(vm, getNodeEventsEmitWithRejectionCapture, nullptr), lazy);
 }
 
 JSValue nodeEventEmitterState(Zig::GlobalObject* globalObject, NodeEventEmitterState state)
@@ -105,7 +100,7 @@ JSValue nodeEventEmitterState(Zig::GlobalObject* globalObject, NodeEventEmitterS
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     putState(vm, globalObject);
-    // Not getDirect(): the function is behind getNodeEventsFunction until something reads it.
+    // Not getDirect(): the `emit` that captures rejections is behind its getter until something reads it.
     JSValue value = globalObject->get(globalObject, WebCore::builtinNames(vm).privateName(stateNames[index]));
     RETURN_IF_EXCEPTION(scope, {});
     return value;

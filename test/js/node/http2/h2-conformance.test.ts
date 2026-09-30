@@ -1979,8 +1979,8 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
 
   // Writes `count` request/kill pairs and returns the GOAWAY. The PING behind the pairs is
   // answered when the server took them all. 1200 resets empty a bucket of 1000 unless it
-  // regained 199 tokens meanwhile. That takes 7 s at 33 per second, so only a build that needs
-  // more than 6 s for the pairs gets them once more.
+  // regained 200 tokens meanwhile. That takes 7 refills of 33, one per second, so only a build
+  // that needs more than 6 s for the pairs gets them once more.
   async function flood(opts: {
     options?: Record<string, unknown>;
     count: number;

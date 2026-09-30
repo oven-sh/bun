@@ -879,22 +879,34 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "store\nsecond\nback\nthird function\nfirst 3\nindex s\nlazy s" },
   });
-  // index.js runs the first import itself, and index.js cannot move.
+  // index.js runs these imports itself, and index.js cannot move. The chunk that its files move to runs them as well.
+  const noChunkImportsIndex = (api: BundlerTestBundleAPI) => {
+    for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+  };
+  const extSetup = {
+    external: ["ext-setup"],
+    runtimeFiles: {
+      "/node_modules/ext-setup/package.json": `{ "name": "ext-setup", "type": "module", "main": "index.js" }`,
+      "/node_modules/ext-setup/index.js": `globalThis.APP = { name: "app" };`,
+    },
+  };
   for (const [name, specifier, options] of [
     ["CommonJS", "./setup.cjs", { files: { "/setup.cjs": `globalThis.APP = { name: "app" };` } }],
     [
-      "External",
-      "ext-setup",
+      "WrappedESM",
+      "./setup.js",
       {
-        external: ["ext-setup"],
-        runtimeFiles: {
-          "/node_modules/ext-setup/package.json": `{ "name": "ext-setup", "type": "module", "main": "index.js" }`,
-          "/node_modules/ext-setup/index.js": `globalThis.APP = { name: "app" };`,
+        target: "browser",
+        files: {
+          "/setup.js": `globalThis.APP = { name: "app" };`,
+          "/first.js": `console.log("first"); globalThis.FIRST = 1; globalThis.again = () => require("./setup.js");`,
         },
       },
     ],
+    ["External", "ext-setup", extSetup],
   ] as const) {
-    itBundled("splitting/EntryFileAfterImportThatEntryRunsStays/" + name, {
+    itBundled("splitting/ImportThatEntryFileRunsPrecedesFilesThatMove/" + name, {
+      target: "bun",
       ...options,
       files: {
         "/index.js": /* js */ `
@@ -913,12 +925,170 @@ describe("bundler", () => {
       },
       entryPoints: ["/index.js"],
       splitting: true,
-      target: "bun",
       outdir: "/out",
       format: "esm",
-      run: { file: "/out/index.js", stdout: "first\nstore 1\nreader app\nindex s\nsettings s" },
+      onAfterBundle: noChunkImportsIndex,
+      run: { file: "/out/index.js", stdout: "first\nreader app\nstore 1\nindex s\nsettings s" },
     });
   }
+  itBundled("splitting/ImportOfPackageThatLazyChunkSharesPrecedesFilesThatMove", {
+    files: {
+      ...setupBeforeShared(""),
+      "/index.js": /* js */ `
+        import React from "fakereact";
+        import "./setup.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name, React.version);
+        import("./settings.js");
+      `,
+      "/setup.js": `console.log("setup", globalThis.REACT); globalThis.APP = { name: "app" };`,
+      "/settings.js": /* js */ `
+        import React from "fakereact";
+        import { Store } from "./store.js";
+        console.log("settings", new Store().name, React.version);
+      `,
+      "/node_modules/fakereact/index.js": `globalThis.REACT = "loaded"; module.exports = { version: 1 };`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "setup loaded\nindex app 1\nsettings app 1" },
+  });
+  itBundled("splitting/ImportOfWrapperInChunkOfOtherEntryPrecedesFilesThatMove", {
+    files: {
+      "/index.js": /* js */ `
+        import "./polyfill.cjs";
+        import "./setup.js";
+        import { Store } from "./store.js";
+        console.log("index", new Store().name);
+        import("./settings.js");
+      `,
+      "/other.js": `import "./polyfill.cjs"; console.log("other");`,
+      "/polyfill.cjs": `console.log("polyfill"); globalThis.POLYFILL = 1;`,
+      "/setup.js": `console.log("setup", globalThis.POLYFILL); globalThis.APP = { name: "app" };`,
+      "/store.js": `console.log("store", globalThis.POLYFILL); export class Store { name = globalThis.APP.name; }`,
+      "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+    },
+    entryPoints: ["/index.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "polyfill\nsetup 1\nstore 1\nindex app\nsettings app" },
+  });
+  itBundled("splitting/ExternalImportsOfEntryFileAreBareInOtherChunk", {
+    files: {
+      "/index.js": /* js */ `
+        import * as ns from "ext-star";
+        import def, { named } from "ext-names";
+        import { sep } from "node:path";
+        export * from "ext-reexport";
+        import "./reader.js";
+        import { Store } from "./store.js";
+        console.log("index", ns.star, def, named, sep.length, new Store().name);
+        import("./settings.js");
+      `,
+      "/reader.js": `console.log("reader", globalThis.LOADED.join());`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+    },
+    external: ["ext-star", "ext-names", "ext-reexport"],
+    runtimeFiles: Object.fromEntries(
+      [
+        ["ext-star", `export const star = 1;`],
+        ["ext-names", `export default 2; export const named = 3;`],
+        ["ext-reexport", `export const reexported = 4;`],
+      ].flatMap(([name, code]) => [
+        [`/node_modules/${name}/package.json`, `{ "name": "${name}", "type": "module", "main": "index.js" }`],
+        [`/node_modules/${name}/index.js`, `(globalThis.LOADED ??= []).push("${name}"); ${code}`],
+      ]),
+    ),
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const parent = api.readFile("/out/" + chunkContaining(api, `"reader"`));
+      expect(parent.match(/^import.*$/gm)).toEqual([`import"ext-star";`, `import"ext-names";`, `import"ext-reexport";`]);
+    },
+    run: {
+      file: "/out/index.js",
+      stdout: "reader ext-star,ext-names,ext-reexport\nstore\nindex 1 2 3 1 s\nsettings s",
+    },
+  });
+  // main.js is not the entry point's file, so it moves as a whole when what it imports first must precede a file that moves.
+  const thinEntry = {
+    "/index.js": `import "./main.js"; export const name = "index";`,
+    "/setup.cjs": `globalThis.APP = { name: "app" };`,
+    "/reader.js": `console.log("reader", globalThis.APP.name);`,
+    "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+    "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+  };
+  itBundled("splitting/FileWhoseImportsRunBeforeFilesThatMoveMovesToo", {
+    files: {
+      ...thinEntry,
+      "/main.js": /* js */ `
+        import "./setup.cjs";
+        import "./reader.js";
+        import { Store } from "./store.js";
+        console.log("main", new Store().name);
+        import("./settings.js");
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "reader app\nstore\nmain s\nsettings s" },
+  });
+  itBundled("splitting/FilesThatOneImportOfEntryFileLoadsStayTogether", {
+    files: {
+      ...thinEntry,
+      "/main.js": /* js */ `
+        import "./setup.cjs";
+        import "./reader.js";
+        import "./back.js";
+        import { Store } from "./store.js";
+        console.log("main", new Store().name);
+        import("./settings.js");
+      `,
+      "/back.js": `import { name } from "./index.js"; console.log("back"); globalThis.BACK = () => name;`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle: noChunkImportsIndex,
+    run: { file: "/out/index.js", stdout: "store\nreader app\nback\nmain s\nsettings s" },
+  });
+  itBundled("splitting/FileAroundLastSharedFileStaysWhenItsImportsRunNothing", {
+    files: {
+      "/index.js": /* js */ `
+        import "./outer.js";
+        import "./both.js";
+        console.log("index");
+        import("./lazy.js");
+      `,
+      "/other.js": `import "./both.js"; import { config } from "./config.js"; console.log("other", config);`,
+      "/outer.js": `import "./store.js"; import { config } from "./config.js"; console.log("outer", config);`,
+      "/store.js": `console.log("store"); globalThis.STORE = 1;`,
+      "/config.js": `console.log("config", globalThis.STORE); export const config = 1;`,
+      "/both.js": `console.log("both");`,
+      "/lazy.js": `import "./store.js"; console.log("lazy");`,
+    },
+    entryPoints: ["/index.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`"outer"`);
+    },
+    run: { file: "/out/index.js", stdout: "store\nconfig 1\nboth\nouter 1\nindex\nlazy" },
+  });
   itBundled("splitting/EntryFilesAfterSharedCodeStay", {
     files: {
       ...setupBeforeShared(""),

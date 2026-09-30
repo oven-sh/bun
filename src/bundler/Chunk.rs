@@ -1318,6 +1318,8 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
+    /// The file of a pinned entry point, which is in another chunk. Its part ranges here print only what their `import` statements run (`LinkerContext::entry_imports_in_parent`).
+    pub(crate) repeats_imports_of: Option<IndexInt>,
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with
     /// side effects: the order the unbundled modules would run them in.

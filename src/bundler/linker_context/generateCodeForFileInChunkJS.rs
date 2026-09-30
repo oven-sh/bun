@@ -222,6 +222,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 writer,
                 &mut stmts.all_stmts[main_stmts_len..],
                 &ast,
+                ast.import_records.as_slice(),
                 flags,
                 Ref::NONE,
                 Ref::NONE,
@@ -238,6 +239,72 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
 
     stmts.reset();
+
+    if chunk.content.javascript().repeats_imports_of == Some(source_index as u32) {
+        // The bindings stay with the file, so an external module gets a record of its own, for a bare `import`.
+        let mut external_records = bun_ast::import_record::List::new_in(temp_arena);
+        let wrapper_refs = c.graph.ast.items_wrapper_ref();
+        c.for_each_import_that_runs(
+            source_index as u32,
+            part_range.part_index_begin..part_range.part_index_end,
+            |record_index, wrapped| {
+                let record = &ast.import_records[record_index as usize];
+                let loc = record.range.loc;
+                stmts.all_stmts.push(if let Some(wrapped) = wrapped {
+                    Stmt::alloc(
+                        S::SExpr {
+                            value: Expr::init(
+                                E::Call {
+                                    target: Expr::init_identifier(
+                                        wrapper_refs[wrapped as usize],
+                                        loc,
+                                    ),
+                                    ..Default::default()
+                                },
+                                loc,
+                            ),
+                            ..Default::default()
+                        },
+                        loc,
+                    )
+                } else {
+                    external_records.push(bun_ast::ImportRecord {
+                        flags: record.flags - bun_ast::ImportRecordFlags::CONTAINS_IMPORT_STAR,
+                        ..*record
+                    });
+                    Stmt::alloc(
+                        S::Import {
+                            import_record_index: external_records.len() as u32 - 1,
+                            ..Default::default()
+                        },
+                        loc,
+                    )
+                });
+            },
+        );
+        if stmts.all_stmts.is_empty() {
+            return PrintResult::Result(PrintResultSuccess {
+                code: Box::new([]),
+                source_map: None,
+            });
+        }
+        let source: &bun_ast::Source = c.get_source(source_index as u32);
+        return c.print_code_for_file_in_chunk_js(
+            r,
+            arena,
+            writer,
+            stmts.all_stmts.as_mut_slice(),
+            &ast,
+            external_records.as_slice(),
+            flags,
+            to_esm_ref,
+            to_common_js_ref,
+            runtime_require_ref,
+            part_range.source_index,
+            source,
+            module_info,
+        );
+    }
 
     let part_index_for_lazy_default_export: u32 = 'brk: {
         if ast.flags.contains(AstFlags::HAS_LAZY_EXPORT) {
@@ -983,6 +1050,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         writer,
         out_stmts,
         &ast,
+        ast.import_records.as_slice(),
         flags,
         to_esm_ref,
         to_common_js_ref,

@@ -3767,6 +3767,8 @@ declare module "bun" {
      * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
      * thresholds so code that only runs during startup stays in the interpreter
      * longer; the app should call `Bun.unsafe.setJITPolicy(1)` once it is interactive.
+     * A function in which one property access keeps taking the interpreter's slow
+     * path is compiled by the Baseline JIT earlier than the scale says.
      *
      * Equivalent CLI flag: `--compile-jit-policy <n>`
      *
@@ -5612,6 +5614,11 @@ declare module "bun" {
      * effect until the next call. `bun build --compile` executables can start with a
      * scale baked in (`compile.jitPolicy` / `--compile-jit-policy`) and call
      * `setJITPolicy(1)` once interactive.
+     *
+     * The scale does not hold back every function: one in which a property access
+     * (`o.x` or `o.x = v`) keeps taking the interpreter's slow path, for example
+     * because it sees objects of several shapes, is compiled by the Baseline JIT
+     * earlier than the scale says. The optimizing tiers keep the scale.
      *
      * @param scale a finite number `>= 1`
      * @throws {TypeError} if `scale` is not a number

@@ -1795,6 +1795,46 @@ describe("DONT_CONTEXTIFY", () => {
     }
   });
 
+  test("a read of the context object finds a property that the context got after many reads", () => {
+    // Enough reads for the JIT, whose inline cache remembers "no such property" for the structure of an object.
+    // The compiler threads decide when, so there are several rounds.
+    const results: unknown[] = [];
+    for (let round = 0; round < 5; round++) {
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      const read = new Function("o", `return o.laterSymbol; // ${round}`);
+      for (let i = 0; i < 5000; i++) read(ctx);
+
+      // A bare assignment of a symbol makes a property of the global object of the context. The context
+      // object answers with it, and keeps its structure.
+      runInContext("laterSymbol = Symbol.for('later')", ctx);
+      results.push(ctx.laterSymbol, read(ctx));
+    }
+    expect(results).toEqual(new Array(10).fill(Symbol.for("later")));
+  });
+
+  test("a read of the context object finds a variable that hides a property of its prototype", () => {
+    const results: unknown[] = [];
+    // Few reads for the inline cache of the interpreter, many for those of the JIT.
+    for (const reads of [10, 5000]) {
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      const name = `hidesPrototype${reads}`;
+      const proto = Object.getPrototypeOf(ctx);
+      Object.defineProperty(proto, name, { value: "prototype", writable: true, configurable: true });
+      try {
+        const read = new Function("o", `return o.${name};`);
+        for (let i = 0; i < reads; i++) read(ctx);
+
+        // The variable is a property of the global object of the context. The context object answers with
+        // it, and keeps its structure.
+        runInContext(`var ${name};`, ctx);
+        results.push(Object.hasOwn(ctx, name), ctx[name], read(ctx));
+      } finally {
+        delete proto[name];
+      }
+    }
+    expect(results).toEqual([true, undefined, undefined, true, undefined, undefined]);
+  });
+
   test("basic usage still works", () => {
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     expect(runInContext("globalThis", ctx)).toBe(ctx);

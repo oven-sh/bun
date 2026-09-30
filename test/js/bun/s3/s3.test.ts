@@ -1,5 +1,5 @@
 import type { S3Options } from "bun";
-import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
+import { s3 as defaultS3, file, randomUUIDv7, S3Client } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";

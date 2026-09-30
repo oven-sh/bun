@@ -80,7 +80,7 @@ pub(crate) fn refuse_in_exec_argv(value: &[u8]) {
     }
 }
 
-/// Checks every operand and runs none. Exits with 1 without an operand or with one after the first that starts with `-`, with 2 when a diagnostic is an error, else with 0.
+/// Checks every operand and runs none. Exits with 1 without an operand, with `-` as the first one or with a later one that starts with `-`, with 2 when a diagnostic is an error, else with 0.
 #[cold]
 #[inline(never)]
 pub(crate) fn exec(ctx: Context<'_>) -> ! {
@@ -91,13 +91,17 @@ pub(crate) fn exec(ctx: Context<'_>) -> ! {
     {
         operands = rest;
     }
-    if operands.is_empty() && ctx.passthrough.is_empty() {
+    let mut tokens = operands.iter().chain(&ctx.passthrough);
+    let Some(first) = tokens.next() else {
         bun_core::err_generic!("--lint needs one or more files");
         Global::exit(1);
+    };
+    // `bun -` reads its script from stdin: `-` is not the name of a file.
+    if &**first == b"-" {
+        refuse("a script from stdin");
     }
     // Flags are parsed up to the first operand: a later token that starts with `-` would be read as a file.
-    let mut later = operands.iter().chain(&ctx.passthrough).skip(1);
-    if let Some(token) = later.find(|token| token.first() == Some(&b'-')) {
+    if let Some(token) = tokens.find(|token| token.first() == Some(&b'-')) {
         bun_core::err_generic!(
             "--lint cannot be used with \"{}\" after the first file",
             BStr::new(token)

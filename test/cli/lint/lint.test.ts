@@ -387,6 +387,74 @@ describe("bun --lint operands", () => {
   });
 });
 
+describe("`-` as the first operand, which makes stdin the script of a run", () => {
+  const refused = { stdout: "", stderr: "error: --lint cannot be used with a script from stdin\n", exitCode: 1 };
+  // Run, the script writes the marker and prints its arguments.
+  const script = `${markerSource}console.log(JSON.stringify(process.argv.slice(2)));\n`;
+
+  /** Runs `bun <args>` with `script` on stdin and returns what `bun` returns. */
+  async function bunWithScript(cwd: string, args: string[], env: NodeJS.Dict<string> = lintEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env,
+      cwd,
+      stdin: Buffer.from(script),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each(["--lint -", "run --lint -", "--lint -- -", "--lint - bad.ts"])(
+    "`bun %s` is refused and the script is not run",
+    async command => {
+      // Read, `bad.ts` is reported and the exit code is 2.
+      using dir = tempDir("lint-stdin", { "bad.ts": "let x = ;\n" });
+      const cwd = String(dir);
+      expect(await bunWithScript(cwd, command.split(" "))).toEqual(refused);
+      expect(await markerExists(cwd)).toBe(false);
+    },
+  );
+
+  test.concurrent("without the variable that turns `--lint` on, the refusal is about that variable", async () => {
+    using dir = tempDir("lint-stdin-gate", {});
+    const cwd = String(dir);
+    const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+    expect(await bunWithScript(cwd, ["--lint", "-"], withoutVariable)).toEqual({
+      stdout: "",
+      stderr:
+        "error: --lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it\n",
+      exitCode: 1,
+    });
+    expect(await markerExists(cwd)).toBe(false);
+  });
+
+  test.concurrent("it is refused while stdin stays open: stdin is not read to its end", async () => {
+    using dir = tempDir("lint-stdin-open", {});
+    // Nothing closes the pipe: a run, which reads its script to the end of stdin, would not exit.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--lint", "-"],
+      env: lintEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(refused);
+  });
+
+  test.concurrent("after `-` the flag is an argument of the script, and the script is run", async () => {
+    using dir = tempDir("lint-stdin-after", {});
+    const cwd = String(dir);
+    const after = await bunWithScript(cwd, ["-", "--lint"]);
+    expect(after.stdout).toBe('["--lint"]\n');
+    expect(after.exitCode).toBe(0);
+    expect(await markerExists(cwd)).toBe(true);
+  });
+});
+
 describe("a token that starts with `-` after the first file", () => {
   // Read, each of these files is reported and the exit code is 2.
   const files = { "a.ts": "let x = ;\n", "-b.ts": "\nlet y = ;\n", "c.ts": "\n\nlet z = ;\n" };

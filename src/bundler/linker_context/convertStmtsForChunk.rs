@@ -55,7 +55,6 @@ pub(crate) fn convert_stmts_for_chunk(
     wrap: WrapKind,
     ast: &JSAst<'_>,
 ) -> Result<(), crate::Error> {
-    let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
         || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;

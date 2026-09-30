@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolveObjectURL } from "node:buffer";
@@ -200,6 +201,102 @@ describe("url", () => {
       if (ok) expect(new URL(input).href).toBe(input.toLowerCase());
       else expect(() => new URL(input)).toThrow(TypeError);
     }
+  });
+
+  // URL Standard: the host and hostname setters run the host parser on the value, the one the constructor runs. It
+  // removes tab and newline, percent-decodes, then runs domain to ASCII once, and a forbidden host code point in that
+  // result fails the set. So a value with no ASCII delimiter gives the host that the same text gives in `new URL()`.
+  // Domain to ASCII never sees the value before that parse, so what it maps to a delimiter cannot become URL
+  // structure. Every expected value is what Node v26.10.0 gives. Some rows come from oven-sh/bun#33757.
+  describe("host and hostname setters parse the value once, like the constructor", () => {
+    const base = "https://user:pass@base.test:444/p?q#f";
+    // [value, host after the set]. null: the set is refused.
+    const cases: [string, string | null][] = [
+      ["other.example", "other.example"],
+      ["B\u00FCcher.example", "xn--bcher-kva.example"],
+      ["\u05D0.example", "xn--4db.example"],
+      ["\uFF45\uFF58\uFF41\uFF4D\uFF50\uFF4C\uFF45\u3002com", "example.com"],
+      ["%C3%9F.de", "xn--zca.de"],
+      ["x\u00AD", "x"],
+      ["\u00AD", null],
+      // Percent-decoding comes before domain to ASCII.
+      ["\u00DF%41.de", "xn--a-pfa.de"],
+      ["\u00FC%41.de", "xn--a-dha.de"],
+      ["%C3%BC\u00FC.de", "xn--tdaa.de"],
+      ["\u00DF%2e.de", "xn--zca..de"],
+      ["\u00E9.%78n--a", null],
+      ["\u00E9%2Fx", null],
+      ["\u00E9%40x", null],
+      ["\u00E9%3Ax", null],
+      // So does the removal of tab and newline.
+      ["\t\u00DF.de", "xn--zca.de"],
+      ["\u00DF\n.d\re", "xn--zca.de"],
+      ["\u00FC\t.de", "xn--tda.de"],
+      ["\u{1F4A9}\t.com", "xn--ls8h.com"],
+      // Domain to ASCII maps these fullwidth forms to "/", "\", "?", "#", "@", ":" and "%". None of them is allowed in
+      // a host, and none of them ends the host or starts another component.
+      ["a\uFF0Fb", null],
+      ["bad.c\u2100.good.com", null],
+      ["a\uFF3Cb", null],
+      ["a\uFF1Fb", null],
+      ["a\uFF03b", null],
+      ["a\uFF20b", null],
+      ["a\uFF1A81", null],
+      ["a\uFF0541", null],
+      ["\u00DF\uFF20b", null],
+      ["evil.example\uFF0F.base.test", null],
+      // An IPv6 address is never mapped: a fullwidth digit or an ignored code point makes it invalid.
+      ["[::1]", "[::1]"],
+      ["[::\uFF11]", null],
+      ["[::\u00B9]", null],
+      ["[::1]\u00AD", null],
+    ];
+
+    it.each(cases)("%j", (value, host) => {
+      const set = (property: "host" | "hostname", to: string) => {
+        const url = new URL(base);
+        url[property] = to;
+        return url.href;
+      };
+      const href = (port: number) => (host === null ? base : `https://user:pass@${host}:${port}/p?q#f`);
+      expect({
+        hostname: set("hostname", value),
+        host: set("host", value),
+        hostWithPort: set("host", value + ":8080"),
+        constructor: URL.parse(`https://user:pass@${value}:444/p?q#f`)?.href ?? base,
+      }).toEqual({ hostname: href(444), host: href(444), hostWithPort: href(8080), constructor: href(444) });
+    });
+
+    it.each(["http://base.test/p", "ws://base.test/p", "wss://base.test/p", "ftp://base.test/p", "file://base.test/p"])(
+      "in %s",
+      href => {
+        const url = new URL(href);
+        url.hostname = "\u00DF%41.de";
+        expect(url.href).toBe(href.replace("base.test", "xn--a-pfa.de"));
+        url.hostname = "\tB\u00FCcher.example";
+        expect(url.href).toBe(href.replace("base.test", "xn--bcher-kva.example"));
+        url.hostname = "a\uFF0Fb";
+        expect(url.href).toBe(href.replace("base.test", "xn--bcher-kva.example"));
+      },
+    );
+
+    it("a fullwidth colon does not start a port", () => {
+      for (const property of ["hostname", "host"] as const) {
+        const url = new URL("https://base.test/p");
+        url[property] = "a\uFF1A81";
+        expect(url.href).toBe("https://base.test/p");
+      }
+    });
+
+    it("keeps href an 8-bit string", () => {
+      for (const value of ["other.example", "B\u00FCcher.example", "\u05D0.example"]) {
+        const url = new URL(base);
+        url.hostname = value;
+        expect(jscDescribe(url.href)).toContain("8Bit:(1)");
+        url.host = value + ":8080";
+        expect(jscDescribe(url.href)).toContain("8Bit:(1)");
+      }
+    });
   });
 
   it("resolves against repeated, alternating and invalid string bases consistently", () => {

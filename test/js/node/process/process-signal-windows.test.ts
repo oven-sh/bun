@@ -117,6 +117,14 @@ describe.skipIf(!isWindows)("console control events", () => {
     };
   }
 
+  function isRunning(pid: number) {
+    try {
+      return process.kill(pid, 0);
+    } catch {
+      return false;
+    }
+  }
+
   // Ctrl+C ends the child, and the console ends the line `cat` is reading with no characters in it.
   // That is the end of `cat`'s input: nothing else ends the pipeline.
   test.concurrent.each(["cat | CHILD", "(cat) | CHILD", "cat | cat | CHILD"])(
@@ -126,17 +134,27 @@ describe.skipIf(!isWindows)("console control events", () => {
       dlopen("kernel32.dll", { SetConsoleCtrlHandler: { args: ["ptr", "i32"], returns: "i32" } })
         .symbols //
         .SetConsoleCtrlHandler(null, 0);
-      using dir = tempDir("shell-ctrl-c", { "idle.js": `console.log("up"); setInterval(() => {}, 1e6);` });
+      using dir = tempDir("shell-ctrl-c", {
+        "idle.js": `console.log("up " + process.pid + "."); setInterval(() => {}, 1e6);`,
+      });
       const { options, match } = terminalOutput();
-      const up = match(/up/);
+      const up = match(/up (\d+)\./);
+      const echoed = match(/~/);
       const idle = `"${bunExe().replaceAll("\\", "/")}" "${join(String(dir), "idle.js").replaceAll("\\", "/")}"`;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "exec", script.replace("CHILD", idle)],
         env: bunEnv,
         terminal: { cols: 100, rows: 30, ...options },
       });
-      expect(await up).not.toBeNull();
+      // One expectation per stage: how many were reached says where a run that hangs is stuck.
+      const child = Number((await up)?.[1]);
+      expect(child).toBeGreaterThan(0);
+      // A console echoes a key while a line is being read, so `cat` is in its read by then.
+      proc.terminal!.write("~");
+      expect(await echoed).not.toBeNull();
       proc.terminal!.write("\x03");
+      while (isRunning(child)) await Bun.sleep(1);
+      expect(isRunning(child)).toBe(false);
       expect((await proc.exited) & 0xff).toBe(0xc000013a /* STATUS_CONTROL_C_EXIT, the child's */ & 0xff);
     },
   );

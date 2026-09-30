@@ -292,4 +292,12 @@ new TextDecoder("windows-1251", { fatal: true, ignoreBOM: true }).decode(
 
 new TextEncoder().encode("hello");
 
+new TextEncoder().encodeInto("hello", new Uint8Array(8));
+
+// @ts-expect-error - encodeInto throws ERR_MISSING_ARGS without a destination
+new TextEncoder().encodeInto("hello");
+
+// @ts-expect-error - encodeInto throws ERR_MISSING_ARGS without arguments
+new TextEncoder().encodeInto();
+
 export {};

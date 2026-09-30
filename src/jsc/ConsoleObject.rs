@@ -3,16 +3,16 @@
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
-use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
+use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
-use bun_core::{String as BunString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below can use the `JSLexer.isLatin1Identifier` /
@@ -588,11 +588,9 @@ struct Column {
 }
 
 enum RowKey {
-    /// Property-name UTF-8 slice + visible width (plain-object tabular data).
-    /// `to_utf8` refs the WTF impl (or owns a transcoded copy) and Drop
-    /// releases it, so the slice is safe to keep past the property iterator.
+    /// Property-name UTF-8 bytes + visible width (plain-object tabular data).
     Str {
-        text: bun_core::ZigStringSlice,
+        text: bun_core::Utf8Bytes<'static>,
         width: u32,
     },
     /// Row index (array / iterable tabular data). Rendered on demand.
@@ -600,10 +598,10 @@ enum RowKey {
 }
 
 impl RowKey {
-    fn str(name: &BunString) -> Self {
+    fn str(name: &bun_core::StringView) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
-            text: name.to_utf8(),
+            text: (**name).clone().into_utf8(),
         }
     }
 
@@ -675,6 +673,11 @@ impl<'a> TablePrinter<'a> {
             values_col_width: None,
             values_col_idx: usize::MAX,
         })
+    }
+
+    /// Cells start at nesting level `depth`, out of the formatter's `max_depth`.
+    pub fn set_start_depth(&mut self, depth: u16) {
+        self.value_formatter.depth = depth.min(self.value_formatter.max_depth);
     }
 
     /// Format `value` exactly once (bare for strings, quoted otherwise),
@@ -1128,9 +1131,9 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
-    let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
+    let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
-    let err = ZigString::init(b"trace output").to_error_instance(global);
+    let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
@@ -1153,7 +1156,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    // `ZigStringSlice` frees on `Drop`.
     drop(source_code_slice);
     holder.deinit(vm);
 }
@@ -1595,6 +1597,8 @@ pub mod formatter {
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
+        /// `max_depth` before the error property dump narrowed it.
+        pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub(crate) failed: bool,
@@ -1625,6 +1629,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                outer_max_depth: None,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1663,6 +1668,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                outer_max_depth: self.outer_max_depth,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -1736,6 +1742,11 @@ pub mod formatter {
 
         pub fn add_for_new_line(&mut self, len: usize) {
             self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+        }
+
+        /// Depth cap for the `cause` and `AggregateError.errors` walks.
+        pub(crate) fn error_chain_max_depth(&self) -> u16 {
+            self.outer_max_depth.unwrap_or(self.max_depth)
         }
     }
 
@@ -2963,7 +2974,7 @@ pub mod formatter {
         #[inline(never)]
         fn write_property_key(
             writer: &mut WrappedWriter<'_>,
-            key: &ZigString,
+            key: &EncodedSlice,
             is_symbol: bool,
             is_private_symbol: bool,
             quote_keys: bool,
@@ -2971,11 +2982,10 @@ pub mod formatter {
         ) {
             if !is_symbol {
                 // TODO: make this one pass?
-                if (!key.is_16_bit()
+                if (!key.is_16bit()
                     && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
-                    || (key.is_16_bit()
-                        && (!quote_keys
-                            && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
+                    || (key.is_16bit()
+                        && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16_slice())))
                 {
                     writer.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
@@ -2984,8 +2994,8 @@ pub mod formatter {
                         key,
                         pfmt!("<d>:<r> ", C),
                     ));
-                } else if key.is_16_bit() {
-                    let mut utf16_slice = key.utf16_slice_aligned();
+                } else if key.is_16bit() {
+                    let mut utf16_slice = key.utf16_slice();
 
                     writer.add_for_new_line(utf16_slice.len() + 2);
 
@@ -3054,14 +3064,14 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut ZigString,
+            key: *mut EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*ZigString`.
+            // SAFETY: caller passes a valid `*EncodedSlice`.
             let key = unsafe { &*key };
-            if key.eql_comptime(b"constructor") {
+            if key.eq_ascii(b"constructor") {
                 return None;
             }
             if ctx.formatter.failed {
@@ -3134,7 +3144,7 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut ZigString,
+            key: *mut EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
@@ -3171,7 +3181,7 @@ pub mod formatter {
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
         let name_str = value.get_class_name(global_this)?;
-        if !name_str.eql_comptime(b"Object") {
+        if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
@@ -3508,7 +3518,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let str = value.to_slice(self.global_this)?;
+            let str = value.to_utf8(self.global_this)?;
             let slice = str.slice();
             self.add_for_new_line(slice.len());
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
@@ -3701,7 +3711,7 @@ pub mod formatter {
 
                 let number_value = value.to_js_string_view(self.global_this)?;
 
-                if !number_name.eql_comptime(b"Number") {
+                if !number_name.eq_ascii(b"Number") {
                     writer.add_for_new_line(
                         number_name.length() + number_value.length() + "[Number ():]".len(),
                     );
@@ -3908,7 +3918,7 @@ pub mod formatter {
             let printable_proto = if proto_is_class {
                 proto.get_name(self.global_this)?
             } else {
-                BunString::empty()
+                BunString::EMPTY
             };
             writer.add_for_new_line(printable_proto.length());
 
@@ -4106,7 +4116,7 @@ pub mod formatter {
                 let bool_name = value.get_class_name(self.global_this)?;
                 let bool_value = value.to_js_string_view(self.global_this)?;
 
-                if !bool_name.eql_comptime(b"Boolean") {
+                if !bool_name.eq_ascii(b"Boolean") {
                     writer.add_for_new_line(
                         bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
                     );
@@ -4227,6 +4237,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            let len = value.get_length(self.global_this)?;
+            if len != 0 && self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, "Array");
+            }
             // Cache once: `disable_inspect_custom` does not change inside this
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
@@ -4241,8 +4255,6 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-
-            let len = value.get_length(self.global_this)?;
 
             // TODO: DerivedArray does not get passed along in JSType, and it's
             // not clear why.
@@ -4269,7 +4281,7 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
-                    let element = value.get_direct_index(self.global_this, 0);
+                    let element = value.get_direct_index(self.global_this, 0)?;
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
@@ -4309,7 +4321,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
-                    let element = value.get_direct_index(self.global_this, i);
+                    let element = value.get_direct_index(self.global_this, i)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);
@@ -4588,6 +4600,10 @@ pub mod formatter {
                 return Ok(());
             }
 
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, map_name);
+            }
+
             if self.single_line {
                 let _ = write!(writer_, "{map_name}({length}) {{ ");
             } else {
@@ -4647,6 +4663,9 @@ pub mod formatter {
             value: JSValue,
             label: &'static str,
         ) -> JsResult<()> {
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, label);
+            }
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
@@ -4728,6 +4747,10 @@ pub mod formatter {
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, set_name);
             }
 
             if self.single_line {
@@ -4830,6 +4853,9 @@ pub mod formatter {
                 EventType::ErrorEvent => "ErrorEvent",
                 _ => unreachable!(),
             };
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, event_tag_name);
+            }
             let _ = writeln!(
                 writer_,
                 "{}{}{} {{",
@@ -4989,14 +5015,14 @@ pub mod formatter {
 
             let mut needs_space: bool;
             let tag_name_view;
-            let tag_name_slice: bun_core::ZigStringSlice;
+            let tag_name_slice: bun_core::Utf8Bytes;
             let mut is_tag_kind_primitive = false;
 
             if let Some(type_value) = value.get(self.global_this, "type")? {
                 let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
                 if _tag.cell == jsc::JSType::Symbol {
-                    tag_name_slice = bun_core::ZigStringSlice::EMPTY;
+                    tag_name_slice = bun_core::Utf8Bytes::EMPTY;
                 } else if _tag.cell.is_string_like() {
                     tag_name_view = type_value.to_js_string_view(self.global_this)?;
                     tag_name_slice = tag_name_view.to_utf8();
@@ -5004,9 +5030,9 @@ pub mod formatter {
                 } else if _tag.cell.is_object() || type_value.is_callable() {
                     let name = type_value.get_name_property(self.global_this)?;
                     tag_name_slice = if name.is_empty() {
-                        bun_core::ZigStringSlice::from_utf8_never_free(b"NoName")
+                        bun_core::Utf8Bytes::Borrowed(b"NoName")
                     } else {
-                        name.to_utf8()
+                        name.into_utf8()
                     };
                 } else {
                     tag_name_view = type_value.to_js_string_view(self.global_this)?;
@@ -5015,7 +5041,7 @@ pub mod formatter {
 
                 needs_space = true;
             } else {
-                tag_name_slice = bun_core::ZigStringSlice::from_utf8_never_free(b"unknown");
+                tag_name_slice = bun_core::Utf8Bytes::Borrowed(b"unknown");
                 needs_space = true;
             }
 
@@ -5090,7 +5116,7 @@ pub mod formatter {
                             props_iter.len - usize::from(children_prop.is_some());
 
                         while let Some((prop, property_value)) = props_iter.next()? {
-                            if prop.eql_comptime("children") {
+                            if prop.eq_ascii(b"children") {
                                 continue;
                             }
 
@@ -5412,6 +5438,23 @@ pub mod formatter {
                 pf!("<r><cyan>"),
                 display_name,
                 pf!("<r>")
+            );
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_depth_exceeded_marker<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            name: &str,
+        ) -> JsResult<()> {
+            self.add_for_new_line(name.len() + 6);
+            let _ = write!(
+                writer_,
+                "{}[{} ...]{}",
+                pfmt!("<r><cyan>", C),
+                name,
+                pfmt!("<r>", C)
             );
             Ok(())
         }

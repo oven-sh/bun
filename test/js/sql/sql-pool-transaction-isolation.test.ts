@@ -9,6 +9,7 @@ import { bunEnv, bunExe } from "harness";
 import type net from "node:net";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
@@ -73,6 +74,7 @@ const mysqlMockServer: MockServer = received => {
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] === COM_QUERY) {
           const sql = payload.subarray(1).toString("utf8");
           received.push({ conn: connId, sql });

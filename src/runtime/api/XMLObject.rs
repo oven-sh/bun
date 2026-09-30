@@ -557,7 +557,7 @@ impl Stringifier {
             if skipped(value) {
                 continue;
             }
-            if key.has_prefix_comptime(b"@") || key.has_prefix_comptime(b"#") {
+            if key.starts_with_ascii(b"@") || key.starts_with_ascii(b"#") {
                 return Err(global
                     .throw(format_args!(
                         "XML.stringify: the top-level object is the document, so it can only contain the root element (found '{}')",
@@ -709,19 +709,19 @@ impl Stringifier {
             if skipped(child) {
                 continue;
             }
-            if key.has_prefix_comptime(b"@") {
+            if key.starts_with_ascii(b"@") {
                 match self.scalar(global, child, "an attribute value")? {
                     Scalar::Skip | Scalar::Empty => {}
                     Scalar::Text(text) => {
                         self.append_attribute(global, &key.substring(1), &text)?
                     }
                 }
-            } else if key.eql_comptime("#text") {
+            } else if key.eq_ascii(b"#text") {
                 match self.scalar(global, child, "#text")? {
                     Scalar::Text(text) if text.length() > 0 => has_text = true,
                     _ => {}
                 }
-            } else if key.has_prefix_comptime(b"#") {
+            } else if key.starts_with_ascii(b"#") {
                 return Err(global
                     .throw(format_args!("XML.stringify: unknown key '{}' (keys starting with '#' are reserved; text content is \"#text\")", key))
                     .into());
@@ -744,10 +744,10 @@ impl Stringifier {
         }
         let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
         while let Some((key, child)) = iter.next()? {
-            if skipped(child) || key.has_prefix_comptime(b"@") {
+            if skipped(child) || key.starts_with_ascii(b"@") {
                 continue;
             }
-            if key.eql_comptime("#text") {
+            if key.eq_ascii(b"#text") {
                 if let Scalar::Text(text) = self.scalar(global, child, "#text")? {
                     self.append_text(global, &text)?;
                 }

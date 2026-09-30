@@ -205,12 +205,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlob
     return JSValue::encode(JSTextEncoder::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-static inline JSValue jsTextEncoder_encodingGetter(JSGlobalObject& lexicalGlobalObject, JSTextEncoder& thisObject)
+static inline JSValue jsTextEncoder_encodingGetter(JSGlobalObject& lexicalGlobalObject, JSTextEncoder&)
 {
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.encoding())));
+    return Bun::commonStrings(lexicalGlobalObject.vm()).utf8WithDashString();
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

@@ -31,7 +31,7 @@ test.skipIf(!isDebug && !isASAN)(
       "fixture.ts": /* js */ `
       import net from "node:net";
       import { SQL } from "bun";
-      import { mysqlHandshakeV10, mysqlOkPacket } from ${JSON.stringify(wireFrames)};
+      import { mysqlAckSessionSetup, mysqlHandshakeV10, mysqlOkPacket } from ${JSON.stringify(wireFrames)};
 
       let socketRef;
       const server = net.createServer(socket => {
@@ -44,9 +44,11 @@ test.skipIf(!isDebug && !isASAN)(
             const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
             if (buffered.length < 4 + len) break;
             const seq = buffered[3];
+            const payload = buffered.subarray(4, 4 + len);
             buffered = buffered.subarray(4 + len);
             if (!authed) { authed = true; socket.write(mysqlOkPacket(seq + 1)); }
-            // Never respond to queries -> they stay in the native request queue.
+            else mysqlAckSessionSetup(socket, payload);
+            // Never respond to user queries -> they stay in the native request queue.
           }
         });
         socket.on("error", () => {});

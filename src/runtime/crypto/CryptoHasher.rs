@@ -3,6 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
     JsError, JsResult,
@@ -62,7 +63,7 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 /// `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[repr(C)]
-pub enum CryptoHasher {
+pub(crate) enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(JsCell<Option<Box<HMAC>>>),
     // EVP_CTX is ~280 bytes; box it so the enum stays small.
@@ -155,7 +156,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
-    pub fn extern_update(&self, input: &[u8]) -> bool {
+    pub(crate) fn extern_update(&self, input: &[u8]) -> bool {
         match self {
             CryptoHasher::Zig(zig) => {
                 zig.with_mut(|z| z.update(input));
@@ -170,7 +171,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
-    pub fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
+    pub(crate) fn extern_digest(&self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
         let buf_len = digest_buf.len();
         match self {
             CryptoHasher::Zig(zig) => {
@@ -187,7 +188,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
-    pub fn extern_digest_size(&self) -> u32 {
+    pub(crate) fn extern_digest_size(&self) -> u32 {
         match self {
             CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
             CryptoHasher::Evp(inner) => inner.get().size() as u32,
@@ -196,7 +197,7 @@ impl CryptoHasher {
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
-    pub fn extern_is_xof(&self) -> bool {
+    pub(crate) fn extern_is_xof(&self) -> bool {
         match self {
             CryptoHasher::Zig(inner) => matches!(
                 inner.get().algorithm,
@@ -329,7 +330,7 @@ impl CryptoHasher {
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
         };
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
+        bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -340,7 +341,7 @@ impl CryptoHasher {
         _: JSValue,
         _: PropertyName,
     ) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
+        bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     fn hash_to_encoding(
@@ -781,7 +782,7 @@ impl CryptoHasher {
 // CryptoHasherZig
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CryptoHasherZig {
+pub(crate) struct CryptoHasherZig {
     pub(crate) algorithm: evp::Algorithm,
     pub(crate) state: Box<dyn Any>,
     pub(crate) digest_length: u8,
@@ -1083,7 +1084,7 @@ impl CryptoHasherZig {
 
 /// Trait abstracting over the `bun_sha_hmac::sha::evp::*` hasher types.
 /// `hash()` takes the VM-owned BoringSSL ENGINE*.
-pub trait StaticHasher: 'static {
+pub(crate) trait StaticHasher: 'static {
     const NAME: &'static str;
     const DIGEST: usize;
     type Digest: AsRef<[u8]> + AsMut<[u8]>; // = [u8; Self::DIGEST]
@@ -1162,7 +1163,7 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 // `hashing` is mutated by `update`/`final_` → `JsCell<H>`; `digested` is a
 // Copy flag → `Cell<bool>`.
 #[repr(C)]
-pub struct StaticCryptoHasher<H: StaticHasher> {
+pub(crate) struct StaticCryptoHasher<H: StaticHasher> {
     pub(crate) hashing: JsCell<H>,
     pub(crate) digested: Cell<bool>,
 }
@@ -1491,11 +1492,11 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 }
 
-pub type MD4 = StaticCryptoHasher<hashers::MD4>;
-pub type MD5 = StaticCryptoHasher<hashers::MD5>;
-pub type SHA1 = StaticCryptoHasher<hashers::SHA1>;
-pub type SHA224 = StaticCryptoHasher<hashers::SHA224>;
-pub type SHA256 = StaticCryptoHasher<hashers::SHA256>;
-pub type SHA384 = StaticCryptoHasher<hashers::SHA384>;
-pub type SHA512 = StaticCryptoHasher<hashers::SHA512>;
-pub type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;
+pub(crate) type MD4 = StaticCryptoHasher<hashers::MD4>;
+pub(crate) type MD5 = StaticCryptoHasher<hashers::MD5>;
+pub(crate) type SHA1 = StaticCryptoHasher<hashers::SHA1>;
+pub(crate) type SHA224 = StaticCryptoHasher<hashers::SHA224>;
+pub(crate) type SHA256 = StaticCryptoHasher<hashers::SHA256>;
+pub(crate) type SHA384 = StaticCryptoHasher<hashers::SHA384>;
+pub(crate) type SHA512 = StaticCryptoHasher<hashers::SHA512>;
+pub(crate) type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;

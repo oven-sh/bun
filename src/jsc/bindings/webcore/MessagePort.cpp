@@ -137,6 +137,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 JSC::JSValue::encode(JSC::jsUndefined()));
             CLEAR_IF_EXCEPTION(warnScope);
             close();
+            RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
             return {};
         }
     }

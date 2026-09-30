@@ -7,7 +7,7 @@ use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
-use bun_core::{strings, ZigString, ZigStringSlice};
+use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
 use crate::webcore::BlobExt as _;
@@ -86,17 +86,17 @@ impl EventType {
 }
 
 #[derive(Default)]
-pub struct JestPrettyFormat {}
+pub(crate) struct JestPrettyFormat {}
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum MessageLevel {
+pub(crate) enum MessageLevel {
     Error = 2,
     Debug = 3,
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct FormatOptions {
+pub(crate) struct FormatOptions {
     pub(crate) enable_colors: bool,
     pub(crate) add_newline: bool,
     pub flush: bool,
@@ -260,7 +260,7 @@ impl JestPrettyFormat {
 }
 
 // For detecting circular references
-pub mod visited {
+pub(crate) mod visited {
     use super::*;
 
     // JSValue keys live on heap; safe because every visited value is also
@@ -272,7 +272,7 @@ pub mod visited {
     // `.get_or_put()`, `.remove()`, `mem::take`) unchanged.
     #[repr(transparent)]
     #[derive(Default)]
-    pub struct Map(pub(crate) HashMap<JSValue, ()>);
+    pub(crate) struct Map(pub(crate) HashMap<JSValue, ()>);
 
     impl core::ops::Deref for Map {
         type Target = HashMap<JSValue, ()>;
@@ -304,10 +304,10 @@ pub mod visited {
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
     // `UnwiredStorage` which panics on first `get_node()`.
     bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-    pub type PoolNode = bun_collections::pool::Node<Map>;
+    pub(crate) type PoolNode = bun_collections::pool::Node<Map>;
 }
 
-pub struct Formatter<'a> {
+pub(crate) struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
     /// Lazily acquired from `visited::Pool`; released back in `Drop`.
@@ -375,7 +375,7 @@ impl Drop for Formatter<'_> {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Tag {
+pub(crate) enum Tag {
     StringPossiblyFormatted,
     String,
     Undefined,
@@ -428,7 +428,7 @@ impl Tag {
 }
 
 #[derive(Copy, Clone)]
-pub struct TagResult {
+pub(crate) struct TagResult {
     pub(crate) tag: Tag,
     pub cell: JSType,
 }
@@ -440,7 +440,7 @@ impl Default for TagResult {
 }
 
 impl Tag {
-    pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
+    pub(crate) fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
         if value.is_empty() || value == JSValue::UNDEFINED {
             return Ok(TagResult { tag: Tag::Undefined, ..Default::default() });
         }
@@ -587,8 +587,8 @@ impl<'a> Formatter<'a> {
         slice_: S,
         global_this: &'a JSGlobalObject,
     ) where
-        // The sole caller here passes a
-        // UTF-8 byte slice (`to_slice`), so only the byte path is needed.
+        // The sole caller here passes a UTF-8 byte slice, so only the byte
+        // path is needed.
         S: AsRef<[u8]>,
     {
         let mut writer = WrappedWriter::new(writer_);
@@ -675,7 +675,7 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct WrappedWriter<'w, W: bun_io::Write> {
+pub(crate) struct WrappedWriter<'w, W: bun_io::Write> {
     pub ctx: &'w mut W,
     pub(crate) failed: bool,
 }
@@ -865,13 +865,13 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
             let name_str = value.get_name_property(global_this)?;
-            if !name_str.is_empty() && !name_str.eql_comptime(b"Object") {
+            if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                 writer.print(format_args!("{} ", name_str));
             } else {
                 let name_str = value
                     .get_prototype(global_this)?
                     .get_name_property(global_this)?;
-                if !name_str.is_empty() && !name_str.eql_comptime(b"Object") {
+                if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                     writer.print(format_args!("{} ", name_str));
                 }
             }
@@ -884,7 +884,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             let _ = self.writer.write_all(b"\n");
         }
         let classname = value.get_class_name(global_this)?;
-        if !classname.is_empty() && !classname.eql_comptime(b"Object") {
+        if !classname.is_empty() && !classname.eq_ascii(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
 
@@ -897,7 +897,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     extern "C" fn for_each(
         global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
-        key_: *mut ZigString,
+        key_: *mut EncodedSlice,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
@@ -908,7 +908,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         // SAFETY: key_ is non-null per JSC contract for property iteration.
         let key = unsafe { *key_ };
-        if key.eql_comptime(b"constructor") {
+        if key.eq_ascii(b"constructor") {
             return;
         }
 
@@ -954,9 +954,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if !is_symbol {
             // TODO: make this one pass?
-            if (!key.is_16_bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
-                || (key.is_16_bit()
-                    && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice_aligned()))
+            if (!key.is_16bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
+                || (key.is_16bit()
+                    && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice()))
             {
                 this.add_for_new_line(key.len + 2);
 
@@ -967,8 +967,8 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));
-            } else if key.is_16_bit() {
-                let utf16_slice = key.utf16_slice_aligned();
+            } else if key.is_16bit() {
+                let utf16_slice = key.utf16_slice();
 
                 this.add_for_new_line(utf16_slice.len() + 2);
 
@@ -1088,7 +1088,7 @@ impl<'a> Formatter<'a> {
         let result: JsResult<()> = (|| {
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
-                    let str = value.to_slice(self.global_this)?;
+                    let str = value.to_utf8(self.global_this)?;
                     let slice = str.slice();
                     self.add_for_new_line(slice.len());
                     self.write_with_formatting::<W, _, ENABLE_ANSI_COLORS>(
@@ -1099,7 +1099,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::String => {
                     let view = value.to_js_string_view(self.global_this)?;
-                    let str = view.to_zig_string();
+                    let str = view.to_encoded_slice();
                     self.add_for_new_line(str.len);
 
                     if value.js_type() == JSType::StringObject
@@ -1148,7 +1148,7 @@ impl<'a> Formatter<'a> {
 
                         writer.write_all(b"\"");
                         let mut remaining = str;
-                        // `ZigString::char_at` returns u16; use explicit u16
+                        // `EncodedSlice::char_at` returns u16; use explicit u16
                         // consts so the match arms type-check.
                         const BACKSLASH: u16 = b'\\' as u16;
                         const CR: u16 = b'\r' as u16;
@@ -1204,7 +1204,7 @@ impl<'a> Formatter<'a> {
                         ));
                     }
 
-                    if str.is_16_bit() {
+                    if str.is_16bit() {
                         // streaming print
                         writer.print(format_args!("{}", str));
                     } else if strings::is_all_ascii(str.slice()) {
@@ -1335,7 +1335,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Error => {
                     let classname = value.get_class_name(self.global_this)?;
-                    let mut message_string = bun_core::String::empty();
+                    let mut message_string = bun_core::String::EMPTY;
 
                     if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
                         message_string = message_prop.to_bun_string(self.global_this)?;
@@ -1718,7 +1718,11 @@ impl<'a> Formatter<'a> {
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = length_value.to_int32();
+                    let length = if length_value.is_number() {
+                        length_value.coerce_to_i32(self.global_this)?
+                    } else {
+                        0
+                    };
 
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
@@ -1762,7 +1766,11 @@ impl<'a> Formatter<'a> {
                     let length_value = value
                         .get(self.global_this, "size")?
                         .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-                    let length = length_value.to_int32();
+                    let length = if length_value.is_number() {
+                        length_value.coerce_to_i32(self.global_this)?
+                    } else {
+                        0
+                    };
 
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
@@ -1964,14 +1972,14 @@ impl<'a> Formatter<'a> {
                     let mut needs_space;
 
                     let tag_name_view;
-                    let tag_name_slice: ZigStringSlice;
+                    let tag_name_slice: Utf8Bytes;
                     let mut is_tag_kind_primitive = false;
 
                     if let Some(type_value) = value.get(self.global_this, "type")? {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
-                            tag_name_slice = ZigStringSlice::EMPTY;
+                            tag_name_slice = Utf8Bytes::EMPTY;
                         } else if _tag.cell.is_string_like() {
                             tag_name_view = type_value.to_js_string_view(self.global_this)?;
                             tag_name_slice = tag_name_view.to_utf8();
@@ -1979,9 +1987,9 @@ impl<'a> Formatter<'a> {
                         } else if _tag.cell.is_object() || type_value.is_callable() {
                             let name = type_value.get_name_property(self.global_this)?;
                             tag_name_slice = if name.is_empty() {
-                                ZigStringSlice::from_utf8_never_free(b"NoName")
+                                Utf8Bytes::Borrowed(b"NoName")
                             } else {
-                                name.to_utf8()
+                                name.into_utf8()
                             };
                         } else {
                             tag_name_view = type_value.to_js_string_view(self.global_this)?;
@@ -1990,7 +1998,7 @@ impl<'a> Formatter<'a> {
 
                         needs_space = true;
                     } else {
-                        tag_name_slice = ZigStringSlice::from_utf8_never_free(b"unknown");
+                        tag_name_slice = Utf8Bytes::Borrowed(b"unknown");
 
                         needs_space = true;
                     }
@@ -2068,7 +2076,7 @@ impl<'a> Formatter<'a> {
                                 let mut iter_i: usize = 0;
                                 while let Some((prop, property_value)) = props_iter.next()? {
                                     iter_i += 1;
-                                    if prop.eql_comptime(b"children") {
+                                    if prop.eq_ascii(b"children") {
                                         continue;
                                     }
 
@@ -2333,7 +2341,7 @@ impl<'a> Formatter<'a> {
                     if iter_i == 0 {
                         let object_name = value.get_class_name(self.global_this)?;
 
-                        if !object_name.eql_comptime(b"Object") {
+                        if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
                         } else {
                             // don't write "Object"
@@ -2369,7 +2377,7 @@ impl<'a> Formatter<'a> {
 
                     if js_type == JSType::Uint8Array {
                         let buffer_name = value.get_class_name(self.global_this)?;
-                        if buffer_name.eql_comptime(b"Buffer") {
+                        if buffer_name.eq_ascii(b"Buffer") {
                             // special formatting for 'Buffer' snapshots only
                             if slice.is_empty() && self.indent == 0 {
                                 writer.write_all(b"\n");
@@ -2662,7 +2670,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
 /// [`bun_jsc::console_object::Formatter`] so the same body serves the test
 /// runner *and* `console.log`'s `.Private` arm (via the
 /// `RuntimeHooks::console_print_runtime_object` hook).
-pub trait AsymmetricMatcherFormatter {
+pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;

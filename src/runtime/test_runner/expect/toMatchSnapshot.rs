@@ -86,7 +86,7 @@ pub(crate) fn to_match_snapshot(
         }
     }
 
-    let hint = hint_string.as_ref().map_or(bun_core::ZigStringSlice::EMPTY, |s| s.to_utf8());
+    let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 
     let value: JSValue = this.get_value(
         global,

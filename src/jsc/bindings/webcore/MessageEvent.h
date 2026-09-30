@@ -31,10 +31,6 @@
 #include "JSValueInWrappedObject.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
-#include "MessagePort.h"
-// #include "JSMessageEvent.h"
-// #include "ServiceWorker.h"
-// #include "WindowProxy.h"
 #include <variant>
 
 namespace WebCore {

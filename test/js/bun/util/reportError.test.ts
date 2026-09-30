@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -164,11 +164,11 @@ describe("native error printer survives a deeply nested uncaught value", () => {
   });
 });
 
-// Formatting this value for the error printer runs a user
-// toString/Symbol.toPrimitive that throws. The printer has to clear that
-// exception. Left pending, it ended module evaluation early, was reported as a
-// second uncaught error, and dropped the AggregateError members after it.
-const hostile = `Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } })`;
+// Formatting this value for the error printer runs a user getter that throws.
+// The printer has to clear that exception. Left pending, it ended module
+// evaluation early, was reported as a second uncaught error, and dropped the
+// AggregateError members after it.
+const hostile = `new (class extends Map { get size() { throw 1; } })()`;
 
 test.concurrent.each([
   {

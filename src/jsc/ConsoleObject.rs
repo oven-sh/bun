@@ -947,9 +947,15 @@ impl<'a> TablePrinter<'a> {
                 }
                 use formatter::reader;
                 if matches!(jstype, jsc::JSType::Map | jsc::JSType::Set) {
-                    reader::for_each_entry(
+                    // A size that is no count says nothing about where the rows end.
+                    let size = match reader::collection_size(global_object, tabular_data)? {
+                        size if size > 0 => size,
+                        _ => reader::UNSIZED_ITERABLE_BUDGET as i32,
+                    };
+                    rows_truncated = reader::for_each_entry(
                         tabular_data,
                         global_object,
+                        size,
                         (&raw mut ctx).cast::<c_void>(),
                         entry::<ENABLE_ANSI_COLORS>,
                     )?;
@@ -2822,6 +2828,24 @@ pub mod formatter {
     }
 
     impl<'a> Formatter<'a> {
+        /// Ends a listing whose iterator had more to give than it was allowed.
+        fn print_more_entries<const C: bool>(
+            &mut self,
+            writer: &mut dyn bun_io::Write,
+            wrote_entry: bool,
+        ) {
+            if !self.single_line {
+                let _ = self.write_indent(writer);
+            } else if wrote_entry {
+                let _ = self.print_comma::<C>(writer);
+                let _ = writer.write_all(b" ");
+            }
+            let _ = writer.write_all(pfmt!("<r><d>... more items<r>", C).as_bytes());
+            if !self.single_line {
+                let _ = writer.write_all(b"\n");
+            }
+        }
+
         /// Shadow the binding with this for an indented block.
         #[inline]
         pub fn indented(&mut self) -> crate::IndentScope<'_, 'a> {
@@ -4624,7 +4648,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length = reader::collection_size(value);
+            let length = reader::collection_size(self.global_this, value)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4662,9 +4686,10 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    reader::for_each_entry(
+                    let truncated = reader::for_each_entry(
                         value,
                         global_this,
+                        length,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, true>::for_each,
                     )?;
@@ -4672,7 +4697,10 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if count > 0 {
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
+                    }
+                    if count > 0 || truncated {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4681,14 +4709,18 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    reader::for_each_entry(
+                    let truncated = reader::for_each_entry(
                         value,
                         global_this,
+                        length,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, false>::for_each,
                     )?;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, true);
                     }
                 }
             }
@@ -4730,6 +4762,7 @@ pub mod formatter {
                     reader::for_each_entry(
                         value,
                         global_this,
+                        0,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each,
                     )?;
@@ -4750,6 +4783,7 @@ pub mod formatter {
                     reader::for_each_entry(
                         value,
                         global_this,
+                        0,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each,
                     )?;
@@ -4776,7 +4810,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let length = reader::collection_size(value);
+            let length = reader::collection_size(self.global_this, value)?;
 
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
@@ -4814,9 +4848,10 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    reader::for_each_entry(
+                    let truncated = reader::for_each_entry(
                         value,
                         global_this,
+                        length,
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each,
                     )?;
@@ -4824,7 +4859,10 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if !is_first {
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, !is_first);
+                    }
+                    if !is_first || truncated {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -4833,14 +4871,18 @@ pub mod formatter {
                         writer: writer_,
                         is_first: true,
                     };
-                    reader::for_each_entry(
+                    let truncated = reader::for_each_entry(
                         value,
                         global_this,
+                        length,
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, false>::for_each,
                     )?;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, true);
                     }
                 }
             }

@@ -581,6 +581,7 @@ function* endless() {
     expect(exitCode).toBe(0);
   });
 
+  // The rows of an array are its own properties, so its iterator does not run.
   test.concurrent("an array whose iterator was replaced", async () => {
     const { lines, stderr, exitCode } = await run(
       `Array.prototype[Symbol.iterator] = endless;\nconsole.table([{ a: 1 }, { a: 2 }]);`,
@@ -588,13 +589,12 @@ function* endless() {
     expect(stderr).toBe("");
     expect(lines).toEqual([
       "┌───┬───┐",
-      "│   │ t │",
+      "│   │ a │",
       "├───┼───┤",
       "│ 0 │ 1 │",
-      "│ 1 │ 1 │",
+      "│ 1 │ 2 │",
       "└───┴───┘",
-      "... more rows",
-      "yielded=3",
+      "yielded=0",
       "",
     ]);
     expect(exitCode).toBe(0);

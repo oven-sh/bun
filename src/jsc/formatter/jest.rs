@@ -357,7 +357,8 @@ impl<'a> Formatter<'a> {
         } else {
             "Map"
         };
-        if reader::collection_size(value) == 0 {
+        let size = reader::collection_size(self.global_this, value)?;
+        if size == 0 {
             self.putf(writer_, format_args!("{name} {{}}"));
             return Ok(());
         }
@@ -374,12 +375,17 @@ impl<'a> Formatter<'a> {
                 formatter: self,
                 writer: writer_,
             };
-            reader::for_each_entry(
+            let truncated = reader::for_each_entry(
                 value,
                 global_this,
+                size,
                 (&raw mut iter).cast::<c_void>(),
                 JestEntries::map_entry,
             )?;
+            if truncated {
+                self.put_jest_indent(writer_);
+                self.put(writer_, b"... more items\n");
+            }
         }
         self.put_jest_indent(writer_);
         self.put(writer_, b"}\n");
@@ -393,7 +399,7 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
-        let size = reader::collection_size(value);
+        let size = reader::collection_size(self.global_this, value)?;
         self.put_jest_indent(writer_);
         let name = if value.js_type() == jsc::JSType::WeakSet {
             "WeakSet"
@@ -417,12 +423,17 @@ impl<'a> Formatter<'a> {
                 formatter: self,
                 writer: writer_,
             };
-            reader::for_each_entry(
+            let truncated = reader::for_each_entry(
                 value,
                 global_this,
+                size,
                 (&raw mut iter).cast::<c_void>(),
                 JestEntries::set_entry,
             )?;
+            if truncated {
+                self.put_jest_indent(writer_);
+                self.put(writer_, b"... more items\n");
+            }
         }
         self.put_jest_indent(writer_);
         self.put(writer_, b"}\n");

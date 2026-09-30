@@ -84,10 +84,11 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(exitCode).toBe(1);
 });
 
-// Printing the failure for a test or hook that rejects with a boxed primitive
-// or RegExp whose own toString/Symbol.toPrimitive throws used to leave that
-// second exception pending on the VM. The next test callback then aborted the
-// runner, or was reported as passed without running its body.
+// Printing the failure for a test or hook that rejects with a value whose
+// formatting throws used to leave that second exception pending on the VM. The
+// next test callback then aborted the runner, or was reported as passed without
+// running its body. A boxed primitive or a RegExp prints from its internal slot,
+// so its hooks do not run. The \`size\` getter of a Map subclass does.
 test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not break later tests", async () => {
   using dir = tempDir("test-hostile-rejection", {
     "hostile.test.js": `
@@ -102,6 +103,7 @@ test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not b
         ["Boolean", () => new Boolean(true)],
         ["RegExp", () => /re/],
         ["String subclass", () => new Sub("q")],
+        ["Map subclass", () => new (class extends Map { get size() { throw 1; } })()],
       ]) {
         test(name, async () => {
           throw Object.assign(make(), hooks);
@@ -137,22 +139,30 @@ test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not b
   expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
     "hostile.test.js:
     error
+    [String: "q"]
     (fail) String
     error
+    [Number: 1]
     (fail) Number
     error
+    [Boolean: true]
     (fail) Boolean
     error
+    /re/
     (fail) RegExp
     error
+    [String: "q"]
     (fail) String subclass
     error
+    (fail) Map subclass
+    error
+    [String: "q"]
     (fail) hook > afterEach rejects
     (pass) runs after the rejections
 
      1 pass
-     6 fail
-    Ran 7 tests across 1 file."
+     7 fail
+    Ran 8 tests across 1 file."
   `);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);

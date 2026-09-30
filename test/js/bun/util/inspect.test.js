@@ -291,6 +291,8 @@ it("MessageEvent with deleted data", () => {
   );
 });
 
+// The fields come from the native event, so what a subclass or the instance puts
+// in front of the prototype's getter does not run.
 it("Event subclass with a throwing getter does not make Bun.inspect throw", () => {
   class ThrowType extends Event {
     get type() {
@@ -308,7 +310,7 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
     }
   }
   expect(Bun.inspect(new ThrowData("message", { data: "p" }))).toBe(
-    `MessageEvent {\n  type: "message",\n  data: undefined,\n}`,
+    `MessageEvent {\n  type: "message",\n  data: "p",\n}`,
   );
 
   class ThrowError extends ErrorEvent {
@@ -319,8 +321,8 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
       throw new Error("message-getter-boom");
     }
   }
-  expect(Bun.inspect(new ThrowError("error", { message: "m", error: new Error("i") }))).toBe(
-    `ErrorEvent {\n  type: "error",\n}`,
+  expect(Bun.inspect(new ThrowError("error", { message: "m", error: 5 }))).toBe(
+    `ErrorEvent {\n  type: "error",\n  message: "m",\n  error: 5,\n}`,
   );
 
   // Own-instance accessors (not subclass) on the Event branch reads.
@@ -331,8 +333,8 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
     },
     configurable: true,
   });
-  expect(Bun.inspect(me)).toBe(`MessageEvent {\n  type: "message",\n  data: undefined,\n}`);
-  expect(Bun.inspect({ nested: me })).toContain("data: undefined");
+  expect(Bun.inspect(me)).toBe(`MessageEvent {\n  type: "message",\n  data: "p",\n}`);
+  expect(Bun.inspect({ nested: me })).toContain('data: "p"');
 });
 
 it("AggregateError with a hostile 'errors' property does not make Bun.inspect throw", () => {
@@ -597,8 +599,9 @@ it.concurrent("Event in test diff formatter is not spuriously [Circular]", async
         expect(() => expect(new CustomEvent("foo")).toEqual({})).toThrow(/CustomEvent/);
       });
       test("circular message event still detected", () => {
-        const ev = new MessageEvent("message");
-        Object.defineProperty(ev, "data", { value: ev, configurable: true });
+        const data = {};
+        const ev = new MessageEvent("message", { data });
+        data.ev = ev;
         expect(() => expect(ev).toEqual({})).toThrow(/\\[Circular\\]/);
       });
     `,
@@ -1015,6 +1018,7 @@ it("Bun.inspect arguments object with a huge length summarizes holes without ite
       delete b[1];
       b[70] = 70;
       b[4294967294] = "max";
+      // Does not run: the array then ends at its last element.
       Object.defineProperty(b, "length", { get: () => 2 ** 50 });
       console.log(Bun.inspect({ b }));
     }
@@ -1028,7 +1032,7 @@ it("Bun.inspect arguments object with a huge length summarizes holes without ite
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const formatted =
     "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
-    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n';
+    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max"\n  ],\n}\n';
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "true\n" + formatted + "true\n" + formatted + "false\n" + formatted,
     stderr: "",
@@ -1470,7 +1474,12 @@ it("ErrorEvent", () => {
     colno: 10,
     error: new Error("Test error"),
   });
-  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
+  // The column of the caret depends on how many digits the line numbers have.
+  expect(
+    normalizeBunSnapshot(Bun.inspect(errorEvent))
+      .replace(/\d+ \| /gim, "NNN |")
+      .replace(/^ +\^$/gm, "^"),
+  ).toMatchInlineSnapshot(`
     "ErrorEvent {
       type: "error",
       message: "Something went wrong",
@@ -1480,7 +1489,7 @@ it("ErrorEvent", () => {
     NNN |    lineno: 42,
     NNN |    colno: 10,
     NNN |    error: new Error("Test error"),
-                         ^
+    ^
     error: Test error
         at <anonymous> (file:NN:NN)
     ,
@@ -1583,15 +1592,15 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         console.log("custom delete:", s.includes("z: 1"));
       }
       {
-        // The formatter reads the size from the Map itself, so a getter on a
-        // subclass does not run.
+        // A getter on a built-in subclass (Map.size) is another way the
+        // formatter runs user code for a nested value.
         const p = makeParent();
         let fired = 0;
         class M extends Map { get size() { if (!fired++) addMany(p); return super.size; } }
         p.a = new M([[1, 2]]);
         p.z = 1;
         const s = Bun.inspect(p);
-        console.log("map size getter:", s.includes("z: 1"), fired);
+        console.log("map size getter:", s.includes("z: 1"), fired > 0);
       }
       {
         // An object with no own properties is formatted by fast-walking its
@@ -1657,7 +1666,7 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "  z: 1,",
         "}",
         "custom delete: true",
-        "map size getter: true 0",
+        "map size getter: true true",
         "prototype walk: true true",
         "gc churn: true",
         "",
@@ -2262,6 +2271,7 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
     expect(exitCode).toBe(0);
   });
 
+  // What an iterator has left is read from the collection, so `next` does not run.
   it("a replaced next() on the Map iterator prototype", async () => {
     const { output, runaway, exitCode } = await run(
       `const map = new Map([["a", 1], ["b", 2]]);
@@ -2269,8 +2279,10 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
        console.log(map.entries());`,
       "stdout",
     );
-    expect({ entries: count(output, '"k"'), runaway }).toEqual({ entries: 2, runaway: false });
-    expect(output).toEndWith("  ... more items\n}\n");
+    expect({ output, runaway }).toEqual({
+      output: 'MapIterator { \n  [ "a", 1 ],\n  [ "b", 2 ],\n}\n',
+      runaway: false,
+    });
     expect(exitCode).toBe(0);
   });
 
@@ -2281,8 +2293,7 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
        console.log(set.values());`,
       "stdout",
     );
-    expect({ values: count(output, '"k"'), runaway }).toEqual({ values: 2, runaway: false });
-    expect(output).toEndWith("  ... more items\n}\n");
+    expect({ output, runaway }).toEqual({ output: 'SetIterator { \n  "a",\n  "b",\n}\n', runaway: false });
     expect(exitCode).toBe(0);
   });
 

@@ -1,6 +1,6 @@
 // The reads the value formatter (src/jsc/formatter/reader.rs) makes on its own
-// account. None of them runs user code: no getter, no Proxy trap, no replaced
-// `size`, `toString` or iterator. `util.inspect` holds itself to the same rule.
+// account. They run no user code (no getter, no Proxy trap, no replaced `toString`),
+// except where a comment says so, and there the number of steps is bounded.
 
 #include "root.h"
 
@@ -96,15 +96,34 @@ extern "C" uint64_t Bun__FormatterReads__arrayLength(EncodedJSValue encodedValue
     return end;
 }
 
-// The entry count of a Map or a Set. 0 for a WeakMap or a WeakSet, which cannot be listed.
-extern "C" uint32_t Bun__FormatterReads__collectionSize(EncodedJSValue encodedValue)
+// Whether listing it the way JS would cannot be told apart from reading its storage.
+// False for a subclass: quick-lru extends Map, never calls `super.set`, and lists what
+// it holds through its own `size` and `Symbol.iterator`.
+static bool listsItsStorage(JSValue value)
 {
-    JSValue value = JSValue::decode(encodedValue);
     if (auto* map = dynamicDowncast<JSMap>(value))
-        return map->size();
+        return map->isIteratorProtocolFastAndNonObservable();
     if (auto* set = dynamicDowncast<JSSet>(value))
-        return set->size();
-    return 0;
+        return set->isIteratorProtocolFastAndNonObservable();
+    return false;
+}
+
+// The entry count of a Map or a Set: what a subclass reports as its `size`, which runs
+// its getter. 0 for a WeakMap or a WeakSet, which cannot be listed.
+extern "C" int32_t Bun__FormatterReads__collectionSize(EncodedJSValue encodedValue, JSGlobalObject* globalObject)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encodedValue);
+    auto* map = dynamicDowncast<JSMap>(value);
+    auto* set = dynamicDowncast<JSSet>(value);
+    if (!map && !set)
+        return 0;
+    if (listsItsStorage(value))
+        return static_cast<int32_t>(std::min<uint32_t>(map ? map->size() : set->size(), std::numeric_limits<int32_t>::max()));
+    JSValue size = asObject(value)->get(globalObject, vm.propertyNames->size);
+    RETURN_IF_EXCEPTION(scope, 0);
+    RELEASE_AND_RETURN(scope, size.toInt32(globalObject));
 }
 
 enum class EventField : uint8_t {
@@ -185,7 +204,10 @@ static void forEachLeftInIterator(VM& vm, JSGlobalObject* globalObject, Iterator
 
 // Every entry of a Map (key, value) or a Set (element, empty), and what a Map or Set
 // iterator has left to give (item, empty). The iterator does not advance.
-extern "C" void Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, JSGlobalObject* globalObject, void* ctx, EntryCallback callback)
+//
+// A Map or a Set that does not list its storage is listed by its own iterator, which
+// gets as many steps as `size`, the entry count the caller read. True when it had more.
+extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, JSGlobalObject* globalObject, int32_t size, void* ctx, EntryCallback callback)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -196,15 +218,60 @@ extern "C" void Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
         return !scope.exception();
     };
 
-    scope.release();
-    if (auto* map = dynamicDowncast<JSMap>(value))
-        forEachInStorage<JSMap>(vm, map->storage(), 0, visit);
-    else if (auto* set = dynamicDowncast<JSSet>(value))
-        forEachInStorage<JSSet>(vm, set->storage(), 0, visit);
-    else if (auto* mapIterator = dynamicDowncast<JSMapIterator>(value))
+    if (auto* mapIterator = dynamicDowncast<JSMapIterator>(value)) {
+        scope.release();
         forEachLeftInIterator<JSMap>(vm, globalObject, mapIterator, ctx, callback);
-    else if (auto* setIterator = dynamicDowncast<JSSetIterator>(value))
+        return false;
+    }
+    if (auto* setIterator = dynamicDowncast<JSSetIterator>(value)) {
+        scope.release();
         forEachLeftInIterator<JSSet>(vm, globalObject, setIterator, ctx, callback);
+        return false;
+    }
+
+    auto* map = dynamicDowncast<JSMap>(value);
+    auto* set = dynamicDowncast<JSSet>(value);
+    if (!map && !set)
+        return false;
+    if (listsItsStorage(value)) {
+        scope.release();
+        if (map)
+            forEachInStorage<JSMap>(vm, map->storage(), 0, visit);
+        else
+            forEachInStorage<JSSet>(vm, set->storage(), 0, visit);
+        return false;
+    }
+
+    IterationRecord iterationRecord = iteratorForIterable(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    bool truncated = false;
+    for (int32_t visited = 0;; visited++) {
+        JSValue next = iteratorStep(globalObject, iterationRecord);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (next.isFalse())
+            return false;
+        if (visited >= size) {
+            truncated = true;
+            break;
+        }
+        JSValue item = iteratorValue(globalObject, next);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue entryValue;
+        if (map) {
+            JSValue pair = item;
+            item = pair.get(globalObject, 0u);
+            RETURN_IF_EXCEPTION(scope, false);
+            entryValue = pair.get(globalObject, 1u);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (!visit(item, entryValue))
+            break;
+    }
+
+    scope.release();
+    iteratorClose(globalObject, iterationRecord.iterator);
+    return truncated;
 }
 
 // `forEachInIterable` with the steps bounded: by the length of an array or a typed array,

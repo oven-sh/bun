@@ -1,9 +1,9 @@
 //! Every read the formatter makes on its own account, to find out what a value
 //! is or what it holds.
 //!
-//! None of them runs user code, so none of them can throw, hang or change the
-//! value being printed. The rule is `util.inspect`'s: what it does not run, the
-//! formatter does not run. What the user asked to have called
+//! They run no user code, so they cannot throw, hang or change the value being
+//! printed. The few that do run some return a `JsResult`, say what they run,
+//! and bound how long it can go on. What the user asked to have called
 //! (`[inspect.custom]`, `toJSON`) is not a read and does not belong here.
 //! `test/internal/source-lints/formatter-reads.test.ts` keeps observable reads
 //! out of the printers.
@@ -43,7 +43,7 @@ unsafe extern "C" {
     safe fn Bun__FormatterReads__boxedPrimitive(value: JSValue) -> JSValue;
     safe fn Bun__FormatterReads__regExpSource(value: JSValue) -> BunString;
     safe fn Bun__FormatterReads__arrayLength(value: JSValue, global: &JSGlobalObject) -> u64;
-    safe fn Bun__FormatterReads__collectionSize(value: JSValue) -> u32;
+    safe fn Bun__FormatterReads__collectionSize(value: JSValue, global: &JSGlobalObject) -> i32;
     safe fn Bun__FormatterReads__eventField(
         value: JSValue,
         global: &JSGlobalObject,
@@ -53,9 +53,10 @@ unsafe extern "C" {
     safe fn Bun__FormatterReads__forEachEntry(
         value: JSValue,
         global: &JSGlobalObject,
+        size: i32,
         ctx: *mut c_void,
         callback: EntryCallback,
-    );
+    ) -> bool;
     safe fn Bun__FormatterReads__forEachProperty(
         value: JSValue,
         global: &JSGlobalObject,
@@ -103,8 +104,13 @@ pub(super) fn array_length(global: &JSGlobalObject, value: JSValue) -> u64 {
 
 /// The entry count of a `Map` or a `Set`. 0 for a `WeakMap` or a `WeakSet`,
 /// which cannot be listed.
-pub(super) fn collection_size(value: JSValue) -> u32 {
-    Bun__FormatterReads__collectionSize(value)
+///
+/// A subclass reports its own `size`, which runs its getter: `quick-lru`
+/// extends `Map` and keeps its entries elsewhere.
+pub(crate) fn collection_size(global: &JSGlobalObject, value: JSValue) -> JsResult<i32> {
+    jsc::host_fn::from_js_host_call_generic(global, || {
+        Bun__FormatterReads__collectionSize(value, global)
+    })
 }
 
 #[repr(u8)]
@@ -133,14 +139,19 @@ pub(super) fn event_field(
 /// of a `Set`, and every `(item, empty)` a `Map` or `Set` iterator has left to
 /// give. The iterator does not advance. Stops once `callback` leaves an
 /// exception pending.
+///
+/// A subclass, or a collection whose iterator was replaced, is listed by that
+/// iterator. It gets as many steps as `size`, from [`collection_size`].
+/// `Ok(true)` when it had more to give.
 pub(crate) fn for_each_entry(
     value: JSValue,
     global: &JSGlobalObject,
+    size: i32,
     ctx: *mut c_void,
     callback: EntryCallback,
-) -> JsResult<()> {
+) -> JsResult<bool> {
     jsc::host_fn::from_js_host_call_generic(global, || {
-        Bun__FormatterReads__forEachEntry(value, global, ctx, callback)
+        Bun__FormatterReads__forEachEntry(value, global, size, ctx, callback)
     })
 }
 
@@ -166,9 +177,9 @@ pub(super) fn for_each_property(
 /// generator. It can be endless.
 pub(crate) const UNSIZED_ITERABLE_BUDGET: u32 = 1000;
 
-/// The one read that does run user code, for the callers that were handed an
-/// iterable to list (`console.table`, `AggregateError.errors`). `Ok(true)`
-/// when the iterable had more to give than `budget`.
+/// Runs the iterator of an iterable the caller was handed to list
+/// (`console.table`, `AggregateError.errors`). `Ok(true)` when it had more to
+/// give than its length, or than `budget` when it has none.
 pub(crate) fn for_each_limited(
     iterable: JSValue,
     global: &JSGlobalObject,

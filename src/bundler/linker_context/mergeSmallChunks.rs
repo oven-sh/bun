@@ -172,7 +172,7 @@ struct Group {
     parent_of_pinned_entry: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
-    /// Every live part of every file is side-effect free.
+    /// Every live part of every file is side-effect free, and the group repeats no import of a pinned entry point.
     pure: bool,
     /// Groups holding files that this group's live parts statically import
     /// or depend on, and (rule 2 only) the groups importing this one.
@@ -1448,10 +1448,17 @@ pub(crate) fn merge_small_chunks(
                     || (group.target == Some(target_platform) && !group.loads_entry_of(class))
             });
             if takes_entry_files
-                && let Some(repeated) =
-                    entry_imports_in_parent.get_mut(class.find_first_set().expect("one bit set"))
+                && let Some(entry_id) = class.find_first_set()
+                && let Some(repeated) = entry_imports_in_parent.get_mut(entry_id)
             {
-                repeated.1 = groups.values()[target_index].first_source;
+                // A parent that repeats an import runs it when it loads, so rule 2 leaves that parent where it is.
+                let entry_source = entry_source_indices[entry_id];
+                let mut runs = false;
+                this.for_each_import_that_runs(entry_source, 0..repeated.0, |_, _, _| runs = true);
+                if runs {
+                    repeated.1 = groups.values()[target_index].first_source;
+                    groups.values_mut()[target_index].pure = false;
+                }
             }
         }
         for &member in members {

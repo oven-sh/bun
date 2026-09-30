@@ -1233,6 +1233,124 @@ describe("bundler", () => {
       run: { file: "/out/index.js", stdout },
     });
   }
+  // The chunk with pkg runs setup.cjs for index.js. Alone it has no side effects and would fold into the chunk of util.js, which admin.js loads too.
+  for (const [name, entryPoints] of [
+    ["AdminFirst", ["/admin.js", "/index.js"]],
+    ["IndexFirst", ["/index.js", "/admin.js"]],
+  ] as const) {
+    itBundled("splitting/MinChunkSizeKeepsChunkThatRepeatsImportOutOfChunkOfOtherEntry/" + name, {
+      files: {
+        "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+        "/index.js": /* js */ `
+          import "./setup.cjs";
+          import { x } from "pkg";
+          import { u } from "./util.js";
+          console.log("index", x(), u());
+          import("./route.js");
+        `,
+        "/route.js": /* js */ `
+          import { x } from "pkg";
+          import { u } from "./util.js";
+          console.log("route", x(), u());
+        `,
+        "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+        "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+        "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+        "/node_modules/pkg/index.js": /* js */ `
+          const cache = new Map([["app", globalThis.APP?.name]]);
+          export function x() { return "x " + cache.get("app"); }
+        `,
+      },
+      entryPoints: [...entryPoints],
+      splitting: true,
+      minChunkSize: 100000,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        api.expectFile("/out/admin.js").not.toContain(chunkContaining(api, "new Map"));
+        for (const file of jsFilesIn(api))
+          api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(index|admin)\.js"/);
+      },
+      run: [
+        { file: "/out/index.js", stdout: "setup\nindex x app u\nroute x app u" },
+        { file: "/out/admin.js", stdout: "admin u" },
+      ],
+    });
+  }
+  // Nothing that the imports of index.js run precedes pkg, so its chunk still folds.
+  itBundled("splitting/MinChunkSizeFoldsChunkBesideEntryThatRepeatsNoImport", {
+    files: {
+      "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+      "/index.js": /* js */ `
+        import { x } from "pkg";
+        import { u } from "./util.js";
+        console.log("index", x(), u());
+        import("./route.js");
+      `,
+      "/route.js": /* js */ `
+        import { x } from "pkg";
+        import { u } from "./util.js";
+        console.log("route", x(), u());
+      `,
+      "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        const cache = new Map();
+        export function x() { return "x" + cache.size; }
+      `,
+    },
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/" + chunkContaining(api, "new Map")).toContain(`return "u"`);
+    },
+    run: [
+      { file: "/out/index.js", stdout: "index x0 u\nroute x0 u" },
+      { file: "/out/admin.js", stdout: "admin u" },
+    ],
+  });
+  // h has no side effects and imports pkg. A fold of h into the chunk of util.js would make admin.js load the chunk of pkg, which runs setup.cjs.
+  itBundled("splitting/MinChunkSizeKeepsImporterOfChunkThatRepeatsImportOutOfChunkOfOtherEntry", {
+    files: {
+      "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import { x } from "pkg";
+        console.log("index", x());
+        import("./route.js").then(m => console.log(m.name));
+      `,
+      "/route.js": /* js */ `
+        import { x } from "pkg";
+        import { u } from "./util.js";
+        import { h } from "h";
+        console.log("route", x(), u(), h());
+        export const name = "route";
+        import("./sub.js");
+      `,
+      "/sub.js": `import { h } from "h"; console.log("sub", h());`,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        const cache = new Map([["app", globalThis.APP?.name]]);
+        export function x() { return "x " + cache.get("app"); }
+      `,
+      "/node_modules/h/package.json": `{ "name": "h", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/h/index.js": `import { x } from "pkg"; export function h() { return "h(" + x() + ")"; }`,
+    },
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "setup\nindex x app\nroute x app u h(x app)\nroute\nsub h(x app)" },
+      { file: "/out/admin.js", stdout: "admin u" },
+    ],
+  });
 
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {

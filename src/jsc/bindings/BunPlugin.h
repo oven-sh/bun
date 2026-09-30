@@ -8,6 +8,8 @@
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
 namespace Zig {
 
@@ -78,7 +80,7 @@ public:
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
@@ -110,7 +112,7 @@ public:
         {
         }
 
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer);
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer);
     };
 };
 

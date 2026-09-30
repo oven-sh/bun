@@ -5,7 +5,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub struct Stmt {
+pub(crate) struct Stmt {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Stmt>,
     pub(crate) idx: usize,
@@ -85,6 +85,10 @@ impl Stmt {
         // notion of "done"); see `Async`'s empty `deinit`.
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
+        }
+        if interp.interrupted(this) {
+            let me = interp.as_stmt_mut(this);
+            me.idx = Self::expr_count(me);
         }
         Yield::Next(this)
     }

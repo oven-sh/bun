@@ -26,9 +26,6 @@ impl strings::Appender for FilenameStoreAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         self.0.append(s)
     }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        self.0.append_lower_case(s)
-    }
 }
 
 /// Convenience: returns an `Appender` over the global filename store.
@@ -165,7 +162,6 @@ impl NetworkTask {
     /// single-threaded main setup path, so no overlapping `&mut
     /// PackageManager` exists for the returned borrow.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn pm_mut<'a>(&self) -> &'a mut PackageManager {
         // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
         unsafe { self.package_manager.assume_mut() }
@@ -417,8 +413,8 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
 fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     let authority_start = strings::index_of(url, b"://")? + b"://".len();
     let rest = &url[authority_start..];
-    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
-    let at = strings::last_index_of_char(authority, b'@')?;
+    // npm reads a tarball URL with `new URL()`, so the authority ends where that ends.
+    let at = URL::parse(url).userinfo_end(rest, bun_url::AuthorityEnd::LikeNewURL)?;
 
     let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));
     without_userinfo.extend_from_slice(&url[..authority_start]);
@@ -490,13 +486,10 @@ impl NetworkTask {
                 name
             };
 
-            // `OwnedString` derefs the WTF-backed result on scope exit —
-            // covers both the
-            // success path and the InvalidURL early returns below.
-            let tmp = bun_core::OwnedString::new(bun_url::join(
+            let tmp = bun_url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
                 &bun_core::String::borrow_utf8(encoded_name),
-            ));
+            );
 
             if tmp.tag() == bun_core::Tag::Dead {
                 if !is_optional {
@@ -523,14 +516,14 @@ impl NetworkTask {
                 return Err(ForManifestError::InvalidURL);
             }
 
-            if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
+            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 } else {
@@ -539,14 +532,14 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 }
                 return Err(ForManifestError::InvalidURL);
             }
 
-            // This actually duplicates the string! So we defer deref the WTF managed one above.
+            // This actually duplicates the string! The WTF managed one above drops at scope exit.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
             {

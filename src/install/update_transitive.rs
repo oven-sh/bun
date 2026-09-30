@@ -576,8 +576,7 @@ pub(crate) fn register_moved(
         }
         let mut tag_buf =
             vec![0u8; current.tag.pre.len() + current.tag.build.len()].into_boxed_slice();
-        let mut cursor: &mut [u8] = &mut tag_buf;
-        let original = current.clone_into(buf, &mut cursor);
+        let original = current.clone_into(buf, &mut tag_buf, &mut 0);
         *entry.value_ptr = PackageUpdateInfo {
             original_version_literal: Box::default(),
             written_back: false,

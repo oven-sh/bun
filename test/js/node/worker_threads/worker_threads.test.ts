@@ -2097,6 +2097,55 @@ test("parentPort messages are delivered while a top-level await is pending", asy
   expect(replies).toEqual(["got hi", "got bye"]);
 });
 
+// parentPort is a MessagePort: it queues what the parent posts until a 'message' listener is
+// attached, and again while none is, as in Node — unlike the Web Worker global scope, which drops
+// a message dispatched while it has no handler (#40141). A second MessagePort is the gate: the
+// parent posts everything, then says "go", so the listener is attached strictly afterwards.
+describe("parentPort queues messages until a 'message' listener is attached", () => {
+  async function run(workerSrc: string, batch: unknown[]) {
+    const { port1, port2 } = new MessageChannel();
+    const w = new Worker(workerSrc, { eval: true, workerData: { gate: port2 }, transferList: [port2] });
+    w.postMessage("early");
+    const replies: unknown[] = [];
+    w.on("message", m => {
+      if (m !== "started") return replies.push(m);
+      for (const item of batch) w.postMessage(item);
+      port1.postMessage("go");
+    });
+    const [code] = await once(w, "exit");
+    port1.close();
+    return { replies, code };
+  }
+
+  test("listener attached after a top-level await", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === 2) process.exit(0); });`,
+      [0, 1, 2],
+    );
+    expect(replies).toEqual(["got early", "got 0", "got 1", "got 2"]);
+    expect(code).toBe(0);
+  });
+
+  // All five are queued before the first listener exists, so one drain batch holds them; removing
+  // the listener after the first must put the rest back, in order, for the next one.
+  test("removing the last listener pauses delivery until one is attached again", async () => {
+    const { replies, code } = await run(
+      `import { parentPort, workerData } from "worker_threads";
+       const first = m => { parentPort.postMessage("first:" + m); parentPort.off("message", first); setImmediate(() => parentPort.on("message", second)); };
+       const second = m => { parentPort.postMessage("second:" + m); if (m === 3) process.exit(0); };
+       parentPort.postMessage("started");
+       await new Promise(resolve => workerData.gate.once("message", resolve));
+       parentPort.on("message", first);`,
+      [0, 1, 2, 3],
+    );
+    expect(replies).toEqual(["first:early", "second:0", "second:1", "second:2", "second:3"]);
+    expect(code).toBe(0);
+  });
+});
+
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
 // (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
@@ -2123,7 +2172,7 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
 });
 
 // Static imports that are still being read/transpiled are loading, not a
-// top-level await: 'online' and message delivery wait for the graph to execute.
+// top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {
   using dir = tempDir("worker-static-import-start", {
     "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
@@ -2136,6 +2185,42 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   w.postMessage("hi");
   expect(await reply).toBe("got hi 0");
   await w.terminate();
+});
+
+// node posts 'online' before it evaluates the entry, so it always precedes a
+// message the entry's top-level code posts (#41375: @discordjs/ws attaches its
+// 'message' listener only after `once(worker, "online")`).
+describe("'online' precedes the worker's first message", () => {
+  test("in event order", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("message", m => order.push("message:" + m));
+    const [code] = await once(w, "exit");
+    expect(order).toEqual(["online", "message:ready"]);
+    expect(code).toBe(0);
+  });
+
+  test("a 'message' listener attached after 'online' sees it", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    await once(w, "online");
+    const ready = new Promise<string>(resolve => w.on("message", resolve));
+    const exited = once(w, "exit").then(() => "exited first");
+    expect(await Promise.race([ready, exited])).toBe("ready");
+    await exited;
+  });
+
+  test("a worker whose entry does not resolve reports 'online' then 'error'", async () => {
+    using dir = tempDir("worker-online-missing-entry", {});
+    const w = new Worker(join(String(dir), "missing.js"));
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("error", e => order.push("error:" + (e as any).code));
+    // not events.once(): it rejects on the 'error' event this test expects
+    const code = await new Promise<number>(resolve => w.on("exit", resolve));
+    expect(order).toEqual(["online", "error:MODULE_NOT_FOUND"]);
+    expect(code).toBe(1);
+  });
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────
@@ -2269,8 +2354,8 @@ describe("terminate with work in flight", () => {
   });
 });
 
-// A JS preload's modules are not the entry: the worker counts as started (online,
-// parent messages delivered) only once its own entry graph has executed.
+// A JS preload's modules are not the entry: parent messages are delivered only
+// once the worker's own entry graph has executed.
 test("a worker with a preload is not started before its entry module runs", async () => {
   using dir = tempDir("worker-preload-start", {
     "setup.js": `globalThis.setupRan = true;`,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -361,6 +361,29 @@ describe("web worker", () => {
     });
   });
 
+  describe("open event", () => {
+    // 'open' is posted before the entry runs, so it precedes anything the
+    // entry's top-level code posts (node:worker_threads turns it into 'online').
+    test("precedes the worker's first message", async () => {
+      const worker = new Worker("data:text/javascript,postMessage('ready')");
+      const order: string[] = [];
+      worker.addEventListener("open", () => order.push("open"));
+      worker.addEventListener("message", e => order.push("message:" + e.data));
+      await once(worker, "close");
+      expect(order).toEqual(["open", "message:ready"]);
+    });
+
+    test("is fired for a worker whose entry does not resolve", async () => {
+      using dir = tempDir("worker-open-missing-entry", {});
+      const worker = new Worker(path.join(String(dir), "missing.js"));
+      const order: string[] = [];
+      worker.addEventListener("open", () => order.push("open"));
+      worker.addEventListener("error", () => order.push("error"));
+      await once(worker, "close");
+      expect(order).toEqual(["open", "error"]);
+    });
+  });
+
   describe("error event", () => {
     test("is fired with a string of the error", async () => {
       const worker = new Worker("data:text/javascript,throw 5");
@@ -377,6 +400,89 @@ describe("web worker", () => {
       const worker = new Worker(specifier);
       const [err] = await once(worker, "error");
       expect(err.message).toBe(`BuildMessage: ModuleNotFound resolving "${specifier}" (entry point)`);
+    });
+  });
+
+  // As in browsers (and Node's Web Worker), the worker's implicit port opens once the entry's
+  // synchronous part has run: a message dispatched while no 'message' handler exists is dropped.
+  // node:worker_threads' parentPort is what queues until a listener is attached. #40141
+  describe("message delivery does not wait for a 'message' handler", () => {
+    async function withWorker(
+      src: string,
+      drive: (w: Worker, got: unknown[], done: PromiseWithResolvers<void>) => void,
+    ) {
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const got: unknown[] = [];
+      const done = Promise.withResolvers<void>();
+      w.onerror = e => done.reject(e.error ?? e.message);
+      w.addEventListener("close", e => done.reject(new Error(`worker closed (${e.code}) with ${JSON.stringify(got)}`)));
+      drive(w, got, done);
+      try {
+        await done.promise;
+      } finally {
+        w.terminate();
+      }
+      return got;
+    }
+
+    // Posted while the worker is still starting: queued, and delivered once the entry has run and
+    // installed its handler — the top-level await never settling does not hold them back (#15408).
+    test("a handler installed before a top-level await that never settles receives what was queued during startup", async () => {
+      const got = await withWorker(
+        `self.onmessage = e => postMessage(e.data);
+         postMessage("installed");
+         await new Promise(() => {});`,
+        (w, got, done) => {
+          w.postMessage("early");
+          w.onmessage = e => {
+            if (e.data === "installed") return [0, 1, 2].forEach(m => w.postMessage(m));
+            got.push(e.data);
+            if (e.data === 2) done.resolve();
+          };
+        },
+      );
+      expect(got).toEqual(["early", 0, 1, 2]);
+    });
+
+    // The worker joins a BroadcastChannel first thing and installs a one-shot "probe" listener; the
+    // parent posts "probe" at construction. Its arrival proves the worker's port is live (a post
+    // that lands while the worker is still starting is buffered, and startup runs other queued
+    // tasks before it drains them), so the worker says "ready" from that handler, after removing
+    // it. The parent then posts 0..2 and answers "go". Those reach the worker as tasks in that
+    // order, so 0..2 are dispatched — to no handler — strictly before `await gate` resumes and
+    // installs one. 3 and 4 come after it.
+    test("a handler installed after a top-level await misses what was dispatched before it", async () => {
+      const gateName = "worker-gate-" + crypto.randomUUID();
+      const gate = new BroadcastChannel(gateName);
+      try {
+        const got = await withWorker(
+          `const c = new BroadcastChannel(${JSON.stringify(gateName)});
+           const gate = new Promise(go => { c.onmessage = () => { c.close(); go(); }; });
+           self.addEventListener("message", function probe(e) {
+             if (e.data !== "probe") return;
+             self.removeEventListener("message", probe);
+             c.postMessage("ready");
+           });
+           await gate;
+           self.onmessage = e => postMessage(e.data);
+           postMessage("installed");`,
+          (w, got, done) => {
+            w.postMessage("probe");
+            gate.onmessage = () => {
+              [0, 1, 2].forEach(m => w.postMessage(m));
+              gate.postMessage("go");
+            };
+            w.onmessage = e => {
+              if (e.data === "installed") return [3, 4].forEach(m => w.postMessage(m));
+              got.push(e.data);
+              if (e.data === 4) done.resolve();
+            };
+          },
+        );
+        expect(got).toEqual([3, 4]);
+      } finally {
+        gate.close();
+      }
     });
   });
 
@@ -457,10 +563,17 @@ describe("web worker", () => {
         (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
-      w.onmessage = () => received++;
+      const { promise: first, resolve: gotFirst } = Promise.withResolvers<void>();
+      w.onmessage = () => {
+        received++;
+        gotFirst();
+      };
+      // Worker startup is slow under debug/ASAN: count timer turns only once the flood has begun.
+      await first;
+      const before = received;
       // Three timer turns while the flood is running is the property; not the timing.
       for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      expect(received).toBeGreaterThan(before);
       w.terminate();
       await once(w, "close");
     });
@@ -507,29 +620,36 @@ describe("web worker", () => {
     // A preload's un-awaited import() finishing while the entry is still
     // fetching is not "the entry started evaluating": message delivery opens
     // only once the entry's own graph runs (and installs its handler).
-    test("preload with an un-awaited import() does not open message delivery before the entry runs", async () => {
-      using dir = tempDir("worker-preload-dynamic-import", {
-        "side.js": `globalThis.sideRan = true;`,
-        "preload.js": `import("./side.js");`,
-        // big enough that the entry graph is still transpiling when side.js evaluates
-        "big.js": Array.from(
-          { length: 4000 },
-          (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
-        ).join("\n"),
-        "worker.js": `import "./big.js";
+    // Three transpiles of big.js take about 2s each under debug/ASAN.
+    test(
+      "preload with an un-awaited import() does not open message delivery before the entry runs",
+      async () => {
+        using dir = tempDir("worker-preload-dynamic-import", {
+          "side.js": `globalThis.sideRan = true;`,
+          "preload.js": `import("./side.js");`,
+          // big enough that the entry graph is still transpiling when side.js evaluates
+          "big.js": Array.from(
+            { length: 4000 },
+            (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
+          ).join("\n"),
+          "worker.js": `import "./big.js";
           const got = [];
           self.onmessage = e => { got.push(e.data); if (e.data === "last") postMessage(got); };`,
-      });
-      for (let i = 0; i < 3; i++) {
-        const w = new Worker(path.join(String(dir), "worker.js"), { preload: [path.join(String(dir), "preload.js")] });
-        w.postMessage("first");
-        w.postMessage("second");
-        w.postMessage("last");
-        const [ev] = await once(w, "message");
-        expect(ev.data).toEqual(["first", "second", "last"]);
-        w.terminate();
-      }
-    });
+        });
+        for (let i = 0; i < 3; i++) {
+          const w = new Worker(path.join(String(dir), "worker.js"), {
+            preload: [path.join(String(dir), "preload.js")],
+          });
+          w.postMessage("first");
+          w.postMessage("second");
+          w.postMessage("last");
+          const [ev] = await once(w, "message");
+          expect(ev.data).toEqual(["first", "second", "last"]);
+          w.terminate();
+        }
+      },
+      isDebug ? 30_000 : 5_000,
+    );
 
     // Everything a worker posted before it exited arrives before 'close'.
     test("messages posted right before a natural exit are all delivered before close", async () => {

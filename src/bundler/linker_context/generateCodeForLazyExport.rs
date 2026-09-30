@@ -373,6 +373,12 @@ pub(crate) fn generate_code_for_lazy_export(
         loc: stmt.loc,
     };
 
+    // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
+    // output, so the part that holds the call must import it.
+    let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
+        if matches!(c.target.data, ExprData::ERequireCallTarget))
+        && this.options.output_format != crate::options::OutputFormat::Cjs;
+
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
             part.stmts.slice_mut()[0] = Stmt::assign(
@@ -395,12 +401,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 Index::init(source_index),
             )?;
 
-            // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-            if matches!(expr.data, ExprData::ECall(ref c)
-                if matches!(c.target.data, ExprData::ERequireCallTarget))
-                // if it's commonjs, use require()
-                && this.options.output_format != crate::options::OutputFormat::Cjs
-            {
+            if calls_runtime_require {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,
                     Index::part(1u32),
@@ -507,6 +508,15 @@ pub(crate) fn generate_code_for_lazy_export(
                     )));
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
+
+                if calls_runtime_require {
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(generated.1),
+                        b"__require",
+                        1,
+                    )?;
+                }
             }
         }
     }

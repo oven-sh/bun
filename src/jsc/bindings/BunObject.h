@@ -18,7 +18,4 @@ JSC::JSObject* createBunObject(JSC::VM& vm, JSC::JSObject* globalObject);
 // ArrayBuffer/ArrayBufferView values; also used by the Web Streams consumers.
 JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSC::JSGlobalObject*, JSC::JSValue arrayValue, size_t maxLength, bool asUint8Array);
 
-JSC::JSObject* BunShell(JSC::JSGlobalObject* globalObject);
-JSC::JSValue ShellError(JSC::JSGlobalObject* globalObject);
-
 }

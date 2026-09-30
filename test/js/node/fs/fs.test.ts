@@ -979,6 +979,27 @@ describe("copyFileSync", () => {
     }).toThrow();
   });
 
+  it("throws ENOENT with syscall, path and dest for a destination in a missing directory", async () => {
+    const tempdir = tmpdirTestMkdir();
+    const src = import.meta.path;
+    const dest = join(tempdir, "does-not-exist", "copyFileSync.js");
+    const expected = expect.objectContaining({ code: "ENOENT", syscall: "copyfile", path: src, dest });
+    expect(() => copyFileSync(src, dest)).toThrow(expected);
+    await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
+    await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
+  });
+
+  // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
+  // in the Win32→errno table, so this is the UNKNOWN path.
+  it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {
+    const src = import.meta.path;
+    const dest = "\\\\localhost\\bun-test-no-such-share$\\copyFileSync.js";
+    const expected = expect.objectContaining({ code: "EUNKNOWN", syscall: "copyfile", errno: -4094, path: src, dest });
+    expect(() => copyFileSync(src, dest)).toThrow(expected);
+    await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
+    await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
+  });
+
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
@@ -1834,6 +1855,55 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   });
 });
 
+// After the first subtask failed, the walker kept scheduling a subtask for every
+// directory it found and only settled once that frontier drained. Two symlinks
+// back to the root make the frontier 2^41 directories (the kernel follows 40
+// symlinks before ELOOP), so the promise and the callback never settled.
+it.skipIf(isWindows)(
+  "readdir({recursive: true}) settles with the first error while symlink loops are still being walked",
+  async () => {
+    using dir = tempDir("readdir-recursive-loop", {
+      "a/b/keep.txt": "x",
+    });
+    const root = String(dir);
+    // Opening this one with O_DIRECTORY fails with ELOOP at once.
+    fs.symlinkSync(join(root, "bad"), join(root, "bad"));
+    fs.symlinkSync(".", join(root, "loop1"));
+    fs.symlinkSync(".", join(root, "loop2"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const root = ${JSON.stringify(root)};
+          const viaPromise = await fs.promises.readdir(root, { recursive: true }).then(
+            r => "resolved " + r.length,
+            e => "rejected " + e.code,
+          );
+          console.log("promise", viaPromise);
+          const { promise, resolve } = Promise.withResolvers();
+          fs.readdir(root, { recursive: true }, (e, r) => resolve(e ? "rejected " + e.code : "resolved " + r.length));
+          console.log("callback", await promise);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
@@ -2013,6 +2083,286 @@ it("preadv", () => {
   expect(buffers[0]).toEqual(new Uint8Array([4, 5, 6]));
   expect(buffers[1]).toEqual(new Uint8Array([7, 8, 9]));
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
+});
+
+// Node defaults an explicit `undefined` len to 0 on every truncate entry point
+// (`if (len === undefined) len = 0` in truncateSync, `len = 0` default params
+// elsewhere), while `null` still fails validateInteger.
+describe.concurrent("truncate with an undefined len", () => {
+  const file = (name: string, dir: string) => {
+    const p = join(dir, name);
+    writeFileSync(p, "hello world");
+    return p;
+  };
+
+  it("truncateSync(path, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("sync.txt", String(dir));
+    fs.truncateSync(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("promises.truncate(path, undefined) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("promise.txt", String(dir));
+    await _promises.truncate(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("truncate(path, undefined, cb) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("callback.txt", String(dir));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.truncate(p, undefined, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("ftruncateSync(fd, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("fsync.txt", String(dir));
+    const fd = openSync(p, "r+");
+    try {
+      ftruncateSync(fd, undefined);
+      expect(fstatSync(fd).size).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("null is still rejected with ERR_INVALID_ARG_TYPE", async () => {
+    using dir = tempDir("fs-truncate-null", {});
+    const p = file("null.txt", String(dir));
+    expect(() => fs.truncateSync(p, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    await expect(() => _promises.truncate(p, null as any)).toThrowWithCodeAsync(TypeError, "ERR_INVALID_ARG_TYPE");
+    const fd = openSync(p, "r+");
+    try {
+      expect(() => ftruncateSync(fd, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("hello world");
+  });
+});
+
+// The `fs.*Sync` functions bound straight to the native binding parse their
+// arguments in Rust (`args::*::from_js` in node_fs.rs), where an absent argument
+// and an explicit `undefined` arrive differently. Node treats them the same for
+// every optional argument, so each row must produce the same outcome both ways.
+describe("explicit undefined behaves like an absent optional argument", () => {
+  type Ctx = {
+    dir: string;
+    file: () => string;
+    fresh: (prefix: string) => string;
+    withFd: <T>(flags: string, f: (fd: number) => T) => T;
+  };
+  const makeCtx = (dir: string): Ctx => {
+    let n = 0;
+    const fresh = (prefix: string) => join(dir, `${prefix}${n++}`);
+    const file = () => {
+      const p = fresh("f");
+      writeFileSync(p, "hello world");
+      return p;
+    };
+    const withFd = <T>(flags: string, f: (fd: number) => T): T => {
+      const fd = openSync(file(), flags);
+      try {
+        return f(fd);
+      } finally {
+        closeSync(fd);
+      }
+    };
+    return { dir, file, fresh, withFd };
+  };
+  // Strings (fresh paths from mkdtempSync, readlinkSync) differ between the two
+  // calls by construction, so only their type is compared.
+  const outcome = (f: () => unknown) => {
+    try {
+      const v = f();
+      return { ok: typeof v === "string" ? "string" : v };
+    } catch (e: any) {
+      return { code: e.code };
+    }
+  };
+
+  const rows: [string, (c: Ctx) => unknown, (c: Ctx) => unknown][] = [
+    ["accessSync(path[, mode])", c => fs.accessSync(c.file()), c => fs.accessSync(c.file(), undefined)],
+    [
+      "appendFileSync(path, data[, options])",
+      c => fs.appendFileSync(c.file(), "x"),
+      c => fs.appendFileSync(c.file(), "x", undefined),
+    ],
+    [
+      "copyFileSync(src, dest[, mode])",
+      c => copyFileSync(c.file(), c.fresh("c")),
+      c => copyFileSync(c.file(), c.fresh("c"), undefined),
+    ],
+    [
+      "cpSync(src, dest[, options])",
+      c => fs.cpSync(c.file(), c.fresh("cp")),
+      c => fs.cpSync(c.file(), c.fresh("cp"), undefined),
+    ],
+    ["existsSync(path)", c => existsSync(c.file()), c => existsSync(c.file(), undefined as any)],
+    [
+      "fstatSync(fd[, options]).size",
+      c => c.withFd("r", fd => fstatSync(fd).size),
+      c => c.withFd("r", fd => fstatSync(fd, undefined).size),
+    ],
+    [
+      "ftruncateSync(fd[, len])",
+      c =>
+        c.withFd("r+", fd => {
+          ftruncateSync(fd);
+          return fstatSync(fd).size;
+        }),
+      c =>
+        c.withFd("r+", fd => {
+          ftruncateSync(fd, undefined);
+          return fstatSync(fd).size;
+        }),
+    ],
+    ["lstatSync(path[, options]).size", c => lstatSync(c.file()).size, c => lstatSync(c.file(), undefined).size],
+    ["mkdirSync(path[, options])", c => mkdirSync(c.fresh("m")), c => mkdirSync(c.fresh("m"), undefined)],
+    ["mkdtempSync(prefix[, options])", c => mkdtempSync(c.fresh("t")), c => mkdtempSync(c.fresh("t"), undefined)],
+    [
+      "opendirSync(path[, options])",
+      c => fs.opendirSync(c.dir).closeSync(),
+      c => fs.opendirSync(c.dir, undefined).closeSync(),
+    ],
+    ["openSync(path[, flags])", c => closeSync(openSync(c.file())), c => closeSync(openSync(c.file(), undefined))],
+    [
+      "openSync(path, flags[, mode])",
+      c => closeSync(openSync(c.file(), "r")),
+      c => closeSync(openSync(c.file(), "r", undefined)),
+    ],
+    ["readdirSync(path[, options]).length", c => readdirSync(c.dir).length, c => readdirSync(c.dir, undefined).length],
+    [
+      "readFileSync(path[, options]).length",
+      c => readFileSync(c.file()).length,
+      c => readFileSync(c.file(), undefined).length,
+    ],
+    [
+      "readlinkSync(path[, options])",
+      c => {
+        const l = c.fresh("l");
+        symlinkSync(c.file(), l);
+        return readlinkSync(l);
+      },
+      c => {
+        const l = c.fresh("l");
+        symlinkSync(c.file(), l);
+        return readlinkSync(l, undefined);
+      },
+    ],
+    [
+      "readSync(fd, buffer[, options])",
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2))),
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), undefined)),
+    ],
+    [
+      "readSync(fd, buffer, offset, length[, position])",
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 2)),
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 2, undefined)),
+    ],
+    [
+      "readvSync(fd, buffers[, position])",
+      c => c.withFd("r", fd => readvSync(fd, [Buffer.alloc(2)])),
+      c => c.withFd("r", fd => readvSync(fd, [Buffer.alloc(2)], undefined)),
+    ],
+    ["realpathSync(path[, options])", c => realpathSync(c.dir), c => realpathSync(c.dir, undefined)],
+    [
+      "realpathSync.native(path[, options])",
+      c => realpathSync.native(c.dir),
+      c => realpathSync.native(c.dir, undefined),
+    ],
+    [
+      "rmdirSync(path[, options])",
+      c => {
+        const d = c.fresh("d");
+        mkdirSync(d);
+        return rmdirSync(d);
+      },
+      c => {
+        const d = c.fresh("d");
+        mkdirSync(d);
+        return rmdirSync(d, undefined);
+      },
+    ],
+    ["rmSync(path[, options])", c => rmSync(c.file()), c => rmSync(c.file(), undefined)],
+    ["statSync(path[, options]).size", c => statSync(c.file()).size, c => statSync(c.file(), undefined).size],
+    [
+      "statfsSync(path[, options]).bsize",
+      c => typeof statfsSync(c.dir).bsize,
+      c => typeof statfsSync(c.dir, undefined).bsize,
+    ],
+    [
+      "symlinkSync(target, path[, type])",
+      c => symlinkSync(c.file(), c.fresh("s")),
+      c => symlinkSync(c.file(), c.fresh("s"), undefined),
+    ],
+    [
+      "truncateSync(path[, len])",
+      c => {
+        const p = c.file();
+        fs.truncateSync(p);
+        return statSync(p).size;
+      },
+      c => {
+        const p = c.file();
+        fs.truncateSync(p, undefined);
+        return statSync(p).size;
+      },
+    ],
+    [
+      "writeFileSync(path, data[, options])",
+      c => writeFileSync(c.file(), "x"),
+      c => writeFileSync(c.file(), "x", undefined),
+    ],
+    [
+      "writeSync(fd, buffer[, offset])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"))),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), undefined)),
+    ],
+    [
+      "writeSync(fd, buffer, offset[, length])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0)),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, undefined)),
+    ],
+    [
+      "writeSync(fd, buffer, offset, length[, position])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, 2)),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, 2, undefined)),
+    ],
+    [
+      "writeSync(fd, string[, position])",
+      c => c.withFd("r+", fd => writeSync(fd, "ab")),
+      c => c.withFd("r+", fd => writeSync(fd, "ab", undefined)),
+    ],
+    [
+      "writevSync(fd, buffers[, position])",
+      c => c.withFd("r+", fd => writevSync(fd, [Buffer.from("ab")])),
+      c => c.withFd("r+", fd => writevSync(fd, [Buffer.from("ab")], undefined)),
+    ],
+  ];
+
+  it.each(rows)("%s", (_label, absent, explicit) => {
+    using dir = tempDir("fs-undefined-arg", {});
+    const c = makeCtx(String(dir));
+    expect(outcome(() => explicit(c))).toEqual(outcome(() => absent(c)));
+  });
+
+  // Node coerces a positional read `length` with `length |= 0`, so `undefined`
+  // reads 0 bytes. Bun validates it as an integer instead and throws
+  // ERR_OUT_OF_RANGE 'The value of "length" is out of range. It must be an
+  // integer. Received NaN'. The 3-argument form is the options overload in
+  // Node, so the comparison is against an explicit 0.
+  it.failing("readSync(fd, buffer, offset, undefined) reads 0 bytes like readSync(fd, buffer, offset, 0)", () => {
+    using dir = tempDir("fs-undefined-arg", {});
+    const c = makeCtx(String(dir));
+    expect(outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, undefined)))).toEqual(
+      outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 0))),
+    );
+  });
 });
 
 describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
@@ -3023,6 +3373,35 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
+  it("async calls do not keep a Buffer path alive after they complete", async () => {
+    using dir = tempDir("fs-async-buffer-path", { x: "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const file = Buffer.from(require("path").join(process.argv[1], "x"));
+        const missing = Buffer.from(require("path").join(process.argv[1], "missing"));
+        for (let i = 0; i < 200; i++) {
+          await fs.promises.stat(Buffer.from(file));
+          await fs.promises.readFile(Buffer.from(file));
+          await fs.promises.writeFile(Buffer.from(file), Buffer.from("hello"));
+          await fs.promises.stat(Buffer.from(missing)).catch(() => {});
+        }
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const live = Number(stdout);
+    expect(Number.isFinite(live)).toBe(true);
+    expect(live).toBeLessThan(200);
+    expect(exitCode).toBe(0);
+  });
+
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
@@ -5627,6 +6006,14 @@ it("fs.mkdirSync recursive: false should error when the directory already exists
   expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
 });
 
+it("fs.statfs on a missing path fails with ENOENT and syscall statfs", async () => {
+  const missing = join(tmpdirTestMkdir(), "does-not-exist");
+  const expected = expect.objectContaining({ code: "ENOENT", syscall: "statfs" });
+  expect(() => statfsSync(missing)).toThrow(expected);
+  await expect(promisify(fs.statfs)(missing)).rejects.toThrow(expected);
+  await expect(fs.promises.statfs(missing)).rejects.toThrow(expected);
+});
+
 it("fs.statfsSync should work", () => {
   const stats = statfsSync(import.meta.path);
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
@@ -6406,6 +6793,104 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
 });
 
+// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
+// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
+it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
+  // The unfixed build segfaults on the pool thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        const encoded = new TextEncoder().encode(process.execPath);
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(encoded.length, { maxByteLength: 1 << 16 });
+          const path = new Uint8Array(ab);
+          path.set(encoded);
+          const pending = fs.promises.stat(path);
+          ab.resize(0);
+          if (!((await pending).size > 0)) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A sync call reads the path after the option getters ran. It reads the bytes captured at call time
+// when a getter shrinks the buffer.
+it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
+  using dir = tempDir("fs-resizable-path", {});
+  // The unfixed build segfaults on the main thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        import path from "node:path";
+        const dir = process.cwd();
+        function resizablePath(p) {
+          const bytes = new TextEncoder().encode(p);
+          const ab = new ArrayBuffer(bytes.length, { maxByteLength: 1 << 16 });
+          new Uint8Array(ab).set(bytes);
+          return ab;
+        }
+
+        const written = path.join(dir, "written.txt");
+        {
+          const ab = resizablePath(written);
+          fs.writeFileSync(new Uint8Array(ab), "sync-write", {
+            get flag() {
+              ab.resize(0);
+              return "w";
+            },
+          });
+          console.log("writeFileSync:", fs.readFileSync(written, "utf8"));
+        }
+        {
+          const ab = resizablePath(written);
+          const text = fs.readFileSync(new DataView(ab), {
+            get encoding() {
+              ab.resize(0);
+              return "utf8";
+            },
+          });
+          console.log("readFileSync:", text);
+        }
+        {
+          const made = path.join(dir, "made");
+          const ab = resizablePath(made);
+          fs.mkdirSync(ab, {
+            get recursive() {
+              ab.resize(0);
+              return true;
+            },
+          });
+          console.log("mkdirSync:", fs.statSync(made).isDirectory());
+        }
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("writeFileSync: sync-write\nreadFileSync: sync-write\nmkdirSync: true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
@@ -6641,6 +7126,239 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     `);
     expect(stdout).toBe("quiet");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Node calls an fs callback from the event loop, then runs the process.nextTick
+// queue, then the microtasks.
+describe("a process.nextTick queued by an fs callback runs before a microtask it queues", () => {
+  type Start = (dir: string, callback: () => void) => void;
+
+  // The first process.nextTick() of a process runs right after the microtask
+  // that queued it, which hides a callback that runs inside a microtask.
+  function tickQueueExists() {
+    return new Promise<void>(resolve => process.nextTick(resolve));
+  }
+
+  function withFd(name: string, flags: string, start: (fd: number, callback: () => void) => void): Start {
+    return (dir, callback) => {
+      const fd = openSync(join(dir, name), flags);
+      start(fd, () => {
+        closeSync(fd);
+        callback();
+      });
+    };
+  }
+
+  const cases: Array<[string, Start]> = [
+    ["access", (dir, cb) => fs.access(join(dir, "file.txt"), cb)],
+    ["appendFile", (dir, cb) => fs.appendFile(join(dir, "file.txt"), "x", cb)],
+    ["chmod", (dir, cb) => fs.chmod(join(dir, "file.txt"), 0o644, cb)],
+    ["close", (dir, cb) => fs.close(openSync(join(dir, "file.txt"), "r"), cb)],
+    ["copyFile", (dir, cb) => fs.copyFile(join(dir, "file.txt"), join(dir, "copy.txt"), cb)],
+    ["cp", (dir, cb) => fs.cp(join(dir, "file.txt"), join(dir, "cp.txt"), cb)],
+    ["exists", (dir, cb) => fs.exists(join(dir, "file.txt"), cb)],
+    ["exists (missing)", (dir, cb) => fs.exists(join(dir, "missing"), cb)],
+    ["fdatasync", withFd("file.txt", "r+", (fd, cb) => fs.fdatasync(fd, cb))],
+    ["fstat", withFd("file.txt", "r", (fd, cb) => fs.fstat(fd, cb))],
+    ["fsync", withFd("file.txt", "r+", (fd, cb) => fs.fsync(fd, cb))],
+    ["ftruncate", withFd("file.txt", "r+", (fd, cb) => fs.ftruncate(fd, 1, cb))],
+    ["futimes", withFd("file.txt", "r+", (fd, cb) => fs.futimes(fd, 1, 1, cb))],
+    ["lstat", (dir, cb) => fs.lstat(join(dir, "file.txt"), cb)],
+    ["lutimes", (dir, cb) => fs.lutimes(join(dir, "file.txt"), 1, 1, cb)],
+    ["mkdir", (dir, cb) => fs.mkdir(join(dir, "a", "b"), { recursive: true }, cb)],
+    ["mkdtemp", (dir, cb) => fs.mkdtemp(join(dir, "tmp-"), cb)],
+    [
+      "open",
+      (dir, cb) =>
+        fs.open(join(dir, "file.txt"), "r", (err, fd) => {
+          closeSync(fd);
+          cb();
+        }),
+    ],
+    ["read", withFd("file.txt", "r", (fd, cb) => fs.read(fd, Buffer.alloc(4), 0, 4, 0, cb))],
+    ["readv", withFd("file.txt", "r", (fd, cb) => fs.readv(fd, [Buffer.alloc(4)], 0, cb))],
+    ["readdir", (dir, cb) => fs.readdir(dir, cb)],
+    ["readdir (recursive)", (dir, cb) => fs.readdir(dir, { recursive: true }, cb)],
+    ["readFile", (dir, cb) => fs.readFile(join(dir, "file.txt"), cb)],
+    ["realpath", (dir, cb) => fs.realpath(join(dir, "file.txt"), cb)],
+    ["realpath.native", (dir, cb) => fs.realpath.native(join(dir, "file.txt"), cb)],
+    ["rename", (dir, cb) => fs.rename(join(dir, "file.txt"), join(dir, "renamed.txt"), cb)],
+    ["rm", (dir, cb) => fs.rm(join(dir, "file.txt"), cb)],
+    ["rmdir", (dir, cb) => fs.rmdir(join(dir, "empty"), cb)],
+    ["stat", (dir, cb) => fs.stat(join(dir, "file.txt"), cb)],
+    ["stat (missing)", (dir, cb) => fs.stat(join(dir, "missing"), cb)],
+    ["statfs", (dir, cb) => fs.statfs(dir, cb)],
+    ["truncate", (dir, cb) => fs.truncate(join(dir, "file.txt"), 1, cb)],
+    ["unlink", (dir, cb) => fs.unlink(join(dir, "file.txt"), cb)],
+    ["utimes", (dir, cb) => fs.utimes(join(dir, "file.txt"), 1, 1, cb)],
+    ["write", withFd("file.txt", "r+", (fd, cb) => fs.write(fd, Buffer.from("x"), 0, 1, 0, cb))],
+    ["write (string)", withFd("file.txt", "r+", (fd, cb) => fs.write(fd, "x", 0, "utf8", cb))],
+    ["writev", withFd("file.txt", "r+", (fd, cb) => fs.writev(fd, [Buffer.from("x")], 0, cb))],
+    ["writeFile", (dir, cb) => fs.writeFile(join(dir, "written.txt"), "x", cb)],
+    [
+      "Dir.read",
+      (dir, cb) => {
+        const handle = fs.opendirSync(dir);
+        handle.read(() => {
+          cb();
+          handle.close(() => {});
+        });
+      },
+    ],
+    ["Dir.close", (dir, cb) => fs.opendirSync(dir).close(cb)],
+  ];
+  if (!isWindows) {
+    cases.push(
+      ["link", (dir, cb) => fs.link(join(dir, "file.txt"), join(dir, "hardlink"), cb)],
+      ["readlink", (dir, cb) => fs.readlink(join(dir, "symlink"), cb)],
+      ["symlink", (dir, cb) => fs.symlink(join(dir, "file.txt"), join(dir, "symlink-2"), cb)],
+    );
+  }
+
+  it.each(cases)("%s", async (_name, start) => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello", "empty": {} });
+    if (!isWindows) symlinkSync(join(String(dir), "file.txt"), join(String(dir), "symlink"));
+    await tickQueueExists();
+
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    const order: string[] = [];
+    const step = (name: string) => () => {
+      order.push(name);
+      if (order.length === 3) resolve(order);
+    };
+    start(String(dir), () => {
+      step("callback")();
+      process.nextTick(step("nextTick"));
+      queueMicrotask(step("microtask"));
+    });
+
+    expect(await promise).toEqual(["callback", "nextTick", "microtask"]);
+  });
+
+  it("and both run before the callback of the next operation", async () => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    await tickQueueExists();
+
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    const order: string[] = [];
+    let callbacks = 0;
+    for (let i = 0; i < 3; i++) {
+      fs.stat(join(String(dir), "file.txt"), () => {
+        const n = callbacks++;
+        order.push(`callback ${n}`);
+        process.nextTick(() => order.push(`nextTick ${n}`));
+        queueMicrotask(() => {
+          order.push(`microtask ${n}`);
+          if (n === 2) resolve(order);
+        });
+      });
+    }
+
+    expect(await promise).toEqual([
+      "callback 0",
+      "nextTick 0",
+      "microtask 0",
+      "callback 1",
+      "nextTick 1",
+      "microtask 1",
+      "callback 2",
+      "nextTick 2",
+      "microtask 2",
+    ]);
+  });
+
+  // In a subprocess: the replacement must not reach the other tests, and a held
+  // callback ends the process with no output instead of a hang.
+  it("while user code has replaced process.nextTick", async () => {
+    using dir = tempDir("fs-callback-order", { "file.txt": "hello" });
+    const script = `
+      const fs = require("fs");
+      const realNextTick = process.nextTick;
+      const order = [];
+      process.on("exit", () => console.log(order.join(" ")));
+      // The tick queue exists before the operation starts.
+      realNextTick(() => {
+        // What a fake-timer library does: hold the job until the fake clock runs.
+        process.nextTick = () => {};
+        fs.stat(${JSON.stringify(join(String(dir), "file.txt"))}, () => {
+          order.push("callback");
+          realNextTick(() => order.push("nextTick"));
+          queueMicrotask(() => order.push("microtask"));
+        });
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("callback nextTick microtask");
+    expect(exitCode).toBe(0);
+  });
+
+  // These APIs are promise chains in JS and reach their callback through process.nextTick.
+  it("while user code has replaced process.nextTick, for the APIs that are promise chains", async () => {
+    using dir = tempDir("fs-callback-order", {
+      "file.txt": "hello",
+      "rm.txt": "x",
+      "tree/a/b.txt": "x",
+      "list/f0": "",
+      "list/f1": "",
+    });
+    const script = `
+      const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(String(dir))};
+      const ran = [];
+      process.on("exit", () => console.log(ran.sort().join(" ")));
+      const list = path.join(dir, "list");
+      const buffered = fs.opendirSync(list);
+      buffered.readSync();
+      // What a fake-timer library does: hold the job until the fake clock runs.
+      process.nextTick = () => {};
+      fs.cp(path.join(dir, "file.txt"), path.join(dir, "cp.txt"), () => ran.push("cp"));
+      fs.rm(path.join(dir, "rm.txt"), () => ran.push("rm"));
+      fs.rmdir(path.join(dir, "tree"), { recursive: true }, () => ran.push("rmdir"));
+      fs.opendir(list, (err, handle) => (handle.closeSync(), ran.push("opendir")));
+      const first = fs.opendirSync(list);
+      first.read(() => (first.closeSync(), ran.push("Dir.read")));
+      buffered.read(() => (buffered.closeSync(), ran.push("Dir.read(buffered)")));
+      fs.opendirSync(list).close(() => ran.push("Dir.close"));
+      fs.glob("*.txt", { cwd: dir }, () => ran.push("glob"));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("Dir.close Dir.read Dir.read(buffered) cp glob opendir rm rmdir");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The operation pins the buffer while it runs. Node can transfer it from the callback.
+describe("the buffer of a finished operation can be transferred from its callback", () => {
+  type Start = (fd: number, view: Uint8Array, callback: () => void) => void;
+  const cases: Array<[string, Start]> = [
+    ["read", (fd, view, cb) => fs.read(fd, view, 0, view.byteLength, 0, cb)],
+    ["readv", (fd, view, cb) => fs.readv(fd, [view], 0, cb)],
+    ["write", (fd, view, cb) => fs.write(fd, view, 0, view.byteLength, 0, cb)],
+    ["writev", (fd, view, cb) => fs.writev(fd, [view], 0, cb)],
+  ];
+
+  it.each(cases)("%s", async (_name, start) => {
+    using dir = tempDir("fs-callback-transfer", { "file.txt": "hello world" });
+    const fd = openSync(join(String(dir), "file.txt"), "r+");
+    try {
+      const buffer = new ArrayBuffer(8);
+      const { promise, resolve } = Promise.withResolvers<{ source: number; moved: number }>();
+      start(fd, new Uint8Array(buffer), () => {
+        const moved = structuredClone(buffer, { transfer: [buffer] });
+        resolve({ source: buffer.byteLength, moved: moved.byteLength });
+      });
+      expect(await promise).toEqual({ source: 0, moved: 8 });
+    } finally {
+      closeSync(fd);
+    }
   });
 });
 

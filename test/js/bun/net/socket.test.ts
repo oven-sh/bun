@@ -6296,8 +6296,8 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
 });
 
 // Bun.listen and Bun.connect: end(data) queued a part of its chunk, and the connection closed before Bun sent
-// that part. That is a write error. It is reported once: to `error`, or to `close` when there is no `error`
-// handler. A close that the application asked for reports nothing.
+// that part. A close with a read error gives that error to `close`. Every other close that the application did
+// not ask for is a write error. It is reported once: to `error`, or to `close` when there is no `error` handler.
 describe.concurrent("end(data) whose queued tail is lost with the connection", () => {
   type Transport = "tcp" | "tls" | "tls over unix";
   type Side = "listen" | "connect";
@@ -6475,57 +6475,93 @@ describe.concurrent("end(data) whose queued tail is lost with the connection", (
     await once(socket, "data");
   }
 
-  // A way to lose the tail that is the same on every platform: the socket under test sends its FIN right after
-  // end(data). Its peer reads to that FIN and answers with its own, and the loop closes the socket over the queued tail.
-  async function loseByShutdown(
-    transport: "tcp" | "tls",
-    side: Side,
+  // A way to lose the tail that is the same on every platform, and that no call of the socket under test starts:
+  // its TLS peer sends a record that cannot be read, and the TLS layer closes the socket over the queued tail.
+  async function loseByUnreadableRecord(
     options: { withError?: boolean; withClose?: boolean } = {},
     afterEnd = (_socket: Socket<unknown>, _subject: Subject) => {},
   ) {
-    const subject: Subject = answering({
-      ...options,
-      afterEnd(socket) {
-        afterEnd(socket, subject);
-        socket.shutdown();
-      },
+    const subject: Subject = answering({ ...options, afterEnd: socket => afterEnd(socket, subject) });
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: tls.key, cert: tls.cert },
+      socket: subject.handlers,
     });
-    const peer = reading(transport === "tls");
-    using pair = open(transport, side, subject.handlers, peer.handlers);
-    await pair.connected;
-    await Promise.all([subject.closed, peer.closed]);
-    return {
-      kernelFull: subject.kernelFull(),
-      events: subject.events,
-      peerGotLess: peer.received() < subject.sent(),
-    };
+    // The peer is the TLS half of an upgraded socket. It reads nothing. Its raw half writes past the TLS layer.
+    const tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, close() {}, error() {} },
+    });
+    const [raw, secure] = tcp.upgradeTLS({
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket: Socket) {
+          socket.pause();
+          socket.write(REQUEST);
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    } as any);
+    try {
+      await subject.answered;
+      raw.write(Buffer.alloc(64, "A"));
+      await subject.closed;
+    } finally {
+      secure.terminate();
+    }
+    return { kernelFull: subject.kernelFull(), events: subject.events };
   }
 
   // A row that expects no report must not pass on a build that never reports: each of them checks this too.
   let control: Promise<string[]> | undefined;
-  const aLostTailIsReported = () => (control ??= loseByShutdown("tcp", "listen").then(lost => lost.events));
+  const aLostTailIsReported = () => (control ??= loseByUnreadableRecord().then(lost => lost.events));
   const reported = [`end ${TAIL}`, "close EPIPE write"];
 
+  it.each([
+    ["with", true],
+    ["without", false],
+  ] as const)("a TLS record that cannot be read is reported once, %s an error handler", async (_handler, withError) => {
+    expect(await loseByUnreadableRecord({ withError })).toEqual({
+      kernelFull: true,
+      events: [`end ${TAIL}`, ...lostTail(withError)],
+    });
+  });
+
+  it("the error handler gets the report when there is no close handler", async () => {
+    expect(await loseByUnreadableRecord({ withError: true, withClose: false })).toEqual({
+      kernelFull: true,
+      events: [`end ${TAIL}`, "error EPIPE write"],
+    });
+  });
+
+  // shutdown() right after end(data) sends the FIN ahead of the queued tail, for TCP too. The peer reads to that
+  // FIN and answers with its own, and the loop closes the socket over the tail.
   describe.each(["tcp", "tls"] as const)("%s, shutdown() after end(data)", transport => {
     describe.each(["listen", "connect"] as const)("Bun.%s socket", side => {
       it.each([
         ["with", true],
         ["without", false],
       ] as const)("the tail is reported once, %s an error handler", async (_handler, withError) => {
-        expect(await loseByShutdown(transport, side, { withError })).toEqual({
+        const subject = answering({ withError, afterEnd: socket => void socket.shutdown() });
+        const peer = reading(transport === "tls");
+        using pair = open(transport, side, subject.handlers, peer.handlers);
+        await pair.connected;
+        await Promise.all([subject.closed, peer.closed]);
+
+        expect({
+          kernelFull: subject.kernelFull(),
+          events: subject.events,
+          peerGotLess: peer.received() < subject.sent(),
+        }).toEqual({
           kernelFull: true,
           events: [`end ${TAIL}`, ...lostTail(withError)],
           peerGotLess: true,
         });
       });
-    });
-  });
-
-  it("the error handler gets the report when there is no close handler", async () => {
-    expect(await loseByShutdown("tcp", "listen", { withError: true, withClose: false })).toEqual({
-      kernelFull: true,
-      events: [`end ${TAIL}`, "error EPIPE write"],
-      peerGotLess: true,
     });
   });
 
@@ -6558,49 +6594,6 @@ describe.concurrent("end(data) whose queued tail is lost with the connection", (
         events: [`end ${TAIL}`, ...afterReset(withError)],
         peerGotLess: true,
       });
-    });
-  });
-
-  it.each([
-    ["with", true],
-    ["without", false],
-  ] as const)("a TLS record that cannot be read is reported once, %s an error handler", async (_handler, withError) => {
-    const subject = answering({ withError });
-    using listener = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      tls: { key: tls.key, cert: tls.cert },
-      socket: subject.handlers,
-    });
-    // The peer is the TLS half of an upgraded socket. It reads nothing. Its raw half writes past the TLS layer.
-    const tcp = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: listener.port,
-      socket: { data() {}, close() {}, error() {} },
-    });
-    const [raw, secure] = tcp.upgradeTLS({
-      tls: { ca: tls.cert },
-      socket: {
-        handshake(socket: Socket) {
-          socket.pause();
-          socket.write(REQUEST);
-        },
-        data() {},
-        close() {},
-        error() {},
-      },
-    } as any);
-    try {
-      await subject.answered;
-      raw.write(Buffer.alloc(64, "A"));
-      await subject.closed;
-    } finally {
-      secure.terminate();
-    }
-
-    expect({ kernelFull: subject.kernelFull(), events: subject.events }).toEqual({
-      kernelFull: true,
-      events: [`end ${TAIL}`, ...lostTail(withError)],
     });
   });
 
@@ -6696,7 +6689,7 @@ describe.concurrent("end(data) whose queued tail is lost with the connection", (
   it.each(["listener", "socket"] as const)(
     "reload() on the %s after end(data): the new close handler gets the report, once",
     async via => {
-      const lost = await loseByShutdown("tcp", "listen", {}, (socket, subject) => {
+      const lost = await loseByUnreadableRecord({}, (socket, subject) => {
         const reloaded = { socket: subject.reloaded };
         if (via === "listener") socket.listener!.reload(reloaded);
         else socket.reload(reloaded);
@@ -6704,7 +6697,6 @@ describe.concurrent("end(data) whose queued tail is lost with the connection", (
       expect(lost).toEqual({
         kernelFull: true,
         events: [`end ${TAIL}`, "reloaded close EPIPE write"],
-        peerGotLess: true,
       });
     },
   );

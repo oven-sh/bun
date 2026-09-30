@@ -90,18 +90,6 @@ impl JsString {
     }
 }
 
-impl From<&str> for JsString {
-    fn from(s: &str) -> Self {
-        Self::from_wtf8_bytes(s.as_bytes())
-    }
-}
-
-impl From<String> for JsString {
-    fn from(s: String) -> Self {
-        Self::from_wtf8_bytes(s.as_bytes())
-    }
-}
-
 impl PartialEq for JsString {
     fn eq(&self, other: &Self) -> bool {
         self.0.get().eql_string(other.0.get())
@@ -112,18 +100,6 @@ impl Eq for JsString {}
 impl Hash for JsString {
     fn hash<H: Hasher>(&self, h: &mut H) {
         self.0.get().hash().hash(h);
-    }
-}
-
-impl PartialEq<str> for JsString {
-    fn eq(&self, other: &str) -> bool {
-        self.0.get().eql_bytes(other.as_bytes())
-    }
-}
-
-impl PartialEq<&str> for JsString {
-    fn eq(&self, other: &&str) -> bool {
-        self.0.get().eql_bytes(other.as_bytes())
     }
 }
 

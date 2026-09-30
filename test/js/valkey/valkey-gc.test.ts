@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, expectRssDeltaBelow, isASAN, isMusl, isWindows } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 // Fuzzer found a heap-use-after-free: connect()'s tls_ctx_failed branch
 // called on_valkey_close() before the socket keep-alive ref was taken, so
@@ -40,6 +41,277 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
   expect(stdout.trim()).toBe("OK");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// The socket's close event (ValkeyClient::on_close) rejects the commands the
+// connection still owes replies for, then settles connect()/onclose or arms the
+// retry. Rejecting a promise fails once the VM's termination is pending, which
+// is the state a terminated worker's teardown closes its sockets in, and
+// on_close() then returns before its callees ran. The keep-alive ref the socket
+// held on the client used to be released by those callees, so every
+// RedisClient terminated with commands owed leaked its Box<JSValkeyClient>; now
+// the close event's entry releases it whatever on_close() returns. One case per
+// branch of on_close() (retry scheduled, autoReconnect off, retries exhausted)
+// with the commands in flight, one with commands in the offline queue as well,
+// and one whose close event is on_connect_error (a dial that never completes)
+// rather than on_close. With the offline queue, the first rejection failing
+// used to leave the queue's remaining entries undropped, leaking their
+// serialized bytes as well. Only observable via LSan, so ASAN-only. (The main
+// thread's teardown under process.exit() closes the same sockets with no
+// termination pending, so the rejections succeed there and nothing leaked.)
+describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks nothing", () => {
+  const CRLF = "\\r\\n";
+  // Answers HELLO, never replies to a command, and resolves `ready` once the
+  // first INCR has arrived, so the commands it owes are in flight from then on.
+  // With `endAtIncr` it ends the connection at that INCR instead, which leaves
+  // the client in its retry delay.
+  const server = (endAtIncr: boolean) => `
+    const HELLO = "%1${CRLF}$5${CRLF}proto${CRLF}:3${CRLF}";
+    const { promise: ready, resolve: onReady } = Promise.withResolvers();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { buf: "", hello: false }; },
+        data(s, chunk) {
+          s.data.buf += chunk.toString("latin1");
+          if (!s.data.hello && s.data.buf.includes("HELLO")) {
+            s.data.hello = true;
+            s.write(HELLO);
+          }
+          if (s.data.buf.includes("INCR")) {
+            onReady();
+            if (${endAtIncr}) s.end();
+          }
+        },
+        close() {},
+        error() {},
+      },
+    });
+  `;
+
+  async function expectCleanExit(src: string, stdout: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: out, stderr: err, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+  }
+
+  // The client is created from a macrotask on purpose: allocations made while
+  // the worker's module body is still on the stack match the module-evaluation
+  // entries of leaksan.supp, and a leaked client would then go unreported.
+  const workerSrc = (body: string) => `
+    const { parentPort, workerData } = require("node:worker_threads");
+    setImmediate(() => {
+      const client = new Bun.RedisClient(workerData.url, workerData.options);
+      globalThis.client = client;
+      ${body}
+    });
+  `;
+
+  // Terminates the worker once the server reports `ready`, with whatever the
+  // client still owes. With `closedDuringRetryDelay` the server ends the
+  // connection instead, and the worker is terminated once it has posted that
+  // it called close() during the retry delay.
+  function terminateWorker(options: object, worker: string, closedDuringRetryDelay = false) {
+    return expectCleanExit(
+      `
+      const { Worker } = require("node:worker_threads");
+      ${server(closedDuringRetryDelay)}
+      const worker = new Worker(${JSON.stringify(workerSrc(worker))}, {
+        eval: true,
+        workerData: { url: "redis://127.0.0.1:" + server.port, options: ${JSON.stringify(options)} },
+      });
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers();
+      worker.on("message", onClosed);
+      worker.on("error", (err) => { console.error(err); process.exit(2); });
+      worker.on("exit", (code) => { console.error("worker exited on its own with " + code); process.exit(3); });
+      await ${closedDuringRetryDelay ? "closed" : "ready"};
+      worker.removeAllListeners("exit");
+      console.log("terminated", await worker.terminate());
+      server.stop(true);
+      `,
+      "terminated 1\n",
+    );
+  }
+
+  const inFlight = `client.connect().then(() => { for (let i = 0; i < 4; i++) client.incr("k").catch(() => {}); });`;
+
+  // Symbolizing a leak report takes LSan several seconds on a debug binary.
+  const timeout = 60_000;
+  test.concurrent("worker.terminate(): retry scheduled", () => terminateWorker({}, inFlight), timeout);
+  test.concurrent(
+    "worker.terminate(): autoReconnect off",
+    () => terminateWorker({ autoReconnect: false }, inFlight),
+    timeout,
+  );
+  test.concurrent("worker.terminate(): retries exhausted", () => terminateWorker({ maxRetries: 0 }, inFlight), timeout);
+
+  // close() during the retry delay has no socket close event to run through:
+  // it disarms the retry timer and runs the close path by hand, so it must
+  // take no ref of its own for that path to release. After close() nothing
+  // else keeps the worker alive, and terminate() on a worker that has already
+  // exited reports that exit instead; the timer keeps it running until
+  // terminate() ends it like the other cases.
+  test.concurrent(
+    "worker.terminate(): after close() during the retry delay",
+    () =>
+      terminateWorker(
+        {},
+        `client.connect().then(async () => {
+          client.incr("k").catch(() => {});
+          while (client.connected) await Bun.sleep(1);
+          client.close();
+          setTimeout(() => {}, 1 << 30);
+          parentPort.postMessage("closed");
+        });`,
+        true,
+      ),
+    timeout,
+  );
+
+  // WATCH is not auto-pipelined, so it waits in the offline queue while the
+  // INCRs are in flight, and the INCRs sent after it queue up behind it. The
+  // first in-flight rejection failing then leaves the whole queue behind.
+  test.concurrent(
+    "worker.terminate(): commands queued behind a non-pipelined command",
+    () =>
+      terminateWorker(
+        { autoReconnect: false },
+        `client.connect().then(() => {
+          for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
+          client.send("WATCH", ["k"]).catch(() => {});
+          for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
+        });`,
+      ),
+    timeout,
+  );
+
+  // A listener nobody accepts from, with a backlog one filler connection
+  // fills, so the kernel drops every later SYN and a dial to `port` sits in
+  // EINPROGRESS for good. Needs listen(2) with the smallest backlog that
+  // admits exactly one connection (macOS treats 0 as unlimited), which Bun's
+  // own listeners do not expose, so the listener is a raw libc socket.
+  const blackhole = `
+    const net = require("node:net");
+    const { dlopen, ptr } = require("bun:ffi");
+    const darwin = process.platform === "darwin";
+    const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+      socket:      { args: ["int", "int", "int"],  returns: "int" },
+      bind:        { args: ["int", "ptr", "int"],  returns: "int" },
+      listen:      { args: ["int", "int"],         returns: "int" },
+      getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+    });
+    const AF_INET = 2, SOCK_STREAM = 1;
+    const addr = new Uint8Array(16);
+    if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+    addr.set([127, 0, 0, 1], 4);
+    const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+    const len = new Uint32Array([16]);
+    if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+    const port = (addr[2] << 8) | addr[3];
+    // The error listener outlives the await, so a later error on the filler
+    // is swallowed rather than thrown.
+    const filler = net.connect(port, "127.0.0.1");
+    await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+  `;
+
+  // The dial never completes, so teardown delivers on_connect_error for it,
+  // with the commands in the offline queue.
+  test.concurrent.skipIf(isWindows || isMusl)(
+    "worker.terminate(): commands queued behind a dial that stays pending",
+    () =>
+      expectCleanExit(
+        `
+        const { Worker } = require("node:worker_threads");
+        ${blackhole}
+        const { promise: dialing, resolve: onDialing } = Promise.withResolvers();
+        const worker = new Worker(${JSON.stringify(
+          workerSrc(`
+            client.connect().catch(() => {});
+            for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
+            parentPort.postMessage("dialing");
+          `),
+        )}, {
+          eval: true,
+          workerData: { url: "redis://127.0.0.1:" + port, options: { autoReconnect: false } },
+        });
+        worker.on("message", onDialing);
+        worker.on("error", (err) => { console.error(err); process.exit(2); });
+        worker.on("exit", (code) => { console.error("worker exited on its own with " + code); process.exit(3); });
+        await dialing;
+        worker.removeAllListeners("exit");
+        console.log("terminated", await worker.terminate());
+        filler.destroy();
+        `,
+        "terminated 1\n",
+      ),
+    timeout,
+  );
+
+  // A dial to an IP literal gets a real us_socket_t back from uSockets before
+  // the TCP handshake completes (POLL_TYPE_SEMI_SOCKET), and uSockets delivers
+  // no close event when the application closes one of those, so
+  // ValkeyClient::close() releases connect()'s keep-alive ref and runs the
+  // close event by hand. One case per entry into that branch: close() while
+  // the dial is pending, and the connection timeout firing during it. The
+  // command in the offline queue tells the two apart: connect() itself is
+  // always rejected as connection-closed. The client is created from a
+  // macrotask for the same reason as the workers'.
+  function closePendingDial(options: object, body: string, stdout: string) {
+    return expectCleanExit(
+      `
+      ${blackhole}
+      const { promise: done, resolve: onDone } = Promise.withResolvers();
+      setImmediate(async () => {
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + port, ${JSON.stringify(options)});
+        let closes = 0;
+        client.onclose = () => { closes++; };
+        const connecting = client.connect();
+        const queued = client.get("k");
+        ${body}
+        const code = (p) => p.then(() => "resolved", (err) => err.code);
+        console.log(await code(connecting), await code(queued), closes, client.connected);
+        Bun.gc(true);
+        onDone();
+      });
+      await done;
+      Bun.gc(true);
+      filler.destroy();
+      `,
+      stdout + "\n",
+    );
+  }
+  test.concurrent.skipIf(isWindows || isMusl)(
+    "close() while a dial to an IP literal is pending",
+    () =>
+      closePendingDial(
+        { autoReconnect: false },
+        "client.close();",
+        "ERR_REDIS_CONNECTION_CLOSED ERR_REDIS_CONNECTION_CLOSED 1 false",
+      ),
+    timeout,
+  );
+  test.concurrent.skipIf(isWindows || isMusl)(
+    "connection timeout while a dial to an IP literal is pending",
+    () =>
+      closePendingDial(
+        { connectionTimeout: 1 },
+        "",
+        "ERR_REDIS_CONNECTION_CLOSED ERR_REDIS_CONNECTION_TIMEOUT 1 false",
+      ),
+    timeout,
+  );
 });
 
 // Fuzzer found a heap-use-after-free that survived the ScopedRef refactor:
@@ -617,4 +889,69 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
   expect(stdout.trim()).toBe("OK");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// Closing a client from the continuation of its last reply and collecting
+// before the socket read returns used to panic ("unreachable" in
+// subscription_callback_map): the collector had found the wrapper dead but
+// finalize() had not run yet. The fixture runs the scenario ten times, checks
+// after each collection whether the wrapper is really dead, and exits non-zero
+// unless at least one round reached that state and came back from the read.
+test.concurrent("a client closed and collected from within its own reply does not crash the socket read", async () => {
+  const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
+  expect(result).toSpawn();
+  const reached = result.stdout.match(/^([1-9]\d*) rounds? reached the window$/m);
+  expect(reached).not.toBeNull();
+  // Keep the per-lane count in the CI log so a slide toward zero is visible.
+  console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
+});
+
+test.concurrent("new RedisClient(url) does not leak the URL and its components", async () => {
+  const code = /* js */ `
+    const base = Buffer.alloc(200 * 1024, "a").toString();
+    function once(i) { try { new Bun.RedisClient("redis://user:" + base + i + "@127.0.0.1:1/0"); } catch {} }
+    for (let i = 0; i < 20; i++) once(i);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) once(i);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~148 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 70, debug: 90 });
+});
+
+test.concurrent("RESP map keys are not leaked", async () => {
+  const code = /* js */ `
+    const net = require("net");
+    const big = Buffer.alloc(400 * 1024, "k").toString();
+    let n = 0;
+    const server = net.createServer(sock => {
+      sock.on("data", d => {
+        const s = d.toString();
+        for (const _ of s.split("\\r\\n").filter(x => x.startsWith("*"))) {
+          if (s.includes("HELLO")) sock.write("%1\\r\\n+server\\r\\n+mock\\r\\n");
+          else {
+            const k1 = big + n++, k2 = big + n++;
+            sock.write("%2\\r\\n$" + k1.length + "\\r\\n" + k1 + "\\r\\n:1\\r\\n$" + k2.length + "\\r\\n" + k2 + "\\r\\n:2\\r\\n");
+          }
+        }
+      });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = new Bun.RedisClient("redis://127.0.0.1:" + server.address().port);
+    await client.connect();
+    for (let i = 0; i < 10; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 300; i++) await client.send("HGETALL", ["x"]);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    client.close();
+    server.close();
+  `;
+
+  // Unfixed: ~270 MiB (two 400 KiB keys per reply). Fixed: ~30 MiB of JS string churn.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 130, debug: 160 });
 });

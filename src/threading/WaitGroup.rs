@@ -42,8 +42,8 @@ impl WaitGroup {
         self.add(1);
     }
 
-    /// For a group kept alive past this call by something other than `wait()` (`ThreadPool`
-    /// joins its workers before dropping); otherwise use [`finish_raw`](Self::finish_raw).
+    /// For a group kept alive past this call by something other than `wait()` returning (a
+    /// `static`, say); otherwise use [`finish_raw`](Self::finish_raw).
     pub fn finish(&self) {
         // SAFETY: the group outlives this call (fn contract).
         unsafe { Self::finish_raw(self) }

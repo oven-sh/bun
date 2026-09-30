@@ -182,4 +182,67 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     },
     60000,
   );
+
+  // Editing dep.js raises an inotify event on lib/, which makes the reloader
+  // evict dep's watchlist entry; the reload then re-adds it with a fresh heap
+  // copy of the path. Eviction used to discard the evicted entry's copy
+  // without freeing it, so every edit leaked one path, which LSan reports when
+  // the process exits (the same check CI's ASAN lane applies to every test
+  // process). logLevel=debug makes the reloader log each eviction, so a reload
+  // cycle that stopped evicting cannot pass this vacuously.
+  test.skipIf(!isLinux || !isASAN)("evicting watchlist entries does not leak their paths", async () => {
+    const edits = 3;
+    await using dir = tempDir("hot-evict-leak", {
+      "bunfig.toml": `logLevel = "debug"\n`,
+      "lib/dep.js": `export const value = 0;`,
+      "entry.js": `
+        import { value } from "./lib/dep.js";
+        console.log("RELOAD", value);
+        if (value === ${edits}) process.exit(0);
+      `,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        // Bun's built-in ASAN defaults turn LSan off. Destructing the VM on exit
+        // frees what JS still referenced, so only lost allocations get reported.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        // verbosity=1 makes the exit-time check announce itself on stderr.
+        LSAN_OPTIONS: [bunEnv.LSAN_OPTIONS, "verbosity=1"].filter(Boolean).join(":"),
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrText = proc.stderr.text();
+
+    const iter = forEachLine(proc.stdout);
+    const waitForLine = async (expected: string) => {
+      while (true) {
+        const { value: line, done } = await iter.next();
+        if (done) throw new Error(`--hot exited before printing "${expected}" (exit ${proc.exitCode})`);
+        if (line === expected) return;
+      }
+    };
+
+    await waitForLine("RELOAD 0");
+    for (let i = 1; i <= edits; i++) {
+      writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
+      await waitForLine(`RELOAD ${i}`);
+    }
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+
+    // One edit can produce more than one directory event, so this is a lower bound.
+    const evictions = stderr.split("\n").filter(line => line.includes("Removing file:")).length;
+    expect(evictions).toBeGreaterThanOrEqual(edits);
+    expect(stderr).toContain("LeakSanitizer: checking for leaks");
+    // LSan prints one blank-line-separated block per leaking allocation stack
+    // (each naming its allocation site) and then fails the exit.
+    const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
+    expect(leaks).toEqual([]);
+    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
 });

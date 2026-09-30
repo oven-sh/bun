@@ -2240,7 +2240,7 @@ impl NodeBuilderImpl {
             declaration,
             None,
             &[scope_type_parameter],
-            &[],
+            None,
             TypeMapperId::NIL,
         );
         let type_parameter_declaration_node = self.type_parameter_to_declaration_with_constraint(

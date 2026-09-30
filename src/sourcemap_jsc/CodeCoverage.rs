@@ -109,12 +109,10 @@ impl<'a> Report<'a> {
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut generator = Generator {
-            unterminated_length: byte_range_mapping.unterminated_length,
-            ..Default::default()
-        };
+        let mut generator = Generator::default();
 
         for &source_id in &byte_range_mapping.source_ids {
+            let loaded = generator.blocks.len();
             // SAFETY: `vm` is the live VM of `global_this`; the callback runs before the call returns.
             let ok = unsafe {
                 CodeCoverage__withBlocksAndFunctions(
@@ -126,6 +124,15 @@ impl<'a> Report<'a> {
             };
             if !ok {
                 return None;
+            }
+            // After a function that ends the text, JSC reports the range `[length, length - 1]`.
+            if let Some(length) = byte_range_mapping.unterminated_length
+                && let Some(tail) = generator.blocks[loaded..].iter_mut().find(|b| {
+                    (b.start_offset, b.end_offset) == (length, length - 1)
+                        && (b.has_executed || b.execution_count > 0)
+                })
+            {
+                tail.end_offset = length;
             }
         }
 
@@ -588,8 +595,6 @@ struct Generator {
     function_blocks: Vec<BasicBlockRange>,
     /// SourceIDs that had anything compiled.
     loads: usize,
-    /// `ByteRangeMapping::unterminated_length` of the file.
-    unterminated_length: Option<c_int>,
 }
 
 impl Generator {
@@ -618,41 +623,9 @@ impl Generator {
             return;
         }
 
-        let loaded = this.blocks.len();
         this.blocks.extend_from_slice(blocks);
-        if let Some(length) = this.unterminated_length {
-            as_if_terminated(&mut this.blocks[loaded..], length);
-        }
         this.function_blocks.extend_from_slice(function_blocks);
         this.loads += 1;
-    }
-}
-
-/// JSC ends the last block of a program on the last unit of its text
-/// (`CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler`), or one unit later when a
-/// line terminator follows the text. `blocks` is one load of a text with no terminator. This
-/// gives the last block of the program the end it has with one.
-fn as_if_terminated(blocks: &mut [BasicBlockRange], length: c_int) {
-    let last = length - 1;
-    // The empty range that JSC reports after a function that ends a block on the last unit. The
-    // last block of the program ran, so one that did not run is left of a branch not taken.
-    let after_function = |b: &BasicBlockRange| (b.start_offset, b.end_offset) == (length, last);
-    if blocks.iter().any(after_function) {
-        let ran = |b: &BasicBlockRange| b.has_executed || b.execution_count > 0;
-        if let Some(program) = blocks.iter().position(|b| after_function(b) && ran(b)) {
-            blocks[program].end_offset = length;
-        }
-        return;
-    }
-    // JSC moves a last block that starts at or after the end of the text back onto the last
-    // unit. The block before it then ends on the last unit too, or one unit later. The moved
-    // block is empty with or without a terminator.
-    let ends_with_text =
-        |b: &BasicBlockRange| b.end_offset == last && (0..=last).contains(&b.start_offset);
-    let moved_back = blocks.iter().any(|b| b.end_offset == length)
-        || blocks.iter().filter(|b| ends_with_text(b)).count() > 1;
-    if !moved_back && let Some(program) = blocks.iter().position(ends_with_text) {
-        blocks[program].end_offset = length;
     }
 }
 
@@ -1082,7 +1055,7 @@ impl ByteRangeMapping {
         let mut line_offset_table = LineOffsetTable::generate(source_contents, 0)
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
         let mut unterminated_length = None;
-        // A text of one line stands in for an empty CommonJS file, which reports no lines.
+        // bun runs an empty CommonJS file as a text of one line, and that file reports no lines.
         if let [_, .., last] = *line_offset_table.items_byte_offset_to_start_of_line()
             && (last as usize) < source_contents.len()
         {

@@ -1006,10 +1006,11 @@ test("b", () => {
   });
 });
 
-// JSC runs a text that bun does not print as it is, so the text can end without a line
-// terminator: a file whose first line starts with `// @bun`, and CommonJS under a changed
-// `Module.wrapper`. Each file here reports what the same text reports with a newline after it.
-describe("a text that is not printed by bun and has no final newline", () => {
+// JSC runs a text that bun does not print as it is: a file whose first line starts with
+// `// @bun`, and CommonJS under a changed `Module.wrapper`. Such a text can end without a line
+// terminator. Each text of `texts` reports the functions and the lines that the same text reports
+// with a newline after it.
+describe("a text that is not printed by bun", () => {
   // [the text, FNF and FNH, whether lines at the end of the text ran]
   const texts: Record<string, [string, string, Record<number, boolean>]> = {
     "never-ran-alone-on-the-last-line.js": [
@@ -1027,41 +1028,32 @@ describe("a text that is not printed by bun and has no final newline", () => {
       "FNF:2\nFNH:1",
       { 2: true },
     ],
-    "last-line-of-two-bytes.js": [
-      "// @bun\nexport const first = () => {\n  return 1;\n};",
-      "FNF:1\nFNH:1",
-      { 4: true },
-    ],
     "last-byte-closes-a-function-that-never-ran.js": [
       "// @bun\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n  }",
       "FNF:2\nFNH:1",
       { 5: false, 6: false },
     ],
-    "last-byte-closes-two-functions-that-ran.js": [
-      "// @bun\nexport const first = () => function () {\n  const a = 1;\n  return a;\n  }",
-      "FNF:2\nFNH:2",
-      { 5: true },
+    // The last byte counts for the function on line 3, which ran, as it does with a newline.
+    "last-byte-closes-two-functions-and-one-ran.js": [
+      "// @bun\nexport const first = () => (inner(), 1);\nconst inner = () =>\n  () => 2",
+      "FNF:3\nFNH:2",
+      { 4: true },
+    ],
+    // The test file imports this text a second time, and JSC reports the ranges of each load.
+    "loaded-twice.js": [
+      "// @bun\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n  }",
+      "FNF:2\nFNH:1",
+      { 5: false, 6: false },
     ],
     "branch-not-taken-on-the-last-line.js": [
       "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet)\n  first();",
       "FNF:1\nFNH:1",
       { 4: false },
     ],
-    "last-byte-closes-a-branch-not-taken.js": [
-      "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet) {\n  first();\n  }",
-      "FNF:1\nFNH:1",
-      { 5: false },
-    ],
     "branch-not-taken-ends-with-a-function.js": [
       "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet) globalThis.second =\n  () => 2",
       "FNF:2\nFNH:1",
       { 4: false },
-    ],
-    // The function on line 4 never ran and no other code is on that line.
-    "conditional-ends-with-a-function.js": [
-      "// @bun\nexport const first = () => 1;\nexport const second = globalThis.neverSet ? () => 1 :\n  () => 2",
-      "FNF:3\nFNH:1",
-      { 3: true },
     ],
     "statement-not-reached-on-the-last-line.js": [
       "// @bun\nexport const first = () => 1;\ntail();\nfunction tail() {\n  if (!globalThis.neverSet) return;\n  first(); }",
@@ -1090,6 +1082,7 @@ describe("a text that is not printed by bun and has no final newline", () => {
       // bun prints these two. The test puts a wrapper of its own around the printed text.
       "wrapped.cjs": "exports.first = () => 1;\nexports.second = () => 2;\n",
       [terminated("wrapped.cjs")]: "exports.first = () => 1;\nexports.second = () => 2;\n",
+      "never-ran-on-no-line.js": "// @bun\n// \u00a9\u00a9\n\n\n\n\n()=>1;\nexport const first = () => 1;\n",
     };
     // Each text as it is, and with a final newline.
     const names: string[] = [];
@@ -1104,6 +1097,9 @@ import { codeCoverageForFile } from "bun:jsc";
 import Module from "node:module";
 import { join } from "node:path";
 ${names.map((name, i) => (name.endsWith(".cjs") ? `const m${i} = require("./${name}");` : `import * as m${i} from "./${name}";`)).join("\n")}
+import "./loaded-twice.js?again";
+import "./${terminated("loaded-twice.js")}?again";
+import * as onNoLine from "./never-ran-on-no-line.js";
 require("./empty.cjs");
 const modules = { ${names.map((name, i) => `"${name}": m${i}`).join(", ")} };
 
@@ -1112,10 +1108,10 @@ const row = name => console.log(JSON.stringify({ name, row: codeCoverageForFile(
 
 test("calls first() and not second()", () => {
   for (const [name, module] of Object.entries(modules)) {
-    const value = module.first();
-    expect(typeof value === "function" ? value() : value).toBe(1);
+    expect(module.first()).toBe(1);
     row(name);
   }
+  expect(onNoLine.first()).toBe(1);
 });
 
 test("calls first() and not second() under a changed Module.wrapper", () => {
@@ -1136,10 +1132,10 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
     result = await run(files, []);
   });
 
-  // The table row and the lcov record of a file, without its name. `ran` is whether each line ran.
+  // The table row of a file, the functions of its lcov record, and whether each line ran. A hit
+  // count is not in it: the last line has fewer hits when no newline follows it.
   const report = (file: string) => ({
     row: result.rows[file],
-    record: result.lcov[file].replace(`SF:${file}\n`, "").trim(),
     functions: result.lcov[file].match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
     ran: Object.fromEntries(
       Array.from(result.lcov[file].matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
@@ -1158,7 +1154,6 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
     test("bun test --coverage", () => {
       expect(report(file)).toEqual({
         row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
-        record: expect.any(String),
         functions,
         ran: expect.objectContaining(lines),
       });
@@ -1178,7 +1173,7 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
     expect(report("wrapped.cjs")).toEqual(report(terminated("wrapped.cjs")));
   });
 
-  test("a file with a final newline reports what it reported before", () => {
+  test("the lcov record of a text with a final newline", () => {
     expect(result.lcov[terminated("never-ran-alone-on-the-last-line.js")]).toContain(
       "\nFNF:2\nFNH:1\nDA:2,10\nDA:3,9\nDA:4,1\nDA:5,21\nLF:4\nLH:4\n",
     );
@@ -1187,5 +1182,11 @@ test("calls first() and not second() under a changed Module.wrapper", () => {
   // The text of an empty CommonJS file is a wrapper that bun writes. The file has no line to report.
   test("an empty .cjs file reports no line", () => {
     expect(result.lcov["empty.cjs"]).toContain("\nFNF:1\nFNH:1\nLF:0\nLH:0\n");
+  });
+
+  // The line table has four more bytes than JSC has code units before the function on line 7. Each
+  // offset of that function is then the start of a blank line, and the report puts it on no line.
+  test("a function that never ran and that the line table puts on no line", () => {
+    expect(result.lcov["never-ran-on-no-line.js"]).toContain("\nFNF:2\nFNH:1\n");
   });
 });

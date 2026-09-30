@@ -261,6 +261,19 @@ impl FileBuilder {
         }
     }
 
+    // NodeList.Loc: the undefined range for the nil list.
+    pub fn list_loc(&self, list: NodeListId) -> TextRange {
+        match self.lists.get(list.0 as usize) {
+            Some(record) if !list.is_nil() => record.loc,
+            _ => undefined_text_range(),
+        }
+    }
+
+    // The hosts with the lists of their JSDoc nodes, in the order of the calls of `attach_jsdoc`: `finish` keeps the last list of a host.
+    pub fn jsdoc_attachments(&self) -> &[(NodeId, NodeListId)] {
+        &self.jsdoc
+    }
+
     // The word in a slot of a node.
     pub fn slot(&self, node: NodeId, index: u8) -> u32 {
         let Some(n) = self.node(node) else {
@@ -380,6 +393,41 @@ impl FileBuilder {
         };
         self.set_slot(node, def, index as u8, word);
         true
+    }
+
+    // The member with this name in ast.json of a node under construction: None when the definition has no such member.
+    pub fn member(&self, node: NodeId, member: &[u8]) -> Option<MemberValue<'_>> {
+        let n = self.node(node)?;
+        let info = n.def.info();
+        let index = info.slot_index(member)?;
+        let word = self
+            .slots
+            .get(n.data as usize + index)
+            .copied()
+            .unwrap_or(0);
+        Some(match info.slots.get(index)?.ty {
+            SlotType::Node => MemberValue::Node(NodeId(word)),
+            SlotType::NodeList | SlotType::ModifierList | SlotType::RawNodeList => {
+                MemberValue::List(NodeListId(word))
+            }
+            SlotType::Text => MemberValue::Text(self.text(word)),
+            SlotType::Bool => MemberValue::Bool(word != 0),
+            SlotType::Kind => MemberValue::Kind(Kind::from_u16(word as u16)),
+            SlotType::TokenFlags => MemberValue::TokenFlags(TokenFlags::from_bits(word as i32)),
+            SlotType::Int => MemberValue::Int(word as i32),
+            SlotType::Any | SlotType::FlowNode | SlotType::FlowList => MemberValue::Raw(word),
+        })
+    }
+
+    // The text behind the word of a text slot.
+    fn text(&self, handle: u32) -> &[u8] {
+        let Some(span) = self.texts.get(handle as usize) else {
+            return &[];
+        };
+        let start = span.start as usize;
+        self.text_bytes
+            .get(start..start + span.len as usize)
+            .unwrap_or(&[])
     }
 
     // `file.jsdocCache[host] = jsdoc` with the flag HasJSDoc on the host, as upstream's parser does.
@@ -502,8 +550,10 @@ impl FileBuilder {
                 continue;
             };
             if *slot != 0 {
-                // A node that two nodes hold keeps the id of its first visit.
-                self.fault(FaultKind::TwoParents, node.def.info().name, parent, index);
+                // A node that two nodes hold keeps the id of its first visit. A JSDoc node is no fault: upstream's reparser gives the comment of a typedef tag to the declaration that it makes of the tag as well.
+                if node.kind != Kind::JSDoc {
+                    self.fault(FaultKind::TwoParents, node.def.info().name, parent, index);
+                }
                 continue;
             }
             order.push(index);

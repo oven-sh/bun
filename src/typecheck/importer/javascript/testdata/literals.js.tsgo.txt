@@ -1,0 +1,75 @@
+file /literals.js scriptKind=1 variant=1 dts=false textLen=142
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=56 identifiers=16 text=21 reparsedClones=7
+diagnostic [73,74) TS1003 cat=1 "Identifier expected."
+root KindSourceFile [0,142) f=0x10000
+  .Statements: list [0,141) n=5
+    - KindJSTypeAliasDeclaration [7,50) f=0x210008
+      .Type: KindTypeLiteral [30,50) f=0x10008
+        .Members: list [30,50) n=1
+          - KindPropertySignature [30,50) f=0x10008
+            .Type: KindStringKeyword [41,47) f=0x410008
+            .name: KindStringLiteral [48,48) f=0x10010008 Text="" TokenFlags=0x0
+      .name: KindIdentifier [25,26) f=0x410008 Text="T"
+      .jsdoc: KindJSDoc [0,52) f=0x410000 parent=KindVariableStatement[0,84)
+        .Comment: list [0,7) n=0
+        .Tags: list [7,50) n=1
+          - KindJSDocTypedefTag [7,50) f=0x410000
+            .TagName: KindIdentifier [8,15) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeLiteral [30,50) f=0x410000
+              .JSDocPropertyTags(raw): list [-1,-1) n=1
+                - KindJSDocPropertyTag [30,50) f=0x410000
+                  .TagName: KindIdentifier [31,39) f=0x410000 Text="property"
+                  .TypeExpression: KindJSDocTypeExpression [40,48) f=0x410000
+                    .Type: KindStringKeyword [41,47) f=0x410000
+                  .name: KindIdentifier [48,48) f=0x418000 Text=""
+            .name: KindIdentifier [25,26) f=0x410000 Text="T"
+    - KindJSTypeAliasDeclaration [57,74) f=0x210008
+      .Type: KindNumberKeyword [67,73) f=0x410008
+      .name: KindIdentifier [74,74) f=0x418008 Text=""
+      .jsdoc: KindJSDoc [52,77) f=0x410000 parent=KindVariableStatement[0,84)
+        .Comment: list [53,57) n=0
+        .Tags: list [57,74) n=1
+          - KindJSDocTypedefTag [57,74) f=0x410000
+            .TagName: KindIdentifier [58,65) f=0x410000 Text="typedef"
+            .TypeExpression: KindJSDocTypeExpression [66,74) f=0x410000
+              .Type: KindNumberKeyword [67,73) f=0x410000
+            .name: KindIdentifier [74,74) f=0x418000 Text=""
+    - KindVariableStatement [0,84) f=0x210000
+      .DeclarationList: KindVariableDeclarationList [0,83) f=0x10000
+        .Declarations: list [81,83) n=1
+          - KindVariableDeclaration [81,83) f=0x10000
+            .name: KindIdentifier [81,83) f=0x10000 Text="x"
+      .jsdoc: KindJSDoc [0,52) f=0x410000 SHARED
+      .jsdoc: KindJSDoc [52,77) f=0x410000 SHARED
+    - KindFunctionDeclaration [93,101) f=0x10008
+      .Parameters: list [105,122) n=1
+        - KindParameter [105,122) f=0x10008
+          .Type: KindStringKeyword [113,119) f=0x410008
+          .name: KindIdentifier [120,120) f=0x10010008 Text="_0"
+      .name: KindIdentifier [133,135) f=0x18008 Text="g"
+    - KindFunctionDeclaration [84,141) f=0x210000
+      .Body: KindBlock [138,141) f=0x10000
+        .Statements: list [140,140) n=0
+      .Parameters: list [136,137) n=1
+        - KindParameter [136,137) f=0x10000
+          .name: KindIdentifier [136,137) f=0x10000 Text="a"
+      .name: KindIdentifier [133,135) f=0x18000 Text="g"
+      .jsdoc: KindJSDoc [84,124) f=0x410000
+        .Comment: list [85,92) n=0
+        .Tags: list [92,122) n=1
+          - KindJSDocOverloadTag [92,122) f=0x410000
+            .TagName: KindIdentifier [93,101) f=0x410000 Text="overload"
+            .TypeExpression: KindJSDocSignature [92,122) f=0x410000
+              .Parameters: list [105,122) n=1
+                - KindJSDocParameterTag [105,122) f=0x410000
+                  .TagName: KindIdentifier [106,111) f=0x410000 Text="param"
+                  .TypeExpression: KindJSDocTypeExpression [112,120) f=0x410000
+                    .Type: KindStringKeyword [113,119) f=0x410000
+                  .name: KindIdentifier [120,120) f=0x418000 Text=""
+  .EndOfFileToken: KindEndOfFile [141,142) f=0x10000
+jsdocDiagnostic [48,49) TS1003 cat=1 "Identifier expected."
+jsdocDiagnostic [74,75) TS1003 cat=1 "Identifier expected."
+jsdocDiagnostic [120,121) TS1003 cat=1 "Identifier expected."

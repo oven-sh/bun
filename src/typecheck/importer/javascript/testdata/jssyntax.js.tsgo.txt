@@ -1,0 +1,225 @@
+file /jssyntax.js scriptKind=1 variant=1 dts=false textLen=601
+externalModuleIndicator KindImportDeclaration[0,29)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=140 identifiers=44 text=50 reparsedClones=1
+import KindStringLiteral[22,28) "./a"
+import KindStringLiteral[52,58) "./b"
+import KindStringLiteral[82,88) "./c"
+import KindStringLiteral[112,118) "./d"
+import KindStringLiteral[139,144) "./e"
+jsDiagnostic [0,29) TS8006 cat=1 "'import type' declarations can only be used in TypeScript files."
+jsDiagnostic [39,45) TS8006 cat=1 "'import...type' declarations can only be used in TypeScript files."
+jsDiagnostic [60,89) TS8006 cat=1 "'export type' declarations can only be used in TypeScript files."
+jsDiagnostic [99,105) TS8006 cat=1 "'export...type' declarations can only be used in TypeScript files."
+jsDiagnostic [120,146) TS8002 cat=1 "'import ... =' can only be used in TypeScript files."
+jsDiagnostic [157,158) TS8006 cat=1 "'interface' declarations can only be used in TypeScript files."
+jsDiagnostic [167,168) TS8008 cat=1 "Type aliases can only be used in TypeScript files."
+jsDiagnostic [184,186) TS8006 cat=1 "'enum' declarations can only be used in TypeScript files."
+jsDiagnostic [200,202) TS8006 cat=1 "'namespace' declarations can only be used in TypeScript files."
+jsDiagnostic [206,213) TS8009 cat=1 "The 'declare' modifier can only be used in TypeScript files."
+jsDiagnostic [237,238) TS8009 cat=1 "The '?' modifier can only be used in TypeScript files."
+jsDiagnostic [240,246) TS8010 cat=1 "Type annotations can only be used in TypeScript files."
+jsDiagnostic [248,254) TS8012 cat=1 "Parameter modifiers can only be used in TypeScript files."
+jsDiagnostic [259,263) TS8010 cat=1 "Type annotations can only be used in TypeScript files."
+jsDiagnostic [233,234) TS8004 cat=1 "Type parameter declarations can only be used in TypeScript files."
+jsDiagnostic [267,282) TS8017 cat=1 "Signature declarations can only be used in TypeScript files."
+jsDiagnostic [292,295) TS8013 cat=1 "Non-null assertions can only be used in TypeScript files."
+jsDiagnostic [312,318) TS8016 cat=1 "Type assertion expressions can only be used in TypeScript files."
+jsDiagnostic [343,349) TS8037 cat=1 "Type satisfaction expressions can only be used in TypeScript files."
+jsDiagnostic [351,353) TS1206 cat=1 "Decorators are not valid here."
+jsDiagnostic [393,399) TS8011 cat=1 "Type arguments can only be used in TypeScript files."
+jsDiagnostic [438,450) TS8005 cat=1 "'implements' clauses can only be used in TypeScript files."
+jsDiagnostic [464,465) TS8009 cat=1 "The '?' modifier can only be used in TypeScript files."
+jsDiagnostic [467,473) TS8010 cat=1 "Type annotations can only be used in TypeScript files."
+jsDiagnostic [455,462) TS8009 cat=1 "The 'private' modifier can only be used in TypeScript files."
+jsDiagnostic [478,479) TS8009 cat=1 "The '?' modifier can only be used in TypeScript files."
+jsDiagnostic [487,507) TS8017 cat=1 "Signature declarations can only be used in TypeScript files."
+jsDiagnostic [435,436) TS8004 cat=1 "Type parameter declarations can only be used in TypeScript files."
+jsDiagnostic [572,574) TS8038 cat=1 "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'."
+jsDiagnostic.related [562,564) TS1486 cat=1 "Decorator used before 'export' here."
+jsDiagnostic [589,600) TS8003 cat=1 "'export =' can only be used in TypeScript files."
+root KindSourceFile [0,601) f=0x10000
+  .Statements: list [0,600) n=22
+    - KindImportDeclaration [0,29) f=0x10000
+      .ImportClause: KindImportClause [6,17) f=0x10000 PhaseModifier=KindTypeKeyword
+        .NamedBindings: KindNamedImports [11,17) f=0x10000
+          .Elements: list [13,15) n=1
+            - KindImportSpecifier [13,15) f=0x10000
+              .name: KindIdentifier [13,15) f=0x10000 Text="A"
+      .ModuleSpecifier: KindStringLiteral [22,28) f=0x10000 Text="./a" TokenFlags=0x0
+    - KindImportDeclaration [29,59) f=0x10000
+      .ImportClause: KindImportClause [36,47) f=0x10000 PhaseModifier=KindUnknown
+        .NamedBindings: KindNamedImports [36,47) f=0x10000
+          .Elements: list [38,45) n=1
+            - KindImportSpecifier [38,45) f=0x10000 IsTypeOnly
+              .name: KindIdentifier [43,45) f=0x10000 Text="B"
+      .ModuleSpecifier: KindStringLiteral [52,58) f=0x10000 Text="./b" TokenFlags=0x0
+    - KindExportDeclaration [59,89) f=0x10000 IsTypeOnly
+      .ExportClause: KindNamedExports [71,77) f=0x12000
+        .Elements: list [73,75) n=1
+          - KindExportSpecifier [73,75) f=0x12000
+            .name: KindIdentifier [73,75) f=0x12000 Text="C"
+      .ModuleSpecifier: KindStringLiteral [82,88) f=0x12000 Text="./c" TokenFlags=0x0
+    - KindExportDeclaration [89,119) f=0x10000
+      .ExportClause: KindNamedExports [96,107) f=0x12000
+        .Elements: list [98,105) n=1
+          - KindExportSpecifier [98,105) f=0x12000 IsTypeOnly
+            .name: KindIdentifier [103,105) f=0x12000 Text="D"
+      .ModuleSpecifier: KindStringLiteral [112,118) f=0x12000 Text="./d" TokenFlags=0x0
+    - KindImportEqualsDeclaration [119,146) f=0x10000
+      .ModuleReference: KindExternalModuleReference [130,145) f=0x10000
+        .Expression: KindStringLiteral [139,144) f=0x10000 Text="./e" TokenFlags=0x0
+      .name: KindIdentifier [126,128) f=0x10000 Text="E"
+    - KindInterfaceDeclaration [146,161) f=0x10000
+      .Members: list [160,160) n=0
+      .name: KindIdentifier [156,158) f=0x10000 Text="I"
+    - KindTypeAliasDeclaration [161,178) f=0x10000
+      .Type: KindNumberKeyword [170,177) f=0x10000
+      .name: KindIdentifier [166,168) f=0x10000 Text="T"
+    - KindEnumDeclaration [178,189) f=0x10000
+      .Members: list [188,188) n=0
+      .name: KindIdentifier [183,186) f=0x10000 Text="En"
+    - KindModuleDeclaration [189,205) f=0x10000 Keyword=KindNamespaceKeyword
+      .Body: KindModuleBlock [202,205) f=0x10000
+        .Statements: list [204,204) n=0
+      .name: KindIdentifier [199,202) f=0x10000 Text="Ns"
+    - KindVariableStatement [205,221) f=0x810000
+      .DeclarationList: KindVariableDeclarationList [213,220) f=0x810000
+        .Declarations: list [217,220) n=1
+          - KindVariableDeclaration [217,220) f=0x810000
+            .name: KindIdentifier [217,220) f=0x810000 Text="dv"
+      .modifiers.flags=0x80
+      .modifiers: list [205,213) n=1
+        - KindDeclareKeyword [205,213) f=0x810000
+    - KindFunctionDeclaration [221,266) f=0x10000
+      .Body: KindBlock [263,266) f=0x10000
+        .Statements: list [265,265) n=0
+      .Parameters: list [236,256) n=2
+        - KindParameter [236,246) f=0x10000
+          .QuestionToken: KindQuestionToken [237,238) f=0x10000
+          .Type: KindNumberKeyword [239,246) f=0x10000
+          .name: KindIdentifier [236,237) f=0x10000 Text="a"
+        - KindParameter [247,256) f=0x10000
+          .modifiers.flags=0x1
+          .modifiers: list [247,254) n=1
+            - KindPublicKeyword [247,254) f=0x10000
+          .name: KindIdentifier [254,256) f=0x10000 Text="b"
+      .Type: KindVoidKeyword [258,263) f=0x10000
+      .TypeParameters: list [233,234) n=1
+        - KindTypeParameter [233,234) f=0x10000
+          .name: KindIdentifier [233,234) f=0x10000 Text="T"
+      .name: KindIdentifier [230,232) f=0x10000 Text="f"
+    - KindFunctionDeclaration [266,282) f=0x10000
+      .Parameters: list [280,280) n=0
+      .name: KindIdentifier [275,279) f=0x10000 Text="sig"
+    - KindVariableStatement [282,296) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [282,295) f=0x10000
+        .Declarations: list [286,295) n=1
+          - KindVariableDeclaration [286,295) f=0x10000
+            .Initializer: KindNonNullExpression [291,295) f=0x10000
+              .Expression: KindIdentifier [291,294) f=0x10000 Text="dv"
+            .name: KindIdentifier [286,289) f=0x10000 Text="nn"
+    - KindVariableStatement [296,319) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [296,318) f=0x10000
+        .Declarations: list [300,318) n=1
+          - KindVariableDeclaration [300,318) f=0x10000
+            .Initializer: KindAsExpression [305,318) f=0x10000
+              .Expression: KindIdentifier [305,308) f=0x10000 Text="dv"
+              .Type: KindNumberKeyword [311,318) f=0x10000
+            .name: KindIdentifier [300,303) f=0x10000 Text="as"
+    - KindVariableStatement [319,350) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [319,349) f=0x10000
+        .Declarations: list [323,349) n=1
+          - KindVariableDeclaration [323,349) f=0x10000
+            .Initializer: KindSatisfiesExpression [329,349) f=0x10000
+              .Expression: KindIdentifier [329,332) f=0x10000 Text="dv"
+              .Type: KindNumberKeyword [342,349) f=0x10000
+            .name: KindIdentifier [323,327) f=0x10000 Text="sat"
+    - KindFunctionDeclaration [350,370) f=0x10000
+      .Body: KindBlock [367,370) f=0x10000
+        .Statements: list [369,369) n=0
+      .Parameters: list [366,366) n=0
+      .modifiers.flags=0x8000
+      .modifiers: list [350,353) n=1
+        - KindDecorator [350,353) f=0x10000
+          .Expression: KindIdentifier [352,353) f=0x11000 Text="d"
+      .name: KindIdentifier [362,365) f=0x10000 Text="fd"
+    - KindClassDeclaration [370,403) f=0x10000
+      .HeritageClauses: list [378,400) n=1
+        - KindHeritageClause [378,400) f=0x10000 Token=KindExtendsKeyword
+          .Types: list [386,400) n=1
+            - KindExpressionWithTypeArguments [386,400) f=0x10000
+              .Expression: KindIdentifier [386,392) f=0x10000 Text="Array"
+              .TypeArguments: list [393,399) n=1
+                - KindNumberKeyword [393,399) f=0x10000
+      .Members: list [402,402) n=0
+      .name: KindIdentifier [376,378) f=0x10000 Text="H"
+    - KindClassDeclaration [403,509) f=0x210000
+      .HeritageClauses: list [437,450) n=1
+        - KindHeritageClause [437,450) f=0x10000 Token=KindImplementsKeyword
+          .Types: list [448,450) n=2
+            - KindTypeReference [448,450) f=0x10000
+              .TypeName: KindIdentifier [448,450) f=0x10000 Text="I"
+            - KindExpressionWithTypeArguments [421,422) f=0x410008
+              .Expression: KindIdentifier [421,422) f=0x410000 Text="J"
+      .Members: list [452,507) n=3
+        - KindPropertyDeclaration [452,474) f=0x10000
+          .PostfixToken: KindQuestionToken [464,465) f=0x10000
+          .Type: KindNumberKeyword [466,473) f=0x10000
+          .modifiers.flags=0x2
+          .modifiers: list [452,462) n=1
+            - KindPrivateKeyword [452,462) f=0x10000
+          .name: KindIdentifier [462,464) f=0x10000 Text="p"
+        - KindMethodDeclaration [474,484) f=0x10000
+          .Body: KindBlock [481,484) f=0x10000
+            .Statements: list [483,483) n=0
+          .Parameters: list [480,480) n=0
+          .PostfixToken: KindQuestionToken [478,479) f=0x10000
+          .name: KindIdentifier [474,478) f=0x10000 Text="m"
+        - KindIndexSignature [484,507) f=0x10000
+          .Parameters: list [488,497) n=1
+            - KindParameter [488,497) f=0x10000
+              .Type: KindStringKeyword [490,497) f=0x10000
+              .name: KindIdentifier [488,489) f=0x10000 Text="k"
+          .Type: KindNumberKeyword [499,506) f=0x10000
+      .TypeParameters: list [435,436) n=1
+        - KindTypeParameter [435,436) f=0x10000
+          .name: KindIdentifier [435,436) f=0x10000 Text="U"
+      .name: KindIdentifier [432,434) f=0x10000 Text="K"
+      .jsdoc: KindJSDoc [403,426) f=0x410000
+        .Comment: list [404,408) n=0
+        .Tags: list [408,423) n=1
+          - KindJSDocImplementsTag [408,423) f=0x410000
+            .ClassName: KindExpressionWithTypeArguments [421,422) f=0x410000
+              .Expression: KindIdentifier [421,422) f=0x410000 Text="J"
+            .TagName: KindIdentifier [409,419) f=0x410000 Text="implements"
+    - KindClassDeclaration [509,534) f=0x10000
+      .Members: list [533,533) n=0
+      .modifiers.flags=0x8020
+      .modifiers: list [509,521) n=2
+        - KindDecorator [509,514) f=0x10000
+          .Expression: KindIdentifier [511,514) f=0x11000 Text="dec"
+        - KindExportKeyword [514,521) f=0x10000
+      .name: KindIdentifier [527,531) f=0x10000 Text="Dec"
+    - KindClassDeclaration [534,561) f=0x10000
+      .Members: list [560,560) n=0
+      .modifiers.flags=0x8020
+      .modifiers: list [534,547) n=2
+        - KindExportKeyword [534,541) f=0x10000
+        - KindDecorator [541,547) f=0x10000
+          .Expression: KindIdentifier [543,547) f=0x11000 Text="dec2"
+      .name: KindIdentifier [553,558) f=0x10000 Text="Dec2"
+    - KindClassDeclaration [561,588) f=0x10000
+      .Members: list [587,587) n=0
+      .modifiers.flags=0x8020
+      .modifiers: list [561,574) n=3
+        - KindDecorator [561,564) f=0x10000
+          .Expression: KindIdentifier [563,564) f=0x11000 Text="a"
+        - KindExportKeyword [564,571) f=0x10000
+        - KindDecorator [571,574) f=0x10000
+          .Expression: KindIdentifier [573,574) f=0x11000 Text="b"
+      .name: KindIdentifier [580,585) f=0x10000 Text="Both"
+    - KindExportAssignment [588,600) f=0x10000 IsExportEquals
+      .Expression: KindIdentifier [597,599) f=0x12000 Text="f"
+  .EndOfFileToken: KindEndOfFile [600,601) f=0x10000

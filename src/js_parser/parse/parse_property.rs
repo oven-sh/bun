@@ -825,7 +825,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && opts.is_class
                             && opts.ts_decorators.len() > 0
                         {
-                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                                ts_metadata = p.lint_type_metadata(false)?;
+                                p.lint_type_annotation(key.loc)?;
+                            } else {
+                                ts_metadata =
+                                    p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            }
+                        } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                            p.lint_type_annotation(key.loc)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
                         }

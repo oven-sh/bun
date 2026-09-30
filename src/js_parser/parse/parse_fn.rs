@@ -4,6 +4,7 @@ use bun_collections::VecExt;
 use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
+use crate::parse::attached::Owner;
 use crate::parse::erased;
 use crate::parser::{
     ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
@@ -236,10 +237,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
-                p.lexer.next()?;
-                if p.lexer.token == T::TColon {
+                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                    p.lint_this_parameter(Owner::function(func.open_parens_loc), args.len())?;
+                } else {
                     p.lexer.next()?;
-                    p.skip_type_script_type(Level::Lowest)?;
+                    if p.lexer.token == T::TColon {
+                        p.lexer.next()?;
+                        p.skip_type_script_type(Level::Lowest)?;
+                    }
                 }
                 if p.lexer.token != T::TComma {
                     break;
@@ -323,10 +328,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || opts.has_decorators
                                 || arg_has_decorators)
                         {
-                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                                ts_metadata = p.lint_type_metadata(false)?;
+                                p.lint_type_annotation(arg.loc)?;
+                            } else {
+                                ts_metadata =
+                                    p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            }
+                        } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                            p.lint_type_annotation(arg.loc)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
                         }
+                    } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                        p.lint_type_annotation(arg.loc)?;
                     } else {
                         // rest parameter is always object, leave metadata as m_none
                         p.skip_type_script_type(Level::Lowest)?;
@@ -411,7 +426,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && opts.allow_ts_decorators
                     && (opts.has_argument_decorators || opts.has_decorators)
                 {
-                    func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
+                    if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                        func.return_ts_metadata = p.lint_type_metadata(true)?;
+                        p.lint_return_type(Owner::function(func.open_parens_loc))?;
+                    } else {
+                        func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
+                    }
+                } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                    p.lint_return_type(Owner::function(func.open_parens_loc))?;
                 } else {
                     p.skip_typescript_return_type()?;
                 }
@@ -463,6 +485,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.restore(&old_lexer);
         self.lexer.is_log_disabled = old_log_disabled;
         is_close_paren
+    }
+
+    /// The tag of decorator metadata of the type the lexer is on, in a lint parse: the lexer goes back to the type, which is read again for its node.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn lint_type_metadata(
+        &mut self,
+        is_return_type: bool,
+    ) -> Result<bun_ast::ts::Metadata, Error> {
+        let start = self.lexer.snapshot();
+        let logged = {
+            let log = self.log();
+            (log.msgs.len(), log.errors, log.warnings)
+        };
+        let read = if is_return_type {
+            self.skip_typescript_return_type_with_metadata()
+        } else {
+            self.skip_type_script_type_with_metadata(Level::Lowest)
+        };
+        let metadata = match read {
+            Ok(metadata) => metadata,
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+            Err(_) => {
+                // The reading for the node says what is no type: the messages of this one go.
+                let log = self.log();
+                log.msgs.truncate(logged.0);
+                log.errors = logged.1;
+                log.warnings = logged.2;
+                bun_ast::ts::Metadata::default()
+            }
+        };
+        self.lexer.restore(&start);
+        Ok(metadata)
     }
 
     pub(crate) fn parse_fn_expr(

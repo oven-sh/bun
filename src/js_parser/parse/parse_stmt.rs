@@ -432,7 +432,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Skip over types
                 if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
                     p.lexer.expect(T::TColon)?;
-                    p.skip_type_script_type(Level::Lowest)?;
+                    if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                        p.lint_type_annotation(value.loc)?;
+                    } else {
+                        p.skip_type_script_type(Level::Lowest)?;
+                    }
                 }
 
                 p.lexer.expect(T::TCloseParen)?;

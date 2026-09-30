@@ -100,14 +100,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
-        let value = p.parse_paren_expr(
-            loc,
-            level,
-            ParenExprOpts {
-                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
-                ..Default::default()
-            },
-        )?;
+        let opts = ParenExprOpts {
+            is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+            ..Default::default()
+        };
+        // Only TypeScript has types after what may be parameters, which the one function drops.
+        let value = if Self::IS_TYPESCRIPT_ENABLED {
+            p.parse_paren_expr_for_lint(loc, level, opts)?
+        } else {
+            p.parse_paren_expr(loc, level, opts)?
+        };
         // An arrow function starts at the "(", and what parentheses hold starts after it.
         if value.loc.start != loc.start
             && let Some(starts) = &mut p.starts_for_parse_only
@@ -620,11 +622,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous classes can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                let owner = crate::parse::attached::Owner::class(class_keyword.loc);
+                p.lint_type_parameters(Some(owner))?;
+            } else {
+                let _ = p.skip_type_script_type_parameters(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                )?;
+            }
         }
 
         let class = p.parse_class(
@@ -683,11 +690,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous classes can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                let owner = crate::parse::attached::Owner::class(class_keyword.loc);
+                p.lint_type_parameters(Some(owner))?;
+            } else {
+                let _ = p.skip_type_script_type_parameters(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                )?;
+            }
         }
 
         // spec passes the arena-backed `[]ExprNodeIndex` slice directly into
@@ -741,7 +753,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             // Skip over TypeScript type arguments here if there are any
             if p.lexer.token == T::TLessThan {
-                let _ = p.try_skip_type_script_type_arguments_with_backtracking();
+                if p.starts_for_parse_only.is_some() {
+                    let _ = p.lint_type_arguments_in_expression(target);
+                } else {
+                    let _ = p.try_skip_type_script_type_arguments_with_backtracking();
+                }
             }
         }
 
@@ -978,17 +994,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     <A = B>(x) => {}
         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
-                let _ =
-                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+                if p.starts_for_parse_only.is_some() {
+                    let owner = crate::parse::attached::Owner::arrow(loc);
+                    p.lint_type_parameters(Some(owner))?;
+                } else {
+                    let _ = p.skip_type_script_type_parameters(
+                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                    )?;
+                }
                 p.lexer.expect(T::TOpenParen)?;
-                return p.parse_paren_expr(
-                    loc,
-                    level,
-                    ParenExprOpts {
-                        force_arrow_fn: true,
-                        ..Default::default()
-                    },
-                );
+                let opts = ParenExprOpts {
+                    force_arrow_fn: true,
+                    ..Default::default()
+                };
+                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                    return p.parse_paren_expr_for_lint_cold(loc, level, opts);
+                }
+                return p.parse_paren_expr(loc, level, opts);
             }
         }
 
@@ -1006,7 +1028,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if Self::IS_TYPESCRIPT_ENABLED {
-            if p.starts_for_parse_only.is_some() {
+            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
                 return Self::pfx_t_less_than_for_lint(p, loc, level, errors, flags);
             }
 
@@ -1058,8 +1080,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let less_than = p.lexer.snapshot();
         let result = p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking();
         if result == SkipTypeParameterResult::DefinitelyTypeParameters {
+            // The type parameters of the arrow function are read again, as the ones that are kept.
+            p.lexer.restore(&less_than);
+            let owner = crate::parse::attached::Owner::arrow(loc);
+            p.lint_type_parameters(Some(owner))?;
             p.lexer.expect(T::TOpenParen)?;
-            return p.parse_paren_expr(
+            return p.parse_paren_expr_for_lint(
                 loc,
                 level,
                 ParenExprOpts {
@@ -1076,8 +1102,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "<T>(x)" or "<T>(x) => {}": only the first has a type between "<" and ">".
                 let open = p.lexer.loc();
                 let assertion = Self::pfx_type_before_paren_for_lint(p, &less_than, open);
+                let type_parameters = p.lint_type_parameters_before_paren(&less_than, open);
                 p.lexer.expect(T::TOpenParen)?;
-                let value = p.parse_paren_expr(
+                let value = p.parse_paren_expr_for_lint(
                     loc,
                     level,
                     ParenExprOpts {
@@ -1088,6 +1115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )?;
                 // An arrow function starts at the "<", and what parentheses hold starts after them.
                 if value.loc.start == loc.start {
+                    p.lint_arrow_type_parameters(loc, loc, type_parameters);
                     return Ok(value);
                 }
                 let (type_node, greater_than) = match assertion {

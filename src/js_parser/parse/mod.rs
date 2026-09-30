@@ -1,4 +1,6 @@
 #![warn(unused_must_use)]
+#[cfg(test)]
+mod annotation_tests;
 pub mod attached;
 pub mod erased;
 #[cfg(test)]
@@ -903,6 +905,341 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         rest.first() == Some(&b'<')
     }
 
+    /// `parse_paren_expr` of a lint parse of TypeScript, statement for statement: the types after what may be parameters and the return type are built and recorded.
+    #[inline(never)]
+    pub(crate) fn parse_paren_expr_for_lint(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> Result<Expr, Error> {
+        let p = self;
+        let mut items_list = BumpVec::<Expr>::new_in(p.arena);
+        let mut errors = DeferredErrors::default();
+        let arrow_arg_errors = DeferredArrowArgErrors::default();
+        let mut spread_range = bun_ast::Range::default();
+        let mut type_colon_range = bun_ast::Range::default();
+        let mut comma_after_spread = bun_ast::Loc::EMPTY;
+
+        let scope_index = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, loc)?;
+
+        let old_allow_in = p.allow_in;
+        p.allow_in = true;
+
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+        p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
+        p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
+
+        while p.lexer.token != T::TCloseParen {
+            let is_spread = p.lexer.token == T::TDotDotDot;
+
+            if is_spread {
+                spread_range = p.lexer.range();
+                p.lexer.next()?;
+            }
+
+            p.latest_arrow_arg_loc = p.lexer.loc();
+
+            let mut item = Expr::EMPTY;
+            p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
+
+            if is_spread {
+                item = p.new_expr(E::Spread { value: item }, loc);
+            }
+
+            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+                type_colon_range = p.lexer.range();
+                p.lexer.next()?;
+                p.lint_type_annotation(arrow_parameter_loc(item))?;
+            }
+
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TEquals
+                && !p.forbid_suffix_after_as_loc.eql(p.lexer.loc())
+            {
+                p.lexer.next()?;
+                let rhs = p.parse_expr(Level::Comma)?;
+                item = Expr::assign(item, rhs);
+            }
+
+            items_list.push(item);
+
+            if p.lexer.token != T::TComma {
+                break;
+            }
+
+            if is_spread {
+                comma_after_spread = p.lexer.loc();
+            }
+
+            p.lexer.next()?;
+        }
+        let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
+
+        p.lexer.expect(T::TCloseParen)?;
+
+        p.allow_in = old_allow_in;
+
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
+        let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+        if is_arrow_fn
+            || opts.force_arrow_fn
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && level.lte(Level::Assign))
+        {
+            if level.gt(Level::Assign) {
+                p.lexer.unexpected()?;
+                return Err(crate::Error::SyntaxError);
+            }
+
+            let mut invalid_log = LocList::new_in(p.arena);
+            let mut args = BumpVec::<G::Arg>::new_in(p.arena);
+
+            for i in 0..items.len() {
+                let mut is_spread = false;
+                if let js_ast::expr::Data::ESpread(v) = &items[i].data {
+                    is_spread = true;
+                    let inner = v.value;
+                    items[i] = inner;
+                }
+
+                let mut item = items[i];
+                let tuple = p.convert_expr_to_binding_and_initializer(
+                    &mut item,
+                    &mut invalid_log,
+                    is_spread,
+                );
+                args.push(G::Arg {
+                    binding: tuple.binding.unwrap_or(Binding {
+                        data: B::B::BMissing(B::Missing {}),
+                        loc: item.loc,
+                    }),
+                    default: tuple.expr,
+                    ..Default::default()
+                });
+            }
+
+            let mut arrow_data = FnOrArrowDataParse {
+                allow_await: if opts.is_async {
+                    AwaitOrYield::AllowExpr
+                } else {
+                    AwaitOrYield::AllowIdent
+                },
+                ..Default::default()
+            };
+
+            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
+                is_arrow_fn = p.lint_arrow_return_type(
+                    loc,
+                    &arrow_data,
+                    opts.is_after_question_and_before_colon,
+                )?;
+            }
+
+            if is_arrow_fn || opts.force_arrow_fn {
+                p.maybe_comma_spread_error(comma_after_spread);
+                log_arrow_arg_errors_for_lint(p.log(), p.source, arrow_arg_errors);
+
+                if !invalid_log.is_empty() {
+                    for loc_ in invalid_log.iter() {
+                        loc_.add_error(p.log(), p.source);
+                    }
+                }
+                let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+                let is_body_before_colon = Self::IS_TYPESCRIPT_ENABLED
+                    && opts.is_after_question_and_before_colon
+                    && (p.paren_expr_has_type_parameters(loc, opts.is_async)
+                        || Self::arrow_parameters_could_be_expr(
+                            items,
+                            spread_range,
+                            type_colon_range,
+                            &errors,
+                        ));
+                let body_flags = if is_body_before_colon {
+                    EFlags::AfterQuestionAndBeforeColon
+                } else {
+                    EFlags::None
+                };
+                let mut arrow =
+                    p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
+                arrow.is_async = opts.is_async;
+                arrow.has_rest_arg = spread_range.len > 0;
+                p.pop_scope();
+                return Ok(p.new_expr(arrow, loc));
+            }
+        }
+
+        pop_and_flatten_scope_for_lint(&mut p.current_scope, &mut p.scopes_in_order, scope_index);
+
+        if type_colon_range.len > 0 {
+            p.log()
+                .add_range_error(Some(p.source), type_colon_range, b"Unexpected \":\"");
+            return Err(crate::Error::SyntaxError);
+        }
+
+        if opts.is_async {
+            p.log_expr_errors(&mut errors);
+            let async_ref = p.store_name_in_ref(b"async");
+            let async_expr = p.new_expr(
+                E::Identifier {
+                    ref_: async_ref,
+                    ..Default::default()
+                },
+                loc,
+            );
+            return Ok(p.new_expr(
+                E::Call {
+                    target: async_expr,
+                    args: ExprNodeList::from_arena_slice(items),
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
+
+        if items.len() > 0 {
+            p.log_expr_errors(&mut errors);
+            if spread_range.len > 0 {
+                p.log()
+                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                return Err(crate::Error::SyntaxError);
+            }
+
+            let mut value = Expr::join_all_with_comma(items);
+            p.mark_expr_as_parenthesized(&mut value);
+            return Ok(value);
+        }
+
+        p.lexer.expected(T::TEqualsGreaterThan)?;
+        Err(crate::Error::SyntaxError)
+    }
+
+    /// `parse_paren_expr_for_lint` for a caller that a parse without lint runs too: the call stays out of its way.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_paren_expr_for_lint_cold(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> Result<Expr, Error> {
+        self.parse_paren_expr_for_lint(loc, level, opts)
+    }
+
+    /// The ":" after what may be the parameters of the arrow function at `arrow`, in a lint parse. True where a return type and "=>" follow: the type is built and recorded.
+    #[cold]
+    #[inline(never)]
+    fn lint_arrow_return_type(
+        &mut self,
+        arrow: bun_ast::Loc,
+        arrow_data: &FnOrArrowDataParse,
+        is_after_question_and_before_colon: bool,
+    ) -> Result<bool, Error> {
+        let owner = attached::Owner::arrow(arrow);
+        if is_after_question_and_before_colon {
+            if !self.lint_is_arrow_return_type_after_question(arrow_data)? {
+                return Ok(false);
+            }
+            // The attempt read the type and the body, and all of it went back.
+            self.lexer.next()?;
+            self.lint_return_type(owner)?;
+            return Ok(true);
+        }
+        let Some(type_node) = self.lint_try_arrow_return_type() else {
+            return Ok(false);
+        };
+        if let Some(starts) = &mut self.starts_for_parse_only {
+            starts.attached.return_type(owner, type_node);
+        }
+        Ok(true)
+    }
+
+    /// `: T` and then "=>", or nothing moves: what `try_skip_type_script_arrow_return_type_with_backtracking` decides, with the node of the type.
+    fn lint_try_arrow_return_type(&mut self) -> Option<js_ast::ts::Type> {
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        let logged = {
+            let log = self.log();
+            (log.msgs.len(), log.errors, log.warnings)
+        };
+        let recorded = self
+            .starts_for_parse_only
+            .as_deref()
+            .map(|starts| starts.attached.mark());
+        self.lexer.is_log_disabled = true;
+        let read = self.lint_arrow_return_type_then_arrow();
+        if read.is_err() {
+            self.lexer.restore(&old_lexer);
+            let log = self.log();
+            log.msgs.truncate(logged.0);
+            log.errors = logged.1;
+            log.warnings = logged.2;
+            if let (Some(starts), Some(mark)) = (&mut self.starts_for_parse_only, recorded) {
+                starts.attached.rewind(mark);
+            }
+        }
+        self.lexer.is_log_disabled = old_log_disabled;
+        read.ok()
+    }
+
+    /// `: T`, which "=>" follows.
+    fn lint_arrow_return_type_then_arrow(&mut self) -> Result<js_ast::ts::Type, Error> {
+        self.lexer.expect(T::TColon)?;
+        let type_node = self.build_typescript_return_type()?;
+        if self.lexer.token != T::TEqualsGreaterThan {
+            return Err(Error::Backtrack);
+        }
+        Ok(type_node)
+    }
+
+    /// `is_type_script_arrow_return_type_after_question_and_before_colon` of a lint parse: the return type is read as the one that is kept.
+    fn lint_is_arrow_return_type_after_question(
+        &mut self,
+        arrow_data: &FnOrArrowDataParse,
+    ) -> Result<bool, Error> {
+        let memo_key = u32::try_from(self.lexer.start).unwrap_or(u32::MAX);
+        let attempts = &self.ts_conditional_arrow_attempts;
+        let known = attempts
+            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
+            .ok()
+            .and_then(|at| attempts.get(at));
+        if let Some(&packed) = known {
+            return Ok(packed & 1 == 1);
+        }
+
+        let snapshot = self.parser_snapshot();
+        self.lexer.is_log_disabled = true;
+        let mut data = arrow_data.clone();
+        let read = self.lint_arrow_return_type_then_body(&mut data);
+        self.restore_parser_snapshot(snapshot);
+        let is_arrow_fn = match read {
+            Ok(()) => true,
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+            Err(_) => false,
+        };
+
+        // An attempt inside the body may have put its own outcome in the list.
+        let attempts = &mut self.ts_conditional_arrow_attempts;
+        if let Err(insert_at) = attempts.binary_search_by_key(&memo_key, |&packed| packed >> 1) {
+            attempts.insert(insert_at, (memo_key << 1) | u32::from(is_arrow_fn));
+        }
+        Ok(is_arrow_fn)
+    }
+
+    /// `: T => body :`, the arrow function that a conditional expression holds between its "?" and its ":".
+    fn lint_arrow_return_type_then_body(
+        &mut self,
+        data: &mut FnOrArrowDataParse,
+    ) -> Result<(), Error> {
+        self.lexer.expect(T::TColon)?;
+        self.build_typescript_return_type()?;
+        self.parse_arrow_body(&mut [], data)?;
+        self.lexer.expect(T::TColon)?;
+        Ok(())
+    }
+
     pub(crate) fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {
         let p = self;
         if p.lexer.token != T::TIdentifier || p.lexer.has_newline_before {
@@ -1590,7 +1927,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "let foo: number"
                 if is_definite_assignment_assertion || p.lexer.token == T::TColon {
                     p.lexer.expect(T::TColon)?;
-                    p.skip_type_script_type(Level::Lowest)?;
+                    if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                        p.lint_type_annotation(local.loc)?;
+                    } else {
+                        p.skip_type_script_type(Level::Lowest)?;
+                    }
                 }
             }
 
@@ -1974,16 +2315,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "async () => {}"
                 T::TOpenParen => {
                     p.lexer.next()?;
-                    return p.parse_paren_expr(
-                        async_range.loc,
-                        level,
-                        ParenExprOpts {
-                            is_async: true,
-                            is_after_question_and_before_colon: flags
-                                == EFlags::AfterQuestionAndBeforeColon,
-                            ..Default::default()
-                        },
-                    );
+                    let opts = ParenExprOpts {
+                        is_async: true,
+                        is_after_question_and_before_colon: flags
+                            == EFlags::AfterQuestionAndBeforeColon,
+                        ..Default::default()
+                    };
+                    if !SCAN_ONLY
+                        && Self::IS_TYPESCRIPT_ENABLED
+                        && p.starts_for_parse_only.is_some()
+                    {
+                        return p.parse_paren_expr_for_lint_cold(async_range.loc, level, opts);
+                    }
+                    return p.parse_paren_expr(async_range.loc, level, opts);
                 }
 
                 // "async<T>()"
@@ -2001,17 +2345,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // In a JSX file these type parameters prove an arrow function, as in the reference
                                 let is_before_colon = flags == EFlags::AfterQuestionAndBeforeColon
                                     && !p.is_jsx_enabled();
-                                return p.parse_paren_expr(
-                                    async_range.loc,
-                                    level,
-                                    ParenExprOpts {
-                                        is_async: true,
-                                        force_arrow_fn: result
-                                            == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                        is_after_question_and_before_colon: is_before_colon,
-                                        ..Default::default()
-                                    },
-                                );
+                                let opts = ParenExprOpts {
+                                    is_async: true,
+                                    force_arrow_fn: result
+                                        == SkipTypeParameterResult::DefinitelyTypeParameters,
+                                    is_after_question_and_before_colon: is_before_colon,
+                                    ..Default::default()
+                                };
+                                if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                                    return p.parse_paren_expr_for_lint_cold(
+                                        async_range.loc,
+                                        level,
+                                        opts,
+                                    );
+                                }
+                                return p.parse_paren_expr(async_range.loc, level, opts);
                             }
                         }
                     }
@@ -2031,5 +2379,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             async_range.loc,
         ))
+    }
+}
+
+/// Where the binding starts that `item`, an entry of a list in parentheses, becomes as a parameter.
+fn arrow_parameter_loc(item: Expr) -> bun_ast::Loc {
+    match item.data {
+        js_ast::expr::Data::ESpread(spread) => spread.value.loc,
+        _ => item.loc,
+    }
+}
+
+/// `P::log_arrow_arg_errors` for `parse_paren_expr_for_lint`, so that the one keeps its single caller.
+fn log_arrow_arg_errors_for_lint(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    errors: DeferredArrowArgErrors,
+) {
+    if errors.invalid_expr_await.len > 0 {
+        log.add_range_error(
+            Some(source),
+            errors.invalid_expr_await,
+            b"Cannot use an \"await\" expression here",
+        );
+    }
+
+    if errors.invalid_expr_yield.len > 0 {
+        log.add_range_error(
+            Some(source),
+            errors.invalid_expr_yield,
+            b"Cannot use a \"yield\" expression here",
+        );
+    }
+}
+
+/// `P::pop_and_flatten_scope` for `parse_paren_expr_for_lint`, so that the one keeps its single caller.
+fn pop_and_flatten_scope_for_lint(
+    current_scope: &mut js_ast::StoreRef<js_ast::Scope>,
+    scopes_in_order: &mut crate::parser::ScopeOrderList<'_>,
+    scope_index: usize,
+) {
+    let to_flatten = *current_scope;
+    let Some(mut parent) = to_flatten.parent else {
+        return;
+    };
+    *current_scope = parent;
+
+    // A tombstone keeps the indices of the scopes that were pushed after this one.
+    if let Some(entry) = scopes_in_order.get_mut(scope_index) {
+        *entry = None;
+    }
+    if scopes_in_order.len() == scope_index + 1 {
+        scopes_in_order.truncate(scope_index);
+    }
+
+    // The scope is the last child of its parent: its own children take its place.
+    let last = parent.children.len_u32().saturating_sub(1);
+    parent.children.truncate(last as usize);
+    for item in to_flatten.children.slice() {
+        let mut item = *item;
+        item.parent = Some(parent);
+        VecExt::append(&mut parent.children, item);
     }
 }

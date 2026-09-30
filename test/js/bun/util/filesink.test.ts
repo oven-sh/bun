@@ -1120,6 +1120,18 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
         c.close();
       },
     }`,
+    // pull() waits for the sink to write the whole chunk, so the sink holds a promise that
+    // it has to reject when the reader goes away.
+    directFlush: `{
+      type: "direct",
+      async pull(c) {
+        c.write(first);
+        const flushed = c.flush();
+        console.error("parked");
+        await flushed;
+        c.close();
+      },
+    }`,
   };
 
   function fixture(source: string, dest: string, countBeforeExit = false) {
@@ -1328,6 +1340,63 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
     } finally {
       if (writeFdOpen) fs.closeSync(writeFd);
       fs.closeSync(readFd);
+    }
+  });
+
+  // The reader takes part of the stream and goes away while pull() awaits flush(). The child
+  // finds out in its poll of stdout, and the sink rejects the flush from that callback.
+  // pull() then fails, which closes the sink and drops the last refs on it, and the pipe
+  // writer, a field of the sink, still had a close of its own to make (ASAN:
+  // heap-use-after-free in PosixStreamingWriter::close).
+  //
+  // The flush that ends each turn of the child's loop writes too, and a failure there is
+  // reported from another place. So the reader closes while the child waits in its poll: it
+  // leaves each refill in the pipe for a pause, and closes in the step that takes the last.
+  it.concurrent.skipIf(!isPosix)("a reader that goes away while pull() awaits flush() rejects the promise", async () => {
+    using dir = tempDir("filesink-piped-reader-gone", {});
+    const path = join(String(dir), "stdout.fifo");
+    mkfifo(path, 0o666);
+    const readFd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    let readFdOpen = true;
+    let writeFd: number | undefined;
+    try {
+      writeFd = fs.openSync(path, fs.constants.O_WRONLY);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(sources.directFlush, "Bun.stdout")],
+        env: bunEnv,
+        stdout: writeFd,
+        stderr: "pipe",
+      });
+      // The child holds the only write end now: a read of 0 bytes means it is gone.
+      fs.closeSync(writeFd);
+      writeFd = undefined;
+
+      const rest = await parked(proc.stderr);
+      const buffer = Buffer.alloc(64 * 1024);
+      let taken = 0;
+      while (taken < 4 * buffer.length) {
+        let n: number;
+        try {
+          n = fs.readSync(readFd, buffer);
+        } catch (e: any) {
+          if (e.code !== "EAGAIN") throw e;
+          await Bun.sleep(10);
+          continue;
+        }
+        if (n === 0) break;
+        taken += n;
+      }
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({
+        stderr: "parked\n" + JSON.stringify({ settled: "rejected EPIPE: broken pipe, write", code: 0 }) + "\n",
+        exitCode: 0,
+      });
+    } finally {
+      if (writeFd !== undefined) fs.closeSync(writeFd);
+      if (readFdOpen) fs.closeSync(readFd);
     }
   });
 });

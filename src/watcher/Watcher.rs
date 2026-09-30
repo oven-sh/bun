@@ -34,11 +34,12 @@ pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
 
 /// Open flags for an fd that exists only to receive kqueue VNODE events.
 /// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
-/// equivalent, so the watch fd is a plain O_RDONLY.
+/// equivalent, so the watch fd is a plain O_RDONLY. `O_CLOEXEC` keeps the fd
+/// out of the image that `--watch` and `--hot` `execve` into on reload.
 #[cfg(target_os = "macos")]
-pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY;
+pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY | bun_sys::O::CLOEXEC;
 #[cfg(not(target_os = "macos"))]
-pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
+pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
@@ -604,7 +605,7 @@ impl Watcher {
         let fd = if stored_fd.is_valid() {
             stored_fd
         } else {
-            bun_sys::open_a(file_path, 0, 0)?
+            bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
         };
 
         // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the

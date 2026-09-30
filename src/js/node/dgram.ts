@@ -188,6 +188,36 @@ function lookup6(lookup, address, callback) {
 
 let dns;
 
+interface SendRequest {
+  oncomplete: ((err: unknown, sent: number) => void) | undefined;
+  address: string | undefined;
+  port: number | undefined;
+  callback: ((err: Error | null, sent?: number) => void) | undefined;
+}
+
+interface QueuedSend {
+  data: Buffer;
+  length: number;
+  port: number | undefined;
+  address: string | undefined;
+  req: SendRequest;
+}
+
+interface UDPHandle {
+  socket: import("bun").udp.Socket<"buffer"> | undefined;
+  queueSize: number;
+  queueCount: number;
+  sendQueue: (QueuedSend | undefined)[] | undefined;
+  sendQueueHead: number;
+  send: typeof handleSend;
+  drain: typeof handleDrain;
+  getSendQueueSize: typeof handleGetSendQueueSize;
+  getSendQueueCount: typeof handleGetSendQueueCount;
+  readonly fd: number;
+  lookup?: (address: string | undefined, callback: (err: Error | null, ip: string) => void) => void;
+  onmessage?: typeof onMessage;
+}
+
 function newHandle(type, lookup) {
   if (lookup === undefined) {
     if (dns === undefined) {
@@ -199,7 +229,7 @@ function newHandle(type, lookup) {
     validateFunction(lookup, "lookup");
   }
 
-  const handle = {
+  const handle: UDPHandle = {
     socket: undefined,
     // Bytes/requests the kernel has not yet accepted — the uv_udp_send fallback
     // queue. A synchronously accepted send (uv_udp_try_send fast path) never
@@ -393,7 +423,7 @@ function onMessage(nread, handle, buf, rinfo) {
 
 let udpSocketChannel;
 
-function Socket(type, listener) {
+function Socket(type, listener?) {
   EventEmitter.$call(this);
   let lookup;
   let recvBufferSize;
@@ -509,7 +539,7 @@ function bufferSize(self, size, buffer) {
 
   try {
     return bufferSizeFn.$call(socket, size, buffer === RECV_BUFFER);
-  } catch (err) {
+  } catch (err: any) {
     const known = kUvErrors[err.code];
     throw new ERR_SOCKET_BUFFER_SIZE({
       // err.errno is only libuv-semantic on POSIX; on Windows it is Bun's
@@ -553,11 +583,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   if (port !== null && typeof port === "object" && typeof port.recvStart === "function") {
     throwNotImplemented("Socket.prototype.bind(handle)");
-    /*
-    replaceHandle(this, port);
-    startListening(this);
-    return this;
-    */
   }
 
   // Open an existing fd instead of creating a new one.
@@ -1063,7 +1088,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
   // The queued (async) path invokes req.oncomplete once the kernel accepts
   // the write; the synchronous path uses the numeric return.
-  const req = { oncomplete: undefined, address, port, callback };
+  const req: SendRequest = { oncomplete: undefined, address, port, callback };
   let err;
   if (port) err = state.handle.send(req, list, list.length, port, ip, !!callback);
   else err = state.handle.send(req, list, list.length, !!callback);
@@ -1227,7 +1252,7 @@ Socket.prototype.setTTL = function (ttl) {
   }
   try {
     handle.socket.setTTL(ttl);
-  } catch (err) {
+  } catch (err: any) {
     // Reuse the native error's platform-correct code, reported the way Node's
     // ErrnoException would ("setTTL EINVAL").
     err.syscall = "setTTL";
@@ -1246,7 +1271,7 @@ Socket.prototype.setMulticastTTL = function (ttl) {
   }
   try {
     handle.socket.setMulticastTTL(ttl);
-  } catch (err) {
+  } catch (err: any) {
     err.syscall = "setMulticastTTL";
     err.message = `setMulticastTTL ${err.code}`;
     throw err;

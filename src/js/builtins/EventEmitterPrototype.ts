@@ -1,6 +1,6 @@
 // The methods of node:events' EventEmitter.prototype and the functions that they call. NodeEventEmitterPrototype.cpp
 // defines the methods on the prototype and the other functions under the `$nodeEvents` names. A method evaluates a
-// module only when it throws or warns.
+// module only when it throws or warns. `$overriddenName` is the `name` of a function: without it the name is "".
 
 interface Listener extends Function {
   listener?: Function;
@@ -16,16 +16,19 @@ interface MaxListenersExceededWarning extends Error {
   count?: number;
 }
 
+$overriddenName = "setMaxListeners";
 export function setMaxListeners(this: any, n) {
   if (typeof n !== "number" || !(n >= 0)) require("internal/validators").validateNumber(n, "setMaxListeners", 0);
   this._maxListeners = n;
   return this;
 }
 
+$overriddenName = "getMaxListeners";
 export function getMaxListeners(this: any) {
   return this?._maxListeners ?? $nodeEventsDefaultMaxListeners;
 }
 
+$overriddenName = "emitError";
 export function emitError(emitter, args) {
   var { _events: events } = emitter;
 
@@ -66,6 +69,7 @@ export function emitError(emitter, args) {
 // A listener list is a bare function for a single listener, else an array
 // (like node). Arrays are never mutated in place - mutators install a copy -
 // so a stored list can be iterated with no defensive clone.
+$overriddenName = "applyHandlers";
 export function applyHandlers(handlers, emitter, args) {
   if (typeof handlers === "function") {
     handlers.$apply(emitter, args);
@@ -167,11 +171,13 @@ export function internalAddListener(target, type, fn, prepend) {
   }
 }
 
+$overriddenName = "addListener";
 export function addListener(this: any, type, fn) {
   $nodeEventsAddListener(this, type, fn, false);
   return this;
 }
 
+$overriddenName = "prependListener";
 export function prependListener(this: any, type, fn) {
   $nodeEventsAddListener(this, type, fn, true);
   return this;
@@ -180,6 +186,7 @@ export function prependListener(this: any, type, fn) {
 // Copy-on-write: emit iterates stored arrays with no clone, so new listeners
 // land in a fresh array; `warned` carries over so the leak warning fires once.
 // An inline loop beats concat/slice here ~10x (host-call boundary).
+$overriddenName = "copyWithInserted";
 export function copyWithInserted(list, fn, prepend) {
   const n = list.length;
   const copy: ListenerList = $newArrayWithSize(n + 1);
@@ -195,6 +202,7 @@ export function copyWithInserted(list, fn, prepend) {
   return copy;
 }
 
+$overriddenName = "overflowWarning";
 export function overflowWarning(emitter, type, handlers) {
   const inspect: (value: unknown, opts?: object) => string = require("internal/util/inspect").inspect;
   handlers.warned = true;
@@ -233,18 +241,21 @@ export function internalOnceWrap(target, type, listener) {
   return wrapped;
 }
 
+$overriddenName = "once";
 export function once(this: any, type, fn) {
   if (typeof fn !== "function") require("internal/validators").validateFunction(fn, "listener");
   this.on(type, $nodeEventsOnceWrap(this, type, fn));
   return this;
 }
 
+$overriddenName = "prependOnceListener";
 export function prependOnceListener(this: any, type, fn) {
   if (typeof fn !== "function") require("internal/validators").validateFunction(fn, "listener");
   this.prependListener(type, $nodeEventsOnceWrap(this, type, fn));
   return this;
 }
 
+$overriddenName = "removeListener";
 export function removeListener(this: any, type, listener) {
   if (typeof listener !== "function") require("internal/validators").validateFunction(listener, "listener");
 
@@ -296,6 +307,7 @@ export function removeListener(this: any, type, listener) {
   return this;
 }
 
+$overriddenName = "removeAllListeners";
 export function removeAllListeners(this: any, type) {
   const events = this._events;
   if (events === undefined) return this;
@@ -337,6 +349,7 @@ export function removeAllListeners(this: any, type) {
   return this;
 }
 
+$overriddenName = "listeners";
 export function listeners(this: any, type) {
   var { _events: events } = this;
   if (!events) return [];
@@ -346,6 +359,7 @@ export function listeners(this: any, type) {
   return handlers.map(x => x.listener ?? x);
 }
 
+$overriddenName = "rawListeners";
 export function rawListeners(this: any, type) {
   var { _events } = this;
   if (!_events) return [];
@@ -355,6 +369,7 @@ export function rawListeners(this: any, type) {
   return handlers.slice();
 }
 
+$overriddenName = "listenerCount";
 export function listenerCount(this: any, type, method) {
   var handlers = this._events?.[type];
   if (handlers === undefined) return 0;
@@ -375,6 +390,7 @@ export function listenerCount(this: any, type, method) {
   return handlers.length;
 }
 
+$overriddenName = "eventNames";
 export function eventNames(this: any) {
   return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
 }

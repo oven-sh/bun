@@ -1,0 +1,179 @@
+bun test v1.4.3-canary.1 (04f38c0d8)
+
+test/cli/install/bun-lock.test.ts:
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+Saved lockfile
+(pass) should write plaintext lockfiles [748.22ms]
+(pass) should escape names [102.76ms]
+(pass) should be the default save format [279.94ms]
+(pass) should save the lockfile if --save-text-lockfile and --frozen-lockfile are used [5700.64ms]
+(pass) should convert a binary lockfile with invalid optional peers [237.04ms]
+Resolving dependencies
+Resolved, downloaded and extracted [14]
+Saved lockfile
+(pass) should not deduplicate bundled packages with un-bundled packages [1496.97ms]
+Resolving dependencies
+Resolved, downloaded and extracted [49]
+Saved lockfile
+
+$ echo 'preinstall'
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+
+$ echo 'preinstall'
+(pass) should not change formatting unexpectedly [666.31ms]
+(pass) writes trustedDependencies and patchedDependencies in the order earlier versions wrote them > 7 trusted, 5 patched [115.23ms]
+(pass) writes trustedDependencies and patchedDependencies in the order earlier versions wrote them > 13 trusted, 6 patched [114.66ms]
+(pass) should sort overrides before comparing [2182.90ms]
+(pass) should pass frozen lockfile check when a bundled dependency has an optional peer satisfiable from the root [111.75ms]
+(pass) should include unused resolutions in the lockfile [94.28ms]
+(pass) requires an integrity hash for an off-registry npm tarball URL at lockfileVersion 2 [150.74ms]
+(pass) escapes double quotes in npm registry tarball URLs when saving bun.lock [34.69ms]
+(pass) --frozen-lockfile accepts a bun.lock with an entry nothing depends on, wherever it is listed [602.61ms]
+(pass) escapes quotes and newlines in requested version literals when writing yarn.lock [326.92ms]
+(pass) prints an actionable error for a lockfile version newer than this build supports [145.18ms]
+(pass) hand-edited bun.lock that lists workspaces but has no packages object > bun install links the workspace and writes the packages object back [674.26ms]
+(pass) hand-edited bun.lock overrides > rejects a group child whose key is a bare scope [685.82ms]
+(pass) hand-edited bun.lock overrides > rejects a group child whose value is a number [685.47ms]
+(pass) hand-edited bun.lock overrides > rejects a group whose key carries a non-npm range [684.86ms]
+(pass) hand-edited bun.lock overrides > rejects a group child whose value does not parse as a dependency [683.77ms]
+(pass) hand-edited bun.lock that lists workspaces but has no packages object > bun install --frozen-lockfile treats it like an empty packages object [664.81ms]
+(pass) hand-edited bun.lock overrides > rejects a group whose key is a bare scope [755.80ms]
+(pass) hand-edited bun.lock overrides > rejects a top-level row whose value is a number [1068.89ms]
+(pass) bun remove drops a package that was only otherwise an optional peer [1920.47ms]
+(pass) bun remove keeps an optional peer that is still reachable via a non-peer edge [800.96ms]
+(pass) bun install drops a once-resolved optional peer after the providing dependency leaves package.json [103.49ms]
+(pass) optional peer with a non-wildcard range is idempotent with two versions of the target in the tree [574.91ms]
+(pass) --frozen-lockfile keeps a package that an older lockfile lists only as an optional peer [138.82ms]
+(pass) a fresh install hoists around an optional peer the same way a reinstall does [1406.95ms]
+(pass) a fresh install settles hoisting around a peer that only becomes bindable once another peer is bound [275.68ms]
+(pass) --frozen-lockfile accepts an existing bun.lock with leaf@2.0.0 hoisted (target placed from consumer) [408.45ms]
+(pass) --frozen-lockfile accepts an existing bun.lock with leaf@1.0.0 hoisted (target placed from deep-child) [141.52ms]
+(pass) adding a dependency keeps an optional peer on the package bun.lock bound it to while that package stays next to it [791.62ms]
+(pass) an optional peer is rebound when another version of its package takes the slot next to it [795.60ms]
+(pass) peer no published version satisfies (hoisted linker) > declared by the root package and a workspace [1913.50ms]
+(pass) peer no published version satisfies (isolated linker) > declared by the root package and a workspace [1919.44ms]
+(pass) peer no published version satisfies (hoisted linker) > declared by a registry package [1940.20ms]
+(pass) peer no published version satisfies (isolated linker) > declared by a registry package [5231.28ms]
+1888 |       // lockfileVersion 2 does not take a row without an integrity hash.
+1889 |       packages: { "override-of-short": ["override-of-short@1.0.0", "", {}] },
+1890 |     });
+1891 |     expect(err).toContain("error: Missing integrity");
+1892 |     expect(err).toContain("warn: Ignoring lockfile");
+1893 |     expect(result).toEqual(everyNameIsItsOwnPackage);
+                          ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "exitCode": 0,
++   "exitCode": 1,
+    "packages": {
+-     "catalog-of-short": "catalog-of-short@1.0.0",
+-     "catalog-of-some-other-package": "catalog-of-some-other-package@1.0.0",
+-     "named-catalog-of-short": "named-catalog-of-short@1.0.0",
+-     "named-catalog-of-some-other-package": "named-catalog-of-some-other-package@1.0.0",
+      "override-of-short": "override-of-short@1.0.0",
+-     "override-of-some-other-package": "override-of-some-other-package@1.0.0",
+    },
+    "requests": [
+-     "/catalog-of-short",
+-     "/catalog-of-some-other-package",
+-     "/named-catalog-of-short",
+-     "/named-catalog-of-some-other-package",
+-     "/override-of-short",
+-     "/override-of-some-other-package",
++     "/alog-of-some-other",
++     "/short",
+    ],
+  }
+
+- Expected  - 12
++ Received  + 3
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lock.test.ts:1893:20)
+(fail) npm: alias in a row of bun.lock > bun.lock fails to load after the rows [425.09ms]
+1897 |     ["has a root with no dependencies", { workspaces: { "": { name: "app" } }, packages: {} }],
+1898 |     ["has no packages object", { workspaces: root(plainDependencies(aliases)) }],
+1899 |   ])("bun install does not use a bun.lock that %s", async (_, lockfile) => {
+1900 |     using registry = await aliasRegistry(aliases);
+1901 |     const { err, ...result } = await resolve(registry, plainDependencies(aliases), { ...lockfile, ...rows });
+1902 |     expect(err).not.toContain("error:");
+                           ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "error:"
+Received: "Resolving dependencies\nResolved, downloaded and extracted [3]\nerror: GET http://localhost:38347/alog-of-some-other - 404\nerror: catalog-of-some-other-package@^1.0.0 failed to resolve\nerror: named-catalog-of-some-other-package@^1.0.0 failed to resolve\nerror: override-of-some-other-package@^1.0.0 failed to resolve\n"
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lock.test.ts:1902:21)
+(fail) npm: alias in a row of bun.lock > bun install does not use a bun.lock that has a root with no dependencies [688.26ms]
+1897 |     ["has a root with no dependencies", { workspaces: { "": { name: "app" } }, packages: {} }],
+1898 |     ["has no packages object", { workspaces: root(plainDependencies(aliases)) }],
+1899 |   ])("bun install does not use a bun.lock that %s", async (_, lockfile) => {
+1900 |     using registry = await aliasRegistry(aliases);
+1901 |     const { err, ...result } = await resolve(registry, plainDependencies(aliases), { ...lockfile, ...rows });
+1902 |     expect(err).not.toContain("error:");
+                           ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "error:"
+Received: "Resolving dependencies\nResolved, downloaded and extracted [3]\nerror: GET http://localhost:40695/alog-of-some-other - 404\nerror: catalog-of-some-other-package@^1.0.0 failed to resolve\nerror: named-catalog-of-some-other-package@^1.0.0 failed to resolve\nerror: override-of-some-other-package@^1.0.0 failed to resolve\n"
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lock.test.ts:1902:21)
+(fail) npm: alias in a row of bun.lock > bun install does not use a bun.lock that has no packages object [1711.31ms]
+1914 |         packages: lockfileRows(registry, { unrelated: "unrelated@1.0.0" }),
+1915 |       },
+1916 |     );
+1917 |     expect(err).not.toContain("error:");
+1918 |     expect(err).not.toContain("Ignoring lockfile");
+1919 |     expect(result).toEqual({
+                          ^
+error: expect(received).toEqual(expected)
+
+  {
+    "exitCode": 0,
+    "packages": {
+-     "catalog-of-short": "catalog-of-short@1.0.0",
+-     "catalog-of-some-other-package": "catalog-of-some-other-package@1.0.0",
+-     "named-catalog-of-short": "named-catalog-of-short@1.0.0",
+-     "named-catalog-of-some-other-package": "named-catalog-of-some-other-package@1.0.0",
+-     "override-of-short": "override-of-short@1.0.0",
+-     "override-of-some-other-package": "override-of-some-other-package@1.0.0",
++     "catalog-of-short": "short@1.0.0",
++     "catalog-of-some-other-package": "some-other-package@1.0.0",
++     "named-catalog-of-short": "short@1.0.0",
++     "named-catalog-of-some-other-package": "some-other-package@1.0.0",
++     "override-of-short": "short@1.0.0",
++     "override-of-some-other-package": "some-other-package@1.0.0",
+      "unrelated": "unrelated@1.0.0",
+    },
+    "requests": [
+-     "/catalog-of-short",
+-     "/catalog-of-some-other-package",
+-     "/named-catalog-of-short",
+-     "/named-catalog-of-some-other-package",
+-     "/override-of-short",
+-     "/override-of-some-other-package",
++     "/short",
++     "/some-other-package",
+    ],
+  }
+
+- Expected  - 12
++ Received  + 8
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lock.test.ts:1919:20)
+(fail) npm: alias in a row of bun.lock > package.json no longer has the rows [323.23ms]
+(pass) npm: alias in a row of bun.lock > a new dependency > does not follow the alias that only a package of the registry declares [57.48ms]
+(pass) npm: alias in a row of bun.lock > a new dependency > follows the alias that package.json declares [38.79ms]
+
+4 tests failed:
+(fail) npm: alias in a row of bun.lock > bun.lock fails to load after the rows [425.09ms]
+(fail) npm: alias in a row of bun.lock > bun install does not use a bun.lock that has a root with no dependencies [688.26ms]
+(fail) npm: alias in a row of bun.lock > bun install does not use a bun.lock that has no packages object [1711.31ms]
+(fail) npm: alias in a row of bun.lock > package.json no longer has the rows [323.23ms]
+
+ 42 pass
+ 4 fail
+ 34 snapshots, 376 expect() calls
+Ran 46 tests across 1 file. [32.73s]

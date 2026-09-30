@@ -1,0 +1,69 @@
+bun test v1.4.3-canary.1 (04f38c0d8)
+
+test/cli/install/bun-lock.test.ts:
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+Saved lockfile
+(pass) should write plaintext lockfiles [85.39ms]
+(pass) should escape names [37.69ms]
+(pass) should be the default save format [938.66ms]
+(pass) should save the lockfile if --save-text-lockfile and --frozen-lockfile are used [264.08ms]
+(pass) should convert a binary lockfile with invalid optional peers [283.74ms]
+Resolving dependencies
+Resolved, downloaded and extracted [12]
+Saved lockfile
+(pass) should not deduplicate bundled packages with un-bundled packages [4482.06ms]
+Resolving dependencies
+Resolved, downloaded and extracted [49]
+Saved lockfile
+
+$ echo 'preinstall'
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+
+$ echo 'preinstall'
+(pass) should not change formatting unexpectedly [3488.85ms]
+(pass) writes trustedDependencies and patchedDependencies in the order earlier versions wrote them > 7 trusted, 5 patched [523.76ms]
+(pass) writes trustedDependencies and patchedDependencies in the order earlier versions wrote them > 13 trusted, 6 patched [565.08ms]
+(pass) should sort overrides before comparing [359.37ms]
+(pass) should pass frozen lockfile check when a bundled dependency has an optional peer satisfiable from the root [1836.55ms]
+(pass) should include unused resolutions in the lockfile [1617.45ms]
+(pass) requires an integrity hash for an off-registry npm tarball URL at lockfileVersion 2 [340.85ms]
+(pass) escapes double quotes in npm registry tarball URLs when saving bun.lock [30.20ms]
+(pass) --frozen-lockfile accepts a bun.lock with an entry nothing depends on, wherever it is listed [2043.12ms]
+(pass) escapes quotes and newlines in requested version literals when writing yarn.lock [512.64ms]
+(pass) prints an actionable error for a lockfile version newer than this build supports [27.34ms]
+(pass) hand-edited bun.lock that lists workspaces but has no packages object > bun install --frozen-lockfile treats it like an empty packages object [34.23ms]
+(pass) hand-edited bun.lock overrides > rejects a group child whose value does not parse as a dependency [190.35ms]
+(pass) hand-edited bun.lock overrides > rejects a group child whose value is a number [190.53ms]
+(pass) hand-edited bun.lock overrides > rejects a group whose key carries a non-npm range [190.47ms]
+(pass) hand-edited bun.lock overrides > rejects a group child whose key is a bare scope [190.62ms]
+(pass) hand-edited bun.lock that lists workspaces but has no packages object > bun install links the workspace and writes the packages object back [192.28ms]
+(pass) hand-edited bun.lock overrides > rejects a group whose key is a bare scope [193.26ms]
+(pass) hand-edited bun.lock overrides > rejects a top-level row whose value is a number [195.72ms]
+(pass) bun remove drops a package that was only otherwise an optional peer [649.71ms]
+(pass) bun remove keeps an optional peer that is still reachable via a non-peer edge [1077.41ms]
+(pass) bun install drops a once-resolved optional peer after the providing dependency leaves package.json [594.36ms]
+(pass) optional peer with a non-wildcard range is idempotent with two versions of the target in the tree [832.91ms]
+(pass) --frozen-lockfile keeps a package that an older lockfile lists only as an optional peer [5098.51ms]
+(pass) a fresh install hoists around an optional peer the same way a reinstall does [3087.74ms]
+(pass) a fresh install settles hoisting around a peer that only becomes bindable once another peer is bound [3659.93ms]
+(pass) --frozen-lockfile accepts an existing bun.lock with leaf@2.0.0 hoisted (target placed from consumer) [1242.21ms]
+(pass) --frozen-lockfile accepts an existing bun.lock with leaf@1.0.0 hoisted (target placed from deep-child) [175.86ms]
+(pass) adding a dependency keeps an optional peer on the package bun.lock bound it to while that package stays next to it [1185.48ms]
+(pass) an optional peer is rebound when another version of its package takes the slot next to it [4029.11ms]
+(pass) peer no published version satisfies (hoisted linker) > declared by the root package and a workspace [1175.37ms]
+(pass) peer no published version satisfies (isolated linker) > declared by the root package and a workspace [1303.08ms]
+(pass) peer no published version satisfies (hoisted linker) > declared by a registry package [1408.33ms]
+(pass) peer no published version satisfies (isolated linker) > declared by a registry package [2314.45ms]
+(pass) npm: alias in a row of bun.lock > bun.lock fails to load after the rows [117.84ms]
+(pass) npm: alias in a row of bun.lock > bun install does not use a bun.lock that has a root with no dependencies [336.41ms]
+(pass) npm: alias in a row of bun.lock > bun install does not use a bun.lock that has no packages object [935.56ms]
+(pass) npm: alias in a row of bun.lock > package.json no longer has the rows [521.19ms]
+(pass) npm: alias in a row of bun.lock > a new dependency > does not follow the alias that only a package of the registry declares [68.96ms]
+(pass) npm: alias in a row of bun.lock > a new dependency > follows the alias that package.json declares [193.81ms]
+
+ 46 pass
+ 0 fail
+ 34 snapshots, 378 expect() calls
+Ran 46 tests across 1 file. [47.53s]

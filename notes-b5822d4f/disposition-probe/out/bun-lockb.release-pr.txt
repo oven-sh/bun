@@ -1,0 +1,24 @@
+bun test v1.4.3-canary.1 (04f38c0d8)
+
+test/cli/install/bun-lockb.test.ts:
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+Saved lockfile
+(pass) should not print anything to stderr when running bun.lockb [1458.83ms]
+(pass) should continue using a binary lockfile if it exists [3916.92ms]
+(pass) migrating bun.lockb keeps a peer required when it is satisfied only by the dependent's own nested copy [2040.07ms]
+(pass) recovers from a corrupted binary lockfile instead of panicking [939.89ms]
+(pass) recomputes a package name hash that disagrees with the name in a binary lockfile [353.42ms]
+(pass) rejects a binary lockfile whose patched-dependency flag byte is out of range [267.32ms]
+(pass) rejects a binary lockfile whose package scripts flag byte is out of range [324.54ms]
+(pass) rejects a binary lockfile whose git resolved tag contains path separators [3549.05ms]
+(pass) npm: alias in a row of bun.lockb > bun.lockb fails to load after the rows [117.78ms]
+(pass) npm: alias in a row of bun.lockb > package.json no longer has the override and catalog rows [176.02ms]
+(pass) npm: alias in a row of bun.lockb > a new dependency > does not follow the alias of an override for one parent [124.17ms]
+(pass) npm: alias in a row of bun.lockb > a new dependency > follows the alias that a package of the registry declares [85.91ms]
+(pass) npm: alias in a row of bun.lockb > a new dependency > follows the alias that package.json declares [124.04ms]
+
+ 13 pass
+ 0 fail
+ 188 expect() calls
+Ran 13 tests across 1 file. [15.70s]

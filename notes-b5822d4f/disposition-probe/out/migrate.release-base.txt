@@ -1,0 +1,223 @@
+bun test v1.4.3-canary.1 (04f38c0d8)
+
+test/cli/install/migration/migrate.test.ts:
+(pass) migrate from npm during `bun add` [740.06ms]
+(pass) migrate from npm lockfile v2 during `bun add` [87.55ms]
+(todo) migrate workspace from npm during `bun add`
+(pass) migrate package with dependency on root package [91.02ms]
+(pass) migrate package with npm dependency that resolves to a git package [105.12ms]
+(pass) migrate from npm lockfile that is missing `resolved` properties [153.61ms]
+(pass) npm lockfile with relative workspaces [54.34ms]
+(pass) should create bun.lock if package-lock.json migration fails [46.95ms]
+(pass) should create bun.lock if yarn.lock migration fails [26.53ms]
+(pass) should create bun.lock if pnpm-lock.yaml migration fails [132.85ms]
+(pass) npm lockfile migration skips extraneous packages that also declare inBundle: false [82.49ms]
+(pass) package-lock.json migration requires integrity for tarball URLs outside the configured registry [196.23ms]
+(pass) package-lock.json migration rejects git committish values that are not a single path component [102.22ms]
+(pass) package-lock.json migration keeps dependencies declared as arbitrary tarball URLs without integrity [160.04ms]
+(pass) bun install terminates when a file: folder dependency declares a workspace:. self-reference (#25202) [788.39ms]
+(pass) pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency [1004.33ms]
+(pass) package-lock.json migration does not platform-skip a regular file: folder dependency [1442.78ms]
+(pass) package-lock.json migration fixes > lockfileVersion 1 is a warning, not a fatal error (B3) [935.40ms]
+(pass) package-lock.json migration fixes > lockfileVersion 4 is accepted (B3) [1557.95ms]
+(pass) package-lock.json migration fixes > git hosts round-trip (B1, github: parity) [1862.32ms]
+(pass) package-lock.json migration fixes > root bundleDependencies keeps its subtree (B2) [1914.41ms]
+(pass) package-lock.json migration fixes > workspace bundleDependencies are plain edges (B2 variant) [1981.14ms]
+(pass) package-lock.json migration fixes > root bundleDependencies: true still injects workspaces (B10) [2079.88ms]
+(pass) package-lock.json migration terminates when a file: link target depends on its own name [2597.00ms]
+(pass) package-lock.json migration does not platform-skip a regular file: tarball dependency [2701.05ms]
+(pass) package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency @scope/a at vendor/@scope/a [2872.49ms]
+(pass) package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency a at vendor/a [2908.21ms]
+(pass) package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency admin at packages/@admin [2907.57ms]
+(pass) package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency admin at @admin [2929.68ms]
+(pass) package-lock.json migration fixes > github dependency from package-lock.json is installed (#40489) [2775.08ms]
+(pass) package-lock.json migration terminates when a file: link target aliases its own name via npm: [3274.15ms]
+(pass) package-lock.json migration terminates when a file: link target and another link target depend on each other [3237.04ms]
+(pass) package-lock.json migration fixes > a bundled copy reached first does not lose the registry copy's integrity (B7, B9) [963.75ms]
+(pass) migrated bun.lock with a nested-placed peer of a file: dependency round-trips --frozen-lockfile [4122.17ms]
+(pass) package-lock.json migration fixes > out-of-tree link targets and their node_modules (B6, walk) [2380.45ms]
+(pass) package-lock.json migration fixes > overrides are carried into the migrated lockfile (#55) [1822.14ms]
+(pass) package-lock.json migration fixes > unreferenced entries are skipped with a warning (B6) and github shorthand keeps github: form [3248.70ms]
+(pass) package-lock.json migration fixes > file: specs into a registry package's folder (B4) [3387.63ms]
+(pass) package-lock.json migration fixes > root duplicate groups and optional peer meta match a fresh parse (B5, B8) [3712.11ms]
+(pass) package-lock.json migration fixes > root bundle with cyclic bundled contents (B2) [4782.43ms]
+(pass) package-lock.json migration fixes > workspace on disk but missing from a stale lockfile (#59) [2405.90ms]
+(pass) package-lock.json migration fixes > optional peer that is present keeps optionalPeers (B8) [4179.46ms]
+(pass) package-lock.json migration fixes > bundled entry without resolved (B9) [4001.61ms]
+(pass) package-lock.json migration fixes > dist-tag and empty specs without resolved use the registry (B4) and duplicate groups collapse (B5) [5519.96ms]
+(pass) package-lock.json migration fixes > override warnings are printed after a successful migration [1766.75ms]
+(pass) package-lock.json migration fixes > unsupported specs are skipped, not fatal (B11) [3748.12ms]
+(pass) package-lock.json migration fixes > workspace ranges that link to sibling workspaces keep the migrated pins [3240.00ms]
+(pass) package-lock.json migration fixes > a registry entry naming a dep in dependencies and peerDependencies keeps one edge; the root keeps both [3422.56ms]
+(pass) package-lock.json migration fixes > absent peer and optional targets keep their edges (#49, #52) [4115.48ms]
+(pass) package-lock.json migration fixes > a file: dependency declared by a registry package's own folder is still skipped [447.91ms]
+(pass) package-lock.json migration fixes > dependency-level bundles use bundled: true (B9) and same-version copies dedupe (B7) [4642.70ms]
+(pass) package-lock.json migration fixes > a link target reached both directly and through the find_target walk keeps only the direct entry [2061.45ms]
+(pass) package-lock.json migration fixes > nested and version-scoped overrides migrate into a lockfileVersion 3 bun.lock [2379.53ms]
+(pass) package-lock.json migration fixes > workspace listed in the lockfile but deleted from disk is skipped [3025.35ms]
+(pass) package-lock.json migration fixes > a $ref override resolves through a workspace's dependencies [2543.49ms]
+(pass) package-lock.json migration fixes > yarn-style resolutions are carried into the migrated lockfile [2635.29ms]
+(pass) package-lock.json migration fixes > bundled: true edges install from the parent tarball (B9, hoisted) [4315.90ms]
+(pass) package-lock.json migration fixes > lockfileVersion missing is an invalid lockfile, and install falls back to a fresh resolve [246.08ms]
+(pass) package-lock.json migration fixes > identical name@version at several paths becomes one package (B7) [4505.38ms]
+(pass) package-lock.json migration fixes > out-of-tree link target and its node_modules install (isolated) [757.14ms]
+(pass) package-lock.json migration fixes > workspace listing a dependency in dependencies and optionalDependencies matches a fresh resolve [3820.41ms]
+(pass) package-lock.json migration fixes > out-of-tree link target and its node_modules install (hoisted) [773.59ms]
+(pass) package-lock.json migration fixes > lockfileVersion a string is an invalid lockfile, and install falls back to a fresh resolve [549.12ms]
+(pass) package-lock.json migration fixes > lockfileVersion 5 is refused, and install falls back to a fresh resolve [582.04ms]
+(pass) package-lock.json migration fixes > bundled: true edges install from the parent tarball (B9, isolated) [4018.28ms]
+(pass) package-lock.json migration fixes > a link entry without resolved drops the dependency [157.43ms]
+(pass) package-lock.json migration fixes > several patched entries are listed in one warning [274.70ms]
+(pass) package-lock.json migration fixes > bundleDependencies: false bundles nothing even when npm marked the child inBundle [277.04ms]
+(pass) package-lock.json migration fixes > an empty bin object migrates as no bin [271.16ms]
+(pass) package-lock.json migration fixes > in-tree link target and its node_modules install (hoisted) [2173.89ms]
+(pass) package-lock.json migration fixes > a git resolved without a committish is an invalid lockfile, and install falls back [398.89ms]
+(pass) package-lock.json migration fixes > a file: dependency declared by an out-of-tree file: package migrates [896.01ms]
+(pass) package-lock.json migration fixes > in-tree link target and its node_modules install (isolated) [2187.66ms]
+(pass) package-lock.json migration fixes > arborist fixtures > audit-fix-old-tap [151.52ms]
+(pass) package-lock.json migration fixes > arborist fixtures > audit-linked-package [155.36ms]
+(pass) package-lock.json migration fixes > arborist fixtures > audit-omit [454.99ms]
+(pass) package-lock.json migration fixes > arborist fixtures > bundle-metadep-duplication--x [405.95ms]
+(pass) package-lock.json migration fixes > arborist fixtures > carbonium [309.04ms]
+(pass) package-lock.json migration fixes > arborist fixtures > cli-750 [347.70ms]
+(pass) package-lock.json migration fixes > arborist fixtures > dedupe-lockfile [107.73ms]
+(pass) package-lock.json migration fixes > arborist fixtures > dep-installed-without-bin-link [64.73ms]
+(pass) package-lock.json migration fixes > arborist fixtures > dep-missing-resolved [263.68ms]
+(pass) package-lock.json migration fixes > arborist fixtures > edit-package-json--changed [621.15ms]
+(pass) package-lock.json migration fixes > arborist fixtures > edit-package-json--ok [212.36ms]
+(pass) package-lock.json migration fixes > arborist fixtures > edit-package-json--removed [145.94ms]
+(pass) package-lock.json migration fixes > arborist fixtures > edit-package-json--workspaces-changed [57.40ms]
+(pass) package-lock.json migration fixes > arborist fixtures > engine-specification [21.89ms]
+(pass) package-lock.json migration fixes > arborist fixtures > external-link-dep [19.46ms]
+(pass) package-lock.json migration fixes > arborist fixtures > external-link--root [58.33ms]
+(pass) package-lock.json migration fixes > arborist fixtures > flow-outdated [139.22ms]
+(pass) package-lock.json migration fixes > arborist fixtures > link-dep-lifecycle-scripts [552.10ms]
+(pass) package-lock.json migration fixes > arborist fixtures > minimist-git-dep [1060.51ms]
+(pass) package-lock.json migration fixes > arborist fixtures > minimist-git-metadep [760.95ms]
+(pass) package-lock.json migration fixes > arborist fixtures > old-package-lock [28.82ms]
+(pass) package-lock.json migration fixes > arborist fixtures > optional-dep-allinstall-fail [199.10ms]
+(pass) package-lock.json migration fixes > arborist fixtures > optional-dep-install-fail [226.10ms]
+(pass) package-lock.json migration fixes > arborist fixtures > optional-dep-postinstall-fail [138.45ms]
+(pass) package-lock.json migration fixes > arborist fixtures > optional-dep-preinstall-fail [153.55ms]
+(pass) package-lock.json migration fixes > arborist fixtures > optional-engine-specification [199.13ms]
+(pass) package-lock.json migration fixes > arborist fixtures > peer-dep-cycle-nested-with-sw [376.96ms]
+(pass) package-lock.json migration fixes > arborist fixtures > peer-dep-cycle-with-sw [387.09ms]
+(pass) package-lock.json migration fixes > arborist fixtures > pnpm [175.96ms]
+(pass) package-lock.json migration fixes > arborist fixtures > prune-lockfile-omit-dev [302.02ms]
+(pass) package-lock.json migration fixes > arborist fixtures > prune-lockfile-optional-peer [36.62ms]
+(pass) package-lock.json migration fixes > arborist fixtures > prune-lockfile [76.02ms]
+(pass) package-lock.json migration fixes > arborist fixtures > rebuild-foreground-scripts [162.36ms]
+(pass) package-lock.json migration fixes > arborist fixtures > test-package-with-shrinkwrap [52.47ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-bundledeps-sw [17.12ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-peer-dep-conflict-chain [62.91ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-peer-deps-nested [70.77ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-rebuild-bundle-reified [49.39ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-rebuild-bundle--a [71.96ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-rebuild-bundle [58.60ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-rebuild-bundle--parent [81.04ms]
+(pass) package-lock.json migration fixes > arborist fixtures > testing-rebuild-script-env-flags [123.60ms]
+(pass) package-lock.json migration fixes > arborist fixtures > two-bundled-deps [25.44ms]
+(pass) package-lock.json migration fixes > arborist fixtures > update-exact-version [79.72ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-add-new-dep [302.61ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-conflicting-versions-virtual [147.06ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-ignore-nm-virtual [124.86ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-need-update [30.88ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-non-simplistic [476.59ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-not-root [488.19ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-prefer-linking-virtual [440.12ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-shared-deps-virtual [186.49ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-simple-virtual [474.35ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-top-level-link-virtual [1127.55ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-transitive-deps-virtual [883.54ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-version-unsatisfied-virtual [411.27ms]
+(pass) package-lock.json migration fixes > arborist fixtures > workspaces-with-overrides [136.66ms]
+1992 |       },
+1993 |       "install",
+1994 |     );
+1995 |     expect(stderr).toContain("InvalidNPMLockfile: failed to migrate lockfile: 'package-lock.json'");
+1996 |     expect(stderr).toContain("warn: Ignoring lockfile");
+1997 |     expect(result).toEqual({
+                          ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "exitCode": 0,
+-   "packages": {
+-     "dependency-of-short": "dependency-of-short@1.0.0",
+-     "dependency-of-some-other-package": "dependency-of-some-other-package@1.0.0",
+-   },
++   "exitCode": 1,
++   "packages": {},
+    "requests": [
+-     "/dependency-of-short",
+-     "/dependency-of-some-other-package",
++     "/",
++     "/short",
+    ],
+  }
+
+- Expected  - 7
++ Received  + 4
+
+      at <anonymous> (/workspace/bun/test/cli/install/migration/migrate.test.ts:1997:20)
+(fail) npm: alias in a row of the lockfile of another package manager > package-lock.json fails to migrate after the rows [1012.29ms]
+2018 |       },
+2019 |       "install",
+2020 |     );
+2021 |     expect(stderr).toContain("error: pnpm-lock.yaml missing 'importers' field");
+2022 |     expect(stderr).toContain("warn: Ignoring lockfile");
+2023 |     expect(result).toEqual({
+                          ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "exitCode": 0,
+-   "packages": {
+-     "override-of-short": "override-of-short@1.0.0",
+-     "override-of-some-other-package": "override-of-some-other-package@1.0.0",
+-   },
++   "exitCode": 1,
++   "packages": {},
+    "requests": [
+-     "/override-of-short",
+-     "/override-of-some-other-package",
++     "/",
++     "/short",
+    ],
+  }
+
+- Expected  - 7
++ Received  + 4
+
+      at <anonymous> (/workspace/bun/test/cli/install/migration/migrate.test.ts:2023:20)
+(fail) npm: alias in a row of the lockfile of another package manager > pnpm-lock.yaml fails to migrate after the rows [1054.31ms]
+(pass) npm: alias in a row of the lockfile of another package manager > a new dependency follows the alias that a package of the lockfile declares > package-lock.json [1083.44ms]
+2088 |         },
+2089 |         "add",
+2090 |         "new-dependency",
+2091 |       );
+2092 |       expect(stderr).toContain("migrated lockfile from yarn.lock");
+2093 |       expect(stderr).not.toContain("error:");
+                                ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "error:"
+Received: "[138.39ms] migrated lockfile from yarn.lock\nResolving dependencies\nResolved, downloaded and extracted [9]\nerror: GET http://localhost:36309/:%2f%2flocalhost:36309 - 404\nerror: dependency-of-some-other-package@^1.0.0 failed to resolve\n"
+
+      at <anonymous> (/workspace/bun/test/cli/install/migration/migrate.test.ts:2093:26)
+(fail) npm: alias in a row of the lockfile of another package manager > a new dependency follows the alias that a package of the lockfile declares > yarn.lock [1124.24ms]
+
+1 tests todo:
+(todo) migrate workspace from npm during `bun add`
+
+
+3 tests failed:
+(fail) npm: alias in a row of the lockfile of another package manager > package-lock.json fails to migrate after the rows [1012.29ms]
+(fail) npm: alias in a row of the lockfile of another package manager > pnpm-lock.yaml fails to migrate after the rows [1054.31ms]
+(fail) npm: alias in a row of the lockfile of another package manager > a new dependency follows the alias that a package of the lockfile declares > yarn.lock [1124.24ms]
+
+ 130 pass
+ 1 todo
+ 3 fail
+ 57 snapshots, 533 expect() calls
+Ran 134 tests across 1 file. [25.96s]

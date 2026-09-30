@@ -1,0 +1,129 @@
+bun test v1.4.3-canary.1 (04f38c0d8)
+
+test/cli/install/bun-lockb.test.ts:
+Resolving dependencies
+Resolved, downloaded and extracted [1]
+Saved lockfile
+(pass) should not print anything to stderr when running bun.lockb [303.52ms]
+(pass) should continue using a binary lockfile if it exists [400.05ms]
+(pass) migrating bun.lockb keeps a peer required when it is satisfied only by the dependent's own nested copy [1168.02ms]
+(pass) recovers from a corrupted binary lockfile instead of panicking [889.68ms]
+(pass) recomputes a package name hash that disagrees with the name in a binary lockfile [600.68ms]
+(pass) rejects a binary lockfile whose patched-dependency flag byte is out of range [2440.46ms]
+(pass) rejects a binary lockfile whose package scripts flag byte is out of range [1768.21ms]
+(pass) rejects a binary lockfile whose git resolved tag contains path separators [1196.29ms]
+582 |     await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: plainDependencies(aliases) }));
+583 | 
+584 |     const { err, ...result } = await resolveAgain(cwd, registry, "install");
+585 |     expect(err).toContain("failed to parse lockfile: 'bun.lockb'");
+586 |     expect(err).toContain("warn: Ignoring lockfile");
+587 |     expect(result).toEqual({
+                         ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "exitCode": 0,
+-   "packages": {
+-     "dependency-of-short": "dependency-of-short@1.0.0",
+-     "dependency-of-some-other-package": "dependency-of-some-other-package@1.0.0",
+-   },
++   "exitCode": 1,
++   "packages": {},
+    "requests": [
+-     "/dependency-of-short",
+-     "/dependency-of-some-other-package",
++     "/",
++     "/short",
+    ],
+  }
+
+- Expected  - 7
++ Received  + 4
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lockb.test.ts:587:20)
+(fail) npm: alias in a row of bun.lockb > bun.lockb fails to load after the rows [148.31ms]
+606 |     );
+607 | 
+608 |     const { err, ...result } = await resolveAgain(cwd, registry, "install");
+609 |     expect(err).not.toContain("error:");
+610 |     expect(err).not.toContain("Ignoring lockfile");
+611 |     expect(result).toEqual({
+                         ^
+error: expect(received).toEqual(expected)
+
+  {
+    "exitCode": 0,
+    "packages": {
+-     "catalog-of-short": "catalog-of-short@1.0.0",
+-     "catalog-of-some-other-package": "catalog-of-some-other-package@1.0.0",
+-     "named-catalog-of-short": "named-catalog-of-short@1.0.0",
+-     "named-catalog-of-some-other-package": "named-catalog-of-some-other-package@1.0.0",
+-     "override-of-short": "override-of-short@1.0.0",
+-     "override-of-some-other-package": "override-of-some-other-package@1.0.0",
++     "catalog-of-short": "short@1.0.0",
++     "catalog-of-some-other-package": "some-other-package@1.0.0",
++     "named-catalog-of-short": "short@1.0.0",
++     "named-catalog-of-some-other-package": "some-other-package@1.0.0",
++     "override-of-short": "short@1.0.0",
++     "override-of-some-other-package": "some-other-package@1.0.0",
+      "unrelated": "unrelated@1.0.0",
+    },
+    "requests": [
+-     "/catalog-of-short",
+-     "/catalog-of-some-other-package",
+-     "/named-catalog-of-short",
+-     "/named-catalog-of-some-other-package",
+-     "/override-of-short",
+-     "/override-of-some-other-package",
++     "/short",
++     "/some-other-package",
+    ],
+  }
+
+- Expected  - 12
++ Received  + 8
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lockb.test.ts:611:20)
+(fail) npm: alias in a row of bun.lockb > package.json no longer has the override and catalog rows [1151.60ms]
+627 |       });
+628 | 
+629 |       const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
+630 |       expect(err).not.toContain("error:");
+631 |       expect(err).not.toContain("Ignoring lockfile");
+632 |       expect(result).toEqual({
+                           ^
+error: expect(received).toEqual(expected)
+
+  {
+    "exitCode": 0,
+    "packages": {
+-     "dependency-of-short": "dependency-of-short@1.0.0",
+-     "dependency-of-some-other-package": "dependency-of-some-other-package@1.0.0",
++     "dependency-of-short": "short@1.0.0",
++     "dependency-of-some-other-package": "some-other-package@1.0.0",
+      "new-dependency": "new-dependency@1.0.0",
+      "parent": "parent@1.0.0",
+-     "parent/dependency-of-short": "short@1.0.0",
+-     "parent/dependency-of-some-other-package": "some-other-package@1.0.0",
+    },
+    "requests": [
+-     "/dependency-of-short",
+-     "/dependency-of-some-other-package",
+      "/new-dependency",
++     "/short",
++     "/some-other-package",
+    ],
+  }
+
+- Expected  - 6
++ Received  + 4
+
+      at <anonymous> (/workspace/bun/test/cli/install/bun-lockb.test.ts:632:22)
+(fail) npm: alias in a row of bun.lockb > a new dependency > does not follow the alias of an override for one parent [1055.06ms]
+(pass) npm: alias in a row of bun.lockb > a new dependency > follows the alias that a package of the registry declares [104.30ms]
+(pass) npm: alias in a row of bun.lockb > a new dependency > follows the alias that package.json declares [199.05ms]
+
+ 10 pass
+ 3 fail
+ 188 expect() calls
+Ran 13 tests across 1 file. [15.89s]

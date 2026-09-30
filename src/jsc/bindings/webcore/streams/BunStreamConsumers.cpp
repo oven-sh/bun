@@ -232,7 +232,7 @@ using WebCore::JSStreamsRuntime;
 WTF::String withoutUTF8BOM(const WTF::String& string)
 {
     if (string.length() && string[0] == 0xFEFF)
-        return string.substring(1);
+        return string.substringSharingImpl(1);
     return string;
 }
 
@@ -734,7 +734,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return WTF::String();
         }
         if (rope.length() && rope[0] == 0xFEFF)
-            return rope.substring(1);
+            return rope.substringSharingImpl(1);
         return rope;
     }
     // estimatedLength never overcounts the bytes, so an estimate past the limit is final.
@@ -769,7 +769,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
             return WTF::String();
         }
         if (rope[0] == 0xFEFF)
-            rope = rope.substring(1);
+            rope = rope.substringSharingImpl(1);
         if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
             releaseAccumulated();
             throwOutOfMemoryError(globalObject, scope);

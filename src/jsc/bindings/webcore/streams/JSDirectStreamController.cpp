@@ -495,7 +495,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             return String();
         }
         if (rope.length() && rope[0] == 0xFEFF)
-            return rope.substring(1);
+            return rope.substringSharingImpl(1);
         return rope;
     }
 
@@ -538,7 +538,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             return String();
         }
         if (rope[0] == 0xFEFF)
-            rope = rope.substring(1);
+            rope = rope.substringSharingImpl(1);
         if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();

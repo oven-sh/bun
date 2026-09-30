@@ -11,7 +11,6 @@ use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
 use bun_paths as path;
-use bun_sys;
 
 pub(crate) struct PmPkgCommand;
 

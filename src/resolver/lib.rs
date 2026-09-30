@@ -1,8 +1,6 @@
 #![allow(non_snake_case)]
-#![allow(non_camel_case_types, non_upper_case_globals)]
-#![allow(static_mut_refs, private_interfaces, private_bounds)]
+#![allow(non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![allow(incomplete_features)]
 #![feature(adt_const_params)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
@@ -58,7 +56,9 @@ pub use result::{
     MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
     ResultUnion,
 };
-pub use standalone_module_graph::StandaloneModuleGraph;
+pub use standalone_module_graph::{
+    BytecodeModule, LINKED_BYTECODE_REGION_COUNT, StandaloneModuleGraph,
+};
 
 /// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
 /// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).

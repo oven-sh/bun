@@ -435,7 +435,6 @@ impl<'a> PackageInstaller<'a> {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`; install pass
         // is single-threaded so no concurrent `&mut PackageManager` exists.
@@ -449,14 +448,12 @@ impl<'a> PackageInstaller<'a> {
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn lockfile_mut(&self) -> &'a mut Lockfile {
         // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
         unsafe { &mut *self.lockfile }
     }
 
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn progress_mut(&self) -> &'a mut Progress {
         // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
         // `*self`; the install pass is single-threaded so no concurrent `&mut

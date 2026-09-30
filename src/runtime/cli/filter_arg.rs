@@ -12,7 +12,6 @@ use bun_install::package_manager::workspace_selection::{
 use bun_parsers::json;
 use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
-use bun_sys;
 
 use crate::cli::Command;
 

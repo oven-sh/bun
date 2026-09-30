@@ -6090,6 +6090,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            false,
         ) {
             if err == crate::CrateError::JSError {
                 self.global().clear_exception();
@@ -6619,6 +6620,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            false,
         )
         // `defer default_formatter.deinit()` → Drop.
     }
@@ -6633,6 +6635,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
+        queue_members: bool,
     ) -> crate::CrateResult<()> {
         // Note: stack-safety guard for the Error recursion path.
         // `print_error_instance_body` dispatches on runtime bools, so it
@@ -6700,6 +6703,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            queue_members,
         );
 
         drop(source_code_slice);
@@ -6722,6 +6726,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
+        queue_members: bool,
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
@@ -7037,6 +7042,38 @@ impl VirtualMachine {
             NonNull::new(&raw mut errors_to_append).expect("stack addr"),
         ));
 
+        let mut members: Vec<JSValue> = Vec::new();
+        let _unprotect_members = UnprotectAll(bun_ptr::BackRef::from(
+            NonNull::new(&raw mut members).expect("stack addr"),
+        ));
+        let mut members_source = JSValue::ZERO;
+        if queue_members && is_error_instance && error_instance.is_aggregate_error(global_ref) {
+            extern "C" fn collect(
+                _vm: *mut crate::VM,
+                _global: &JSGlobalObject,
+                ctx: *mut c_void,
+                member: JSValue,
+            ) {
+                // SAFETY: `ctx` is `&mut Vec<JSValue>` for the duration of `for_each`.
+                let members = unsafe { bun_ptr::callback_ctx::<Vec<JSValue>>(ctx) };
+                member.protect();
+                members.push(member);
+            }
+            match error_instance.fast_get(global_ref, jsc::BuiltinName::errors) {
+                Ok(Some(errors)) => {
+                    members_source = errors;
+                    if errors
+                        .for_each(global_ref, (&raw mut members).cast(), collect)
+                        .is_err()
+                    {
+                        global_ref.clear_exception();
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => global_ref.clear_exception(),
+            }
+        }
+
         if is_error_instance {
             let mut saw_cause = false;
             // SAFETY: `is_error_instance` ⇒ object.
@@ -7064,13 +7101,14 @@ impl VirtualMachine {
                     continue;
                 }
 
+                if !members.is_empty() && value == members_source {
+                    continue;
+                }
+
                 let kind = value.js_type();
                 let is_error = kind == JSType::ErrorInstance;
                 let is_cause = is_error && field.eq_ascii(b"cause");
-                // The queue prints no members of an AggregateError. The render in place does.
-                if is_error
-                    && (!prev_had_errors || (is_cause && !value.is_aggregate_error(global_ref)))
-                {
+                if is_error && (!prev_had_errors || is_cause) {
                     if is_cause {
                         saw_cause = true;
                     }
@@ -7178,6 +7216,8 @@ impl VirtualMachine {
                     }
                 }
             }
+
+            errors_to_append.append(&mut members);
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
             let tag = Tag::get_advanced(
@@ -7207,21 +7247,29 @@ impl VirtualMachine {
 
         let mut exception_list = exception_list;
         for &err in &errors_to_append {
-            // Circular-ref guard for cause chains.
-            if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
-                formatter.map_node = Some(node);
+            if !allow_side_effects && (global_ref.has_exception() || formatter.failed) {
+                break;
             }
+            // A member of an AggregateError can be any value. `formatter.format` records the others.
+            let is_error = err.is_cell() && err.js_type() == JSType::ErrorInstance;
+            if is_error {
+                // Circular-ref guard for cause chains.
+                if formatter.map_node.is_none() {
+                    let mut node =
+                        NonNull::new(console_object::formatter::visited::Pool::get_node())
+                            .expect("ObjectPool::get_node always returns a valid heap node");
+                    let data = console_object::formatter::visited::node_data_mut(&mut node);
+                    data.clear();
+                    formatter.map = core::mem::take(data);
+                    formatter.map_node = Some(node);
+                }
 
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
+                let entry = formatter.map.get_or_put(err).expect("unreachable");
+                if entry.found_existing {
+                    writer.write_all(b"\n")?;
+                    pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
+                    continue;
+                }
             }
 
             writer.write_all(b"\n")?;
@@ -7230,7 +7278,7 @@ impl VirtualMachine {
             let over_cap = formatter.depth > formatter.error_chain_max_depth();
             let result: crate::CrateResult<()> = if over_cap {
                 pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
-            } else {
+            } else if is_error {
                 self.print_error_instance_js(
                     err,
                     exception_list.as_deref_mut(),
@@ -7238,10 +7286,23 @@ impl VirtualMachine {
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
+                    true,
                 )
+            } else {
+                self.print_error_from_maybe_private_data(
+                    err,
+                    exception_list.as_deref_mut(),
+                    formatter,
+                    writer,
+                    allow_ansi_color,
+                    allow_side_effects,
+                );
+                Ok(())
             };
             formatter.depth = prev_depth;
-            let _ = formatter.map.remove(&err);
+            if is_error {
+                let _ = formatter.map.remove(&err);
+            }
             result?;
         }
 

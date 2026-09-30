@@ -737,6 +737,27 @@ describe("error event", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Error: l39\n", stderr: "", exitCode: 0 });
   });
+
+  // The render of the members must end at the first member that is already in the render.
+  test("is fired for an error whose cause is an AggregateError that lists itself", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const worker = new Worker(
+           'const agg = new AggregateError([], "agg"); agg.errors = [agg, agg]; throw new Error("top", { cause: agg });',
+           { eval: true },
+         );
+         worker.on("error", error => console.log(error.name + ": " + error.message));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Error: top\n", stderr: "", exitCode: 0 });
+  });
 });
 
 describe("getHeapSnapshot", () => {

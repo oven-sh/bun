@@ -664,42 +664,204 @@ describe.concurrent("an assigned cause", () => {
     });
   });
 
-  // Only an Error-valued `cause` goes to the queue from a nested error. The
-  // queue prints no members of an AggregateError, so that value stays in place.
-  test("a nested error keeps its other values in its property list", async () => {
-    const shapes = {
-      "an Error-valued property that is not the cause": `
-        const mid = new Error("mid");
-        mid.other = new Error("other");
-        throw new Error("top", { cause: mid });`,
-      "a cause that is an AggregateError": `
-        const mid = new Error("mid");
-        mid.cause = new AggregateError([new Error("member")], "agg");
-        throw new Error("top", { cause: mid });`,
-    };
-    const names = Object.keys(shapes);
-    const results = await Promise.all(names.map(name => run(shapes[name])));
-    const seen = Object.fromEntries(
-      names.map((name, i) => [
-        name,
-        {
-          renders: renders(results[i].stderr),
-          inPlace: results[i].stderr.split("\n").filter(line => /^ (other|cause): /.test(line)).length,
-          exitCode: results[i].exitCode,
-        },
-      ]),
-    );
-    expect(seen).toEqual({
-      "an Error-valued property that is not the cause": {
-        renders: ["error: top", "error: mid", "error: other"],
-        inPlace: 1,
-        exitCode: 1,
+  // Only an Error-valued `cause` goes to the queue from a nested error.
+  test("a nested error keeps an Error-valued property that is not the cause in its property list", async () => {
+    const { stderr, exitCode } = await run(`
+      const mid = new Error("mid");
+      mid.other = new Error("other");
+      throw new Error("top", { cause: mid });`);
+    expect({
+      renders: renders(stderr),
+      inPlace: stderr.split("\n").filter(line => /^ other: /.test(line)).length,
+      exitCode,
+    }).toEqual({
+      renders: ["error: top", "error: mid", "error: other"],
+      inPlace: 1,
+      exitCode: 1,
+    });
+  });
+});
+
+// The queue prints an AggregateError itself, then its members. The members
+// pass the visited set and the depth cap of the queue.
+describe.concurrent("an AggregateError in the queue", () => {
+  async function run(source, cwd) {
+    await using proc = Bun.spawn({
+      cmd: cwd ? [bunExe(), source] : [bunExe(), "-e", source],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const renders = output =>
+    output
+      .split("\n")
+      .filter(line => /^\s*(error: |AggregateError: |\[Error \.\.\.\]|\[Circular\])/.test(line))
+      .map(line => line.trim());
+  // One process prints every shape with reportError().
+  async function reported(shapes) {
+    const { stderr, exitCode } = await run(`
+      const shapes = { ${Object.entries(shapes)
+        .map(([name, body]) => `${JSON.stringify(name)}: () => { ${body} }`)
+        .join(",\n")} };
+      for (const [name, make] of Object.entries(shapes)) {
+        console.error("\\nshape: " + name);
+        reportError(make());
+      }`);
+    const seen = {};
+    let current;
+    for (const line of stderr.split("\n")) {
+      if (line.startsWith("shape: ")) seen[line.slice("shape: ".length)] = current = [];
+      else current?.push(...renders(line));
+    }
+    return { seen, exitCode };
+  }
+
+  test("prints its members once", async () => {
+    const withMember = ["error: top", "AggregateError: agg", "error: member"];
+    expect(
+      await reported({
+        "the cause, from the constructor": `
+          return new Error("top", { cause: new AggregateError([new Error("member")], "agg") });`,
+        "the cause of a cause, assigned": `
+          const mid = new Error("mid");
+          mid.cause = new AggregateError([new Error("member")], "agg");
+          return new Error("top", { cause: mid });`,
+        "an own property that is not the cause": `
+          const top = new Error("top");
+          top.other = new AggregateError([new Error("member")], "agg");
+          return top;`,
+        "errors is enumerable": `
+          const agg = new AggregateError([new Error("member")], "agg");
+          Object.defineProperty(agg, "errors", { enumerable: true });
+          return new Error("top", { cause: agg });`,
+        "the same member twice": `
+          const member = new Error("member");
+          return new Error("top", { cause: new AggregateError([member, member], "agg") });`,
+        "no members": `
+          return new Error("top", { cause: new AggregateError([], "agg") });`,
+      }),
+    ).toEqual({
+      seen: {
+        "the cause, from the constructor": withMember,
+        "the cause of a cause, assigned": ["error: top", "error: mid", "AggregateError: agg", "error: member"],
+        "an own property that is not the cause": withMember,
+        "errors is enumerable": withMember,
+        "the same member twice": ["error: top", "AggregateError: agg", "error: member", "error: member"],
+        "no members": ["error: top", "AggregateError: agg"],
       },
-      "a cause that is an AggregateError": {
-        renders: ["error: top", "error: mid", "error: member", "AggregateError: agg"],
-        inPlace: 1,
-        exitCode: 1,
+      exitCode: 1,
+    });
+  });
+
+  test("ends a cycle through its members with [Circular]", async () => {
+    expect(
+      await reported({
+        "it lists itself twice": `
+          const agg = new AggregateError([], "agg");
+          agg.errors = [agg, agg];
+          return new Error("top", { cause: agg });`,
+        "two that list each other": `
+          const a = new AggregateError([], "A");
+          const b = new AggregateError([], "B");
+          a.errors = [b];
+          b.errors = [a];
+          return new Error("top", { cause: a });`,
+      }),
+    ).toEqual({
+      seen: {
+        "it lists itself twice": ["error: top", "AggregateError: agg", "[Circular]", "[Circular]"],
+        "two that list each other": ["error: top", "AggregateError: A", "AggregateError: B", "[Circular]"],
       },
+      exitCode: 1,
+    });
+  });
+
+  test.each(["throw top;", `reportError(top); console.log("after");`])(
+    "a member that holds itself prints [Circular] under its key: %s",
+    async statement => {
+      const { stdout, stderr, exitCode, signalCode } = await run(`
+        const member = new Error("member");
+        member.self = member;
+        const top = new Error("top", { cause: new AggregateError([member], "agg") });
+        ${statement}`);
+      expect({
+        renders: renders(stderr),
+        underKey: stderr.split("\n").filter(line => line.startsWith(" self: [Circular]")).length,
+        stdout,
+        exitCode,
+        signalCode,
+      }).toEqual({
+        renders: ["error: top", "AggregateError: agg", "error: member"],
+        underKey: 1,
+        stdout: statement.startsWith("throw") ? "" : "after\n",
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  test("an enumerable errors that cannot be walked prints as a property", async () => {
+    const { stderr, exitCode } = await run(`
+      const agg = new AggregateError([new Error("unused")], "agg");
+      Object.defineProperty(agg, "errors", { value: 42, enumerable: true });
+      throw new Error("top", { cause: agg });`);
+    expect({
+      renders: renders(stderr),
+      property: stderr.split("\n").filter(line => line.startsWith(" errors: ")),
+      exitCode,
+    }).toEqual({
+      renders: ["error: top", "AggregateError: agg"],
+      property: [" errors: 42,"],
+      exitCode: 1,
+    });
+  });
+
+  test("a wrapped import() prints its build errors", async () => {
+    using dir = tempDir("queued-aggregate-build-errors", {
+      "broken.ts": "const a: = 1;\nconst b = ;\n",
+      "main.js": `
+        try {
+          await import("./broken.ts");
+        } catch (e) {
+          throw new Error("wrap", { cause: e });
+        }`,
+    });
+    const { stderr, exitCode } = await run("main.js", String(dir));
+    expect({
+      errors: stderr.split("\n").filter(line => line.startsWith("error: ")),
+      aggregate: stderr.split("\n").filter(line => line.startsWith("AggregateError: 2 errors building ")).length,
+      exitCode,
+    }).toEqual({
+      errors: ["error: wrap", "error: Unexpected =", "error: Unexpected ;"],
+      aggregate: 1,
+      exitCode: 1,
+    });
+  });
+
+  // The queue stops when an exception is pending.
+  test("Bun.inspect throws when a value of a queued error throws and the queue has more errors", async () => {
+    const { stdout, exitCode, signalCode } = await run(`
+      const attempt = (name, make) => {
+        const failing = new Error("failing");
+        failing.when = Object.assign(new Date(0), { toJSON() { throw new Error("toJSON threw"); } });
+        try {
+          Bun.inspect(make(failing));
+          console.log(name + ": returned");
+        } catch (err) {
+          console.log(name + ": threw " + err.message);
+        }
+      };
+      attempt("two Error-valued properties", failing => Object.assign(new Error("top"), { a: failing, b: new Error("b") }));
+      attempt("a cause and a member", failing =>
+        new Error("top", { cause: new AggregateError([new Error("member")], "agg", { cause: failing }) }));`);
+    expect({ stdout, exitCode, signalCode }).toEqual({
+      stdout: "two Error-valued properties: threw toJSON threw\na cause and a member: threw toJSON threw\n",
+      exitCode: 0,
+      signalCode: null,
     });
   });
 });

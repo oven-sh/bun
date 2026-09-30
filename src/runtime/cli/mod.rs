@@ -1419,6 +1419,10 @@ pub(crate) mod command {
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
         let ctx = init(tag, log)?;
+        // Ahead of every run mode: `parse` returned before the other flags of a lint run were read.
+        if ctx.lint {
+            super::lint_command::exec(ctx);
+        }
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         if ctx.parallel || ctx.sequential {

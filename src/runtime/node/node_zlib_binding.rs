@@ -511,11 +511,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
     /// `view[in_off..in_off + in_len]` out of the stream's own copy of `view`.
     ///
-    /// One JS write becomes several native writes: when the output buffer fills,
-    /// `processCallback` re-sends the same input with `in_off` advanced. So the
-    /// copy holds the whole view and a continuation reads it instead of copying
-    /// the remainder again, which would be quadratic. `in_off == 0` starts a
-    /// fresh input. `None` if the copy cannot be allocated.
+    /// `processCallback` re-sends the same input with `in_off` advanced once per
+    /// output chunk, so copying the remainder per write would be quadratic: the
+    /// copy holds the whole view, and `in_off == 0` is a fresh input.
     fn borrow_input_copy<'a>(
         this: &'a T,
         view: &[u8],
@@ -542,8 +540,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
-    /// The input copy outlives the write, because the next native write may be a
-    /// continuation that reads it; `close()` releases it.
+    /// The input copy outlives it, for a continuation; `close()` releases that.
     fn unpin_pending_buffers(this: &T, this_value: JSValue) {
         let pinned = this.pinned_buffers().replace(0);
         if pinned & 1 != 0 {

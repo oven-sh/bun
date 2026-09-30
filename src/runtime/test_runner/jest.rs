@@ -442,13 +442,15 @@ pub(crate) mod Jest {
         module.put(global_object, b"spyOn", spy_on);
         module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
 
-        let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
+        let vi = JSValue::create_empty_object(global_object, 8 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
         vi.put(global_object, b"mock", mock_module_fn);
         vi.put(global_object, b"spyOn", spy_on);
         vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
         vi.put(global_object, b"resetAllMocks", reset_all_mocks);
         vi.put(global_object, b"clearAllMocks", clear_all_mocks);
+        vi.put(global_object, b"waitFor", jsc::JSFunction::create(global_object, "waitFor", JSMock__jsWaitFor, 2, Default::default()));
+        vi.put(global_object, b"waitUntil", jsc::JSFunction::create(global_object, "waitUntil", JSMock__jsWaitUntil, 2, Default::default()));
         module.put(global_object, b"vi", vi);
 
         fake_timers::put_timers_fns(global_object, jest, vi);
@@ -466,6 +468,8 @@ pub(crate) mod Jest {
         pub(crate) fn JSMock__jsClearAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsResetAllMocks(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsWaitFor(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
+        pub(crate) fn JSMock__jsWaitUntil(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 
     #[bun_jsc::host_fn]

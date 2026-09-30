@@ -12,6 +12,8 @@ import {
   type Mock,
   spyOn,
   test,
+  vi,
+  type WaitForOptions,
   xdescribe,
   xit,
   xtest,
@@ -421,3 +423,17 @@ unknownMatchers.toContainEqual([""]);
 unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
+
+async function waitHelpers() {
+  expectTypeOf(await vi.waitFor(() => 1)).toEqualTypeOf<number>();
+  expectTypeOf(await vi.waitFor(async () => "ready", 500)).toEqualTypeOf<string>();
+  const options: WaitForOptions = { timeout: 500, interval: undefined };
+  expectTypeOf(await vi.waitFor(() => 1, options)).toEqualTypeOf<number>();
+  expectTypeOf(await vi.waitUntil(() => (Math.random() > 0.5 ? { id: 1 } : null))).toEqualTypeOf<{ id: number }>();
+  expectTypeOf(await vi.waitUntil(async () => Math.random() > 0.5)).toEqualTypeOf<true>();
+  // @ts-expect-error the callback is required
+  void vi.waitFor();
+  // @ts-expect-error options is a number or an options object
+  void vi.waitFor(() => 1, "500");
+}
+void waitHelpers;

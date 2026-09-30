@@ -429,7 +429,7 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
 }
 
 #[bun_jsc::host_fn]
-fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
     let arg = frame.arguments_as_array::<1>()[0];
@@ -504,7 +504,7 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     let is_active = unsafe { (*timer_all()).fake_timers.is_active() };
 

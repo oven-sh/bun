@@ -60,6 +60,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "BytecodeOrderRecorder.rs": "jsc/BytecodeOrderRecorder.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
+  "FakeTimers.rs": "runtime/test_runner/timers/FakeTimers.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",
   "h2_frame_parser.rs": "runtime/api/bun/h2_frame_parser.rs",
   "hosted_git_info.rs": "install/hosted_git_info.rs",

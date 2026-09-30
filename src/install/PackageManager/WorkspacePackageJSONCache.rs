@@ -27,9 +27,8 @@ pub struct MapEntry {
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
-    /// Owns the arena that the parser built `root` in: its nodes, its lists
-    /// and its escape-decoded string bytes. Held here so it drops with the
-    /// entry.
+    /// Owns the arena that the parser built the nodes of `root` and its
+    /// escape-decoded string bytes in. Held here so it drops with the entry.
     ///
     /// Public so editors that splice new `Expr` nodes into `root`
     /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)

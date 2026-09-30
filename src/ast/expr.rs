@@ -112,6 +112,15 @@ impl Expr {
 }
 
 impl Expr {
+    /// Deep-clone this subtree into `bump`.
+    ///
+    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
+    /// allocate via `AstAlloc`, which reads the thread's active allocation
+    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
+    /// is bulk-freed while the cloned tree still references the buffers — UAF.
+    /// This entry point installs a `DetachAstHeap` guard so those vecs land on
+    /// global mimalloc. The recursive body goes through `*_no_detach` so we
+    /// don't pay 3 TLS ops per node.
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump)
@@ -1852,22 +1861,6 @@ impl Data {
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
 
 impl Data {
-    /// Deep-clone this subtree into `bump`.
-    ///
-    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
-    /// allocate via `AstAlloc`, which reads the thread's active allocation
-    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
-    /// is bulk-freed while the cloned tree (e.g. `WorkspacePackageJSONCache`)
-    /// still references the buffers — UAF. This entry point installs a
-    /// [`DetachAstHeap`] guard so
-    /// those vecs land on global mimalloc. The guard is installed once here
-    /// and at [`Expr::deep_clone`]; the recursive body goes through
-    /// `*_no_detach` so we don't pay 3 TLS ops per node.
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
-        self.deep_clone_no_detach(bump)
-    }
-
     fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Data, AllocError> {
         let this = *self;
         match &this {

@@ -73,25 +73,29 @@ fn empty_object_expr<D: Dest>(bump: &Bump) -> Expr {
 /// Where the classic tree is built.
 trait Dest {
     fn expr<T: js_ast::expr::IntoExprData>(bump: &Bump, st: T, loc: bun_ast::Loc) -> Expr;
-    fn list<T>(bump: &Bump, cap: usize) -> bun_alloc::AstVec<T>;
+    /// In the active `AstAlloc` state, or on the global heap when there is none.
+    #[inline]
+    fn list<T>(_: &Bump, cap: usize) -> bun_alloc::AstVec<T> {
+        Vec::with_capacity_in(cap, bun_alloc::AstAlloc)
+    }
 }
 
-/// Nodes in the thread-local AST store, lists in the active `AstAlloc` state.
-/// The tree lives until the store resets.
+/// Nodes in the thread-local AST store. The tree lives until the store resets.
 struct InStore;
 
 /// Nodes and lists in the caller's arena. The tree lives as long as the arena,
 /// so an owner that keeps the arena keeps the tree without a copy.
 struct InArena;
 
+/// Nodes in the caller's arena, lists from `AstAlloc`. For an owner with one
+/// arena per document: a list in the arena opens a mimalloc page per list size
+/// in every arena.
+struct NodesInArena;
+
 impl Dest for InStore {
     #[inline]
     fn expr<T: js_ast::expr::IntoExprData>(_: &Bump, st: T, loc: bun_ast::Loc) -> Expr {
         Expr::init(st, loc)
-    }
-    #[inline]
-    fn list<T>(_: &Bump, cap: usize) -> bun_alloc::AstVec<T> {
-        Vec::with_capacity_in(cap, bun_alloc::AstAlloc)
     }
 }
 
@@ -103,6 +107,13 @@ impl Dest for InArena {
     #[inline]
     fn list<T>(bump: &Bump, cap: usize) -> bun_alloc::AstVec<T> {
         bun_alloc::AstAlloc::vec_with_capacity_in_arena(cap, bump)
+    }
+}
+
+impl Dest for NodesInArena {
+    #[inline]
+    fn expr<T: js_ast::expr::IntoExprData>(bump: &Bump, st: T, loc: bun_ast::Loc) -> Expr {
+        Expr::allocate(bump, st, loc)
     }
 }
 
@@ -382,9 +393,9 @@ fn parse_classic(
     Ok(out)
 }
 
-/// [`parse_classic`] with the tree built in `arena`, for an owner that keeps
+/// [`parse_classic`] with the nodes built in `arena`, for an owner that keeps
 /// the arena and the tree.
-fn parse_classic_into_arena(
+fn parse_classic_into_arena<D: Dest>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     arena: &Bump,
@@ -395,14 +406,13 @@ fn parse_classic_into_arena(
         ..opts
     };
     let mut out = parse_impl(source, log, opts, false)?;
-    out.root =
-        match materialize_impl::<InArena>(&out.root, source, arena, opts.was_originally_macro) {
-            Ok(root) => root,
-            Err(e) => {
-                add_too_deeply_nested_error(log, source, out.root.loc);
-                return Err(e);
-            }
-        };
+    out.root = match materialize_impl::<D>(&out.root, source, arena, opts.was_originally_macro) {
+        Ok(root) => root,
+        Err(e) => {
+            add_too_deeply_nested_error(log, source, out.root.loc);
+            return Err(e);
+        }
+    };
     out.tape = None;
     Ok(out)
 }
@@ -561,8 +571,10 @@ pub fn parse_package_json_utf8_with_opts(
     })
 }
 
-/// [`parse_package_json_utf8_with_opts`] with the tree built in `arena`, for
-/// an owner that caches the root beside the arena.
+/// [`parse_package_json_utf8_with_opts`] with the nodes built in `arena`, for
+/// an owner that caches the root beside the arena. The lists go to the global
+/// heap, which nothing frees, so an editor of the root can keep a list past
+/// the arena.
 pub fn parse_package_json_utf8_with_opts_into_arena(
     opts: JSONOptions,
     source: &bun_ast::Source,
@@ -571,11 +583,12 @@ pub fn parse_package_json_utf8_with_opts_into_arena(
 ) -> crate::Result<JsonResult> {
     if source.contents.is_empty() {
         return Ok(JsonResult {
-            root: empty_object_expr::<InArena>(arena),
+            root: empty_object_expr::<NodesInArena>(arena),
             ..Default::default()
         });
     }
-    let out = parse_classic_into_arena(source, log, arena, opts)?;
+    let _global_lists = bun_alloc::ast_alloc::DetachAstHeap::new();
+    let out = parse_classic_into_arena::<NodesInArena>(source, log, arena, opts)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -629,15 +642,17 @@ pub fn parse_env_json(
         }
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(parse_classic_into_arena(&rw_source, log, bump, DOTENV_JSON_OPTS)?.root);
+        return Ok(
+            parse_classic_into_arena::<InArena>(&rw_source, log, bump, DOTENV_JSON_OPTS)?.root,
+        );
     }
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic_into_arena(source, log, bump, DOTENV_JSON_OPTS)?.root)
+            Ok(parse_classic_into_arena::<InArena>(source, log, bump, DOTENV_JSON_OPTS)?.root)
         }
         b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic_into_arena(source, log, bump, DOTENV_JSON_OPTS)?.root)
+            Ok(parse_classic_into_arena::<InArena>(source, log, bump, DOTENV_JSON_OPTS)?.root)
         }
         _ => {
             let word_len = contents

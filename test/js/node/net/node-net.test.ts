@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -3443,5 +3443,40 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stdout).not.toContain("socket-error:");
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
+  });
+});
+
+// `_write()` stores bytes in `_pendingData` while the socket is still connecting,
+// and `_onTimeout` suppressed the timeout whenever `_pendingData` was set. The
+// timer is one-shot and was not refreshed on that path, so the connect-phase
+// timeout never fired. A `lookup` that never answers keeps the socket connecting
+// without sending a packet, so the tests do not depend on the host's routing.
+describe("socket.setTimeout() while the socket is still connecting", () => {
+  const IDLE = 100;
+  const sockets: Socket[] = [];
+
+  afterEach(() => {
+    for (const socket of sockets.splice(0)) socket.destroy();
+  });
+
+  async function whenTimeoutFires(queueAWriteBeforeConnect: boolean) {
+    const socket = connect({ host: "stalled.invalid", port: 80, lookup: () => {} });
+    sockets.push(socket);
+    socket.on("error", () => {});
+    socket.setTimeout(IDLE);
+    if (queueAWriteBeforeConnect) socket.write("GET / HTTP/1.1\r\nHost: example\r\n\r\n");
+    const outcome = await Promise.race([
+      once(socket, "timeout").then(() => "timeout"),
+      Bun.sleep(IDLE * 20).then(() => `no timeout within ${IDLE * 20}ms`),
+    ]);
+    return { outcome, stillConnecting: socket.connecting };
+  }
+
+  it("fires when no write is queued", async () => {
+    expect(await whenTimeoutFires(false)).toEqual({ outcome: "timeout", stillConnecting: true });
+  });
+
+  it("fires when a write was queued before the handshake completed", async () => {
+    expect(await whenTimeoutFires(true)).toEqual({ outcome: "timeout", stillConnecting: true });
   });
 });

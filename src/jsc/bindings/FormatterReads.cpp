@@ -14,6 +14,7 @@
 #include <JavaScriptCore/BooleanObject.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSSet.h>
@@ -61,8 +62,10 @@ extern "C" BunString Bun__FormatterReads__regExpSource(EncodedJSValue encodedVal
     return BunStringEmpty;
 }
 
-// The length of an array, or the own `length` of an `arguments` object.
-// 0 when that is gone or is not a number.
+extern "C" uint64_t Bun__JSObject__nextPresentIndex(EncodedJSValue, uint32_t start);
+
+// The length of an array, or the own `length` of an `arguments` object. When that is
+// gone, an accessor or not a number: one past the last index that is present.
 extern "C" uint64_t Bun__FormatterReads__arrayLength(EncodedJSValue encodedValue, JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
@@ -75,13 +78,22 @@ extern "C" uint64_t Bun__FormatterReads__arrayLength(EncodedJSValue encodedValue
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool hasSlot = object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->length, slot);
     scope.assertNoExceptionExceptTermination();
-    if (!hasSlot || !slot.isValue())
-        return 0;
-    JSValue length = slot.getValue(globalObject, vm.propertyNames->length);
-    if (!length.isNumber())
-        return 0;
-    double number = length.asNumber();
-    return number > 0 ? static_cast<uint64_t>(std::min(number, maxSafeInteger())) : 0;
+    if (hasSlot && slot.isValue()) {
+        JSValue length = slot.getValue(globalObject, vm.propertyNames->length);
+        if (length.isNumber()) {
+            double number = length.asNumber();
+            return number > 0 ? static_cast<uint64_t>(std::min(number, maxSafeInteger())) : 0;
+        }
+    }
+
+    uint64_t end = 0;
+    while (end <= MAX_ARRAY_INDEX) {
+        uint64_t present = Bun__JSObject__nextPresentIndex(encodedValue, static_cast<uint32_t>(end));
+        if (present == std::numeric_limits<uint64_t>::max())
+            break;
+        end = present + 1;
+    }
+    return end;
 }
 
 // The entry count of a Map or a Set. 0 for a WeakMap or a WeakSet, which cannot be listed.
@@ -195,8 +207,9 @@ extern "C" void Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
         forEachLeftInIterator<JSSet>(vm, globalObject, setIterator, ctx, callback);
 }
 
-// `forEachInIterable` for an iterable only its own iterator can list, such as a generator.
-// It gets `budget` steps. True when it had more to give.
+// `forEachInIterable` with the steps bounded: by the length of an array or a typed array,
+// and by `budget` for an iterable only its own iterator can list, such as a generator.
+// True when it had more to give.
 extern "C" bool Bun__FormatterReads__forEachLimited(EncodedJSValue encodedIterable, JSGlobalObject* globalObject, uint32_t budget, void* ctx, void (*callback)(VM*, JSGlobalObject*, void* ctx, EncodedJSValue))
 {
     VM& vm = getVM(globalObject);
@@ -211,16 +224,22 @@ extern "C" bool Bun__FormatterReads__forEachLimited(EncodedJSValue encodedIterab
         return false;
     }
 
+    uint64_t bound = budget;
+    if (auto* array = dynamicDowncast<JSArray>(iterable))
+        bound = array->length();
+    else if (auto* view = dynamicDowncast<JSArrayBufferView>(iterable))
+        bound = view->length();
+
     IterationRecord iterationRecord = iteratorForIterable(globalObject, iterable);
     RETURN_IF_EXCEPTION(scope, false);
 
     bool truncated = false;
-    for (uint32_t visited = 0;; visited++) {
+    for (uint64_t visited = 0;; visited++) {
         JSValue next = iteratorStep(globalObject, iterationRecord);
         RETURN_IF_EXCEPTION(scope, false);
         if (next.isFalse())
             return false;
-        if (visited >= budget) {
+        if (visited >= bound) {
             truncated = true;
             break;
         }

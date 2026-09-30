@@ -94,8 +94,9 @@ pub(super) fn reg_exp_source(value: JSValue) -> BunString {
     Bun__FormatterReads__regExpSource(value)
 }
 
-/// The length of an array, or the own `length` of an `arguments` object. 0
-/// when that is gone or is not a number.
+/// The length of an array, or the own `length` of an `arguments` object. When
+/// that is gone, an accessor or not a number: one past the last index that is
+/// present.
 pub(super) fn array_length(global: &JSGlobalObject, value: JSValue) -> u64 {
     Bun__FormatterReads__arrayLength(value, global)
 }

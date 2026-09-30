@@ -637,3 +637,230 @@ test("a bad record behind the client's Finished does not make a server accept an
   // Node reports the bad record. Its code depends on the cipher, so only the class of the error is fixed.
   assert.match(events[0], isBun ? /^tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT$/ : /^tlsClientError ERR_SSL_/);
 });
+
+// A client calls end() before the first step of its handshake: in the tick of tls.connect(), in the next tick, or
+// inside 'connect'. The ClientHello still leaves before the FIN, so the server answers, and the handshake ends on that
+// answer. The server closes when the FIN arrives. Returns the ordered events of the client.
+async function endBeforeClientHello(
+  when,
+  maxVersion,
+  rejectUnauthorized,
+  { trusted = false, servername = "agent1" } = {},
+) {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const server = tls.createServer({ key, cert, maxVersion }, socket => socket.on("error", () => {}));
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const client = tls.connect({
+    port: server.address().port,
+    host: "127.0.0.1",
+    servername,
+    rejectUnauthorized,
+    maxVersion,
+    ...(trusted && { ca: serverCA }),
+  });
+  if (when === "in the same tick") client.end();
+  else if (when === "in the next tick") process.nextTick(() => client.end());
+  else client.on("connect", () => client.end());
+  for (const event of ["finish", "secureConnect", "end"]) client.on(event, () => events.push(event));
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    resolve();
+  });
+  await promise;
+  server.close();
+  return events;
+}
+
+for (const when of ["in the same tick", "in the next tick", "inside 'connect'"]) {
+  test(`TLSv1.3: end() ${when} still refuses an untrusted certificate`, async () => {
+    assert.deepStrictEqual(await endBeforeClientHello(when, "TLSv1.3", true), [
+      "finish",
+      "error UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "close",
+    ]);
+  });
+
+  test(`TLSv1.3: end() ${when} still refuses a certificate for another name`, async () => {
+    const wrongName = { trusted: true, servername: "another.name" };
+    assert.deepStrictEqual(await endBeforeClientHello(when, "TLSv1.3", true, wrongName), [
+      "finish",
+      "error ERR_TLS_CERT_ALTNAME_INVALID",
+      "close",
+    ]);
+  });
+
+  test(`TLSv1.3: end() ${when} still completes the handshake`, async () => {
+    assert.deepStrictEqual(await endBeforeClientHello(when, "TLSv1.3", false), [
+      "finish",
+      "secureConnect",
+      "end",
+      "close",
+    ]);
+  });
+
+  test(`TLSv1.2: end() ${when} reports the handshake that the server cannot complete`, async () => {
+    // The client cannot send its second flight after the FIN, so the handshake ends when the server closes.
+    assert.deepStrictEqual(await endBeforeClientHello(when, "TLSv1.2", false), [
+      "finish",
+      "end",
+      "error ECONNRESET",
+      "close",
+    ]);
+  });
+}
+
+test("end() inside 'connect' still reports a ClientHello that the client cannot build", async () => {
+  const events = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const server = tls.createServer({ key, cert }, socket => socket.on("error", () => {}));
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  // No protocol version is inside this window, so the first step of the handshake fails.
+  const client = tls.connect({
+    port: server.address().port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.2",
+  });
+  client.on("connect", () => client.end());
+  client.on("secureConnect", () => events.push("secureConnect"));
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    resolve();
+  });
+  await promise;
+  server.close();
+  // OpenSSL and BoringSSL name the reason differently.
+  assert.match(events.join(", "), /^error ERR_SSL_NO_(PROTOCOLS_AVAILABLE|SUPPORTED_VERSIONS_ENABLED), close$/);
+});
+
+test(
+  "end() still sends the FIN when the socket starts to connect again before the shutdown runs",
+  { skip: !isBun && "Node's connect() does not throw for a socket that is already a TLS socket" },
+  async () => {
+    // The shutdown of a client that ends during its handshake runs one turn of the event loop after end(). What
+    // happens to the socket in between must not strand it: here connect() throws and leaves `connecting` set.
+    const peerSaw = Promise.withResolvers();
+    const peer = net.createServer({ allowHalfOpen: true }, socket => {
+      const types = [];
+      socket.on("error", () => {});
+      socket.on("data", data => types.push(data[0]));
+      socket.on("end", () => {
+        peerSaw.resolve(types);
+        socket.end();
+      });
+    });
+    await new Promise(listening => peer.listen(0, "127.0.0.1", listening));
+    const port = peer.address().port;
+    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      const finished = new Promise(done => client.once("finish", done));
+      await new Promise(connected => client.once("connect", connected));
+      client.end();
+      assert.throws(() => client.connect({ port, host: "127.0.0.1" }), /socket must be an instance of net\.Socket/);
+      // 22 is a handshake record: the ClientHello left before the FIN.
+      assert.deepStrictEqual(await peerSaw.promise, [22]);
+      await finished;
+    } finally {
+      client.destroy();
+      peer.close();
+    }
+  },
+);
+
+test("end() inside 'connect' sends the FIN when setImmediate was replaced after node:tls loaded", async () => {
+  const sawFin = Promise.withResolvers();
+  let accepted;
+  const server = net.createServer({ allowHalfOpen: true }, socket => {
+    accepted = socket;
+    socket.on("error", () => {});
+    socket.on("end", () => sawFin.resolve(true));
+    socket.resume();
+  });
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const realSetImmediate = globalThis.setImmediate;
+  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  const ended = new Promise(done =>
+    client.on("connect", () => {
+      // What fake timers do: the callback is kept and never runs.
+      globalThis.setImmediate = () => ({ ref() {}, unref() {}, hasRef: () => false });
+      client.end();
+      done();
+    }),
+  );
+  try {
+    await ended;
+    // A FIN that is due arrives before two new connections have been answered.
+    const noFin = pendingReadsDone()
+      .then(pendingReadsDone)
+      .then(() => false);
+    assert.strictEqual(await Promise.race([sawFin.promise, noFin]), true, "the peer got no FIN");
+  } finally {
+    globalThis.setImmediate = realSetImmediate;
+    client.destroy();
+    accepted?.destroy();
+    server.close();
+  }
+});
+
+test("end() inside 'connect' sends the ClientHello before the FIN", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  let accepted;
+  const server = net.createServer({ allowHalfOpen: true }, socket => {
+    accepted = socket;
+    const received = [];
+    socket.on("error", () => {});
+    socket.on("data", chunk => received.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(received)));
+  });
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  client.on("connect", () => client.end());
+  const beforeFin = await promise;
+  client.destroy();
+  accepted.destroy();
+  server.close();
+  // One complete handshake record: the ClientHello.
+  assert.deepStrictEqual(
+    { type: beforeFin[0], complete: beforeFin.length >= 5 && beforeFin.length === 5 + beforeFin.readUInt16BE(3) },
+    { type: 22, complete: true },
+  );
+});
+
+test("a server that end()s at accept still reports the client that gives up", async () => {
+  // Only a client's FIN waits for the first step of its handshake. A server has no flight to send before it reads
+  // one, so its FIN leaves at once and the client reads the end of the stream.
+  const { promise, resolve } = Promise.withResolvers();
+  const server = tls.createServer({ key, cert }, socket => socket.on("error", () => {}));
+  server.on("connection", socket => {
+    socket.on("error", () => {});
+    socket.end();
+  });
+  server.on("tlsClientError", err => resolve(err.code));
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+
+  const events = [];
+  const closed = Promise.withResolvers();
+  const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  // 'end' is not recorded: whether the client reports it ahead of the error depends on the platform.
+  client.on("secureConnect", () => events.push("secureConnect"));
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    closed.resolve();
+  });
+  const [tlsClientError] = await Promise.all([promise, closed.promise]);
+  server.close();
+  assert.deepStrictEqual(
+    { tlsClientError, client: events },
+    { tlsClientError: "ECONNRESET", client: ["error ECONNRESET", "close"] },
+  );
+});

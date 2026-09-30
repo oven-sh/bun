@@ -5057,6 +5057,7 @@ impl DevServer {
             self.directory_watchers.track_resolution_failure(
                 abs_path,
                 paths::basename(abs_path),
+                bun_ast::ImportKind::Stmt,
                 bake::Graph::Client,
                 Loader::Html,
             )?;

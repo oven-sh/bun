@@ -154,6 +154,100 @@ devTest("import then create", {
     await c.expectMessage("data");
   },
 });
+// An asset attribute and a stylesheet link resolve as CSS import kinds, so the
+// resolver removes a ?query or #fragment. The retry for a missing file uses
+// the import kind that the bundler used.
+const retriedWithCssKind: {
+  name: string;
+  tag: string;
+  error: string;
+  dir?: string;
+  file: string;
+  contents: string;
+}[] = [
+  {
+    name: "img src with query",
+    tag: `<img src="./image.png?v=2">`,
+    error: 'index.html: error: Could not resolve: "./image.png?v=2"',
+    file: "image.png",
+    contents: "FIRST",
+  },
+  {
+    name: "img src with fragment",
+    tag: `<img src="./image.png#frag">`,
+    error: 'index.html: error: Could not resolve: "./image.png#frag"',
+    file: "image.png",
+    contents: "FIRST",
+  },
+  {
+    name: "project-relative img src with query",
+    tag: `<img src="/assets/image.png?v=2">`,
+    error: 'index.html: error: Could not resolve: "/assets/image.png?v=2"',
+    dir: "assets",
+    file: "assets/image.png",
+    contents: "FIRST",
+  },
+  {
+    name: "bare stylesheet href with query",
+    tag: `<link rel="stylesheet" href="styles.css?v=2">`,
+    error: 'index.html: error: Could not resolve: "styles.css?v=2". Maybe you need to "bun install"?',
+    file: "styles.css",
+    contents: "body { color: red; }",
+  },
+];
+for (const { name, tag, error, dir, file, contents } of retriedWithCssKind) {
+  devTest(`html ${name} before create`, {
+    files: {
+      "index.html": `
+        <!DOCTYPE html><html><head></head><body>
+        ${tag}
+        </body></html>
+      `,
+    },
+    async test(dev) {
+      if (dir) dev.mkdir(dir); // (See DevServer.zig "BUN-10968")
+      await using c = await dev.client("/", { errors: [error] });
+      // A change in the watched directory that does not create the file sends nothing.
+      await c.expectNoWebSocketActivity(async () => {
+        await dev.write((dir ? dir + "/" : "") + "unrelated.txt", "x", { errors: null });
+        await dev.delete((dir ? dir + "/" : "") + "unrelated.txt", { errors: null });
+      });
+      await c.expectReload(async () => {
+        await dev.write(file, contents);
+      });
+      if (file.endsWith(".png")) {
+        const url: string = await c.js`document.querySelector("img").src`;
+        await dev.fetch(url).expect.toBe(contents);
+      } else {
+        await c.style("body").color.expect.toBe("red");
+      }
+    },
+  });
+}
+// One html file has records of more than one import kind. The asset needs the
+// CSS rules, and the script needs the JS extensions.
+devTest("html asset and script before create", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img src="./image.png?v=2">
+      <script type="module" src="./app"></script>
+      </body></html>
+    `,
+  },
+  async test(dev) {
+    const image = 'index.html: error: Could not resolve: "./image.png?v=2"';
+    const script = 'index.html: error: Could not resolve: "./app"';
+    await using c = await dev.client("/", { errors: [image, script] });
+    await dev.write("image.png", "FIRST", { errors: [script] });
+    await c.expectReload(async () => {
+      await dev.write("app.ts", `console.log("app ran");`);
+    });
+    await c.expectMessage("app ran");
+    const url: string = await c.js`document.querySelector("img").src`;
+    await dev.fetch(url).expect.toBe("FIRST");
+  },
+});
 devTest("external links", {
   files: {
     "index.html": `

@@ -733,10 +733,11 @@ enum Runs {
 }
 
 /// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the own files that must run before a file of the parent; returns `LinkerContext::entry_imports_in_parent.0`.
-fn files_that_leave_entry_chunk(
-    this: &LinkerContext,
+fn files_that_leave_entry_chunk<'a>(
+    this: &'a LinkerContext,
     entry_id: usize,
     load_class: &mut impl FnMut(&AutoBitSet) -> crate::Result<AutoBitSet>,
+    class_by_key: &mut ArrayHashMap<&'a [u8], AutoBitSet>,
     entered: &mut [u32],
     leaves: &mut AutoBitSet,
     parent_gains_no_import: bool,
@@ -761,22 +762,18 @@ fn files_that_leave_entry_chunk(
     // The own files that the walk is inside of, now and at that file.
     let (mut depth, mut depth_at_cut) = (0, 0);
     let parts_len = |file: u32| this.graph.ast.items_parts()[file as usize].len() as u32;
-    let mut runs_by_key: ArrayHashMap<&[u8], Runs> = ArrayHashMap::new();
     let mut when_chunk_runs = |file: u32| -> crate::Result<Runs> {
-        let key = bits[file as usize].bytes(entry_points_len);
-        if let Some(&known) = runs_by_key.get(&key) {
-            return Ok(known);
-        }
-        let class = load_class(&bits[file as usize])?;
-        let runs = if !class.is_set(entry_id) {
+        let class = match class_by_key.entry(bits[file as usize].bytes(entry_points_len)) {
+            MapEntry::Occupied(known) => known.into_mut(),
+            MapEntry::Vacant(slot) => slot.insert(load_class(&bits[file as usize])?),
+        };
+        Ok(if !class.is_set(entry_id) {
             Runs::BeforeEntry
         } else if class.count() == 1 {
             Runs::WithEntry
         } else {
             Runs::WithOtherEntry
-        };
-        runs_by_key.put(key, runs)?;
-        Ok(runs)
+        })
     };
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
@@ -1219,6 +1216,7 @@ pub(crate) fn merge_small_chunks(
             }
         }
         let entered: &mut [u32] = temp.alloc_slice_fill_copy(files_len, u32::MAX);
+        let mut class_by_key: ArrayHashMap<&[u8], AutoBitSet> = ArrayHashMap::new();
         for entry_id in 0..entry_points_len {
             if precedes.is_set(entry_id)
                 && pin_entry_chunk(entry_id)
@@ -1228,6 +1226,7 @@ pub(crate) fn merge_small_chunks(
                     this,
                     entry_id,
                     &mut load_class,
+                    &mut class_by_key,
                     entered,
                     &mut leaves_entry_chunk,
                     takes_no_fold_under_any_name(entry_id),

@@ -59,7 +59,6 @@ const ruleVars = {
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts
   host_tool_cc: [],
-  shim_crt_decompress: [],
   // source.ts
   dep_build: ["name", "builddir", "buildtype", "targets"],
   dep_cargo: ["name", "manifestdir", "env", "args"],

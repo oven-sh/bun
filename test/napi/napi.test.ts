@@ -1247,6 +1247,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
     });
+
+    // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
+    async function runScriptWith(executable: string, flag: string) {
+      using dir = tempDir("napi-run-script-code-generation", {
+        "fixture.cjs": `
+          const { test_napi_run_script } = require(process.argv[2]);
+          let evaluated, ran;
+          try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
+          try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
+          console.log(JSON.stringify({ evaluated, ran }));
+        `,
+      });
+      await using proc = spawn({
+        cmd: [executable, flag, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    it("is not affected by --disallow-code-generation-from-strings, as in Node.js", async () => {
+      const [node, bun] = await Promise.all([
+        runScriptWith(await nodeExeMatchingAbi(), "--disallow-code-generation-from-strings"),
+        runScriptWith(bunExe(), "--disallow-code-generation-from-strings"),
+      ]);
+      expect(bun).toEqual({ stdout: JSON.stringify({ evaluated: "EvalError", ran: 15 }), stderr: "", exitCode: 0 });
+      expect(bun).toEqual(node);
+    });
+    it("throws with --disallow-code-generation-from-strings=strict", async () => {
+      expect(await runScriptWith(bunExe(), "--disallow-code-generation-from-strings=strict")).toEqual({
+        stdout: JSON.stringify({
+          evaluated: "EvalError",
+          ran: "EvalError: Code generation from strings disallowed for this context",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("napi_get_named_property", () => {

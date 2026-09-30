@@ -1,0 +1,5 @@
+PR: https://github.com/oven-sh/bun/pull/44294
+issue: https://github.com/oven-sh/bun/issues/44292
+status comment id: 5907897851
+branch head at open: 9b8218c1f8 (rebased on 2722608f47)
+fail-before: 20 of 28 new tests fail on main (release build of a4f1429148), lint fails with 7 yarn.rs calls

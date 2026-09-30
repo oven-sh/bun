@@ -538,9 +538,8 @@ private:
                  * strip the next response's body framing. */
                 httpResponseData->resetResponseState();
 
-                /* An ancient (HTTP/1.0) request gets no keep-alive, and no chunked
-                 * framing unless node:http states it. An explicit `Connection: close`
-                 * gets no keep-alive. */
+                /* An ancient (HTTP/1.0) request gets no keep-alive and no chunked
+                 * framing; so does an explicit `Connection: close`. */
                 const bool isAncient = httpRequest->isAncient();
                 if (isAncient) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;

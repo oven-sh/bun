@@ -1794,10 +1794,17 @@ it("object property enumeration scales linearly with property count", () => {
     for (let i = 0; i < n; i++) o["p" + i] = i;
     return o;
   }
-  function timeInspect(o) {
-    const t0 = performance.now();
-    const out = Bun.inspect(o);
-    return { ms: performance.now() - t0, out };
+  // Each timing covers 30,000 properties, so a garbage collection or a preemption is as likely in
+  // one as in the other, and the fastest of a few has neither. A quadratic walk is slow in all of them.
+  function timeInspect(o, times) {
+    let ms = Infinity;
+    let out;
+    for (let round = 0; round < 5; round++) {
+      const t0 = performance.now();
+      for (let i = 0; i < times; i++) out = Bun.inspect(o);
+      ms = Math.min(ms, performance.now() - t0);
+    }
+    return { ms, out };
   }
 
   const small = makeWide(3000);
@@ -1805,8 +1812,8 @@ it("object property enumeration scales linearly with property count", () => {
 
   withoutAggressiveGC(() => {
     Bun.inspect(small); // warm up
-    const s = timeInspect(small);
-    const l = timeInspect(large);
+    const s = timeInspect(small, 10);
+    const l = timeInspect(large, 1);
 
     // Output still lists every property (no behavior change).
     expect(s.out.includes("p2999")).toBe(true);
@@ -1814,7 +1821,7 @@ it("object property enumeration scales linearly with property count", () => {
 
     // Per-property cost must stay roughly constant as n grows 10x. The previous
     // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
-    expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
+    expect(l.ms / s.ms).toBeLessThan(3);
   });
 });
 

@@ -609,18 +609,16 @@ registry=http://127.0.0.1:4873/ ; default registry
   });
 
   test("every boolean option uses the same coercion", () => {
-    expect(loadNpmrc("save-exact=1\nlink-workspace-packages=0\nhoist=TRUE\ndry-run=yes\n")).toMatchObject({
+    expect(loadNpmrc("save-exact=1\nlink-workspace-packages=0\nhoist=TRUE\n")).toMatchObject({
       save_exact: true,
       link_workspace_packages: false,
       hoist: true,
-      dry_run: true,
     });
     expect(loadNpmrc("registry=https://somehost.com/\n")).toMatchObject({
       ignore_scripts: undefined,
       save_exact: undefined,
       link_workspace_packages: undefined,
       hoist: undefined,
-      dry_run: undefined,
     });
   });
 

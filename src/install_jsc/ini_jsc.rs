@@ -124,13 +124,12 @@ impl IniTestingAPIs {
             link_workspace_packages: Option<bool>,
             save_exact: Option<bool>,
             hoist: Option<bool>,
-            dry_run: Option<bool>,
         }
         fn optional_bool(b: Option<bool>) -> JSValue {
             b.map_or(JSValue::UNDEFINED, JSValue::js_boolean)
         }
         impl bun_jsc::js_object::PojoFields for Pojo {
-            const FIELD_COUNT: usize = 10;
+            const FIELD_COUNT: usize = 9;
             fn put_fields(
                 &self,
                 global: &JSGlobalObject,
@@ -163,7 +162,6 @@ impl IniTestingAPIs {
                 )?;
                 put(b"save_exact", optional_bool(self.save_exact))?;
                 put(b"hoist", optional_bool(self.hoist))?;
-                put(b"dry_run", optional_bool(self.dry_run))?;
                 Ok(())
             }
         }
@@ -177,7 +175,6 @@ impl IniTestingAPIs {
             link_workspace_packages: install.link_workspace_packages,
             save_exact: install.exact,
             hoist: install.hoist,
-            dry_run: install.dry_run,
         };
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }

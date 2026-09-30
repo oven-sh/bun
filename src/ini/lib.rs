@@ -120,9 +120,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub use draft::{
-    Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config, npm_config_bool,
-};
+pub use draft::{Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config};
 
 mod draft {
 
@@ -1241,7 +1239,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     /// npm's Boolean coercion: `@npmcli/config` parse-field, then nopt `validateBoolean`.
-    pub fn npm_config_bool(value: &[u8]) -> bool {
+    fn npm_config_bool(value: &[u8]) -> bool {
         let value = bun_core::trim(value, b" \n\r\t");
         if value == b"false" || value == b"null" || value == b"undefined" {
             return false;
@@ -1256,7 +1254,7 @@ mod draft {
     fn npmrc_bool(expr: &Expr) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
-            ExprData::ENull(_) | ExprData::EUndefined(_) => Some(false),
+            ExprData::ENull(_) => Some(false),
             // a single-quoted `'1'` is JSON-parsed to a number, as in ini
             ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
             ExprData::EString(_) => expr.as_utf8_string_literal().map(npm_config_bool),
@@ -1389,7 +1387,9 @@ mod draft {
         }
 
         if let Some(query) = out.as_property(b"dry-run") {
-            if let Some(b) = npmrc_bool(&query.expr) {
+            if let Some(str_) = query.expr.as_utf8_string_literal() {
+                install.dry_run = Some(str_ == b"true");
+            } else if let Some(b) = query.expr.as_bool() {
                 install.dry_run = Some(b);
             }
         }

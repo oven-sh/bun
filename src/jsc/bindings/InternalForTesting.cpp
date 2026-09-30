@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
+#include "NodeEventEmitterPrototype.h"
 #include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
@@ -55,6 +56,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
     }
 
     return JSValue::encode(jsBoolean(false));
+}
+
+// (fresh): EventEmitter.prototype of node:events as native code gets it, or a new object of its class.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_nodeEventEmitterPrototype, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (callFrame->argument(0).isTrue())
+        return JSValue::encode(createNodeEventEmitterPrototype(zigGlobalObject));
+    return JSValue::encode(nodeEventEmitterPrototype(zigGlobalObject));
 }
 
 // Side-effect-free report of whether this binary was compiled with

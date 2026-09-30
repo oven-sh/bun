@@ -575,6 +575,16 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
+/**
+ * `EventEmitter.prototype` of node:events as native code gets it, which does not evaluate the module. With
+ * `fresh`, a new object of the same class: one that nothing has read a method from.
+ */
+export const nodeEventEmitterPrototype: (fresh?: boolean) => import("node:events").EventEmitter = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_nodeEventEmitterPrototype",
+  1,
+);
+
 interface setSocketOptionsFn {
   (socket: Bun.Socket, sendBuffer: 1, size: number): void;
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;

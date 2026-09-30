@@ -97,13 +97,14 @@ describe("udpSocket() receive flags", () => {
   // A connected socket gets the ICMP error on Linux and macOS. Linux reads it
   // from the error queue. macOS gets it from the receive that fails.
   test.skipIf(isWindows)("a connected socket reports ECONNREFUSED as error(socket, error) and stays open", async () => {
-    const closed = await udpSocket({ hostname: "127.0.0.1" });
-    const closedPort = closed.port;
-    closed.close();
+    // A port that refuses the datagrams of this test and that no other process
+    // can bind: a socket connected to another peer holds it.
+    const other = await udpSocket({ hostname: "127.0.0.1" });
+    const holder = await udpSocket({ hostname: "127.0.0.1", connect: { hostname: "127.0.0.1", port: other.port } });
 
-    const { promise, resolve } = Promise.withResolvers<{ argc: number; socket: unknown; code: unknown }>();
+    const { promise, resolve, reject } = Promise.withResolvers<{ argc: number; socket: unknown; code: unknown }>();
     const sender = await udpSocket({
-      connect: { hostname: "127.0.0.1", port: closedPort },
+      connect: { hostname: "127.0.0.1", port: holder.port },
       socket: {
         error(...args: unknown[]) {
           resolve({ argc: args.length, socket: args[0], code: (args[1] as { code?: unknown } | undefined)?.code });
@@ -111,8 +112,9 @@ describe("udpSocket() receive flags", () => {
       },
     });
 
-    // A send can throw the pending ECONNREFUSED before a receive reports it.
     const send = () => {
+      if (sender.closed) return reject(new Error("the socket closed and did not call `error`"));
+      // A send can throw the pending ECONNREFUSED before a receive reports it.
       try {
         sender.send("x");
       } catch {}
@@ -130,6 +132,8 @@ describe("udpSocket() receive flags", () => {
     } finally {
       clearInterval(resend);
       sender.close();
+      holder.close();
+      other.close();
     }
   });
 });

@@ -7445,6 +7445,9 @@ declare module "bun" {
        * rejects, the rejection is reported as an unhandled rejection and does
        * not reach `error`.
        *
+       * Earlier versions of Bun call this handler with the error as the only
+       * argument.
+       *
        * @param error The error. A value that `data` or `drain` throws is passed as thrown.
        */
       error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
@@ -7469,6 +7472,9 @@ declare module "bun" {
        * A promise that `data` or `drain` returns is not awaited. If it
        * rejects, the rejection is reported as an unhandled rejection and does
        * not reach `error`.
+       *
+       * Earlier versions of Bun call this handler with the error as the only
+       * argument.
        *
        * @param error The error. A value that `data` or `drain` throws is passed as thrown.
        */

@@ -133,6 +133,8 @@ const socket = await Bun.udpSocket({
 
 Bun calls the `error` socket handler with the socket and the error when the `data` or `drain` handler throws. The socket stays open.
 
+<Note>Earlier versions of Bun call `error` with the error as the only argument.</Note>
+
 ```ts
 const server = await Bun.udpSocket({
   socket: {

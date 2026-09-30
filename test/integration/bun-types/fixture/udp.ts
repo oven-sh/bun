@@ -108,6 +108,7 @@ const connectedSocketWithHandlers = await Bun.udpSocket({
 expectType(connectedSocketWithHandlers).is<Bun.udp.ConnectedSocket<"buffer">>();
 
 // The example in docs/runtime/networking/udp.mdx: handlers written inline on a connected socket.
+// No check of `socket` here: TypeScript gives it the type of an unconnected socket (https://github.com/oven-sh/bun/issues/44272).
 await Bun.udpSocket({
   connect: {
     hostname: "127.0.0.1",
@@ -116,8 +117,6 @@ await Bun.udpSocket({
   socket: {
     error(socket, error: Bun.SystemError) {
       expectType(error.code).is<string | undefined>();
-      // @ts-expect-error `socket` has the type of an unconnected socket here: https://github.com/oven-sh/bun/issues/44272
-      socket.send("Hello");
     },
   },
 });

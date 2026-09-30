@@ -50,7 +50,7 @@ mod _impl {
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
         /// What `write()` copies for storage a pin cannot hold; else empty.
-        pub input_copy: JsCell<Vec<u8>>,
+        pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -117,7 +117,7 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
-                input_copy: JsCell::new(Vec::new()),
+                input_copy: JsCell::new(Default::default()),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by

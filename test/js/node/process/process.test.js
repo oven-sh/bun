@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -107,6 +107,67 @@ it("process.title with UTF-16 characters", () => {
 
   process.title = "bun";
   expect(process.title).toBe("bun");
+});
+
+// What `ps` / `pgrep -f` see for the current process: /proc/self/cmdline on
+// Linux, the kernel argv block (KERN_PROCARGS2) via `ps` on macOS.
+const osVisibleTitleFixture = `
+  const fs = require("fs");
+  function osCmdline() {
+    if (process.platform === "linux") return fs.readFileSync("/proc/self/cmdline").toString().split("\\0")[0];
+    const { stdout } = Bun.spawnSync(["ps", "-o", "command=", "-p", String(process.pid)]);
+    return stdout.toString().trim();
+  }
+  function osComm() {
+    return process.platform === "linux" ? fs.readFileSync("/proc/self/comm", "utf8").trim() : undefined;
+  }
+`;
+
+it.concurrent.skipIf(!isLinux && !isMacOS)("process.title is visible to ps", async () => {
+  const script = `${osVisibleTitleFixture}
+    const argvBefore = JSON.stringify(process.argv);
+    process.title = "bun-title-renamed";
+    const r1 = { readback: process.title, cmdline: osCmdline(), comm: osComm() };
+    process.title = Buffer.alloc(4096, "x").toString();
+    const r2 = { readback: process.title.length, cmdline: osCmdline(), comm: osComm() };
+    console.log(JSON.stringify({ r1, r2, argvUnchanged: JSON.stringify(process.argv) === argvBefore }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { r1, r2, argvUnchanged } = JSON.parse(stdout);
+  // `ps` on macOS joins the NUL-padded remainder of argv with spaces; only the
+  // leading title is meaningful.
+  expect(r1.readback).toBe("bun-title-renamed");
+  expect(r1.cmdline.trim()).toBe("bun-title-renamed");
+  if (isLinux) expect(r1.comm).toBe("bun-title-renamed".slice(0, 15));
+  // A title longer than the original argv is kept whole in JS but truncated
+  // to the argv block for the OS.
+  expect(r2.readback).toBe(4096);
+  expect(r2.cmdline.length).toBeGreaterThan(0);
+  expect(r2.cmdline.length).toBeLessThan(4096);
+  expect(r2.cmdline).toMatch(/^x+$/);
+  // process.argv reads owned copies, not the rewritten kernel block.
+  expect(argvUnchanged).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent.skipIf(!isLinux && !isMacOS)("--title is visible to ps", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--title=bun-title-from-flag", "-e", `${osVisibleTitleFixture} console.log(osCmdline().trim())`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("bun-title-from-flag");
+  expect(exitCode).toBe(0);
 });
 
 it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {

@@ -1494,7 +1494,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
             // can drop the previous value; box the argv-borrowed slice up
             // front.
-            *cli::Bun__Node__ProcessTitle.lock() = Some(title.into());
+            let mut guard = cli::Bun__Node__ProcessTitle.lock();
+            bun_core::set_process_title(title);
+            *guard = Some(title.into());
         }
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);

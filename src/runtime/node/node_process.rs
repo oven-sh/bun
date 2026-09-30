@@ -201,14 +201,16 @@ mod _impl {
         )
     }
 
-    // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
     extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &BunString) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
+        // Hold the lock across the OS write so concurrent setters serialise.
+        let mut guard = crate::cli::Bun__Node__ProcessTitle.lock();
+        bun_core::set_process_title(&new_title);
         // Assigning into the `Option<Box<[u8]>>` static drops the previous box.
-        *crate::cli::Bun__Node__ProcessTitle.lock() = Some(new_title);
+        *guard = Some(new_title);
     }
 
     // ───────────────────────────── execArgv ─────────────────────────────

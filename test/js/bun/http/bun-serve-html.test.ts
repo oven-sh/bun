@@ -533,7 +533,7 @@ console.log(JSON.stringify(results));
       // request path, which does not close the socket yet, and later requests
       // with its own plugin error body.
       hmr: [
-        { ...firstResponse, closedByServer: expect.any(Boolean) },
+        { ...firstResponse, closedByServer: false },
         { method: "GET", status: 500, contentLength: "12", body: "Plugin Error" },
         { method: "HEAD", status: 500, contentLength: "12", body: "" },
       ],

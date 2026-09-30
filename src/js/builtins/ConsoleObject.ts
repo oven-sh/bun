@@ -677,10 +677,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
 
       const mapIter = isMapIterator(tabularData);
-      let isKeyValue = false;
       let i = 0;
 
-      if (isKeyValue || $isMap(tabularData)) {
+      if ($isMap(tabularData)) {
         const keys = [];
         const values = [];
         let length = 0;

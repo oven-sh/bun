@@ -1734,7 +1734,6 @@ impl RunCommand {
             bstr::BStr::new(display_name),
             bstr::BStr::new(err.name()),
         );
-        bun_core::handle_error_return_trace(err);
         Global::exit(1);
     }
 
@@ -2113,8 +2112,6 @@ impl RunCommand {
         }) {
             Ok(r) => r,
             Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-
                 // an error occurred before the process was spawned
                 #[allow(unused_labels)]
                 'print_error: {

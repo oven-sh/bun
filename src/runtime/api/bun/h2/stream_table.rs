@@ -1,10 +1,4 @@
-//! One session's per-stream state, keyed by stream id.
-//!
-//! Stream ids rise and are never used again, so a session inserts a new key for each stream and
-//! removes it when the stream closes. The entries are dense: a lookup of an absent id and a full
-//! walk cost the same after ten thousand streams as after ten. [`StreamTable::take`] keeps them
-//! dense. It is the only removal, and the container is private, so no site can call the ordered
-//! `ArrayHashMap::remove`, which shifts the entries and builds the index again.
+//! One session's per-stream state by stream id, kept dense: `take`, a swap-removal, is the only removal.
 
 use bun_collections::ArrayHashMap;
 

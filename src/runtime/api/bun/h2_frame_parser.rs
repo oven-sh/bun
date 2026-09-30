@@ -843,8 +843,7 @@ impl Handlers {
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub(crate) use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
-/// `http2StreamTables(parser)` of `bun:internal-for-testing`: the entry count and the walk
-/// length of a session's three stream tables.
+/// `http2StreamTables(parser)` of `bun:internal-for-testing`.
 pub(crate) fn stream_tables_for_testing(
     global: &JSGlobalObject,
     callframe: &CallFrame,
@@ -1314,12 +1313,7 @@ impl H2FrameParser {
     }
 }
 
-/// Walks the streams when the loop body can run JS that opens or closes streams.
-///
-/// `StreamTable::take` moves the last entry into the freed position, so a walk by position
-/// would skip or repeat streams. `init` snapshots the stream ids and `next` looks each one
-/// up: streams removed mid-loop are skipped, streams added mid-loop are not visited, and
-/// nothing is yielded twice. The call sites rely on that (flush / emit-to-all / detach).
+/// Walks a snapshot of the stream ids, so the loop body can run JS that opens or closes streams.
 pub(crate) struct StreamResumableIterator {
     // Note: `streams`
     // is `JsCell`-backed, so a shared backref suffices and the in-loop
@@ -4200,8 +4194,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
                 unsafe { (*stream).free_resources::<false>(self) };
             } else {
-                // No legacy entry, so free_resources did not release the per-stream JS
-                // context root. Release it here so it can be collected.
+                // No legacy entry, so free_resources did not release the JS context root.
                 self.sctx.with_mut(|m| {
                     m.take(stream_id);
                 });

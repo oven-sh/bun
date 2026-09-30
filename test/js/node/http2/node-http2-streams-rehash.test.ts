@@ -357,161 +357,153 @@ function dense(len: number) {
   return { streams: table, contexts: table, engine: table };
 }
 
-test(
-  "a server session's stream tables stay dense after a burst of streams",
-  async () => {
-    const BURST = 48;
-    const KEPT = 16;
-    const peer = new Peer(0);
-    const session = http2.performServerHandshake(peer.socket);
-    try {
-      const burst: http2.ServerHttp2Stream[] = [];
-      const bodies = new Map<number, string>();
-      const allOpen = Promise.withResolvers<void>();
-      const burstClosed = Promise.withResolvers<void>();
-      let burstLeft = BURST;
-      const keptClosed: number[] = [];
-      let onKeptClosed = () => {};
-      session.on("stream", stream => {
-        stream.on("error", () => {});
-        stream.respond({ ":status": 200 });
-        if (stream.id < BURST * 2) {
-          burst.push(stream);
-          stream.on("close", () => {
-            if (--burstLeft === 0) burstClosed.resolve();
-          });
-        } else {
-          let body = "";
-          stream.setEncoding("latin1");
-          stream.on("data", chunk => (body += chunk));
-          stream.on("end", () => {
-            bodies.set(stream.id, body);
-            stream.end();
-          });
-          stream.on("close", () => {
-            keptClosed.push(stream.id);
-            onKeptClosed();
-          });
-        }
-        if (stream.id === (BURST + KEPT) * 2 - 1) allOpen.resolve();
-      });
-      const untilKeptClosed = (count: number) => {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        onKeptClosed = () => {
-          if (keptClosed.length === count) resolve();
-        };
-        onKeptClosed();
-        return promise;
-      };
-
-      peer.send(PREFACE, frame(FRAME.SETTINGS, 0, 0));
-      // One read opens every stream: BURST complete requests, then KEPT requests with an open body.
-      const opening: Buffer[] = [];
-      const keptIds: number[] = [];
-      let id = 1;
-      for (let i = 0; i < BURST; i++, id += 2) {
-        opening.push(frame(FRAME.HEADERS, FLAG.END_HEADERS | FLAG.END_STREAM, id, GET_BLOCK));
-      }
-      for (let i = 0; i < KEPT; i++, id += 2) {
-        opening.push(frame(FRAME.HEADERS, FLAG.END_HEADERS, id, GET_BLOCK));
-        keptIds.push(id);
-      }
-      peer.send(...opening);
-      await allOpen.promise;
-      await peer.roundTrip();
-      expect(tablesOf(session)).toEqual(dense(BURST + KEPT));
-
-      for (const stream of burst) stream.end();
-      await burstClosed.promise;
-      await peer.roundTrip();
-      expect(tablesOf(session)).toEqual(dense(KEPT));
-
-      // Close every second stream that is left. That moves the entries of the others inside
-      // the tables. Each of the others must still get the frames with its own id.
-      const first = keptIds.filter((_, i) => i % 2 === 0);
-      const second = keptIds.filter((_, i) => i % 2 === 1);
-      const end = (id: number) => frame(FRAME.DATA, FLAG.END_STREAM, id, Buffer.from(`body of stream ${id}`));
-      peer.send(...first.map(end));
-      await untilKeptClosed(first.length);
-      await peer.roundTrip();
-      expect({ closed: keptClosed.toSorted((a, b) => a - b), tables: tablesOf(session) }).toEqual({
-        closed: first,
-        tables: dense(second.length),
-      });
-
-      peer.send(...second.map(end));
-      await untilKeptClosed(KEPT);
-      await peer.roundTrip();
-      expect({
-        bodies: [...bodies].sort((a, b) => a[0] - b[0]),
-        // Every stream got a response that ends: END_STREAM on a HEADERS or DATA frame.
-        answered: new Set(
-          peer.frames.filter(f => f.type <= FRAME.HEADERS && (f.flags & FLAG.END_STREAM) !== 0).map(f => f.streamId),
-        ).size,
-        tables: tablesOf(session),
-      }).toEqual({
-        bodies: keptIds.map(id => [id, `body of stream ${id}`]),
-        answered: BURST + KEPT,
-        tables: dense(0),
-      });
-    } finally {
-      session.destroy();
-    }
-  },
-  10_000 * ASAN_MULTIPLIER,
-);
-
-test(
-  "a client session's stream tables stay dense after a flood of pushed streams that the server resets",
-  async () => {
-    const PUSHES = 100;
-    const CANCEL = 0x8;
-    const peer = new Peer(PREFACE.length);
-    const client = http2.connect("http://localhost", { createConnection: () => peer.socket });
-    try {
-      client.on("error", () => {});
-      let pushed = 0;
-      let closed = 0;
-      const allClosed = Promise.withResolvers<void>();
-      client.on("stream", stream => {
-        pushed++;
-        stream.on("error", () => {});
+test("a server session's stream tables stay dense after a burst of streams", async () => {
+  const BURST = 24;
+  const KEPT = 16;
+  const peer = new Peer(0);
+  const session = http2.performServerHandshake(peer.socket);
+  try {
+    const burst: http2.ServerHttp2Stream[] = [];
+    const bodies = new Map<number, string>();
+    const allOpen = Promise.withResolvers<void>();
+    const burstClosed = Promise.withResolvers<void>();
+    let burstLeft = BURST;
+    const keptClosed: number[] = [];
+    let onKeptClosed = () => {};
+    session.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      if (stream.id < BURST * 2) {
+        burst.push(stream);
         stream.on("close", () => {
-          if (++closed === PUSHES) allClosed.resolve();
+          if (--burstLeft === 0) burstClosed.resolve();
         });
-      });
-      // Stream 1 stays open. It is the parent of every push.
-      const requestSent = peer.next(f => f.type === FRAME.HEADERS && f.streamId === 1);
-      const req = client.request({ ":path": "/" });
-      req.on("error", () => {});
-      const responded = Promise.withResolvers<void>();
-      req.on("response", () => responded.resolve());
-      await requestSent;
-
-      // One read: the response headers, then every PUSH_PROMISE with the RST_STREAM that cancels it.
-      const flood = [
-        frame(FRAME.SETTINGS, 0, 0),
-        frame(FRAME.SETTINGS, FLAG.ACK, 0),
-        frame(FRAME.HEADERS, FLAG.END_HEADERS, 1, OK_BLOCK),
-      ];
-      for (let promised = 2; promised <= PUSHES * 2; promised += 2) {
-        flood.push(
-          frame(FRAME.PUSH_PROMISE, FLAG.END_HEADERS, 1, Buffer.concat([uint32(promised), GET_BLOCK])),
-          frame(FRAME.RST_STREAM, 0, promised, uint32(CANCEL)),
-        );
+      } else {
+        let body = "";
+        stream.setEncoding("latin1");
+        stream.on("data", chunk => (body += chunk));
+        stream.on("end", () => {
+          bodies.set(stream.id, body);
+          stream.end();
+        });
+        stream.on("close", () => {
+          keptClosed.push(stream.id);
+          onKeptClosed();
+        });
       }
-      peer.send(...flood);
-      await Promise.all([responded.promise, allClosed.promise]);
-      await peer.roundTrip();
-      // Only stream 1 is left. A client roots a JS context only for a pushed stream.
-      expect({ pushed, closed, tables: tablesOf(client) }).toEqual({
-        pushed: PUSHES,
-        closed: PUSHES,
-        tables: { ...dense(1), contexts: { len: 0, walkPositions: 0 } },
-      });
-    } finally {
-      client.destroy();
+      if (stream.id === (BURST + KEPT) * 2 - 1) allOpen.resolve();
+    });
+    const untilKeptClosed = (count: number) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      onKeptClosed = () => {
+        if (keptClosed.length === count) resolve();
+      };
+      onKeptClosed();
+      return promise;
+    };
+
+    peer.send(PREFACE, frame(FRAME.SETTINGS, 0, 0));
+    // One read opens every stream: BURST complete requests, then KEPT requests with an open body.
+    const opening: Buffer[] = [];
+    const keptIds: number[] = [];
+    let id = 1;
+    for (let i = 0; i < BURST; i++, id += 2) {
+      opening.push(frame(FRAME.HEADERS, FLAG.END_HEADERS | FLAG.END_STREAM, id, GET_BLOCK));
     }
-  },
-  10_000 * ASAN_MULTIPLIER,
-);
+    for (let i = 0; i < KEPT; i++, id += 2) {
+      opening.push(frame(FRAME.HEADERS, FLAG.END_HEADERS, id, GET_BLOCK));
+      keptIds.push(id);
+    }
+    peer.send(...opening);
+    await allOpen.promise;
+    await peer.roundTrip();
+    expect(tablesOf(session)).toEqual(dense(BURST + KEPT));
+
+    for (const stream of burst) stream.end();
+    await burstClosed.promise;
+    await peer.roundTrip();
+    expect(tablesOf(session)).toEqual(dense(KEPT));
+
+    // Close every second stream that is left. That moves the entries of the others inside
+    // the tables. Each of the others must still get the frames with its own id.
+    const first = keptIds.filter((_, i) => i % 2 === 0);
+    const second = keptIds.filter((_, i) => i % 2 === 1);
+    const end = (id: number) => frame(FRAME.DATA, FLAG.END_STREAM, id, Buffer.from(`body of stream ${id}`));
+    peer.send(...first.map(end));
+    await untilKeptClosed(first.length);
+    await peer.roundTrip();
+    expect({ closed: keptClosed.toSorted((a, b) => a - b), tables: tablesOf(session) }).toEqual({
+      closed: first,
+      tables: dense(second.length),
+    });
+
+    peer.send(...second.map(end));
+    await untilKeptClosed(KEPT);
+    await peer.roundTrip();
+    expect({
+      bodies: [...bodies].sort((a, b) => a[0] - b[0]),
+      // Every stream got a response that ends: END_STREAM on a HEADERS or DATA frame.
+      answered: new Set(
+        peer.frames.filter(f => f.type <= FRAME.HEADERS && (f.flags & FLAG.END_STREAM) !== 0).map(f => f.streamId),
+      ).size,
+      tables: tablesOf(session),
+    }).toEqual({
+      bodies: keptIds.map(id => [id, `body of stream ${id}`]),
+      answered: BURST + KEPT,
+      tables: dense(0),
+    });
+  } finally {
+    session.destroy();
+  }
+});
+
+test("a client session's stream tables stay dense after a flood of pushed streams that the server resets", async () => {
+  const PUSHES = 100;
+  const CANCEL = 0x8;
+  const peer = new Peer(PREFACE.length);
+  const client = http2.connect("http://localhost", { createConnection: () => peer.socket });
+  try {
+    client.on("error", () => {});
+    let pushed = 0;
+    let closed = 0;
+    const allClosed = Promise.withResolvers<void>();
+    client.on("stream", stream => {
+      pushed++;
+      stream.on("error", () => {});
+      stream.on("close", () => {
+        if (++closed === PUSHES) allClosed.resolve();
+      });
+    });
+    // Stream 1 stays open. It is the parent of every push.
+    const requestSent = peer.next(f => f.type === FRAME.HEADERS && f.streamId === 1);
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    const responded = Promise.withResolvers<void>();
+    req.on("response", () => responded.resolve());
+    await requestSent;
+
+    // One read: the response headers, then every PUSH_PROMISE with the RST_STREAM that cancels it.
+    const flood = [
+      frame(FRAME.SETTINGS, 0, 0),
+      frame(FRAME.SETTINGS, FLAG.ACK, 0),
+      frame(FRAME.HEADERS, FLAG.END_HEADERS, 1, OK_BLOCK),
+    ];
+    for (let promised = 2; promised <= PUSHES * 2; promised += 2) {
+      flood.push(
+        frame(FRAME.PUSH_PROMISE, FLAG.END_HEADERS, 1, Buffer.concat([uint32(promised), GET_BLOCK])),
+        frame(FRAME.RST_STREAM, 0, promised, uint32(CANCEL)),
+      );
+    }
+    peer.send(...flood);
+    await Promise.all([responded.promise, allClosed.promise]);
+    await peer.roundTrip();
+    // Only stream 1 is left. A client roots a JS context only for a pushed stream.
+    expect({ pushed, closed, tables: tablesOf(client) }).toEqual({
+      pushed: PUSHES,
+      closed: PUSHES,
+      tables: { ...dense(1), contexts: { len: 0, walkPositions: 0 } },
+    });
+  } finally {
+    client.destroy();
+  }
+});

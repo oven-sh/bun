@@ -407,21 +407,30 @@ const backToBackRenegotiationServer = /* js */ `
   server.listen(0, "127.0.0.1", () => console.log(server.address().port));
 `;
 
-function spawnRenegotiationServer(source: string) {
-  return Bun.spawn({
-    cmd: ["node", "-e", source],
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
-  });
-}
-
-async function portOf(server: ReturnType<typeof spawnRenegotiationServer>) {
-  const { value, done } = await server.stdout.getReader().read();
-  if (done) throw new Error("the server exited before it printed its port");
-  return Number(new TextDecoder().decode(value).trim());
-}
+// Each server keeps its state for each connection, so every test below uses the same two processes.
+let pingPongPort: number;
+let backToBackPort: number;
+const refusalServers: Subprocess[] = [];
+beforeAll(async () => {
+  [pingPongPort, backToBackPort] = await Promise.all(
+    [pingPongRenegotiationServer, backToBackRenegotiationServer].map(async source => {
+      const server = Bun.spawn({
+        cmd: ["node", "-e", source],
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+        env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+      });
+      refusalServers.push(server);
+      const { value, done } = await server.stdout.getReader().read();
+      if (done) throw new Error("the server exited before it printed its port");
+      return Number(new TextDecoder().decode(value).trim());
+    }),
+  );
+});
+afterAll(() => {
+  for (const server of refusalServers) server.kill();
+});
 
 // A refusal is not the result of a handshake: no 'secureConnect' reports it.
 it.concurrent.each([
@@ -432,9 +441,7 @@ it.concurrent.each([
 ])(
   "a renegotiation that the client refuses is an 'error' and no 'secureConnect' over $transport (trusted chain: $trusted)",
   async ({ transport, trusted }) => {
-    await using server = spawnRenegotiationServer(pingPongRenegotiationServer);
-    const port = await portOf(server);
-
+    const port = pingPongPort;
     const options = { servername: "localhost", rejectUnauthorized: false, ...(trusted && { ca: tls.cert }) };
     let raw: ReturnType<typeof netConnect> | undefined;
     let socket: ReturnType<typeof tlsConnect>;
@@ -497,16 +504,13 @@ it.concurrent.each([
 it.concurrent.each([true, false])(
   "Bun.connect reports a renegotiation that the client refuses to its handshake handler (error handler: %p)",
   async withErrorHandler => {
-    await using server = spawnRenegotiationServer(pingPongRenegotiationServer);
-    const port = await portOf(server);
-
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     const describe = (error: Error | null | undefined) =>
       error ? `${(error as NodeJS.ErrnoException).code}: ${error.message}` : `${error}`;
     await Bun.connect({
       hostname: "127.0.0.1",
-      port,
+      port: pingPongPort,
       tls: { ca: tls.cert, serverName: "localhost" },
       socket: {
         data(socket, chunk) {
@@ -544,11 +548,9 @@ it.concurrent.each([true, false])(
 );
 
 it("https.request fails with the protocol error when the client refuses a renegotiation", async () => {
-  await using server = spawnRenegotiationServer(backToBackRenegotiationServer);
-  const port = await portOf(server);
   const outcome = Promise.withResolvers<string>();
   const req = httpsRequest(
-    { host: "localhost", port, path: "/", agent: false, ca: tls.cert },
+    { host: "localhost", port: backToBackPort, path: "/", agent: false, ca: tls.cert },
     (res: IncomingMessage) => {
       res.resume();
       res.on("end", () => outcome.resolve(`status ${res.statusCode}`));
@@ -561,9 +563,7 @@ it("https.request fails with the protocol error when the client refuses a renego
 
 // The chain is not trusted and the client accepts that. The refusal must not come back as that certificate verdict.
 it("fetch does not report a certificate error when the client refuses a renegotiation", async () => {
-  await using server = spawnRenegotiationServer(backToBackRenegotiationServer);
-  const port = await portOf(server);
-  const outcome = await fetch(`https://localhost:${port}/`, {
+  const outcome = await fetch(`https://localhost:${backToBackPort}/`, {
     keepalive: false,
     tls: { rejectUnauthorized: false },
   }).then(
@@ -575,8 +575,6 @@ it("fetch does not report a certificate error when the client refuses a renegoti
 
 // In a child process: with no error to report, an assert-enabled build aborts when it makes an Error with no message.
 it("a Valkey client fails its command with the protocol error when the client refuses a renegotiation", async () => {
-  await using server = spawnRenegotiationServer(backToBackRenegotiationServer);
-  const port = await portOf(server);
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -596,7 +594,7 @@ it("a Valkey client fails its command with the protocol error when the client re
     ],
     env: {
       ...bunEnv,
-      SERVER_PORT: String(port),
+      SERVER_PORT: String(backToBackPort),
       SERVER_CERT: tls.cert,
       // An abort of an ASAN build must not spend the test's time on symbols.
       ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),

@@ -73,6 +73,8 @@ class DOMWrapperWorld;
 #include "HTTPHeaderIdentifiers.h"
 #include "BunCommonStrings.h"
 #include "DOMURLBaseCache.h"
+#include "NodeVMOptionNames.h"
+#include "NodeVMSourceOriginCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
@@ -244,6 +246,8 @@ public:
     Bun::CommonStrings commonStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+    Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
+    Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
     size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
@@ -338,6 +342,8 @@ private:
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
     WebCore::DOMURLBaseCache m_urlBaseCache;
+    Bun::NodeVMOptionNames m_nodeVMOptionNames;
+    Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
 
     Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
 

@@ -442,12 +442,16 @@ ipint_simd_i8x16_relaxed_swizzle                  [AVX]
 
 
 # ----------------------------------------------------------------------------
-# JSC IPInt atomics. cmpxchg loop reloads the SIMD accumulator with vmovdqu
-# after the IPInt metadata removal in upstream ef40cabc28d2; gated behind
-# Options::useWasmSIMD().
+# JSC IPInt out-of-line slow paths. They have local labels only, so the scanner
+# counts them as part of the last global symbol in front of them. Since
+# upstream 5ad2bece76 that symbol is the out-of-line memory.atomic.wait64
+# handler (it was ipint_i64_atomic_rmw32_cmpxchg_u). The AVX instructions are
+# the splats of .simd_v128_load{8,16,32,64}_splat_slow_path, which only SIMD
+# opcodes reach. Gate: Options::useWasmSIMD(), which Options.cpp turns off
+# when isX86_64_AVX() is false.
 # (1 symbols)
 # ----------------------------------------------------------------------------
-ipint_i64_atomic_rmw32_cmpxchg_u          [AVX]
+ipint_op_memory_atomic_wait64             [AVX]
 
 
 # ----------------------------------------------------------------------------

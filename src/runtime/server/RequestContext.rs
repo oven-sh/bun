@@ -163,6 +163,8 @@ pub(crate) struct RequestContext<
 
     pub(crate) sendfile: Cell<SendfileContext>,
     pub(crate) range: RangeRequest::Raw,
+    /// The request's `If-Range`, for `do_sendfile`. `None` when `range` is.
+    pub(crate) if_range: Option<Box<[u8]>>,
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
@@ -225,6 +227,7 @@ where
         core::mem::size_of::<Self>()
             + self.request_body_buf.get().capacity()
             + self.response_buf_owned.get().capacity()
+            + self.if_range.as_deref().map_or(0, <[u8]>::len)
             + self.blob.get().memory_cost()
     }
 
@@ -372,6 +375,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 /// monomorphizations share one copy.
 #[inline(never)]
 fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+    if let Body::Value::Locked(locked) = response.get_body_value()
+        && locked.has_consumer()
+    {
+        return;
+    }
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
         response.detach_readable_stream(global_this);
@@ -736,8 +744,13 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit.
+    /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
+        if let Body::Value::Locked(locked) = response.get_body_value()
+            && locked.has_consumer()
+        {
+            return;
+        }
         if let Some(stream) = response.get_body_readable_stream() {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
@@ -1411,6 +1424,9 @@ where
         let resolved_method = method
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
+        let any_req = Self::any_request(req);
+        let range = RangeRequest::raw_from_request(&any_req);
+        let if_range = RangeRequest::if_range_from_request(&any_req, range);
         let slot: *mut Self = this.as_mut_ptr();
         // SAFETY: writing to MaybeUninit slot
         unsafe {
@@ -1423,7 +1439,8 @@ where
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
                 ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
-                range: RangeRequest::raw_from_request(&Self::any_request(req)),
+                range,
+                if_range,
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
@@ -1758,6 +1775,23 @@ where
         true
     }
 
+    /// Bun adds no validators here, so only the handler's `ETag` / `Last-Modified` can match.
+    fn if_range_matches_response(&self) -> bool {
+        let Some(if_range) = self.if_range.as_deref() else {
+            return true;
+        };
+        let Some(headers) = self.response_mut().and_then(|r| r.get_init_headers_mut()) else {
+            return false;
+        };
+        let etag = headers
+            .fast_get(jsc::HTTPHeaderName::ETag)
+            .map(|v| v.to_utf8().into_owned());
+        let last_modified_ms = headers
+            .fast_get(jsc::HTTPHeaderName::LastModified)
+            .and_then(|v| crate::jsc_hooks::parse_http_date(v.to_utf8().slice()));
+        RangeRequest::if_range_matches(if_range, etag.as_deref(), last_modified_ms)
+    }
+
     pub(crate) fn do_sendfile(&self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1911,6 +1945,7 @@ where
             && !user_handles_range
             && is_whole_file
             && self.range != RangeRequest::Raw::None
+            && self.if_range_matches_response()
         {
             match self.range.resolve(stat_size) {
                 RangeRequest::Result::None => {}
@@ -3052,6 +3087,21 @@ where
         true
     }
 
+    #[cold]
+    fn refuse_used_body(&self) {
+        let js_err = self
+            .server()
+            .global_this()
+            .err(
+                jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!(
+                    "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                ),
+            )
+            .to_js();
+        self.run_error_handler(js_err);
+    }
+
     pub(crate) fn do_render_with_body(
         &self,
         value: *mut Body::Value,
@@ -3085,15 +3135,7 @@ where
                 if this.is_aborted_or_ended() {
                     return;
                 }
-                let js_err = global_this
-                    .err(
-                        jsc::ErrorCode::BODY_ALREADY_USED,
-                        format_args!(
-                            "Response body already used. A Response body can only be sent once; create a new Response for each request."
-                        ),
-                    )
-                    .to_js();
-                this.run_error_handler(js_err);
+                this.refuse_used_body();
                 return;
             }
             Body::Value::WTFStringImpl(_) | Body::Value::InternalBlob(_) | Body::Value::Blob(_) => {
@@ -3246,8 +3288,13 @@ where
                     }
                 }
 
-                if lock.on_receive_value.is_some() || lock.task.is_some() {
-                    // someone else is waiting for the stream or waiting for `onStartStreaming`
+                if lock.has_consumer() {
+                    this.refuse_used_body();
+                    return;
+                }
+
+                if lock.task.is_some() {
+                    // The producer waits for `onStartStreaming`.
                     let context = this.script_context();
                     let readable = match value.to_readable_stream(&global_this.js_thread(context)) {
                         Ok(readable) => readable,
@@ -3278,7 +3325,6 @@ where
         this.do_render_blob();
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn write_chunk(
         this: *mut Self,
         stream: &WebCore::streams::Result,
@@ -3317,7 +3363,6 @@ where
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
         let _ref = RequestContextRef::adopt(this);
         // SAFETY: caller passes the live `*mut RequestContext` stored as the
@@ -4288,7 +4333,6 @@ where
         }
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
         // SAFETY: `this` is the registered live `*mut RequestContext`.
         let this = unsafe { &*this };

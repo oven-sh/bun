@@ -163,7 +163,14 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(server_name) = generated.server_name.as_ref() {
-            result.server_name = zbox_into_raw(&server_name.to_owned_slice_z());
+            let server_name = server_name.to_owned_slice_z();
+            // `server_name` is a C string: SNI and the certificate check would see the name up to the NUL.
+            if bun_core::strings::contains_char(server_name.as_bytes(), 0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"serverName\" must not contain null bytes"
+                )));
+            }
+            result.server_name = zbox_into_raw(&server_name);
             result.requires_custom_request_ctx = true;
         }
 

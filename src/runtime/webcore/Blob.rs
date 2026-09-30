@@ -128,7 +128,6 @@ pub(crate) use bun_jsc::generated::JSBlob as js;
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(non_snake_case, clippy::too_many_arguments)]
 pub(crate) trait BlobExt {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
     // `has_content_type_from_user`/`content_type_or_mime_type`/`is_s3`/
@@ -391,7 +390,6 @@ pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
     view.as_ptr()
 }
 
-#[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
@@ -786,9 +784,6 @@ impl BlobExt for Blob {
         let _ = self._on_structured_clone_serialize(&mut writer);
     }
 
-    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
-    // trait signature is fixed, so the deref is documented with the SAFETY comment below.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -1508,7 +1503,6 @@ impl BlobExt for Blob {
                 sink.writer
                     .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
-                #[cfg(windows)]
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 let started = sink.writer.with_mut(|w| {
                     if is_stdout_or_stderr {
@@ -2048,6 +2042,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
                             vm,
+                            None,
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
@@ -2062,6 +2057,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
+                            None,
                         ))
                     }
                 }
@@ -4810,8 +4806,8 @@ pub(crate) fn write_file_internal(
             // SAFETY: scoped shared read of the variant tag.
             let tag = match unsafe { &*body_value } {
                 BodyValue::Error(_) => BodyTag::Error,
-                BodyValue::Locked(_) => BodyTag::Locked,
-                BodyValue::Used => {
+                BodyValue::Locked(locked) if !locked.has_consumer() => BodyTag::Locked,
+                BodyValue::Locked(_) | BodyValue::Used => {
                     destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
@@ -5226,7 +5222,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    _needs_async: &mut bool,
+    needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5244,9 +5240,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5275,9 +5270,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 }
             }
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
@@ -5291,12 +5285,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     }
 
     if truncate {
-        #[cfg(windows)]
-        // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe {
-            bun_sys::windows::kernel32::SetEndOfFile(fd.native())
-        };
-        #[cfg(not(windows))]
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 
@@ -5876,9 +5864,6 @@ pub(crate) struct ToArrayBufferWithBytesFn;
 pub(crate) struct ToUint8ArrayWithBytesFn;
 pub(crate) struct ToFormDataWithBytesFn;
 
-// `ReadFileToJs::call`'s `by: *mut [u8]` is fixed by the trait; each impl forwards
-// it to the matching unsafe `*_with_bytes` body, so the deref is documented there.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
@@ -5893,7 +5878,6 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5907,7 +5891,6 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5923,7 +5906,6 @@ impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5939,7 +5921,6 @@ impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.

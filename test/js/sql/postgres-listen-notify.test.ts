@@ -769,6 +769,34 @@ describe("notify()", () => {
     expect((await settled).map(result => result.status)).toEqual(["rejected", "rejected"]);
     expect(server.liveConnections).toBe(1);
   });
+
+  // notify() on a handle sends through that handle's unsafe().
+  test("rejects on a released reserved handle and on a settled transaction handle, and sends nothing", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    const reserved = await sql.reserve();
+    await reserved.release();
+    let settledTransaction!: Bun.TransactionSQL;
+    await sql.begin(async tx => {
+      settledTransaction = tx;
+    });
+
+    const rejectionCode = (promise: Promise<void>) =>
+      promise.then(
+        () => "resolved",
+        err => err.code ?? err.message,
+      );
+    expect({
+      reserved: await rejectionCode(reserved.notify("ch", "payload")),
+      transaction: await rejectionCode(settledTransaction.notify("ch", "payload")),
+    }).toEqual({
+      reserved: "ERR_POSTGRES_CONNECTION_CLOSED",
+      transaction: "ERR_POSTGRES_CONNECTION_CLOSED",
+    });
+    // The pool has one connection, so a notify that was sent would arrive before this query.
+    await sql.unsafe("SELECT 'barrier'");
+    expect(server.queries).toEqual(["BEGIN", "COMMIT", "SELECT 'barrier'"]);
+  });
 });
 
 describe("in a subprocess", () => {

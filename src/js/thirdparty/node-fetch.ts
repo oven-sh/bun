@@ -277,11 +277,10 @@ async function fetch(
 
 // The native fetch() rejects with the signal's reason. node-fetch rejects with AbortError whatever the reason is.
 function isAbort(error, signal) {
-  return signal?.aborted === true && error === signal.reason;
+  return signal?.aborted === true && Object.is(error, signal.reason);
 }
 
-// The native fetch() reports a transport failure as a TypeError with `errno`. A bad argument, a used body
-// and a failed request body stream do not have one, and node-fetch rejects with those errors as they are.
+// The native fetch() reports a transport failure as a TypeError with `errno`. Other errors pass through as is.
 function isTransportError(error): error is TypeError & { errno: number; code: string; path: string } {
   return error instanceof TypeError && typeof (error as any).errno === "number";
 }

@@ -432,9 +432,11 @@ test("node-fetch fetch() rejects with AbortError when the signal aborts", async 
     message: "The operation was aborted.",
   });
 
-  const preAborted = await fetch2(server.url, { signal: AbortSignal.abort(new Error("custom reason")) }).catch(e => e);
-  expect(preAborted).toBeInstanceOf(AbortError);
-  expect(preAborted.type).toBe("aborted");
+  for (const reason of [new Error("custom reason"), NaN]) {
+    const preAborted = await fetch2(server.url, { signal: AbortSignal.abort(reason) }).catch(e => e);
+    expect(preAborted).toBeInstanceOf(AbortError);
+    expect(preAborted.type).toBe("aborted");
+  }
 
   // A present null signal detaches the Request's signal, as in the native fetch().
   const request = new Request(server.url, { signal: AbortSignal.abort() });

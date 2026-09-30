@@ -9,7 +9,6 @@ import {
   trimRightSpace,
   utf8ToByteString,
 } from "./gostrings";
-import type { CorpusPaths } from "./paths";
 
 // E: the oracle is an error baseline. C: the oracle is no diagnostic, and no baseline. The classes are counted apart and never summed: a check that reports nothing passes all of C and none of E.
 export type OracleClass = "E" | "C";
@@ -24,11 +23,19 @@ export interface Oracle {
   path?: string;
 }
 
-// The places of a corpus that the oracle reads: corpusPaths gives them for a corpus root.
-export type OraclePaths = Pick<
-  CorpusPaths,
-  "typescriptGoBaselines" | "noErrors" | "typescriptBaselines" | "submoduleAccepted" | "submoduleTriaged"
->;
+// The places of a corpus that the oracle reads. This module knows no path below a corpus root: corpusPaths of paths.ts gives these for one.
+export interface OraclePaths {
+  // For each suite, the directory of typescript-go's error baselines: those whose bytes are not TypeScript's or that TypeScript lacks.
+  typescriptGoBaselines: Readonly<Record<string, string>>;
+  // The list NO_ERRORS.txt: a line "<suite>/<name>.errors.txt" where typescript-go reports no error and TypeScript has a baseline.
+  noErrors: string;
+  // The directory of TypeScript's error baselines, both suites in one.
+  typescriptBaselines: string;
+  // The list submoduleAccepted.txt of typescript-go.
+  submoduleAccepted: string;
+  // The list submoduleTriaged.txt of typescript-go.
+  submoduleTriaged: string;
+}
 
 // A panic of baseline.go, with its text.
 export class BaselinePanic extends Error {}

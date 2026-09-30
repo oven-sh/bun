@@ -407,9 +407,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // body can leave no tail to spill.
   const WASM_PAGES = 512;
   const wasmMemoryChild = /* js */ `
-    const http = require("node:http");
-    const net = require("node:net");
-    const { once } = require("node:events");
+    import http from "node:http";
+    import net from "node:net";
+    import { once } from "node:events";
     const PAGES = ${WASM_PAGES}; // 32 MB
     const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 
@@ -430,11 +430,14 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       mem.grow(2);
       detachedAfterGrow = payload.byteLength === 0;
       // Claim the freed block, so that reading it cannot see the caller's bytes.
-      globalThis.claim = Array.from({ length: 2 }, () => {
-        const memory = newMemory();
-        new Uint8Array(memory.buffer).fill(0xee);
-        return memory;
-      });
+      // A plain Uint8Array takes it on a release build, another memory on a debug one.
+      globalThis.claim = Array.from({ length: 4 }, () => new Uint8Array(CHUNK_SIZE).fill(0xee)).concat(
+        Array.from({ length: 2 }, () => {
+          const memory = newMemory();
+          new Uint8Array(memory.buffer).fill(0xee);
+          return memory;
+        }),
+      );
       wrote.resolve();
       res.end(); // spills the pending tail
     });

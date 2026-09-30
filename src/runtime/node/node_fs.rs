@@ -7662,9 +7662,7 @@ impl NodeFS {
                 }
                 args.path.slice_z(inbuf)
             };
-            // Resolve without opening and closing the target, which would
-            // release process-owned POSIX locks.
-            let buf = match Syscall::realpath(path, &mut outbuf) {
+            let buf = match Syscall::realpath_fast(path, &mut outbuf) {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };

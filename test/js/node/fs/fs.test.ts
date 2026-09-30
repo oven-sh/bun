@@ -3255,13 +3255,16 @@ it.if(isPosix)("realpath resolves a symlink before a following parent traversal"
   expect(await promisify(fs.realpath.native)(input)).toBe(expected);
 });
 
-describe.each([
+const posixCc = isPosix ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+const realpathImplementations = [
   ["sync", realpathSync],
   ["sync native", realpathSync.native],
   ["promises", promises.realpath],
   ["callback", promisify(fs.realpath)],
   ["callback native", promisify(fs.realpath.native)],
-] as const)("realpath %s POSIX paths", (_name, realpath) => {
+] as const;
+
+describe.each(realpathImplementations)("realpath %s POSIX paths", (_name, realpath) => {
   // POSIX permits backslashes in filenames; Windows treats them as separators.
   it.skipIf(!isPosix)("preserves literal backslashes instead of resolving a collision", async () => {
     using dir = tempDir("fs-realpath-backslash", {});
@@ -3281,6 +3284,29 @@ describe.each([
       expect(await realpath(input)).toBe(target);
       expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(target));
     }
+  });
+
+  it.skipIf(!isPosix)("counts literal backslashes as one containment-check component", async () => {
+    using dir = tempDir("fs-realpath-backslash-parent", {});
+    const root = String(dir);
+    const jail = join(root, "jail");
+    mkdirSync(join(jail, "up\\x"), { recursive: true });
+    writeFileSync(join(root, "data.txt"), "outside");
+    writeFileSync(join(jail, "data.txt"), "inside");
+    const escapes = `${jail}/up\\x/../../data.txt`;
+
+    expect(readFileSync(escapes, "utf8")).toBe("outside");
+    for (const input of [escapes, `${relative(process.cwd(), jail)}/up\\x/../../data.txt`]) {
+      const resolved = await realpath(input);
+      expect(resolved).toBe(join(root, "data.txt"));
+      expect(resolved.startsWith((await realpath(jail)) + path.sep)).toBe(false);
+      expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(resolved));
+    }
+
+    const literal = join(jail, "..\\secret.txt");
+    await expect((async () => realpath(literal))()).rejects.toMatchObject({ code: "ENOENT" });
+    writeFileSync(literal, "literal");
+    expect(await realpath(literal)).toBe(literal);
   });
 
   // Windows modes cannot remove POSIX read/search permissions; root bypasses them.
@@ -3308,80 +3334,126 @@ describe.each([
       fs.chmodSync(directory, 0o700);
     }
   });
+
+  it.skipIf(process.platform !== "darwin" || !posixCc)("matches F_GETPATH through symlinks and firmlinks", async () => {
+    using dir = tempDir("fs-realpath-fullpath", {
+      "path.c": `
+        #include <fcntl.h>
+        int fd_path(int fd, char *buf) { return fcntl(fd, F_GETPATH, buf); }
+      `,
+      "file.txt": "target",
+    });
+    const root = String(dir);
+    const libraryPath = join(root, "path.dylib");
+    const compile = spawnSync({ cmd: [posixCc!, "-dynamiclib", "-o", libraryPath, join(root, "path.c")], env: bunEnv });
+    expect(compile.stderr.toString()).toBe("");
+    expect(compile.exitCode).toBe(0);
+    const library = dlopen(libraryPath, { fd_path: { args: [FFIType.i32, FFIType.buffer], returns: FFIType.i32 } });
+    try {
+      const file = join(root, "file.txt");
+      const first = join(root, "first");
+      const second = join(root, "second");
+      symlinkSync(file, first);
+      symlinkSync(first, second);
+      const inputs = [file, root, second, "/Users", "/System/Volumes/Data/Users"];
+      for (const input of inputs) {
+        const fd = openSync(input, "r");
+        try {
+          const output = Buffer.alloc(1024);
+          expect(library.symbols.fd_path(fd, output)).toBe(0);
+          const expected = output.subarray(0, output.indexOf(0)).toString();
+          expect(await realpath(input)).toBe(expected);
+          expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(expected));
+        } finally {
+          closeSync(fd);
+        }
+      }
+    } finally {
+      library.close();
+    }
+  });
 });
 
-const darwinCc = process.platform === "darwin" ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
-it.skipIf(!darwinCc)("realpath preserves process-owned POSIX locks", async () => {
-  using dir = tempDir("fs-realpath-posix-lock", {
-    "lock.c": `
+describe.each(realpathImplementations)("realpath %s POSIX locks", (_name, realpath) => {
+  it.skipIf(!posixCc)("preserves process-owned POSIX locks", async () => {
+    using dir = tempDir("fs-realpath-posix-lock", {
+      "lock.c": `
       #include <fcntl.h>
+      #include <errno.h>
       int lock_file(int fd) {
         struct flock lock = { .l_start = 0, .l_len = 0, .l_pid = 0, .l_type = F_WRLCK, .l_whence = SEEK_SET };
-        return fcntl(fd, F_SETLK, &lock);
+        return fcntl(fd, F_SETLK, &lock) == 0 ? 0 : errno;
       }
     `,
-  });
-  const dylibPath = join(String(dir), "lock.dylib");
-  const compile = spawnSync({
-    cmd: [darwinCc!, "-dynamiclib", "-o", dylibPath, join(String(dir), "lock.c")],
-    env: bunEnv,
-  });
-  expect(compile.stderr.toString()).toBe("");
-  expect(compile.exitCode).toBe(0);
-  const library = dlopen(dylibPath, {
-    lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
-  });
-  const implementations = [
-    realpathSync,
-    realpathSync.native,
-    promises.realpath,
-    promisify(fs.realpath),
-    promisify(fs.realpath.native),
-  ];
-
-  const probeWriter = (filePath: string) => {
-    const result = spawnSync({
+    });
+    const dylibPath = join(String(dir), process.platform === "darwin" ? "lock.dylib" : "lock.so");
+    const compile = spawnSync({
       cmd: [
-        bunExe(),
-        "--eval",
-        `
+        posixCc!,
+        ...(process.platform === "darwin" ? ["-dynamiclib"] : ["-shared", "-fPIC"]),
+        "-o",
+        dylibPath,
+        join(String(dir), "lock.c"),
+      ],
+      env: bunEnv,
+    });
+    expect(compile.stderr.toString()).toBe("");
+    expect(compile.exitCode).toBe(0);
+    const library = dlopen(dylibPath, {
+      lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
+    });
+
+    const probeWriter = (filePath: string) => {
+      const result = spawnSync({
+        cmd: [
+          bunExe(),
+          "--eval",
+          `
           const { closeSync, openSync } = require("node:fs");
           const { dlopen, FFIType } = require("bun:ffi");
           const library = dlopen(process.argv[1], {
             lock_file: { args: [FFIType.i32], returns: FFIType.i32 },
           });
           const fd = openSync(process.argv[2], "r+");
-          console.log(library.symbols.lock_file(fd) === 0 ? "acquired" : "busy");
+          const result = library.symbols.lock_file(fd);
+          const { EAGAIN, EACCES } = require("node:os").constants.errno;
+          console.log(result === 0 ? "acquired" : result === EAGAIN || result === EACCES ? "busy" : "error:" + result);
           closeSync(fd);
           library.close();
         `,
-        dylibPath,
-        filePath,
-      ],
-      env: bunEnv,
-    });
-    expect(result.stderr.toString()).toBe("");
-    expect(result.exitCode).toBe(0);
-    return result.stdout.toString().trim();
-  };
+          dylibPath,
+          filePath,
+        ],
+        env: bunEnv,
+      });
+      expect(result.stderr.toString()).toBe("");
+      expect(result.exitCode).toBe(0);
+      return result.stdout.toString().trim();
+    };
 
-  try {
-    for (const [index, impl] of implementations.entries()) {
-      const filePath = join(String(dir), `${index}.lock`);
+    try {
+      const filePath = join(String(dir), "file.lock");
       writeFileSync(filePath, "lock target");
+      const linkPath = join(String(dir), "link.lock");
+      symlinkSync(filePath, linkPath);
       const fd = openSync(filePath, "r+");
       try {
         expect(library.symbols.lock_file(fd)).toBe(0);
         expect(probeWriter(filePath)).toBe("busy");
-        expect(await impl(filePath)).toBe(filePath);
-        expect(probeWriter(filePath)).toBe("busy");
+        for (const input of [filePath, linkPath]) {
+          expect(await realpath(input)).toBe(filePath);
+          expect(probeWriter(filePath)).toBe("busy");
+        }
+        // Closing any ordinary descriptor for this inode must make the probe succeed.
+        closeSync(openSync(filePath, "r"));
+        expect(probeWriter(filePath)).toBe("acquired");
       } finally {
         closeSync(fd);
       }
+    } finally {
+      library.close();
     }
-  } finally {
-    library.close();
-  }
+  });
 });
 
 // The POSIX syscall layer supports every non-Windows target Bun ships, so an

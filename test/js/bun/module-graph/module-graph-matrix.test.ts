@@ -9,7 +9,7 @@
 import { numberOfDFGCompiles } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.ModuleGraph>[0]>;
@@ -937,5 +937,241 @@ describe("ModuleGraph matrix: many concurrent instances", () => {
       for (const g of graphs) g.dispose();
     });
   }
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// 7. error.stack × where the error is read × when it is first read × what became of the graph it
+//    came from. A stack is materialized on first access, or by JSC at the end of a collection that
+//    finds a frame of an unread trace dead; its text must be the same either way, from any reader,
+//    whether the graph whose modules are in the trace is alive, disposed or collected.
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+describe("ModuleGraph matrix: error.stack reader × first read × origin graph", () => {
+  // Throw and catch, and keep every call out of tail position: modules are strict, and a frame a
+  // tail call replaced is not in the trace.
+  const dir = fixture({
+    "origin.mjs": String.raw`export function fail(message) {
+  throw new TypeError(message);
+}
+export function capture(message) {
+  try {
+    fail(message);
+  } catch (error) {
+    return error;
+  }
+}
+// Two errors with the same trace: one to compare, one to find out how it was materialized.
+export function pair(message) {
+  const errors = [capture(message), capture(message)];
+  return errors;
+}
+export function read(error) {
+  const stack = error.stack;
+  return stack;
+}
+`,
+    "other.mjs": String.raw`export function call(pair, message) {
+  const errors = pair(message);
+  if (errors.length !== 2) throw new Error("unreachable");
+  return errors;
+}
+export function read(error) {
+  const stack = error.stack;
+  return stack;
+}
+`,
+    "cells.mjs": String.raw`import { generateHeapSnapshotForDebugging } from "bun:jsc";
+import { join } from "node:path";
+
+const dir = import.meta.dir;
+const trace = process.argv[2];
+const tick = () => new Promise(resolve => setImmediate(resolve));
+// A collection that finds a frame of an unread trace dead makes the stack a string
+// (ErrorInstance::reconcileWeakReferencesAtGCEnd); underDeadFrame() gives every trace such a frame.
+// Back to the event loop first, so nothing on the stack refers to what the cells dropped.
+async function collect() {
+  await tick();
+  Bun.gc(true);
+}
+// graph.run(...args) under a function that is garbage once it returns. Its frame is not one of the
+// graphs' modules, so graphFrames() leaves it out.
+const underDeadFrame = (graph, args) => new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}')(graph, args);
+
+// Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
+// derefs says only that the cell was marked, not that anything holds it; the debugging snapshot has
+// every heap edge and every root, so it answers that.
+function rootReachesProbedGraph() {
+  const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots } = generateHeapSnapshotForDebugging();
+  const className = new Map();
+  for (let i = 0; i < nodes.length; i += 7) className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+  const incoming = new Map();
+  const property = new Map();
+  for (let i = 0; i < edges.length; i += 4) {
+    const [from, to, type, data] = [edges[i], edges[i + 1], edgeTypes[edges[i + 2]], edges[i + 3]];
+    if (!incoming.has(to)) incoming.set(to, []);
+    incoming.get(to).push(from);
+    if (type === "Property" && (edgeNames[data] === "__matrixProbe" || edgeNames[data] === "weak")) property.set(edgeNames[data] + ":" + from, to);
+  }
+  const holder = [...property].find(([key]) => key.startsWith("__matrixProbe:"))?.[1];
+  const weakRef = property.get("weak:" + holder);
+  let graph;
+  for (let i = 0; i < edges.length; i += 4) if (edges[i] === weakRef && className.get(edges[i + 1]) === "ModuleGraph") graph = edges[i + 1];
+  // Taking the snapshot collects first: a graph nothing reaches is gone by now.
+  if (graph === undefined) return false;
+  const rootIds = new Set();
+  for (let i = 0; i < roots.length; i += 3) rootIds.add(roots[i]);
+  const seen = new Set([graph]);
+  const queue = [graph];
+  while (queue.length) {
+    const id = queue.pop();
+    if (rootIds.has(id)) return true;
+    for (const from of incoming.get(id) ?? []) {
+      if (seen.has(from) || className.get(from) === "WeakRef") continue;
+      seen.add(from);
+      queue.push(from);
+    }
+  }
+  return false;
+}
+
+const other = new Bun.ModuleGraph();
+const otherModule = await other.import(join(dir, "other.mjs"));
+
+// Whether the collection materializes a given stack is not up to the test (it does when it finds one
+// of the trace's frames dead), so a cell that is read after the collection gets several pairs, each
+// under its own dead frame, and reports on the first one the collection materialized.
+const CANDIDATES = 4;
+
+// One origin graph per state, and CANDIDATES pairs of errors from it per cell. Everything that refers
+// to the origin is made in here, and only "keep" carries it out. No throwaway closures:
+// run(fn, ...args) passes the arguments.
+async function originIn(gc, cells) {
+  const origin = new Bun.ModuleGraph();
+  const originModule = await origin.import(join(dir, "origin.mjs"));
+  const pairs = [];
+  for (let i = 0; i < cells * CANDIDATES; i++) pairs.push(trace === "origin+other" ? underDeadFrame(other, [otherModule.call, originModule.pair, "boom"]) : underDeadFrame(origin, [originModule.pair, "boom"]));
+  const keep = gc === "none" || gc === "alive" ? { origin, originModule } : gc === "disposed, module held" ? { originModule } : {};
+  if (gc === "disposed, module held" || gc === "collected") origin.dispose();
+  return { pairs, keep, weak: new WeakRef(origin) };
+}
+
+// The header and the frames of the two graphs' modules.
+const graphFrames = stack =>
+  String(stack)
+    .split("\n")
+    .map(line => line.trim().replace(/^at /, ""))
+    .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
+    .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
+
+// How a first read finds a stack, seen on the error's twin (same trace, same dead frame): a
+// prepareStackTrace installed for the read is consulted only if the stack is not a string yet.
+function firstReadPath([, twin]) {
+  let consulted = false;
+  const builtin = Error.prepareStackTrace;
+  Error.prepareStackTrace = () => ((consulted = true), "");
+  try {
+    void twin.stack;
+  } finally {
+    Error.prepareStackTrace = builtin;
+  }
+  return consulted ? "on access" : "early";
+}
+
+// A cell up to the point where the collection may pass over it. A cell with no collection is done here.
+function begin({ gc, firstRead, reader }, { keep, weak }, candidates) {
+  const read = ([error]) => (reader === "origin" ? keep.origin.run(keep.originModule.read, error) : reader === "other" ? other.run(otherModule.read, error) : error.stack);
+  const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined };
+  if (firstRead === "before" || gc === "none") {
+    state.pair = candidates[0];
+    state.path = firstReadPath(state.pair);
+  }
+  if (firstRead === "before") state.before = read(state.pair);
+  return state;
+}
+
+function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, before }) {
+  for (const candidate of pair ? [] : candidates) {
+    pair = candidate;
+    path = firstReadPath(candidate);
+    if (path === "early") break;
+  }
+  const after = read(pair);
+  // "alive": the WeakRef derefs. For an origin that was dropped, a WeakRef that still derefs is not
+  // enough to call it kept (see rootReachesProbedGraph): "rooted" means something really holds it.
+  let origin = weak.deref() === undefined ? "gone" : "alive";
+  if (gc === "collected" && origin === "alive") {
+    globalThis.__matrixProbe = { weak };
+    origin = rootReachesProbedGraph() ? "rooted" : "gone";
+    delete globalThis.__matrixProbe;
+  }
+  return { gc, firstRead, reader, path, stack: graphFrames(after), stable: before === undefined || before === after, origin };
+}
+
+// Every cell is set up first, and one collection passes over all of them.
+const cells = [];
+const kept = [];
+for (const gc of ["none", "alive", "disposed, module held", "collected"]) {
+  const axes = [];
+  for (const firstRead of ["before", "after"])
+    for (const reader of ["origin", "other", "host"]) {
+      if (reader === "origin" && (gc === "disposed, module held" || gc === "collected")) continue; // a disposed graph runs nothing
+      axes.push({ gc, firstRead, reader });
+    }
+  const origin = await originIn(gc, axes.length);
+  kept.push(origin.keep);
+  for (const [index, cell] of axes.entries()) {
+    const state = begin(cell, origin, origin.pairs.slice(index * CANDIDATES, (index + 1) * CANDIDATES));
+    cells.push(gc === "none" ? finish(state) : state);
+  }
+  origin.pairs.length = 0;
+}
+await collect();
+console.log(JSON.stringify(cells.map(state => (state.read ? finish(state) : state))));
+void kept;
+`,
+  });
+
+  const gcs = ["none", "alive", "disposed, module held", "collected"] as const;
+  const frames = {
+    "origin": ["TypeError: boom", "fail origin.mjs:2:13", "capture origin.mjs:6:5", "pair origin.mjs:13:19"],
+    "origin+other": [
+      "TypeError: boom",
+      "fail origin.mjs:2:13",
+      "capture origin.mjs:6:5",
+      "pair origin.mjs:13:19",
+      "call other.mjs:2:18",
+    ],
+  };
+
+  test.concurrent.each(["origin", "origin+other"] as const)("trace through %s", async trace => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "cells.mjs"), trace],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    const expected = [];
+    for (const gc of gcs)
+      for (const firstRead of ["before", "after"])
+        for (const reader of ["origin", "other", "host"]) {
+          if (reader === "origin" && (gc === "disposed, module held" || gc === "collected")) continue;
+          expected.push({
+            gc,
+            firstRead,
+            reader,
+            // Only an unread stack that collections passed over is materialized by one.
+            path: firstRead === "after" && gc !== "none" ? "early" : "on access",
+            stack: frames[trace],
+            stable: true,
+            origin: gc === "collected" ? "gone" : "alive",
+          });
+        }
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });

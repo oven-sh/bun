@@ -56,7 +56,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -113,7 +113,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -181,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -225,7 +225,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;

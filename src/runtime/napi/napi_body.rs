@@ -109,12 +109,12 @@ unsafe extern "C" {
     /// Returns the previous value.
     fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
     /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns when `can_call_into_js()` is false.
-    fn NapiEnv__checkCanCallIntoJS(env: *mut NapiEnv) -> NapiStatus;
+    fn NapiEnv__checkCanCallIntoJS(env: *mut NapiEnv) -> napi_status;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
     fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
-    fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
+    fn napi_set_last_error(env: napi_env, status: napi_status) -> napi_status;
     fn NapiUngatedScope__construct(storage: *mut c_void, env: *mut NapiEnv);
     fn NapiUngatedScope__destruct(storage: *mut c_void);
 }
@@ -135,7 +135,12 @@ impl NapiEnv {
     /// accessed by napi_get_last_error_info
     pub(crate) fn set_last_error(self_: Option<&Self>, err: NapiStatus) -> napi_status {
         // SAFETY: napi_set_last_error accepts null env.
-        unsafe { napi_set_last_error(self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()), err) }
+        unsafe {
+            napi_set_last_error(
+                self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()),
+                err as napi_status,
+            )
+        }
     }
 
     /// Convenience wrapper for set_last_error(.ok)
@@ -192,10 +197,12 @@ impl NapiEnv {
     /// Node's `can_call_into_js()` gate. `Err` is the status Node returns, set as the last error.
     pub(crate) fn check_can_call_into_js(&self) -> Result<(), napi_status> {
         // SAFETY: env is non-null; C++ side is read-only here.
-        match unsafe { NapiEnv__checkCanCallIntoJS(self.as_mut_ptr()) } {
-            NapiStatus::ok => Ok(()),
-            status => Err(Self::set_last_error(Some(self), status)),
+        let status = unsafe { NapiEnv__checkCanCallIntoJS(self.as_mut_ptr()) };
+        if status == NapiStatus::ok as napi_status {
+            return Ok(());
         }
+        // SAFETY: env is non-null.
+        Err(unsafe { napi_set_last_error(self.as_mut_ptr(), status) })
     }
 
     /// Assert that we're not currently performing garbage collection
@@ -441,33 +448,36 @@ impl napi_typedarray_type {
     }
 }
 
+/// The `napi_status` values (js_native_api_types.h) Rust produces. A status that comes from C++ is a
+/// `napi_status`, the integer: it can be any of them. The ones commented out are the values Rust
+/// does not produce yet; uncomment one to use it.
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum NapiStatus {
+pub(crate) enum NapiStatus {
     ok = 0,
     invalid_arg = 1,
     object_expected = 2,
-    string_expected = 3,
-    name_expected = 4,
+    // string_expected = 3,
+    // name_expected = 4,
     function_expected = 5,
-    number_expected = 6,
-    boolean_expected = 7,
+    // number_expected = 6,
+    // boolean_expected = 7,
     array_expected = 8,
     generic_failure = 9,
     pending_exception = 10,
     cancelled = 11,
     escape_called_twice = 12,
-    handle_scope_mismatch = 13,
-    callback_scope_mismatch = 14,
+    // handle_scope_mismatch = 13,
+    // callback_scope_mismatch = 14,
     queue_full = 15,
     closing = 16,
-    bigint_expected = 17,
-    date_expected = 18,
-    arraybuffer_expected = 19,
-    detachable_arraybuffer_expected = 20,
-    would_deadlock = 21,
-    no_external_buffers_allowed = 22,
-    cannot_run_js = 23,
+    // bigint_expected = 17,
+    // date_expected = 18,
+    // arraybuffer_expected = 19,
+    // detachable_arraybuffer_expected = 20,
+    // would_deadlock = 21,
+    // no_external_buffers_allowed = 22,
+    // cannot_run_js = 23,
 }
 
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
@@ -1946,9 +1956,6 @@ impl napi_async_work {
         }))
     }
 
-    // Forwards `this` to `heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
@@ -2674,7 +2681,6 @@ impl ThreadSafeFunction {
     /// The threadsafe function's queue drain is a dispatcher: each queued call
     /// is a JS entry of its own, so what one leaves pending is folded per call
     /// (`dispatch_one`) and the drain goes on; the VM's termination ends it.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop
         // dispatch; `env_dead` is atomic so a shared reborrow suffices.
@@ -5457,18 +5463,8 @@ impl NapiFinalizerTask {
     }
 
     pub(crate) fn schedule(self: Box<Self>) {
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-
-        // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
-        // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
-        // from C++; "main thread" is determined by whether the thread-local VM
-        // holder is populated.
-        // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
-        let vm: &VirtualMachine = global_this.bun_vm();
-        let is_main_thread = VirtualMachine::get_or_null().is_some();
-
-        if !is_main_thread {
+        // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
+        if VirtualMachine::get_or_null().is_none() {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
             // already torn down the finalizer can never run; free the task but
@@ -5490,6 +5486,10 @@ impl NapiFinalizerTask {
             }
             return;
         }
+
+        // SAFETY: env is valid (held by NapiEnvRef).
+        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
+        let vm: &VirtualMachine = global_this.bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
@@ -5517,9 +5517,6 @@ impl NapiFinalizerTask {
         }
     }
 
-    // Forwards `this` to `heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
         let mut this_box = unsafe { bun_core::heap::take(this) };

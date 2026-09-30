@@ -1155,6 +1155,44 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.write_head_and_end_impl::<false, 4>(global_object, callframe, |arguments| {
+            // write_or_end reads (chunk, encoding, _, strictContentLength).
+            [
+                arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),
+                arguments.get(4).copied().unwrap_or(JSValue::UNDEFINED),
+                JSValue::UNDEFINED,
+                arguments.get(5).copied().unwrap_or(JSValue::UNDEFINED),
+            ]
+        })
+    }
+
+    /// `writeHeadAndEnd` with the framed trailer section of the response as one more argument.
+    pub(crate) fn write_head_and_end_with_trailers(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        self.write_head_and_end_impl::<true, 5>(global_object, callframe, |arguments| {
+            // write_or_end reads (chunk, encoding, _, strictContentLength, trailerSection).
+            [
+                arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),
+                arguments.get(4).copied().unwrap_or(JSValue::UNDEFINED),
+                JSValue::UNDEFINED,
+                arguments.get(5).copied().unwrap_or(JSValue::UNDEFINED),
+                arguments.get(8).copied().unwrap_or(JSValue::UNDEFINED),
+            ]
+        })
+    }
+
+    /// `end_args` picks the arguments of `write_or_end` out of those of the call. It gives an
+    /// array, not a slice: a slice puts its length into the state of the cork callback.
+    #[inline(always)]
+    fn write_head_and_end_impl<const WITH_TRAILERS: bool, const END_ARGS: usize>(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+        end_args: impl FnOnce(&[JSValue]) -> [JSValue; END_ARGS],
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
 
         // Same gate as cork(): the old flow threw ERR_STREAM_ALREADY_FINISHED
@@ -1182,13 +1220,7 @@ impl NodeHTTPResponse {
             .copied()
             .filter(|v| v.is_number())
             .map_or(0, |v| v.to_u32());
-        // write_or_end::<true> reads (chunk, encoding, _, strictContentLength).
-        let end_args = [
-            arguments.get(3).copied().unwrap_or(JSValue::UNDEFINED),
-            arguments.get(4).copied().unwrap_or(JSValue::UNDEFINED),
-            JSValue::UNDEFINED,
-            arguments.get(5).copied().unwrap_or(JSValue::UNDEFINED),
-        ];
+        let end_args = end_args(arguments);
         let this_value = callframe.this();
 
         // BACKREF: same keep-alive pattern as cork() — either phase can reach
@@ -1208,7 +1240,7 @@ impl NodeHTTPResponse {
                     keep_alive_timeout_secs,
                 )?;
                 this.resume_socket();
-                this.write_or_end::<true>(global_object, &end_args, this_value)
+                this.write_or_end::<true, WITH_TRAILERS>(global_object, &end_args, this_value)
             };
             if let Some(raw_response) = raw_response {
                 raw_response.corked(|| {
@@ -1966,7 +1998,8 @@ impl NodeHTTPResponse {
         js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
     }
 
-    fn write_or_end<const IS_END: bool>(
+    /// `WITH_TRAILERS`: `arguments[4]` is the framed trailer section of the response.
+    fn write_or_end<const IS_END: bool, const WITH_TRAILERS: bool>(
         &self,
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
@@ -2059,6 +2092,23 @@ impl NodeHTTPResponse {
             }
         }
         // string_or_buffer drops at scope exit.
+
+        // One byte for each char: Node writes the section with encoding 'latin1' (lib/_http_outgoing.js).
+        let trailer_view;
+        let trailer_narrowed;
+        let trailer_section: &[u8] =
+            if WITH_TRAILERS && arguments.len() > 4 && arguments[4].is_string() {
+                trailer_view = arguments[4].to_js_string_view(global_object)?;
+                if trailer_view.is_8bit() {
+                    trailer_view.latin1()
+                } else {
+                    use crate::webcore::encoding::BunStringEncode as _;
+                    trailer_narrowed = trailer_view.encode(crate::node::Encoding::Latin1);
+                    &trailer_narrowed
+                }
+            } else {
+                &[]
+            };
 
         if self.is_requested_completed_or_ended() {
             return err_throw(
@@ -2161,7 +2211,9 @@ impl NodeHTTPResponse {
             raw_response.clear_timeout();
             self.update_flags(|f| f.insert(Flags::ENDED));
             let raw_response = self.writer().unwrap();
-            if !state.is_http_write_called() || !bytes.is_empty() {
+            if WITH_TRAILERS && !trailer_section.is_empty() {
+                raw_response.end_with_trailers(bytes, trailer_section);
+            } else if !state.is_http_write_called() || !bytes.is_empty() {
                 raw_response.end(bytes, state.is_http_connection_close());
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
@@ -2417,7 +2469,7 @@ impl NodeHTTPResponse {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        self.write_or_end::<false>(global_object, arguments, JSValue::ZERO)
+        self.write_or_end::<false, false>(global_object, arguments, JSValue::ZERO)
     }
 
     fn on_auto_flush(&self) -> bool {
@@ -2493,7 +2545,18 @@ impl NodeHTTPResponse {
         let arguments = callframe.arguments();
         // We dont wanna a paused socket when we call end, so is important to resume the socket
         self.resume_socket();
-        self.write_or_end::<true>(global_object, arguments, callframe.this())
+        self.write_or_end::<true, false>(global_object, arguments, callframe.this())
+    }
+
+    /// `end` with the framed trailer section of the response as one more argument.
+    pub(crate) fn end_with_trailers(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+        self.resume_socket();
+        self.write_or_end::<true, true>(global_object, arguments, callframe.this())
     }
 
     /// `handle.takeRawHeaders()` — this request's captured header section

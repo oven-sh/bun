@@ -6076,6 +6076,48 @@ it("connectionListener queues pipelined responses like Node", async () => {
   }
 });
 
+it("connectionListener sends response trailers like Node", async () => {
+  // The trailers follow the last chunk as latin-1 bytes, and they make end(chunk) send a chunked
+  // body. The second response is queued behind the first one when it ends.
+  const server = createServer((req, res) => {
+    if (req.url === "/done") return void res.end("done");
+    res.setHeader("Trailer", "x-t");
+    res.addTrailers({ "x-t": "caf\u00e9" });
+    if (req.url === "/write-end") {
+      res.write("body");
+      res.end();
+    } else {
+      res.end("body");
+    }
+  });
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  try {
+    const out = await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      clientSide.on("data", d => {
+        buf += d.toString("latin1");
+        // The last response is behind everything that the first two send.
+        if (buf.endsWith("done")) resolve(buf);
+      });
+      clientSide.on("error", reject);
+      clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
+      clientSide.write(
+        "GET /write-end HTTP/1.1\r\nHost: x\r\n\r\nGET /end HTTP/1.1\r\nHost: x\r\n\r\nGET /done HTTP/1.1\r\nHost: x\r\n\r\n",
+      );
+    });
+    const head = "HTTP/1.1 200 OK\r\n";
+    const keepAlive = "Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n";
+    const withTrailers = `${head}Trailer: x-t\r\n${keepAlive}Transfer-Encoding: chunked\r\n\r\n4\r\nbody\r\n0\r\nx-t: caf\u00e9\r\n\r\n`;
+    expect(out.replace(/Date: [^\r]+\r\n/g, "")).toBe(
+      withTrailers + withTrailers + `${head}${keepAlive}Content-Length: 4\r\n\r\ndone`,
+    );
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});
+
 describe("a pipelined request whose body continues after the previous response ends", () => {
   // uws keeps one request body handler per connection. The pipelined request
   // arms it while the earlier response is still pending; that response ending

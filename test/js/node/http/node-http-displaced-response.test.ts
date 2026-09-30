@@ -121,6 +121,27 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
   );
 
   test(
+    "does not leave its trailers to the response that has the connection",
+    async () => {
+      expect(await run("connected-trailers", transport)).toEqual({
+        results: triggers.map(trigger => ({
+          trigger,
+          late: "returned",
+          pending: false,
+          regranted: false,
+          thirdQueued: true,
+          bodies: ["second-body", "third-body"],
+          errors: [],
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
     "a response that native code completed does not keep the process alive after it is replaced",
     async () => {
       expect(await run("completed-but-pending", transport)).toEqual({
@@ -159,6 +180,24 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     async () => {
       expect(await run("draining", transport)).toEqual({
         results: [{ displaced: true, pending: false, receivedAtLeastTheWrite: true }],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  // The frame of the WebSocket is all that follows the 101, and end() does the same with trailers as without.
+  test(
+    "the response of the request that a WebSocket adopted can end with trailers",
+    async () => {
+      expect(await run("upgraded", transport)).toEqual({
+        results: ["end", "addTrailers+end"].map(use => ({
+          use,
+          result: "threw ERR_STREAM_ALREADY_FINISHED",
+          afterSwitch: Buffer.from("\x81\x05hello", "latin1").toString("hex"),
+        })),
         stderr: "",
         exitCode: 0,
         signalCode: null,

@@ -147,10 +147,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * forces the close as soon as the buffer has flushed (Node's
          * socketOnEnd -> socket.end()). */
         HTTP_NODE_RECEIVED_FIN = 1 << 15,
-        /* NodeHttpResponseData::nodeHttpResponseTrailers is non-empty. Mirrored
-         * into the shared word so the shared response-end path (internalEnd) never
-         * has to touch the node-only field. */
-        HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
         /* Close this connection the next time it is idle (no request being
          * received, no response in flight or queued). Set by
          * App::closeIdle(true) on connections that were busy during a graceful
@@ -183,23 +179,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
-     * what keeps a 204/304 (HTTP_NO_BODY_STATUS), a close-delimited body or a
-     * previous response's trailers from leaking into the next request on a
-     * keep-alive socket; only the connection-scoped bits are carried over. */
+     * what keeps a 204/304 (HTTP_NO_BODY_STATUS) or a close-delimited body from
+     * leaking into the next request on a keep-alive socket; only the
+     * connection-scoped bits are carried over. */
     void resetResponseState() {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
         /* A response is in flight again (a new request dispatched, or a queued
          * pipelined response activated), so the connection is not idle. */
         this->isIdle = false;
-    }
-
-    /* Set or clear a flag from a runtime bool. */
-    void setFlag(uint32_t flag, bool value) {
-        if (value) {
-            state |= flag;
-        } else {
-            state &= ~flag;
-        }
     }
 
     /* Shared context pointer for onAborted/onTimeout/onData */
@@ -286,12 +273,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
-    /* Trailer fields set via response.addTrailers(), pre-rendered as
-     * "name: value\r\n" lines. Written between the terminating 0 chunk and the
-     * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces
-     * chunked framing for the response body. HTTP_NODE_HAS_RESPONSE_TRAILERS in
-     * the shared flags word mirrors !empty(). */
-    std::string nodeHttpResponseTrailers;
     /* Raw bytes of the trailer section received after the final 0-size chunk
      * of the current request's chunked body, including its terminating CRLF.
      * Cleared when a new request is dispatched; consumed by the JS layer when

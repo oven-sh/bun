@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
@@ -1071,6 +1072,26 @@ test("Trailer response header is allowed on a chunked response", async () => {
   expect(raw.includes(Buffer.from([0xc3, 0xa9]))).toBe(false);
 });
 
+// JSC keeps a string as 8-bit or as 16-bit. TextDecoder gives a 16-bit one, and both must be one byte for each char.
+test("a trailer value in a 16-bit string is written as latin-1 bytes", async () => {
+  const eightBit = "caf\u00e9-\u0080\u00ff";
+  const sixteenBit = new TextDecoder("utf-16le").decode(new Uint16Array([0x63, 0x61, 0x66, 0xe9, 0x2d, 0x80, 0xff]));
+  expect(sixteenBit).toBe(eightBit);
+  expect(jscDescribe(eightBit)).toContain("8Bit:(1)");
+  expect(jscDescribe(sixteenBit)).toContain("8Bit:(0)");
+  for (const value of [eightBit, sixteenBit]) {
+    const { raw, thrown } = await collectResponse((req, res) => {
+      res.write("ok");
+      res.addTrailers({ "x-t": value });
+      res.end();
+    });
+    expect(thrown).toBeNull();
+    expect(raw.subarray(raw.indexOf("\r\n\r\n") + 4).toString("hex")).toBe(
+      Buffer.from(`2\r\nok\r\n0\r\nx-t: ${eightBit}\r\n\r\n`, "latin1").toString("hex"),
+    );
+  }
+});
+
 test("Trailer response header is allowed with an explicit Transfer-Encoding: chunked", async () => {
   const { raw, thrown } = await collectResponse((req, res) => {
     res.writeHead(200, { Trailer: "X-Foo", "Transfer-Encoding": "chunked" });
@@ -1100,6 +1121,65 @@ test("Trailer response header on a body-less status throws ERR_HTTP_TRAILER_INVA
     expect(thrown).toBe("ERR_HTTP_TRAILER_INVALID");
     expect(raw.toString("latin1")).not.toMatch(/^trailer:/im);
   }
+});
+
+// Like Node.js, end() reads the trailers when it writes the end of the body, so after the
+// writeHead() that it makes itself. Middleware in the style of on-headers adds them from there.
+// Node.js v26.3.0 sends the same bytes.
+test("trailers that a patched writeHead() adds during end() are sent", async () => {
+  const { raw, thrown } = await collectResponse((req, res) => {
+    const writeHead = res.writeHead;
+    res.writeHead = function (...args: any[]) {
+      this.setHeader("Trailer", "X-Foo");
+      this.addTrailers({ "X-Foo": "bar" });
+      return writeHead.apply(this, args);
+    };
+    res.end("body");
+  });
+  expect(thrown).toBeNull();
+  expect(raw.toString("latin1").replace(/Date: [^\r]+\r\n/, "")).toBe(
+    "HTTP/1.1 200 OK\r\nTrailer: X-Foo\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "4\r\nbody\r\n0\r\nX-Foo: bar\r\n\r\n",
+  );
+});
+
+// res.end() hands the trailers to the native response with the call that sends them. An end()
+// that throws sends nothing, so it must leave no trailer behind for the end() that follows.
+// Node.js v26.3.0 sends the same bytes. It names the bad status code ERR_HTTP_INVALID_STATUS_CODE.
+describe("an end() that throws keeps no trailer for the next end()", () => {
+  test.each([
+    {
+      reason: "an unknown chunk encoding",
+      failingEnd: (res: any) => res.end("body", "not-an-encoding"),
+      error: { name: "TypeError", code: "ERR_UNKNOWN_ENCODING" },
+    },
+    {
+      reason: "a status code out of range",
+      failingEnd: (res: any) => {
+        res.statusCode = 99999;
+        res.end("body");
+      },
+      error: { name: "RangeError" },
+    },
+  ])("$reason", async ({ failingEnd, error }) => {
+    let caught: unknown;
+    const { raw, thrown } = await collectResponse((req, res) => {
+      res.addTrailers({ "X-Foo": "stale" });
+      try {
+        failingEnd(res);
+      } catch (err) {
+        caught = err;
+      }
+      res.statusCode = 200;
+      res.addTrailers({});
+      res.end("body");
+    });
+    expect(thrown).toBeNull();
+    expect(caught).toMatchObject(error);
+    expect(raw.toString("latin1").replace(/Date: [^\r]+\r\n/, "")).toBe(
+      "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 4\r\n\r\nbody",
+    );
+  });
 });
 
 // The trailer section is captured on the CONNECTION during the parse. Both

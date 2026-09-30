@@ -533,9 +533,9 @@ private:
                 httpResponseData->offset = 0;
 
                 /* Mark pending request and emit it. This also clears the previous
-                 * response's per-request framing bits (204/304, close-delimited,
-                 * trailers), which writeHead only ever sets: a stale one would
-                 * strip the next response's body framing. */
+                 * response's per-request framing bits (204/304, close-delimited),
+                 * which writeHead only ever sets: a stale one would strip the next
+                 * response's body framing. */
                 httpResponseData->resetResponseState();
 
                 /* An ancient (HTTP/1.0) request gets no keep-alive and no chunked
@@ -545,12 +545,6 @@ private:
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 } else if (httpResponseData->sawConnectionClose) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                }
-
-                /* Per-response trailer fields must not leak into the next response
-                 * on this keep-alive connection (the flag itself was cleared above). */
-                if constexpr (IsNodeHttp) {
-                    ((HttpResponseData<SSL, true> *) httpResponseData)->nodeHttpResponseTrailers.clear();
                 }
             }
 

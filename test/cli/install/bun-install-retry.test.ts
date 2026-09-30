@@ -1,8 +1,18 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, mkdir, readdir, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import {
   createTestContext,
   destroyTestContext,
@@ -658,16 +668,20 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
       });
 
       // The same question decides whether a package that --offline cannot find is an error.
+      // Removes the entries that `isGone` names from node_modules, its store and the cache in it.
+      async function forget(dir: string, isGone: (entry: string) => boolean) {
+        for (const store of [".", ".bun", ".cache"]) {
+          for (const entry of await readdir(join(dir, "node_modules", store)).catch(() => [])) {
+            if (isGone(entry)) await rm(join(dir, "node_modules", store, entry), { recursive: true, force: true });
+          }
+        }
+      }
+
       it("reports the required one that --offline does not find in the cache", async () => {
         using t = await project(bar);
         expect(await t.install(pkg)).toEqual(t.installed);
-        // bar stays installed and cached. baz leaves node_modules and the cache in it.
-        const node_modules = join(t.dir, "node_modules");
-        for (const store of [".", ".bun", ".cache"]) {
-          for (const entry of await readdir(join(node_modules, store)).catch(() => [])) {
-            if (entry.startsWith("baz")) await rm(join(node_modules, store, entry), { recursive: true, force: true });
-          }
-        }
+        // bar stays installed and cached.
+        await forget(t.dir, entry => entry.startsWith("baz"));
         expect(await t.install(pkg, "--offline")).toEqual({
           warnLines: [],
           errorLines: ['error: --offline: "baz" is not in the cache'],
@@ -676,6 +690,54 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
           exitCode: 1,
         });
       });
+
+      it.skipIf(!Bun.which("git"))(
+        "reports the required git dependency that --offline does not find in the cache",
+        async () => {
+          using repo = tempDir("shared-download-git", {
+            "work/package.json": JSON.stringify({ name: "gitpkg", version: "1.0.0" }),
+          });
+          const bare = join(String(repo), "repo.git");
+          for (const args of [
+            ["init", "-q"],
+            ["add", "-A"],
+            ["commit", "-q", "-m", "init", "--no-gpg-sign"],
+            ["clone", "-q", "--bare", ".", bare],
+          ]) {
+            await using git = spawn({
+              cmd: ["git", ...args],
+              cwd: join(String(repo), "work"),
+              env: {
+                ...env,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_AUTHOR_NAME: "Test",
+                GIT_AUTHOR_EMAIL: "test@example.com",
+                GIT_COMMITTER_NAME: "Test",
+                GIT_COMMITTER_EMAIL: "test@example.com",
+              },
+              stdout: "ignore",
+              stderr: "pipe",
+            });
+            expect({ stderr: await git.stderr.text(), exitCode: await git.exited }).toEqual({
+              stderr: "",
+              exitCode: 0,
+            });
+          }
+          const gitpkg = `git+${pathToFileURL(bare)}`;
+
+          using t = await project({ bar: { dependencies: { gitpkg } } });
+          const pkg = { dependencies: { bar: "1.0.0" }, optionalDependencies: { gitpkg } };
+          expect(await t.install(pkg)).toEqual({ ...t.installed, tarballGets: 0 });
+          // bar stays installed and cached. The clone and the checkout leave the cache.
+          await forget(t.dir, entry => entry.startsWith("gitpkg") || entry.endsWith(".git") || entry.startsWith("@G@"));
+          expect(await t.install(pkg, "--offline")).toEqual({
+            warnLines: [],
+            errorLines: ['error: --offline: git repository for "gitpkg" is not in the cache'],
+            tarballGets: 0,
+            exitCode: 1,
+          });
+        },
+      );
 
       // `x` comes first, so its dependency on baz is the one the linker asks through.
       it.each(["optionalDependencies", "dependencies"])(

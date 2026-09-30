@@ -349,11 +349,17 @@ export function expectationsAtRevision(revision: string, path: string): Expectat
     const why = commit.said === "" ? "" : `: ${commit.said}`;
     throw new ExpectationsError(`${revision} is no revision of the repository of ${path}${why}`);
   }
-  // "./" makes the path one below the directory of the file, wherever the root of the repository is.
-  const blob = git("rev-parse", "--verify", "--quiet", `${id}:./${file}`);
-  if (!blob.ok) return undefined;
-  const content = git("cat-file", "blob", blob.out.toString().trim());
-  if (!content.ok) throw new ExpectationsError(`${file} of ${revision} is no file: ${content.said}`);
+  // "./" is the directory of the file, wherever the root of the repository is. Only a listing without an entry says that the revision has no such file.
+  const listing = git("ls-tree", "-z", id, "--", `./${file}`);
+  if (!listing.ok) throw new ExpectationsError(`${file} of ${revision} cannot be looked up: ${listing.said}`);
+  if (listing.out.length === 0) return undefined;
+  const entry = /^(\d+) (\w+) ([0-9a-f]+)\t/.exec(listing.out.toString());
+  // The mode 120000 is a link, whose blob is the path of its target.
+  if (entry === null || entry[2] !== "blob" || entry[1] === "120000") {
+    throw new ExpectationsError(`${file} of ${revision} is no file`);
+  }
+  const content = git("cat-file", "blob", entry[3]);
+  if (!content.ok) throw new ExpectationsError(`${file} of ${revision} cannot be read: ${content.said}`);
   try {
     return parseExpectations(utf8String(content.out, "the file"));
   } catch (error) {

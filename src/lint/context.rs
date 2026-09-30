@@ -1,8 +1,10 @@
 //! What a rule handler is given: the text, the names, the reports, and the services that read the text again.
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
-use bun_ast::{E, Expr, Loc, Log, Ref, Source};
+use bun_ast::lexer_tables::T;
+use bun_ast::{E, Expr, ExprData, Loc, Log, OpCode, Ref, Source};
 use bun_core::StackCheck;
 use bun_js_parser::parse::parse_entry::ParsedOnly;
 
@@ -51,6 +53,8 @@ pub(crate) struct Context<'p, 'a> {
     held: Vec<(Diagnostic, Globals)>,
     declared: Globals,
     cut: bool,
+    /// By the first own token of a chain of binary expressions: where the scan from it ended, and each `)` before that end that closed one more `(` from before the token.
+    chains: BTreeMap<u32, (u32, Vec<u32>)>,
 }
 
 impl<'p, 'a> Context<'p, 'a> {
@@ -70,6 +74,7 @@ impl<'p, 'a> Context<'p, 'a> {
             held: Vec::new(),
             declared: Globals::NONE,
             cut: false,
+            chains: BTreeMap::new(),
         }
     }
 
@@ -172,18 +177,71 @@ impl<'p, 'a> Context<'p, 'a> {
         tokens::closes_between(&mut tokens, to)
     }
 
+    /// Each `)` between `from` and the token at `to` that closes one more `(` standing before `from`, by where it is. `None`: not known.
+    fn closing(&self, from: u32, to: u32, under: &[&Expr]) -> Option<Vec<u32>> {
+        let spans = tokens::spans_under(self.text(), under, self.stack_check)?;
+        let mut log = Log::init();
+        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
+        let mut depth = 0i32;
+        let mut lowest = 0i32;
+        let mut closing = Vec::new();
+        loop {
+            let token = tokens.next()?;
+            if token.start >= to {
+                return (token.start == to).then_some(closing);
+            }
+            if token.opaque {
+                continue;
+            }
+            match token.t {
+                T::TOpenParen => depth += 1,
+                T::TCloseParen => {
+                    depth -= 1;
+                    if depth < lowest {
+                        lowest = depth;
+                        closing.push(token.start);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Where the binary expression `node` starts whose first own token is at `own`: at the `(` of a left operand in them.
-    pub(crate) fn binary_start(&self, node: &E::Binary, own: Loc) -> Loc {
-        let Ok(at) = u32::try_from(own.start) else {
+    pub(crate) fn binary_start(&mut self, node: &E::Binary, own: Loc) -> Loc {
+        let (Ok(at), Ok(to)) = (
+            u32::try_from(own.start),
+            u32::try_from(node.right.loc.start),
+        ) else {
             return own;
         };
         // No `(` stands right before the first token: no scan would move the start.
         if tokens::before_opens(self.text(), at, 1).1 == 1 {
             return own;
         }
-        // The scan ends where the right operand starts: only the left one has spans it can meet.
-        self.start_of(own, node.right.loc, &[&node.left])
-            .map_or(own, |(start, _)| start)
+        // Every link of a chain has the first token of the chain, and the walk reaches the outermost link first: its scan answers for each link inside it.
+        let closes = match self.chains.get(&at) {
+            Some((scanned, closing)) if to <= *scanned => {
+                closing.partition_point(|&close| close < to)
+            }
+            _ => {
+                // The scan ends at the `loc` of the right operand: what it meets of that operand is the decorators of a class expression, which stand before the `loc`.
+                let closing = if starts_with_decorators(&node.right) {
+                    self.closing(at, to, &[&node.left, &node.right])
+                } else {
+                    self.closing(at, to, &[&node.left])
+                };
+                let Some(closing) = closing else {
+                    return own;
+                };
+                let closes = closing.len();
+                self.chains.insert(at, (to, closing));
+                closes
+            }
+        };
+        let closes = u32::try_from(closes).unwrap_or(u32::MAX);
+        let (start, _) = tokens::before_opens(self.text(), at, closes);
+        i32::try_from(start).map_or(own, |start| Loc { start })
     }
 
     /// Where the node starts whose first own token is at `own`: at the `(` of its first operand, which ends before `to`.
@@ -199,8 +257,12 @@ impl<'p, 'a> Context<'p, 'a> {
         ))
     }
 
-    /// What ESLint compares of the test of a `case`. `None`: its text does not read.
+    /// What ESLint compares of the test of a `case`. `None`: its text does not read, or decorators stand before its `loc`.
     pub(crate) fn case_test(&self, value: &Expr) -> Option<Vec<u8>> {
+        // The scan starts at the `loc`: two tests that differ only in the decorators before it would be equal.
+        if starts_with_decorators(value) {
+            return None;
+        }
         let from = u32::try_from(value.loc.start).ok()?;
         let spans = tokens::spans_under(self.text(), &[value], self.stack_check)?;
         let mut log = Log::init();
@@ -243,5 +305,29 @@ impl<'p, 'a> Context<'p, 'a> {
             Some(token) if token.start == at => token.end.saturating_sub(token.start),
             _ => 0,
         }
+    }
+}
+
+/// Whether decorators stand before the `loc` of `expr`: its first operand is a class expression that has them.
+fn starts_with_decorators(mut expr: &Expr) -> bool {
+    loop {
+        expr = match &expr.data {
+            ExprData::EClass(class) => return !class.ts_decorators.is_empty(),
+            ExprData::EBinary(binary) => &binary.left,
+            ExprData::EDot(dot) => &dot.target,
+            ExprData::EIndex(index) => &index.target,
+            ExprData::ECall(call) => &call.target,
+            ExprData::EIf(conditional) => &conditional.test,
+            ExprData::ETemplate(template) => match &template.tag {
+                Some(tag) => tag,
+                None => return false,
+            },
+            ExprData::EUnary(unary)
+                if matches!(unary.op, OpCode::UnPostDec | OpCode::UnPostInc) =>
+            {
+                &unary.value
+            }
+            _ => return false,
+        };
     }
 }

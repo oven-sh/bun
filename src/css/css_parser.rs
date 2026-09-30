@@ -2329,15 +2329,9 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 }
 
-/// Longest input `parse_with` / `StyleAttribute::parse` accept.
-///
-/// Byte offsets into the input are stored as `i32` (`bun_ast::Loc` in import
-/// records, CSS-module symbols, `composes` and `PropertyUsage`), and the line
-/// and column numbers derived from them are stored as `i32` too
-/// (`bun_ast::Location` in errors and warnings). The largest such value is
-/// `len + 1`: the column of, or the 1-based line count at, the end of input.
-/// Columns count UTF-16 units, never more than one per byte. Bounding the
-/// length once here is what makes every one of those conversions infallible.
+/// Longest input `parse_with` / `StyleAttribute::parse` accept. Offsets, lines
+/// and columns are `i32` (`bun_ast::Loc`, `bun_ast::Location`); the largest
+/// one is `len + 1`, at the end of input.
 pub(crate) const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
 
 fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {

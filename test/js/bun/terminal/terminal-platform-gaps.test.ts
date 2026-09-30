@@ -748,7 +748,8 @@ describe("Bun.Terminal platform behaviour", () => {
        process.stdout.write(" READY");`,
       { done: o => o.includes("READY") },
     );
-    expect(Bun.stripANSI(output).replaceAll(" ", "")).toMatch(/^(?:<\ufffd+>){8}READY/);
+    // Server 2019's ConPTY scrolls first, and prints a character again over itself.
+    expect(Bun.stripANSI(output).replace(/.\x08|\s/g, "")).toMatch(/^(?:<\ufffd+>){8}READY/);
   });
 
   test("GAP: ANSI escape sequences", async () => {

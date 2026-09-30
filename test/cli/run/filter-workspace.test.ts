@@ -1196,7 +1196,8 @@ describe("output timing", () => {
   // Nobody reads this run's stdout until every script is gone, so it stops at the first 64 KiB it
   // prints: when it goes on, it has the exit of each script waiting behind a read that brought the
   // script's first write alone.
-  test("what a script wrote is not lost when it has exited by the time it is read", async () => {
+  // Windows only: elsewhere a script's parent is the run itself, which waits for its stdout to be read.
+  test.skipIf(!isWindows)("what a script wrote is not lost when it has exited by the time it is read", async () => {
     const names = ["a", "b", "c", "d"];
     using dir = tempDir("filter-last-line", {
       "package.json": JSON.stringify({ name: "ws-last", workspaces: ["packages/*"] }),

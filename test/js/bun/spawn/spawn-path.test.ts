@@ -144,7 +144,7 @@ describe.skipIf(!isWindows).each(["spawn", "spawnSync"] as const)("%s: the image
 // The name is then looked for the way CreateProcess and cmd.exe look for one: in the child's directory, then along
 // this process's own PATH. Windows has a cmd.exe in two directories, and each sets %COMSPEC% to its own path.
 describe.skipIf(!isWindows).concurrent("the image a bare name runs when the env option has no PATH", () => {
-  const windows = process.env.SystemRoot!;
+  const windows = process.env.SystemRoot ?? "";
   const System32 = path.join(windows, "System32");
   const SysWOW64 = path.join(windows, "SysWOW64");
 

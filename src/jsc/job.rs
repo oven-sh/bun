@@ -415,8 +415,9 @@ const APPENDED: *mut WorkPoolTask = core::ptr::without_provenance_mut(1);
 enum Entered {
     /// The pool's now.
     Goes(Option<FdPlace>),
-    /// The pool's when the job it was put behind is done, which sees to it.
-    Follows(FdPlace),
+    /// Behind the job whose [`Job::next_append`] this is: that one gives it to
+    /// the pool when it is done, if it is told of it before then.
+    Follows(FdPlace, *const AtomicPtr<WorkPoolTask>),
     /// A close: the pool's when the jobs of this line are back.
     Waits(u64),
     /// Given the descriptor behind a close that is waiting. The number is
@@ -471,18 +472,8 @@ impl FdJobs {
         let place = FdPlace { fd, line: line.id };
         if matches!(fd_use, FdUse::Appends(_)) {
             let last = core::mem::replace(&mut line.last_append, next_append);
-            // SAFETY: a job takes itself out of `last_append` before it is freed (`leave`).
-            if let Some(last) = unsafe { last.as_ref() }
-                && last
-                    .compare_exchange(
-                        core::ptr::null_mut(),
-                        task,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
-            {
-                return Entered::Follows(place);
+            if !last.is_null() {
+                return Entered::Follows(place, last);
             }
         }
         Entered::Goes(Some(place))
@@ -674,7 +665,11 @@ impl<C: JobContext> Job<C> {
             }
             let task = &raw mut (*job).task;
             let next_append = &raw const (*job).next_append;
-            let mut follows = false;
+            let mut follows = core::ptr::null();
+            if C::OWED_AT_EXIT {
+                (*job).owed = true;
+                WorkPool::owe_write();
+            }
             for (index, fd_use) in fd_uses.into_iter().enumerate() {
                 let Some(fd_use) = fd_use else { continue };
                 let entered = cx
@@ -683,9 +678,9 @@ impl<C: JobContext> Job<C> {
                     .with_mut(|jobs| jobs.enter(task, next_append, fd_use));
                 match entered {
                     Entered::Goes(place) => (*job).places[index] = place,
-                    Entered::Follows(place) => {
+                    Entered::Follows(place, last) => {
                         (*job).places[index] = Some(place);
-                        follows = true;
+                        follows = last;
                     }
                     Entered::Waits(line) => {
                         let place = FdPlace {
@@ -711,13 +706,22 @@ impl<C: JobContext> Job<C> {
             if C::ALWAYS_WAITS {
                 return WorkPool::schedule_wait(task);
             }
-            if C::OWED_AT_EXIT {
-                (*job).owed = true;
-                WorkPool::owe_write();
+            // Last: told of it, the job ahead can have given it to the pool, and
+            // the pool can be done with it, before this returns. That job takes
+            // itself out of `last_append` on this thread before it is freed.
+            if let Some(last) = follows.as_ref()
+                && last
+                    .compare_exchange(
+                        core::ptr::null_mut(),
+                        task,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+            {
+                return;
             }
-            if !follows {
-                WorkPool::schedule(task);
-            }
+            WorkPool::schedule(task);
         }
     }
 

@@ -8602,6 +8602,45 @@ describe.skipIf(!isWindows).concurrent("what was written is in the file when pro
     expect(await proc.exited).toBe(0);
     expect(statSync(join(String(dir), "out.txt")).size).toBe(size);
   });
+
+  // Each write is given to the pool by the one before it, which can be done with that before the call that
+  // made the write has returned: most often on two processors, which a process passes on to its children.
+  it("and the process ends after a burst of writes that are not awaited", async () => {
+    const processes = 24;
+    using dir = tempDir("fs-write-burst-then-exit", {
+      "burst.js": `
+        const fs = require("fs");
+        const fd = fs.openSync(process.argv[2], "w");
+        for (let i = 0; i < 10_000; i++) fs.write(fd, "0123456789", () => {});
+      `,
+      "launcher.js": `
+        const { dlopen } = require("bun:ffi");
+        const { GetCurrentProcess, SetProcessAffinityMask } = dlopen("kernel32.dll", {
+          GetCurrentProcess: { args: [], returns: "ptr" },
+          SetProcessAffinityMask: { args: ["ptr", "usize"], returns: "i32" },
+        }).symbols;
+        if (!SetProcessAffinityMask(GetCurrentProcess(), 3)) throw new Error("SetProcessAffinityMask");
+        const codes = await Promise.all(
+          Array.from({ length: ${processes} }, (_, i) =>
+            Bun.spawn({ cmd: [process.execPath, "burst.js", i + ".txt"], stdio: ["ignore", "inherit", "inherit"] }).exited,
+          ),
+        );
+        console.log(JSON.stringify(codes));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "launcher.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(JSON.stringify(Array(processes).fill(0)) + "\n");
+    expect(Array.from({ length: processes }, (_, i) => statSync(join(String(dir), i + ".txt")).size)).toEqual(
+      Array(processes).fill(100_000),
+    );
+    expect(await proc.exited).toBe(0);
+  });
 });
 
 // Each is written where the one before it left the descriptor's position. The work pool starts jobs in no particular order.

@@ -437,7 +437,6 @@ impl NodeBuilderImpl {
         let any = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
         let a = c.ast;
         c.node_builder.impl_.e.add_synthetic_leading_comment(
-            a,
             any,
             Kind::MultiLineCommentTrivia,
             b"elided",
@@ -474,7 +473,6 @@ impl NodeBuilderImpl {
             let any = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
             let a = c.ast;
             c.node_builder.impl_.e.add_synthetic_leading_comment(
-                a,
                 any,
                 Kind::MultiLineCommentTrivia,
                 comment,
@@ -4072,7 +4070,6 @@ impl NodeBuilderImpl {
             if self.ctx(c).flags.intersects(Flags::NO_TRUNCATION) {
                 let elem = self.f(c).new_not_emitted_type_element();
                 let commented = c.node_builder.impl_.e.add_synthetic_trailing_comment(
-                    a,
                     elem,
                     Kind::MultiLineCommentTrivia,
                     b"elided",
@@ -4174,7 +4171,6 @@ impl NodeBuilderImpl {
                 if self.ctx(c).flags.intersects(Flags::NO_TRUNCATION) {
                     if let Some(last) = type_elements.last().copied() {
                         let commented = c.node_builder.impl_.e.add_synthetic_trailing_comment(
-                            a,
                             last,
                             Kind::MultiLineCommentTrivia,
                             format!("... {more} more elided ...").as_bytes(),
@@ -5131,7 +5127,6 @@ impl NodeBuilderImpl {
             if t == c.unresolved_type {
                 let any = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
                 return c.node_builder.impl_.e.add_synthetic_leading_comment(
-                    a,
                     any,
                     Kind::MultiLineCommentTrivia,
                     b"unresolved",

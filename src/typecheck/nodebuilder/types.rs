@@ -76,6 +76,8 @@ macro_rules! define_flags {
     };
 }
 
+pub(crate) use define_flags;
+
 // NOTE: If modifying this enum, must modify `TypeFormatFlags` too!
 define_flags!(Flags: u32 {
     NONE = 0,

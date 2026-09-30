@@ -456,7 +456,7 @@ impl<'a> LinkerContext<'a> {
         &self,
         source_index: u32,
         parts: core::ops::Range<u32>,
-        mut each: impl FnMut(u32, u32, Option<u32>),
+        each: &mut dyn FnMut(u32, u32, Option<u32>),
     ) {
         use bun_ast::ImportRecordFlags as Flags;
         let flags = self.graph.meta.items_flags();

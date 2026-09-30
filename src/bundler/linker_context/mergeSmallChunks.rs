@@ -130,7 +130,7 @@ impl LinkerContext<'_> {
             return;
         }
         let parts_len = self.graph.ast.items_parts()[source_index as usize].len() as u32;
-        self.for_each_import_that_runs(source_index, 0..parts_len, |_, _, wrapped| {
+        self.for_each_import_that_runs(source_index, 0..parts_len, &mut |_, _, wrapped| {
             inits.extend(wrapped);
         });
     }
@@ -795,7 +795,7 @@ fn files_that_leave_entry_chunk<'a>(
                 // The walk was inside of it at that file. What its `import` statements run precedes files that go, so it goes too.
                 if depth <= depth_at_cut {
                     depth_at_cut = depth - 1;
-                    this.for_each_import_that_runs(file, 0..parts_len(file), |_, _, _| {
+                    this.for_each_import_that_runs(file, 0..parts_len(file), &mut |_, _, _| {
                         cut = candidates.len();
                     });
                 }
@@ -853,7 +853,7 @@ fn files_that_leave_entry_chunk<'a>(
     // An external `import` goes to the top of its chunk, ahead of what the parent runs.
     let mut limit = u32::MAX;
     if parent_gains_no_import {
-        this.for_each_import_that_runs(entry_source, 0..last_part, |part, _, x| {
+        this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, _, x| {
             if x.is_none() {
                 limit = limit.min(part);
             }
@@ -882,7 +882,7 @@ fn files_that_leave_entry_chunk<'a>(
                 }
             });
             if parent_gains_no_import {
-                this.for_each_import_that_runs(file, 0..parts_len(file), |_, _, x| {
+                this.for_each_import_that_runs(file, 0..parts_len(file), &mut |_, _, x| {
                     stuck |= x.is_none();
                 });
             }

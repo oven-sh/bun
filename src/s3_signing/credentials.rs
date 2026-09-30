@@ -1261,6 +1261,7 @@ pub struct S3ContentHeaders {
 
 impl S3ContentHeaders {
     /// The values of `options`. For a value that `options` does not have, the one of `defaults`.
+    /// An empty value of `options` says "no header": nothing is kept for it.
     pub fn from_options(
         options: &S3CredentialsWithOptions,
         defaults: Option<&Arc<S3ContentHeaders>>,
@@ -1270,13 +1271,18 @@ impl S3ContentHeaders {
         if content_disposition.is_none() && content_encoding.is_none() {
             return defaults.cloned();
         }
+        let content_disposition = content_disposition
+            .or_else(|| defaults.and_then(|d| d.content_disposition.as_deref()))
+            .filter(|value| !value.is_empty());
+        let content_encoding = content_encoding
+            .or_else(|| defaults.and_then(|d| d.content_encoding.as_deref()))
+            .filter(|value| !value.is_empty());
+        if content_disposition.is_none() && content_encoding.is_none() {
+            return None;
+        }
         Some(Arc::new(S3ContentHeaders {
-            content_disposition: content_disposition
-                .or_else(|| defaults.and_then(|d| d.content_disposition.as_deref()))
-                .map(Box::from),
-            content_encoding: content_encoding
-                .or_else(|| defaults.and_then(|d| d.content_encoding.as_deref()))
-                .map(Box::from),
+            content_disposition: content_disposition.map(Box::from),
+            content_encoding: content_encoding.map(Box::from),
         }))
     }
 

@@ -1597,33 +1597,22 @@ impl BlobExt for Blob {
                     set_content_type_from_js(global_this, self, content_type)?;
                 }
 
-                let content_disposition_str: Option<Utf8Bytes> =
-                    match options.get_truthy(global_this, "contentDisposition")? {
-                        Some(v) if !v.is_string() => {
-                            return Err(global_this.throw_invalid_argument_type(
-                                "write",
-                                "options.contentDisposition",
-                                "string",
-                            ));
+                // `writer()` has its own error text for these two. `upload_options` reads
+                // their values.
+                for (key, name) in [
+                    ("contentDisposition", "options.contentDisposition"),
+                    ("contentEncoding", "options.contentEncoding"),
+                ] {
+                    if let Some(value) = options.get_truthy(global_this, key)? {
+                        if !value.is_string() {
+                            return Err(
+                                global_this.throw_invalid_argument_type("write", name, "string")
+                            );
                         }
-                        Some(v) => Some(v.to_utf8(global_this)?),
-                        None => None,
-                    };
-                let content_encoding_str: Option<Utf8Bytes> =
-                    match options.get_truthy(global_this, "contentEncoding")? {
-                        Some(v) if !v.is_string() => {
-                            return Err(global_this.throw_invalid_argument_type(
-                                "write",
-                                "options.contentEncoding",
-                                "string",
-                            ));
-                        }
-                        Some(v) => Some(v.to_utf8(global_this)?),
-                        None => None,
-                    };
+                    }
+                }
 
-                let credentials_with_options =
-                    s3.get_credentials_with_options(Some(options), global_this)?;
+                let credentials_with_options = s3.upload_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
                 // `writable_stream` adopts the dup'd ref by value; the
                 // MultiPartUpload derefs on done.
@@ -1633,14 +1622,8 @@ impl BlobExt for Blob {
                     &global_this.js_thread(context),
                     credentials_with_options.options,
                     self.content_type_or_mime_type(),
-                    content_disposition_str
-                        .as_ref()
-                        .map(|s| s.slice())
-                        .or_else(|| s3.content_disposition()),
-                    content_encoding_str
-                        .as_ref()
-                        .map(|s| s.slice())
-                        .or_else(|| s3.content_encoding()),
+                    credentials_with_options.content_disposition.as_deref(),
+                    credentials_with_options.content_encoding.as_deref(),
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
                 );

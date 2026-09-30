@@ -16,7 +16,7 @@ use bun_url::URL;
 /// JS string, and non-empty. Shared ladder for the S3 option parsers
 /// (`get_credentials_with_options`, `get_list_objects_options_from_js`):
 ///
-///   get_truthy → is_string → BunString::from_js → tag ∉ {Empty,Dead} → into_utf8
+///   get → is_string → BunString::from_js → tag ∉ {Empty,Dead} → into_utf8
 ///
 /// `into_utf8()` moves the string's ref into the returned `Utf8Bytes` (or
 /// transcodes into an owned buffer).
@@ -29,7 +29,19 @@ pub(crate) fn get_truthy_string_utf8(
     key: &[u8],
     strict: bool,
 ) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
-    let Some(js_value) = opts.get_truthy(global, key)? else {
+    Ok(get_string_utf8(opts, global, key, strict)?.filter(|utf8| !utf8.is_empty()))
+}
+
+/// [`get_truthy_string_utf8`], but an empty JS string is `Some` with no bytes. For an option
+/// that is the value of a header, where the empty string says "send no such header" and
+/// `None` says "use the value of the file or of the client".
+fn get_string_utf8(
+    opts: JSValue,
+    global: &JSGlobalObject,
+    key: &[u8],
+    strict: bool,
+) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
+    let Some(js_value) = opts.get(global, key)? else {
         return Ok(None);
     };
     if js_value.is_empty_or_undefined_or_null() {
@@ -42,10 +54,11 @@ pub(crate) fn get_truthy_string_utf8(
         return Ok(None);
     }
     let str = BunString::from_js(js_value, global)?;
-    if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
-        return Ok(None);
-    }
-    Ok(Some(str.into_utf8()))
+    Ok(match str.tag() {
+        BunStringTag::Dead => None,
+        BunStringTag::Empty => Some(bun_core::Utf8Bytes::Borrowed(b"")),
+        _ => Some(str.into_utf8()),
+    })
 }
 
 const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \"aws-exec-read\", \
@@ -224,9 +237,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.storage_class = Some(storage_class);
             }
 
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)?
-            {
+            if let Some(utf8) = get_string_utf8(opts, global_object, b"contentDisposition", true)? {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "contentDisposition must not contain newline characters (CR/LF)"
@@ -244,9 +255,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.content_type = Some(utf8);
             }
 
-            if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
-            {
+            if let Some(utf8) = get_string_utf8(opts, global_object, b"contentEncoding", true)? {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "contentEncoding must not contain newline characters (CR/LF)"

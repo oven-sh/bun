@@ -63,27 +63,26 @@ impl Default for ByteStream {
 }
 
 /// ReadableStream source backed by a ByteStream.
-pub type Source = readable_stream::NewSource<ByteStream>;
+pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
-/// the receive backpressure. The ref roots the wrapper except while parked, so an unread stream
-/// can be collected (`SourceHandle::consumer_collected`).
+/// the receive backpressure. It roots the wrapper only for a native sink or a whole-body read.
 #[derive(Default)]
-pub struct ProducerHold {
+pub(crate) struct ProducerHold {
     source: Cell<Option<core::ptr::NonNull<Source>>>,
     parked: Cell<bool>,
 }
 
 /// The JS-thread half of `BODY_HIGH_WATER_MARK`, decided from the stream's buffer after a
 /// delivery. The HTTP thread does the other half on its hop buffer.
-pub enum AfterDelivery {
+pub(crate) enum AfterDelivery {
     /// Under the mark, or a whole-body consumer (`readableStreamTo*`) is collecting: keep going.
     Resume,
     /// At the mark with a back-pressured sink: it resumes the producer when it drains.
     Pause,
-    /// At the mark and nothing reads: pause, release the loop, leave the stream collectable.
+    /// At the mark and nothing reads: pause, release the loop.
     Park,
 }
 
@@ -92,23 +91,43 @@ impl ProducerHold {
     ///
     /// # Safety
     /// `bytes` is the live ByteStream of a stream the caller holds.
-    pub unsafe fn hold(&self, bytes: *mut ByteStream) {
+    pub(crate) unsafe fn hold(&self, bytes: *mut ByteStream) {
         self.release();
         // SAFETY: fn contract; the ref keeps the Source alive past this call.
         unsafe {
             let source = Source::from_context_ptr(bytes);
-            (*source).increment_count();
             self.source.set(core::ptr::NonNull::new(source));
+            // Before the ref, so `increment_count` only roots a wrapper that stays rooted.
+            self.sync_wrapper_root();
+            (*source).increment_count();
         }
     }
 
-    pub fn is_held(&self) -> bool {
+    fn sync_wrapper_root(&self) {
+        let Some(source) = self.source.get() else {
+            return;
+        };
+        let source = source.as_ptr();
+        // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very source
+        // (the chunk it just delivered): shared reads of its cells here, and the root is a
+        // separate field written through the raw pointer.
+        unsafe {
+            let bytes = &(*source).context;
+            if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
+                Source::root_wrapper(source);
+            } else {
+                Source::unroot_wrapper(source);
+            }
+        }
+    }
+
+    pub(crate) fn is_held(&self) -> bool {
         self.source.get().is_some()
     }
 
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
-    /// producer (which drops the hold), and while parked the wrapper is not rooted.
-    pub fn bytes(&self) -> Option<PinnedBytes> {
+    /// producer (which drops the hold), and the wrapper is not always rooted.
+    pub(crate) fn bytes(&self) -> Option<PinnedBytes> {
         let source = self.source.get()?;
         // SAFETY: live through our ref; no borrow of the source exists yet.
         unsafe { (*source.as_ptr()).increment_count() };
@@ -117,7 +136,7 @@ impl ProducerHold {
 
     /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
     /// still deliver a terminal chunk. Touches no JS cell.
-    pub fn take(&self) -> Option<PinnedBytes> {
+    pub(crate) fn take(&self) -> Option<PinnedBytes> {
         let source = self.source.take()?;
         self.parked.set(false);
         // SAFETY: still pinned by our ref, which the guard now owns.
@@ -129,11 +148,12 @@ impl ProducerHold {
     }
 
     /// `take` and drop. Touches no JS cell (safe inside a GC sweep).
-    pub fn release(&self) {
+    pub(crate) fn release(&self) {
         drop(self.take());
     }
 
-    pub fn after_delivery(bytes: &ByteStream) -> AfterDelivery {
+    pub(crate) fn after_delivery(&self, bytes: &ByteStream) -> AfterDelivery {
+        self.sync_wrapper_root();
         if bytes.buffered_len() < bun_http::signals::BODY_HIGH_WATER_MARK
             || bytes.buffer_action.get().is_some()
         {
@@ -146,29 +166,14 @@ impl ProducerHold {
     }
 
     /// Returns whether this call parked (the caller then releases its loop ref).
-    pub fn park(&self) -> bool {
-        if self.parked.replace(true) {
-            return false;
-        }
-        if let Some(source) = self.source.get() {
-            // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very
-            // source (the chunk it just delivered), which is why this is not a method call.
-            unsafe { Source::unroot_wrapper(source.as_ptr()) };
-        }
-        true
+    pub(crate) fn park(&self) -> bool {
+        !self.parked.replace(true)
     }
 
-    /// Returns whether this call unparked (the caller then re-takes its loop ref). Reached from a
-    /// consumer holding the stream.
-    pub fn unpark(&self) -> bool {
-        if !self.parked.replace(false) {
-            return false;
-        }
-        if let Some(source) = self.source.get() {
-            // SAFETY: as in `park`.
-            unsafe { Source::root_wrapper(source.as_ptr()) };
-        }
-        true
+    /// A consumer attached or took bytes; returns whether this unparked (re-take the loop ref).
+    pub(crate) fn unpark(&self) -> bool {
+        self.sync_wrapper_root();
+        self.parked.replace(false)
     }
 }
 
@@ -179,7 +184,7 @@ impl Drop for ProducerHold {
 }
 
 /// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
-pub struct PinnedBytes(core::ptr::NonNull<Source>);
+pub(crate) struct PinnedBytes(core::ptr::NonNull<Source>);
 
 impl core::ops::Deref for PinnedBytes {
     type Target = ByteStream;
@@ -228,10 +233,10 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn to_buffered_value(
         &mut self,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> Option<bun_jsc::JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, global, action))
+        Some(Self::to_buffered_value(self, cx, action))
     }
 }
 
@@ -786,6 +791,20 @@ impl ByteStream {
         streams::Result::Pending(self.pending.as_ptr())
     }
 
+    /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
+    pub(crate) fn error_native_consumer(&self, reason: JSValue) {
+        let waiting = self.sink.get().is_some()
+            || self.buffer_action.get().is_some()
+            || self.pending.get().state == streams::PendingState::Pending;
+        self.on_data(streams::Result::Err(if waiting {
+            let global = self.parent_const().global_this();
+            streams::StreamError::JSValue(StrongOptional::create(reason, global))
+        } else {
+            // Kept for a reader that already holds this source and pulls later. A stored `reason` would be a GC root.
+            streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort)
+        }));
+    }
+
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
@@ -923,15 +942,15 @@ impl ByteStream {
 
     fn to_buffered_value(
         &self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.get().is_some() {
-            return Err(global_this.throw(format_args!("Cannot buffer value twice")));
+            return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
         }
 
         if let streams::Result::Err(err) = &self.pending.get().result {
-            let err_js = err.to_js(global_this);
+            let err_js = err.to_js(cx.global());
             err_js.ensure_still_alive();
             self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
@@ -939,16 +958,15 @@ impl ByteStream {
                 b.clear();
                 b.shrink_to_fit();
             });
-            return Ok(jsc::JSPromise::rejected_promise(global_this, err_js).to_js());
+            return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
         }
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return blob.to_promise(global_this, action);
+            return blob.to_promise(cx, action);
         }
 
-        self.buffer_action
-            .set(Some(BufferAction::new(action, global_this)));
+        self.buffer_action.set(Some(BufferAction::new(action, cx)));
         let promise = self.buffer_action.get().as_ref().unwrap().value();
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.
@@ -957,7 +975,7 @@ impl ByteStream {
     }
 }
 
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     /// `bun:internal-for-testing`: swap the stream's producer for
@@ -980,4 +998,4 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (acronym splitter treats `AP|Is` as two words); alias so both resolve.
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

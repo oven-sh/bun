@@ -1477,19 +1477,19 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
 // JSC options come from BUN_JSC_<option>; JSC's own JSC_<option> environment
 // pass is disabled (JSC::Config::disableEnvironmentOptions in JSCInitialize).
 describe("JSC option environment variables", () => {
-  async function dumpOptions(env: Record<string, string>) {
+  async function run(env: Record<string, string>) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "1"],
+      cmd: [bunExe(), "-e", "process.stdout.write('ran')"],
       env: { ...bunEnv, ...env },
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
   test.concurrent("BUN_JSC_<option> applies", async () => {
     // level 1 lists overridden options only
-    const { stderr, exitCode } = await dumpOptions({
+    const { stderr, exitCode } = await run({
       BUN_JSC_dumpOptions: "1",
       BUN_JSC_thresholdForJITAfterWarmUp: "77",
     });
@@ -1498,9 +1498,42 @@ describe("JSC option environment variables", () => {
   });
   test.concurrent("JSC_<option> is ignored", async () => {
     // level 2 lists every option with its current value, however it was set
-    const { stderr, exitCode } = await dumpOptions({ BUN_JSC_dumpOptions: "2", JSC_thresholdForJITAfterWarmUp: "77" });
+    const { stderr, exitCode } = await run({ BUN_JSC_dumpOptions: "2", JSC_thresholdForJITAfterWarmUp: "77" });
     expect(stderr).toContain("thresholdForJITAfterWarmUp=");
     expect(stderr).not.toContain("thresholdForJITAfterWarmUp=77");
     expect(exitCode).toBe(0);
+  });
+
+  // A bad set of BUN_JSC_* variables is a configuration error: a message on
+  // stderr and exit code 1, never a crash report.
+  test.concurrent("an unknown option is rejected with exit code 1", async () => {
+    const { stdout, stderr, exitCode, signalCode } = await run({ BUN_JSC_noSuchOption: "1" });
+    expect(stderr).toContain("invalid JSC environment variable");
+    expect(stderr).toContain("BUN_JSC_noSuchOption=1");
+    expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+  });
+  // JSC::Options::assertOptionsAreCoherent() aborts on these combinations.
+  for (const env of [
+    // useJIT=0 turns every JIT tier off, including the wasm BBQ JIT, so with the
+    // wasm interpreter also off there is nothing left to run WebAssembly with.
+    { BUN_JSC_useJIT: "0", BUN_JSC_useWasmIPInt: "0" },
+    { BUN_JSC_useBBQJIT: "0", BUN_JSC_useWasmIPInt: "0" },
+  ]) {
+    test.concurrent(`incoherent options are a configuration error: ${Object.keys(env).join(" + ")}`, async () => {
+      const { stdout, stderr, exitCode, signalCode } = await run(env);
+      expect(stderr).toContain("error: incoherent JSC options: useWasmIPInt and useBBQJIT are both off");
+      for (const [key, value] of Object.entries(env)) {
+        expect(stderr).toContain(`${key}=${value}`);
+      }
+      expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+    });
+  }
+  test.concurrent("the same options with useWasm=0 are coherent and run", async () => {
+    const { stdout, exitCode, signalCode } = await run({
+      BUN_JSC_useJIT: "0",
+      BUN_JSC_useWasmIPInt: "0",
+      BUN_JSC_useWasm: "0",
+    });
+    expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "ran", exitCode: 0, signalCode: null });
   });
 });

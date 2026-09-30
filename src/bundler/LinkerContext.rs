@@ -499,9 +499,10 @@ impl<'a> LinkerContext<'a> {
                     continue;
                 }
                 if !record.source_index.is_valid() {
-                    if !record
-                        .flags
-                        .intersects(Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS | Flags::PHASE_DEFER)
+                    if !record.path.is_disabled
+                        && !record.flags.intersects(
+                            Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS | Flags::PHASE_DEFER,
+                        )
                     {
                         each(part_index, i, None);
                     }

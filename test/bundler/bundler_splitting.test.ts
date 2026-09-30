@@ -1153,6 +1153,74 @@ describe("bundler", () => {
       },
     });
   }
+  // index.js imports declares.js first and keeps that binding. setup.js imports it too and moves, so the chunk beside index.js needs it before config.js runs.
+  itBundled("splitting/DeclarationThatEntryFileImportsFirstIsKeptApartFromFileThatRuns", {
+    files: {
+      "/index.js": /* js */ `
+        import { x } from "./declares.js";
+        import "./setup.js";
+        import { Store } from "./store.js";
+        import "./config.js";
+        console.log("index", new Store().name, x());
+        import("./route.js");
+      `,
+      "/other.js": `import { x } from "./declares.js"; import "./config.js"; console.log("other", x());`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+      "/declares.js": `export function x() { return 1; }`,
+      "/setup.js": `import { x } from "./declares.js"; console.log("setup", x());`,
+      "/store.js": `globalThis.STORE = 1; export class Store { name = "s"; }`,
+      "/config.js": `console.log("config", globalThis.STORE);`,
+    },
+    entryPoints: ["/index.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "setup 1\nconfig 1\nindex s 1\nroute s" },
+  });
+  // Each s*.js is in a chunk that one more entry point shares. The walk tells 61 such chunks apart, and the chunk that last.js shares comes after them.
+  const manyShared = Array.from({ length: 63 }, (_, i) => "s" + i);
+  for (const [name, index, last, files, stdout] of [
+    [
+      "SharedChunkIsCut",
+      `import "./a.js"; import "./b.js"; import "./c.js"; console.log("index");`,
+      `import "./b.js";`,
+      {
+        "/a.js": `globalThis.A = "a"; console.log("a");`,
+        "/b.js": `console.log("b", globalThis.A);`,
+        "/c.js": `console.log("c");`,
+        "/route.js": `import "./a.js"; import "./c.js"; console.log("route");`,
+      },
+      "a\nb a\nc\nindex\nroute",
+    ],
+    [
+      "WrapperIsKeptApartFromFileThatRuns",
+      `import x from "./x.cjs"; import "./setup.js"; import "./store.js"; import "./config.js"; console.log("index", x);`,
+      `import x from "./x.cjs"; import "./config.js"; console.log("last", x);`,
+      {
+        "/x.cjs": `module.exports = 1;`,
+        "/setup.js": `console.log("setup");`,
+        "/store.js": `globalThis.STORE = 1;`,
+        "/config.js": `console.log("config", globalThis.STORE);`,
+        "/route.js": `import "./store.js"; console.log("route");`,
+      },
+      "setup\nconfig 1\nindex 1\nroute",
+    ],
+  ] as const) {
+    itBundled("splitting/AfterManyChunksOfOtherEntries/" + name, {
+      files: {
+        "/index.js": manyShared.map(s => `import "./${s}.js";`).join("\n") + index + `import("./route.js");`,
+        "/last.js": last,
+        ...Object.fromEntries(manyShared.map(s => [`/${s}.js`, `globalThis.S = "${s}";`])),
+        ...Object.fromEntries(manyShared.map(s => [`/entry-${s}.js`, `import "./${s}.js";`])),
+        ...files,
+      },
+      entryPoints: ["/index.js", "/last.js", ...manyShared.map(s => `/entry-${s}.js`)],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout },
+    });
+  }
   // Syntax decides what runs, so a piece with only files of a "sideEffects": false package has its place among the imports too.
   itBundled("splitting/PieceOfSharedChunkWithoutSideEffectsKeepsItsPlace", {
     files: {
@@ -1584,6 +1652,35 @@ describe("bundler", () => {
     itBundled("splitting/RequireOfMissingFileIsNoRelativeExternalImport/" + name, {
       ...relativeExternal(`import "./optional.js";`, "", exports),
       run: { file: "/out/api/index.js", stdout: "Cannot require module ./missing.js\nstore\napi s\nroute s" },
+    });
+  }
+  // The "browser" field disables fs, so the import loads nothing. It does not end the list of files that move, as an external import does.
+  for (const [name, inIndex, inSetup, use] of [
+    ["OfEntryFile", `import "fs";`, "", `"none"`],
+    ["OfEntryFileWithBinding", `import fs from "fs";`, "", `typeof fs`],
+    ["OfFileThatMoves", "", `import "fs";`, `"none"`],
+  ]) {
+    itBundled("splitting/EntryWithExportsMovesFilesAfterDisabledImport/" + name, {
+      files: {
+        "/package.json": `{ "browser": { "fs": false } }`,
+        "/index.js": /* js */ `
+          ${inIndex}
+          import "./setup.js";
+          import { Store } from "./store.js";
+          export const version = 1;
+          console.log("index", new Store().name, ${use});
+          import("./route.js");
+        `,
+        "/setup.js": `${inSetup} globalThis.APP = { name: "app" };`,
+        "/store.js": `const NAME = globalThis.APP.name; export class Store { name = NAME; }`,
+        "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+      },
+      entryPoints: ["/index.js"],
+      splitting: true,
+      target: "browser",
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: `index app ${use === "typeof fs" ? "undefined" : "none"}\nroute app` },
     });
   }
   // load.js runs nothing, so --min-chunk-size could fold its chunk into the chunk of util.js, where the path names another file.

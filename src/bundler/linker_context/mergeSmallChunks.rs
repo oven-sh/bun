@@ -765,7 +765,7 @@ struct EntryChunkWalks<'a> {
     run_below: &'a mut [u64],
     /// Per file: the `classes` of the calls of `keep_apart_from_files_that_run` that went through it.
     kept_apart_for: &'a mut [u64],
-    /// Per file: the entry point whose walk last entered it.
+    /// Per file: the entry point whose walk last entered it, or `u32::MAX`.
     entered: &'a mut [u32],
     /// The own files that must run before a file of the parent.
     leaves: AutoBitSet,
@@ -776,6 +776,9 @@ struct EntryChunkWalks<'a> {
 }
 
 type LoadClass<'f> = &'f mut dyn FnMut(&AutoBitSet) -> crate::Result<AutoBitSet>;
+
+/// The bit of all the classes that have no bit of their own. It stands for several chunks, so it never counts as loaded.
+const MORE_CLASSES: u64 = 1 << 61;
 
 impl<'a> EntryChunkWalks<'a> {
     /// The index of a chunk key in `class_by_key`.
@@ -796,7 +799,7 @@ impl<'a> EntryChunkWalks<'a> {
         })
     }
 
-    /// One bit for each of the first 62 classes with a file with side effects (`has_one`). 0 for the others: their chunks cut nothing.
+    /// One bit for each of the first 61 classes with a file with side effects (`has_one`), then `MORE_CLASSES`. 0 for a class without such a file.
     fn bit_of_class(&mut self, key: usize, has_one: bool) -> u64 {
         if self.class_bits[key] == u64::MAX {
             let classes = self.class_by_key.values();
@@ -806,12 +809,12 @@ impl<'a> EntryChunkWalks<'a> {
                 .position(|&other| classes[other].eql(&classes[key]));
             self.class_bits[key] = match bit {
                 Some(bit) => 1 << bit,
+                None if 1 << self.classes_with_bit.len() == MORE_CLASSES => MORE_CLASSES,
                 None if !has_one => return 0,
-                None if self.classes_with_bit.len() < 62 => {
+                None => {
                     self.classes_with_bit.push(key);
                     1 << (self.classes_with_bit.len() - 1)
                 }
-                None => 0,
             };
         }
         self.class_bits[key]
@@ -972,6 +975,8 @@ fn files_that_leave_entry_chunk<'a>(
     // The files of other classes whose load evaluates nothing with side effects, with `met` there. The parent imports from the first `inert_for_parent`.
     let mut inert: Vec<(u32, u64)> = Vec::new();
     let mut inert_for_parent = 0;
+    // In `entered`: such a file is not in `inert` yet, because no file that can be in the parent imports it.
+    const ONLY_FROM_ENTRY_FILE: u32 = 1 << 31;
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
         let file = match frame {
@@ -1024,11 +1029,20 @@ fn files_that_leave_entry_chunk<'a>(
             }
             OrderFrame::Enter(file) => file,
         };
-        if core::mem::replace(&mut walks.entered[file as usize], entry_id as u32) == entry_id as u32
-            || css[file as usize].is_some()
-        {
+        let entered = core::mem::replace(&mut walks.entered[file as usize], entry_id as u32);
+        if css[file as usize].is_some() {
+            continue;
+        }
+        if entered & !ONLY_FROM_ENTRY_FILE == entry_id as u32 {
             if walks.segment_of_file[file as usize] & OPEN != 0 {
                 no_cut_from = no_cut_from.min(walks.segment_of_file[file as usize] & !OPEN);
+            }
+            if entered != entry_id as u32 {
+                if open > 0 {
+                    inert.push((file, met & !MORE_CLASSES));
+                } else {
+                    walks.entered[file as usize] = entered;
+                }
             }
             continue;
         }
@@ -1054,14 +1068,18 @@ fn files_that_leave_entry_chunk<'a>(
                 }
                 Runs::WithOtherEntry => {
                     let loads = classes_that_run_below(this, walks, load_class, file)?;
-                    if loads & !met != 0 && segment_runs && open < no_cut_from {
+                    if loads & (!met | MORE_CLASSES) != 0 && segment_runs && open < no_cut_from {
                         (segment, segment_runs) = (segment + 1, false);
                         walks.cuts.push(part);
                     }
                     met |= loads;
                     // The entry point's file keeps its bindings. The parent only repeats its call of a wrapper.
-                    if loads == 0 && (open > 0 || flags[file as usize].wrap != WrapKind::None) {
-                        inert.push((file, met));
+                    if loads == 0 {
+                        if open > 0 || flags[file as usize].wrap != WrapKind::None {
+                            inert.push((file, met & !MORE_CLASSES));
+                        } else {
+                            walks.entered[file as usize] |= ONLY_FROM_ENTRY_FILE;
+                        }
                     }
                     continue;
                 }

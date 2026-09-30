@@ -1,5 +1,7 @@
 #![warn(unused_must_use)]
 pub mod erased;
+#[cfg(test)]
+mod erased_tests;
 pub mod parse_entry;
 pub(crate) mod parse_fn;
 pub(crate) mod parse_import_export;

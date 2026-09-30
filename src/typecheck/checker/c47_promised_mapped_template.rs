@@ -1,5 +1,5 @@
-// checker.go:29042-29447 (layers E-AWAIT, T-SIGSHAPE, T-SYMTYPE, K-TEMPLATE): the functions of 29042-29133, 29198-29227 and 29268-29344: the promised type of a promise, the type of the first parameter of a signature, optional type markers and missing types, and template literal type construction.
-use crate::ast::{Arg, NodeId, is_outermost_optional_chain};
+// checker.go:29042-29447 (layers E-AWAIT, T-SIGSHAPE, T-SYMTYPE, T-CONSTRAINT, K-TEMPLATE): the functions of 29042-29133, 29198-29227 and 29255-29344: the promised type of a promise, the type of the first parameter of a signature, optional type markers and missing types, the constraint declaration of a type parameter, and template literal type construction.
+use crate::ast::{Arg, NodeId, is_outermost_optional_chain, is_type_parameter_declaration};
 use crate::checker::{
     CachedTypeKey, CachedTypeKind, Checker, RelationKind, SignatureId, SignatureKind, TypeAliasId,
     TypeFacts, TypeFlags, TypeId, UnionReduction, get_template_type_key, is_type_any,
@@ -177,6 +177,22 @@ impl<'a> Checker<'a> {
             return self.remove_type(t, self.missing_type);
         }
         self.get_type_with_facts(t, TypeFacts::NE_UNDEFINED)
+    }
+
+    pub fn get_constraint_declaration(&self, t: TypeId) -> NodeId {
+        let a = self.ast;
+        let symbol = self.types[t].symbol;
+        if !symbol.is_nil() {
+            for &d in a.sym(symbol).declarations.as_slice() {
+                if is_type_parameter_declaration(a, d) {
+                    let constraint = a.as_type_parameter_declaration(d).constraint;
+                    if !constraint.is_nil() {
+                        return constraint;
+                    }
+                }
+            }
+        }
+        NodeId::NIL
     }
 
     pub fn get_template_literal_type(

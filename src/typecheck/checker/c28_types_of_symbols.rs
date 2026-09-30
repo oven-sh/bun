@@ -1,6 +1,6 @@
-// checker.go:16495-17139 (layers T-SYMTYPE, T-SIGSHAPE): the functions of 16495-16585, 16658-17028 and 17132-17139: types of deferred, written and located symbols, the type of a variable, parameter or property from its declaration, padding of destructured initializers, types of functions, classes, enums and modules, and the type of a parameter.
+// checker.go:16495-17139 (layers T-SYMTYPE, T-BASE, T-SIGSHAPE): types of deferred, written and located symbols, the type of a symbol, the type of a variable, parameter or property from its declaration, padding of destructured initializers, types of functions, classes, enums and modules, the base constructor type of a class, and the type of a parameter.
 use crate::ast::{
-    CheckFlags, INTERNAL_SYMBOL_NAME_MISSING, INTERNAL_SYMBOL_NAME_THIS, Kind, ModifierFlags,
+    Arg, CheckFlags, INTERNAL_SYMBOL_NAME_MISSING, INTERNAL_SYMBOL_NAME_THIS, Kind, ModifierFlags,
     NodeFlags, NodeId, SymbolFlags, SymbolId, find_constructor_declaration,
     get_declaration_of_kind, get_root_declaration, has_accessor_modifier, has_static_modifier,
     is_assignment_target, is_binding_element, is_binding_pattern,
@@ -14,13 +14,15 @@ use crate::ast::{
 };
 use crate::checker::{
     CheckMode, Checker, ElementFlags, InferenceContextId, ObjectFlags, SignatureFlags, SignatureId,
-    TupleElementInfo, TypeFlags, TypeId, TypeSystemEntity, TypeSystemPropertyName, WideningKind,
-    get_property_name_from_type, has_dot_dot_dot_token, is_declaration_readonly,
-    is_empty_array_literal, is_object_literal_type, is_optional_declaration,
-    is_right_side_of_access_expression, is_shorthand_ambient_module_symbol, is_tuple_type,
+    SignatureKind, TupleElementInfo, TypeFlags, TypeId, TypeSystemEntity, TypeSystemPropertyName,
+    WideningKind, get_base_type_node_of_class, get_property_name_from_type, has_dot_dot_dot_token,
+    is_declaration_readonly, is_empty_array_literal, is_object_literal_type,
+    is_optional_declaration, is_right_side_of_access_expression,
+    is_shorthand_ambient_module_symbol, is_tuple_type, is_type_any,
     is_type_usable_as_property_name,
 };
-use crate::core::{List, Text};
+use crate::core::{List, Text, find};
+use crate::diagnostics;
 
 impl<'a> Checker<'a> {
     pub fn get_type_of_symbol_with_deferred_type(&mut self, symbol: SymbolId) -> TypeId {
@@ -142,6 +144,97 @@ impl<'a> Checker<'a> {
             }
         }
         self.get_non_missing_type_of_symbol(symbol)
+    }
+
+    pub fn get_type_of_symbol(&mut self, symbol: SymbolId) -> TypeId {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let s = self.ast.sym(symbol);
+        if s.check_flags.intersects(CheckFlags::DEFERRED_TYPE) {
+            return self.get_type_of_symbol_with_deferred_type(symbol);
+        }
+        if s.check_flags.intersects(CheckFlags::INSTANTIATED) {
+            return self.get_type_of_instantiated_symbol(symbol);
+        }
+        if s.check_flags.intersects(CheckFlags::MAPPED) {
+            return self.get_type_of_mapped_symbol(symbol);
+        }
+        if s.check_flags.intersects(CheckFlags::REVERSE_MAPPED) {
+            return self.get_type_of_reverse_mapped_symbol(symbol);
+        }
+        if s.flags.intersects(SymbolFlags::ACCESSOR) {
+            return self.get_type_of_accessors(symbol);
+        }
+        if s.flags
+            .intersects(SymbolFlags::VARIABLE | SymbolFlags::PROPERTY)
+        {
+            return self.get_type_of_variable_or_parameter_or_property(symbol);
+        }
+        if s.flags.intersects(
+            SymbolFlags::FUNCTION
+                | SymbolFlags::METHOD
+                | SymbolFlags::CLASS
+                | SymbolFlags::ENUM
+                | SymbolFlags::VALUE_MODULE,
+        ) {
+            return self.get_type_of_func_class_enum_module(symbol);
+        }
+        if s.flags.intersects(SymbolFlags::ENUM_MEMBER) {
+            return self.get_type_of_enum_member(symbol);
+        }
+        if s.flags.intersects(SymbolFlags::ALIAS) {
+            return self.get_type_of_alias(symbol);
+        }
+        self.error_type
+    }
+
+    pub fn get_non_missing_type_of_symbol(&mut self, symbol: SymbolId) -> TypeId {
+        let t = self.get_type_of_symbol(symbol);
+        let is_optional = self.ast.sym(symbol).flags.intersects(SymbolFlags::OPTIONAL);
+        self.remove_missing_type(t, is_optional)
+    }
+
+    pub fn get_type_of_instantiated_symbol(&mut self, symbol: SymbolId) -> TypeId {
+        let links = self.value_symbol_links_get(symbol);
+        if self.value_symbol_links[links].resolved_type.is_nil() {
+            let target = self.value_symbol_links[links].target;
+            let target_type = self.get_type_of_symbol(target);
+            let mapper = self.value_symbol_links[links].mapper;
+            let resolved_type = self.instantiate_type(target_type, mapper);
+            self.value_symbol_links[links].resolved_type = resolved_type;
+        }
+        self.value_symbol_links[links].resolved_type
+    }
+
+    pub fn get_write_type_of_instantiated_symbol(&mut self, symbol: SymbolId) -> TypeId {
+        let links = self.value_symbol_links_get(symbol);
+        if self.value_symbol_links[links].write_type.is_nil() {
+            let target = self.value_symbol_links[links].target;
+            let target_type = self.get_write_type_of_symbol(target);
+            let mapper = self.value_symbol_links[links].mapper;
+            let write_type = self.instantiate_type(target_type, mapper);
+            self.value_symbol_links[links].write_type = write_type;
+        }
+        self.value_symbol_links[links].write_type
+    }
+
+    pub fn get_type_of_variable_or_parameter_or_property(&mut self, symbol: SymbolId) -> TypeId {
+        let links = self.value_symbol_links_get(symbol);
+        if self.value_symbol_links[links].resolved_type.is_nil() {
+            let mut t = self.get_type_of_variable_or_parameter_or_property_worker(symbol);
+            if t.is_nil() {
+                t = self.fail("Unexpected nil type");
+            }
+            // For a contextually typed parameter it is possible that a type has already been assigned (in assignTypeToParameterAndFixTypeParameters), and we want to preserve this type. In fact, we need to _prefer_ that type, but it won't be assigned until contextual typing is complete, so we need to defer in cases where contextual typing may take place.
+            if self.value_symbol_links[links].resolved_type.is_nil()
+                && !self.is_parameter_of_context_sensitive_signature(symbol)
+            {
+                self.value_symbol_links[links].resolved_type = t;
+            }
+            return t;
+        }
+        self.value_symbol_links[links].resolved_type
     }
 
     pub fn is_parameter_of_context_sensitive_signature(&mut self, symbol: SymbolId) -> bool {
@@ -649,6 +742,167 @@ impl<'a> Checker<'a> {
             return self.get_optional_type(t, true);
         }
         t
+    }
+
+    pub fn get_base_type_variable_of_class(&mut self, symbol: SymbolId) -> TypeId {
+        let class_type = self.get_declared_type_of_class_or_interface(symbol);
+        let base_constructor_type = self.get_base_constructor_type_of_class(class_type);
+        let flags = self.types[base_constructor_type].flags;
+        if flags.intersects(TypeFlags::TYPE_VARIABLE) {
+            return base_constructor_type;
+        }
+        if flags.intersects(TypeFlags::INTERSECTION) {
+            let types = self.type_types(base_constructor_type);
+            return find(types.as_slice(), |t| {
+                self.types[t].flags.intersects(TypeFlags::TYPE_VARIABLE)
+            });
+        }
+        TypeId::NIL
+    }
+
+    // The base constructor of a class can resolve to undefinedType if the class has no extends clause, errorType if an error occurred during resolution of the extends expression, nullType if the extends expression is the null value, anyType if the extends expression has type any, or an object type with at least one construct signature.
+    pub fn get_base_constructor_type_of_class(&mut self, t: TypeId) -> TypeId {
+        let a = self.ast;
+        let resolved_base_constructor_type =
+            self.as_interface_type(t).resolved_base_constructor_type;
+        if !resolved_base_constructor_type.is_nil() {
+            return resolved_base_constructor_type;
+        }
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let base_type_node = get_base_type_node_of_class(self, t);
+        if base_type_node.is_nil() {
+            let undefined_type = self.undefined_type;
+            self.as_interface_type_mut(t).resolved_base_constructor_type = undefined_type;
+            return undefined_type;
+        }
+        if !self.push_type_resolution(
+            TypeSystemEntity::Type(t),
+            TypeSystemPropertyName::ResolvedBaseConstructorType,
+        ) {
+            return self.error_type;
+        }
+        let base_constructor_type = self.check_expression(a.expression(base_type_node));
+        if self.types[base_constructor_type]
+            .flags
+            .intersects(TypeFlags::OBJECT | TypeFlags::INTERSECTION)
+        {
+            // Resolving the members of a class requires us to resolve the base class of that class. We force resolution here such that we catch circularities now.
+            self.resolve_structured_type_members(base_constructor_type);
+        }
+        if !self.pop_type_resolution() {
+            let symbol = self.types[t].symbol;
+            let symbol_name = self.symbol_to_string(symbol);
+            self.error(
+                a.sym(symbol).value_declaration,
+                diagnostics::X_0_IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+                &[Arg::Str(&symbol_name)],
+            );
+            if self
+                .as_interface_type(t)
+                .resolved_base_constructor_type
+                .is_nil()
+            {
+                let error_type = self.error_type;
+                self.as_interface_type_mut(t).resolved_base_constructor_type = error_type;
+            }
+            return self.as_interface_type(t).resolved_base_constructor_type;
+        }
+        if !self.types[base_constructor_type]
+            .flags
+            .intersects(TypeFlags::ANY)
+            && base_constructor_type != self.null_widening_type
+            && !self.is_constructor_type(base_constructor_type)
+        {
+            let type_name = self.type_to_string_exported(base_constructor_type);
+            let err = self.error(
+                a.expression(base_type_node),
+                diagnostics::TYPE_0_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                &[Arg::Str(&type_name)],
+            );
+            if self.types[base_constructor_type]
+                .flags
+                .intersects(TypeFlags::TYPE_PARAMETER)
+            {
+                let constraint = self.get_constraint_from_type_parameter(base_constructor_type);
+                let mut ctor_return = self.unknown_type;
+                if !constraint.is_nil() {
+                    let ctor_sigs =
+                        self.get_signatures_of_type(constraint, SignatureKind::CONSTRUCT);
+                    if ctor_sigs.len() != 0 {
+                        ctor_return = self.get_return_type_of_signature(ctor_sigs.at(0usize));
+                    }
+                }
+                let base_constructor_symbol = self.types[base_constructor_type].symbol;
+                let declarations = a.sym(base_constructor_symbol).declarations;
+                if !declarations.is_nil() {
+                    let symbol_name = self.symbol_to_string(base_constructor_symbol);
+                    let ctor_return_name = self.type_to_string_exported(ctor_return);
+                    let related = self.create_diagnostic_for_node(
+                        declarations.at(0usize),
+                        diagnostics::DID_YOU_MEAN_FOR_0_TO_BE_CONSTRAINED_TO_TYPE_NEW_ARGS_COLON_ANY_1,
+                        &[Arg::Str(&symbol_name), Arg::Str(&ctor_return_name)],
+                    );
+                    self.diagnostic_store.add_related_info(err, related);
+                }
+            }
+            if self
+                .as_interface_type(t)
+                .resolved_base_constructor_type
+                .is_nil()
+            {
+                let error_type = self.error_type;
+                self.as_interface_type_mut(t).resolved_base_constructor_type = error_type;
+            }
+            return self.as_interface_type(t).resolved_base_constructor_type;
+        }
+        if self
+            .as_interface_type(t)
+            .resolved_base_constructor_type
+            .is_nil()
+        {
+            self.as_interface_type_mut(t).resolved_base_constructor_type = base_constructor_type;
+        }
+        self.as_interface_type(t).resolved_base_constructor_type
+    }
+
+    pub fn is_function_type(&mut self, t: TypeId) -> bool {
+        self.types[t].flags.intersects(TypeFlags::OBJECT)
+            && self.get_signatures_of_type(t, SignatureKind::CALL).len() > 0
+    }
+
+    pub fn is_constructor_type(&mut self, t: TypeId) -> bool {
+        if self
+            .get_signatures_of_type(t, SignatureKind::CONSTRUCT)
+            .len()
+            > 0
+        {
+            return true;
+        }
+        if self.types[t].flags.intersects(TypeFlags::TYPE_VARIABLE) {
+            let constraint = self.get_base_constraint_of_type(t);
+            return !constraint.is_nil() && self.is_mixin_constructor_type(constraint);
+        }
+        false
+    }
+
+    // A type is a mixin constructor if it has a single construct signature taking no type parameters and a single rest parameter of type any[].
+    pub fn is_mixin_constructor_type(&mut self, t: TypeId) -> bool {
+        let signatures = self.get_signatures_of_type(t, SignatureKind::CONSTRUCT);
+        if signatures.len() == 1 {
+            let s = signatures.at(0usize);
+            if self.signatures[s].type_parameters.len() == 0
+                && self.signatures[s].parameters.len() == 1
+                && signature_has_rest_parameter(self, s)
+            {
+                let param_type =
+                    self.get_type_of_parameter(self.signatures[s].parameters.at(0usize));
+                return is_type_any(self, param_type)
+                    || self.get_element_type_of_array_type(param_type) == self.any_type;
+            }
+        }
+        false
     }
 }
 

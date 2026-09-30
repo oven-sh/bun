@@ -1,10 +1,16 @@
-// checker.go:27551-28310 (layers K-PRED, T-SIGSHAPE, T-WIDEN): the functions of 27729-27793, 27855-27986 and 28278-28310: kind tests over types, const enum tests, signature parameters expanded from a tuple rest type, rest parameter tests, the cached union predicates, extractTypesOfKind and the regular type of an object literal.
-use crate::ast::{Ast, CheckFlags, NodeId, SymbolFlags, SymbolId, SymbolTable};
+// checker.go:27551-28310 (layers T-CONSTRAINT, K-PRED, T-UIMEMBERS, T-SIGSHAPE, K-INDEXED, T-WIDEN): the functions of 27551-27827, 27855-27986, 28025-28033 and 28278-28310: base constraints, kind tests over types, const enum tests, the comparison of two properties, signature parameters expanded from a tuple rest type, rest parameter tests, the cached union predicates, the dispatcher of type simplification, extractTypesOfKind and the regular type of an object literal.
+use crate::ast::{
+    Arg, Ast, CheckFlags, ModifierFlags, NodeId, SymbolFlags, SymbolId, SymbolTable,
+    is_node_descendant_of,
+};
 use crate::checker::{
-    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, IndexInfoId, ObjectFlags, SignatureId,
-    TypeFlags, TypeId, is_object_literal_type,
+    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, IndexFlags, IndexInfoId, ObjectFlags,
+    RecursionId, SignatureId, Ternary, TypeAliasId, TypeFlags, TypeId, TypeSystemEntity,
+    TypeSystemPropertyName, every_type, get_declaration_modifier_flags_from_symbol,
+    get_recursion_identity, is_object_literal_type,
 };
 use crate::core::List;
+use crate::diagnostics;
 use crate::scanner::declaration_name_to_string;
 use std::collections::BTreeMap;
 
@@ -14,6 +20,252 @@ fn at(types: &[TypeId], index: usize) -> TypeId {
 }
 
 impl<'a> Checker<'a> {
+    pub fn get_base_constraint_or_type(&mut self, t: TypeId) -> TypeId {
+        let constraint = self.get_base_constraint_of_type(t);
+        if !constraint.is_nil() {
+            return constraint;
+        }
+        t
+    }
+
+    pub fn get_base_constraint_of_type(&mut self, t: TypeId) -> TypeId {
+        if self.types[t].flags.intersects(
+            TypeFlags::INSTANTIABLE_NON_PRIMITIVE
+                | TypeFlags::UNION_OR_INTERSECTION
+                | TypeFlags::TEMPLATE_LITERAL
+                | TypeFlags::STRING_MAPPING
+                | TypeFlags::INDEX,
+        ) || self.is_generic_tuple_type(t)
+        {
+            let constraint = self.get_resolved_base_constraint(t, &mut Vec::new());
+            if constraint != self.no_constraint_type && constraint != self.circular_constraint_type
+            {
+                return constraint;
+            }
+            return TypeId::NIL;
+        }
+        TypeId::NIL
+    }
+
+    // Upstream passes the stack of recursion identities by value and extends it with append: here the one stack is pushed before the nested call and truncated after it.
+    pub fn get_resolved_base_constraint(
+        &mut self,
+        t: TypeId,
+        stack: &mut Vec<RecursionId>,
+    ) -> TypeId {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
+        let a = self.ast;
+        if !self.has_constrained_type(t) {
+            return t;
+        }
+        let resolved_base_constraint = self.as_constrained_type(t).resolved_base_constraint;
+        if !resolved_base_constraint.is_nil() {
+            return resolved_base_constraint;
+        }
+        if !self.push_type_resolution(
+            TypeSystemEntity::Type(t),
+            TypeSystemPropertyName::ResolvedBaseConstraint,
+        ) {
+            return self.circular_constraint_type;
+        }
+        let mut constraint = TypeId::NIL;
+        // We always explore at least 10 levels of nested constraints. Thereafter, we continue to explore up to 50 levels of nested constraints provided there are no "deeply nested" types on the stack (i.e. no types for which five instantiations have been recorded on the stack). If we reach 50 levels of nesting, we are presumably exploring a repeating pattern with a long cycle that hasn't yet triggered the deeply nested limiter. We have no test cases that actually get to 50 levels of nesting, so it is effectively just a safety stop.
+        let identity = get_recursion_identity(self, t);
+        if stack.len() < 10 || stack.len() < 50 && !stack.contains(&identity) {
+            let simplified = self.get_simplified_type(t, false);
+            let depth = stack.len();
+            stack.push(identity);
+            constraint = self.compute_base_constraint(simplified, stack);
+            stack.truncate(depth);
+        }
+        if !self.pop_type_resolution() {
+            if self.types[t].flags.intersects(TypeFlags::TYPE_PARAMETER) {
+                let error_node = self.get_constraint_declaration(t);
+                if !error_node.is_nil() {
+                    let type_name = self.type_to_string_exported(t);
+                    let diagnostic = self.error(
+                        error_node,
+                        diagnostics::TYPE_PARAMETER_0_HAS_A_CIRCULAR_CONSTRAINT,
+                        &[Arg::Str(&type_name)],
+                    );
+                    let current_node = self.current_node;
+                    if !current_node.is_nil()
+                        && !is_node_descendant_of(a, error_node, current_node)
+                        && !is_node_descendant_of(a, current_node, error_node)
+                    {
+                        let related = self.new_diagnostic_for_node(
+                            current_node,
+                            diagnostics::CIRCULARITY_ORIGINATES_IN_TYPE_AT_THIS_LOCATION,
+                            &[],
+                        );
+                        self.diagnostic_store.add_related_info(diagnostic, related);
+                    }
+                }
+            }
+            constraint = self.circular_constraint_type;
+        }
+        if constraint.is_nil() {
+            constraint = self.no_constraint_type;
+        }
+        if self
+            .as_constrained_type(t)
+            .resolved_base_constraint
+            .is_nil()
+        {
+            self.as_constrained_type_mut(t).resolved_base_constraint = constraint;
+        }
+        constraint
+    }
+
+    pub fn compute_base_constraint(&mut self, t: TypeId, stack: &mut Vec<RecursionId>) -> TypeId {
+        let flags = self.types[t].flags;
+        if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            let constraint = self.get_constraint_from_type_parameter(t);
+            if self.as_type_parameter(t).is_this_type {
+                return constraint;
+            }
+            return self.get_next_base_constraint(constraint, stack);
+        }
+        if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
+            let types = self.type_types(t);
+            let mut constraints: Vec<TypeId> = Vec::with_capacity(types.as_slice().len());
+            let mut different = false;
+            for &s in types.as_slice() {
+                let constraint = self.get_next_base_constraint(s, stack);
+                if !constraint.is_nil() {
+                    if constraint != s {
+                        different = true;
+                    }
+                    constraints.push(constraint);
+                } else {
+                    different = true;
+                }
+            }
+            if !different {
+                return t;
+            }
+            if flags.intersects(TypeFlags::UNION) && constraints.len() == types.as_slice().len() {
+                return self.get_union_type(List::from_slice(&constraints));
+            }
+            if flags.intersects(TypeFlags::INTERSECTION) && !constraints.is_empty() {
+                return self.get_intersection_type(List::from_slice(&constraints));
+            }
+            return TypeId::NIL;
+        }
+        if flags.intersects(TypeFlags::INDEX) {
+            let mapped_type = self.as_index_type(t).target;
+            if self.is_generic_mapped_type(mapped_type)
+                && !self.get_name_type_from_mapped_type(mapped_type).is_nil()
+                && !self.is_mapped_type_with_keyof_constraint_declaration(mapped_type)
+            {
+                let index_type = self.get_index_type_for_mapped_type(mapped_type, IndexFlags::NONE);
+                return self.get_next_base_constraint(index_type, stack);
+            }
+            return self.string_number_symbol_type;
+        }
+        if flags.intersects(TypeFlags::TEMPLATE_LITERAL) {
+            let types = self.type_types(t);
+            let mut constraints: Vec<TypeId> = Vec::with_capacity(types.as_slice().len());
+            for &s in types.as_slice() {
+                let constraint = self.get_next_base_constraint(s, stack);
+                if !constraint.is_nil() {
+                    constraints.push(constraint);
+                }
+            }
+            if constraints.len() == types.as_slice().len() {
+                let texts = self.as_template_literal_type(t).texts;
+                return self
+                    .get_template_literal_type(texts.as_slice(), List::from_slice(&constraints));
+            }
+            return self.string_type;
+        }
+        if flags.intersects(TypeFlags::STRING_MAPPING) {
+            let target = self.type_target(t);
+            let constraint = self.get_next_base_constraint(target, stack);
+            if !constraint.is_nil() && constraint != self.type_target(t) {
+                let symbol = self.types[t].symbol;
+                return self.get_string_mapping_type(symbol, constraint);
+            }
+            return self.string_type;
+        }
+        if flags.intersects(TypeFlags::INDEXED_ACCESS) {
+            let object_type = self.as_indexed_access_type(t).object_type;
+            let index_type = self.as_indexed_access_type(t).index_type;
+            if self.is_mapped_type_generic_indexed_access(t) {
+                // For indexed access types of the form { [P in K]: E }[X], where K is non-generic and X is generic, we substitute an instantiation of E where P is replaced with X.
+                let substituted = self.substitute_indexed_mapped_type(object_type, index_type);
+                return self.get_next_base_constraint(substituted, stack);
+            }
+            let base_object_type = self.get_next_base_constraint(object_type, stack);
+            let base_index_type = self.get_next_base_constraint(index_type, stack);
+            if base_object_type.is_nil() || base_index_type.is_nil() {
+                return TypeId::NIL;
+            }
+            let access_flags = self.as_indexed_access_type(t).access_flags;
+            let indexed_access = self.get_indexed_access_type_or_undefined(
+                base_object_type,
+                base_index_type,
+                access_flags,
+                NodeId::NIL,
+                TypeAliasId::NIL,
+            );
+            return self.get_next_base_constraint(indexed_access, stack);
+        }
+        if flags.intersects(TypeFlags::CONDITIONAL) {
+            if self.conditional_constraint_depth >= 100 {
+                return TypeId::NIL;
+            }
+            self.conditional_constraint_depth += 1;
+            let constraint = self.get_constraint_from_conditional_type(t);
+            self.conditional_constraint_depth -= 1;
+            return self.get_next_base_constraint(constraint, stack);
+        }
+        if flags.intersects(TypeFlags::SUBSTITUTION) {
+            let intersection = self.get_substitution_intersection(t);
+            return self.get_next_base_constraint(intersection, stack);
+        }
+        if self.is_generic_tuple_type(t) {
+            // We substitute constraints for variadic elements only when the constraints are array types or non-variadic tuple types as we want to avoid further (possibly unbounded) recursion.
+            let element_types = self.get_element_types(t);
+            let element_infos = self.type_target_tuple_type(t).element_infos;
+            let mut new_elements: Vec<TypeId> = Vec::with_capacity(element_types.as_slice().len());
+            for (i, &v) in element_types.as_slice().iter().enumerate() {
+                let mut new_element = v;
+                if self.types[v].flags.intersects(TypeFlags::TYPE_PARAMETER)
+                    && element_infos.at(i).flags.intersects(ElementFlags::VARIADIC)
+                {
+                    let constraint = self.get_next_base_constraint(v, stack);
+                    if !constraint.is_nil()
+                        && constraint != v
+                        && every_type(self, constraint, &mut |c, n| {
+                            c.is_array_or_tuple_type(n) && !c.is_generic_tuple_type(n)
+                        })
+                    {
+                        new_element = constraint;
+                    }
+                }
+                new_elements.push(new_element);
+            }
+            let readonly = self.type_target_tuple_type(t).readonly;
+            let new_elements = self.list_of(&new_elements);
+            return self.create_tuple_type_ex(new_elements, element_infos, readonly);
+        }
+        t
+    }
+
+    pub fn get_next_base_constraint(&mut self, t: TypeId, stack: &mut Vec<RecursionId>) -> TypeId {
+        if t.is_nil() {
+            return TypeId::NIL;
+        }
+        let constraint = self.get_resolved_base_constraint(t, stack);
+        if constraint == self.no_constraint_type || constraint == self.circular_constraint_type {
+            return TypeId::NIL;
+        }
+        constraint
+    }
+
     // Return true if type might be of the given kind. A union or intersection type might be of a given kind if at least one constituent type is of the given kind.
     pub fn maybe_type_of_kind(&self, t: TypeId, kind: TypeFlags) -> bool {
         if self.types[t].flags.intersects(kind) {
@@ -126,6 +378,55 @@ pub fn is_const_enum_object_type(c: &Checker<'_>, t: TypeId) -> bool {
 
 pub fn is_const_enum_symbol(a: Ast<'_>, symbol: SymbolId) -> bool {
     a.sym(symbol).flags.intersects(SymbolFlags::CONST_ENUM)
+}
+
+impl<'a> Checker<'a> {
+    pub fn compare_properties(
+        &mut self,
+        source_prop: SymbolId,
+        target_prop: SymbolId,
+        compare_types: &mut dyn FnMut(&mut Checker<'a>, TypeId, TypeId) -> Ternary,
+    ) -> Ternary {
+        let a = self.ast;
+        // Two members are considered identical when - they are public properties with identical names, optionality, and types, - they are private or protected properties originating in the same declaration and having identical types
+        if source_prop == target_prop {
+            return Ternary::TRUE;
+        }
+        let source_prop_accessibility = get_declaration_modifier_flags_from_symbol(a, source_prop)
+            & ModifierFlags::NON_PUBLIC_ACCESSIBILITY_MODIFIER;
+        let target_prop_accessibility = get_declaration_modifier_flags_from_symbol(a, target_prop)
+            & ModifierFlags::NON_PUBLIC_ACCESSIBILITY_MODIFIER;
+        if source_prop_accessibility != target_prop_accessibility {
+            return Ternary::FALSE;
+        }
+        if source_prop_accessibility != ModifierFlags::NONE {
+            let source_target = self.get_target_symbol(source_prop);
+            let target_target = self.get_target_symbol(target_prop);
+            if source_target != target_target {
+                return Ternary::FALSE;
+            }
+        } else if (a.sym(source_prop).flags & SymbolFlags::OPTIONAL)
+            != (a.sym(target_prop).flags & SymbolFlags::OPTIONAL)
+        {
+            return Ternary::FALSE;
+        }
+        let source_is_readonly = self.is_readonly_symbol(source_prop);
+        let target_is_readonly = self.is_readonly_symbol(target_prop);
+        if source_is_readonly != target_is_readonly {
+            return Ternary::FALSE;
+        }
+        let source_type = self.get_non_missing_type_of_symbol(source_prop);
+        let target_type = self.get_non_missing_type_of_symbol(target_prop);
+        compare_types(self, source_type, target_type)
+    }
+}
+
+// The callback of compareProperties gets the checker first, so this comparer takes it too.
+pub fn compare_types_equal(_c: &mut Checker<'_>, s: TypeId, t: TypeId) -> Ternary {
+    if s == t {
+        return Ternary::TRUE;
+    }
+    Ternary::FALSE
 }
 
 impl<'a> Checker<'a> {
@@ -338,6 +639,21 @@ impl<'a> Checker<'a> {
             .signatures
             .as_slice()
             .is_empty()
+    }
+
+    pub fn get_simplified_type(&mut self, t: TypeId, writing: bool) -> TypeId {
+        if !self.stack_check.is_safe_to_recurse() {
+            let _: () = self.stack_limit();
+            return t;
+        }
+        let flags = self.types[t].flags;
+        if flags.intersects(TypeFlags::INDEXED_ACCESS) {
+            return self.get_simplified_indexed_access_type(t, writing);
+        }
+        if flags.intersects(TypeFlags::CONDITIONAL) {
+            return self.get_simplified_conditional_type(t, writing);
+        }
+        t
     }
 
     pub fn extract_types_of_kind(&mut self, t: TypeId, kind: TypeFlags) -> TypeId {

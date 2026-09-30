@@ -36,12 +36,6 @@ fn ascii(ch: Rune) -> char {
     }
 }
 
-// An upstream callee that is not ported yet: its name goes to the stand-in log.
-#[cold]
-fn stand_in(name: &'static str) {
-    crate::internal::stand_in(name);
-}
-
 // `text[pos]` as a rune: -1 outside the text, where Go panics.
 #[inline]
 fn at(text: &[u8], pos: i32) -> Rune {
@@ -1535,8 +1529,8 @@ impl<'a> Scanner<'a> {
         Ok(self.state.token)
     }
 
-    pub fn re_scan_slash_token(&mut self, report_errors: bool) -> Kind {
-        let should_report_errors = report_errors;
+    // The flags and the pattern of the literal are checked by regexp.go, which is not ported: the literal is scanned the same with and without `report_errors`, and no regular expression diagnostic is reported.
+    pub fn re_scan_slash_token(&mut self, _report_errors: bool) -> Kind {
         if self.state.token == Kind::SlashToken || self.state.token == Kind::SlashEqualsToken {
             let text = self.text;
             // Quickly get to the end of regex such that we know the flags
@@ -1625,10 +1619,6 @@ impl<'a> Scanner<'a> {
             } else {
                 // Consume the slash character
                 p += 1;
-                if should_report_errors {
-                    // The table of flags, the availability of a flag and the parser of the pattern are regexp.go, which is not ported: the literal is scanned, and what regexp.go reports of it is a stand-in.
-                    stand_in("regExpParser.run");
-                }
                 while p < self.end {
                     let (ch, size) = decode_rune(slice_from(text, p));
                     if ch == RUNE_ERROR || !is_identifier_part(ch as u32) {

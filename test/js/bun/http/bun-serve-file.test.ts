@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -19,6 +19,7 @@ const files = {
   "partial.txt": "0123456789ABCDEF",
   "bytes256.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
 };
+const ifRangeValidators = { "ETag": '"v1"', "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT" };
 
 describe("Bun.file in serve routes", () => {
   let server: Server;
@@ -104,6 +105,18 @@ describe("Bun.file in serve routes", () => {
         new Response(Bun.file(join(tempDir, "partial.txt")), {
           headers: { "Cache-Control": "max-age=3600", "X-Custom": "abc" },
         }),
+      // If-Range tests: the same validators on a file route and on a handler response.
+      "/if-range-route": new Response(Bun.file(join(tempDir, "partial.txt")), { headers: ifRangeValidators }),
+      "/if-range-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")), { headers: ifRangeValidators }),
+      // Responds after the request callback returned, when the server no longer has the request's header buffer.
+      "/if-range-async-handler": async () => {
+        const file = Bun.file(join(tempDir, "partial.txt"));
+        await file.exists();
+        return new Response(file, { headers: ifRangeValidators });
+      },
+      "/if-range-weak-route": new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { ETag: 'W/"v1"' } }),
+      "/if-range-weak-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { ETag: 'W/"v1"' } }),
     } as const;
 
     server = Bun.serve({
@@ -943,6 +956,109 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
+  // RFC 9110 §13.1.5: If-Range carries the validator of the partial copy the
+  // client already has. Only a match may get a 206. Anything else means that
+  // copy is of another version, so the server ignores Range and sends the
+  // full 200 body.
+  describe.concurrent.each([
+    ["FileRoute", "/if-range-route", "/if-range-weak-route"],
+    ["fetch handler", "/if-range-handler", "/if-range-weak-handler"],
+    ["async fetch handler", "/if-range-async-handler", "/if-range-weak-handler"],
+  ])("If-Range via %s", (_label, path, weakPath) => {
+    const partial = { status: 206, contentRange: "bytes 4-7/16", body: "4567" };
+    const full = { status: 200, contentRange: null, body: files["partial.txt"] };
+
+    async function get(path: string, headers: Record<string, string>) {
+      const res = await fetch(new URL(path, server.url), { headers });
+      return { status: res.status, contentRange: res.headers.get("content-range"), body: await res.text() };
+    }
+
+    it.each([
+      ["the ETag", '"v1"', partial],
+      ["another ETag", '"v2"', full],
+      ["the ETag as a weak tag", 'W/"v1"', full],
+      ["the Last-Modified date", "Wed, 21 Oct 2015 07:28:00 GMT", partial],
+      ["the Last-Modified date in the rfc850 form", "Wednesday, 21-Oct-15 07:28:00 GMT", partial],
+      ["a date after Last-Modified", "Wed, 21 Oct 2015 07:28:01 GMT", full],
+      ["a date before Last-Modified", "Wed, 21 Oct 2015 07:27:59 GMT", full],
+      // No zone: the parse would depend on the server's time zone, so it never matches.
+      ["the Last-Modified date in the asctime form", "Wed Oct 21 07:28:00 2015", full],
+      ["the Last-Modified date with no zone", "Wed, 21 Oct 2015 07:28:00", full],
+      ["neither an entity-tag nor a date", "v1", full],
+    ])("If-Range is %s", async (_name, ifRange, expected) => {
+      expect(await get(path, { "Range": "bytes=4-7", "If-Range": ifRange })).toEqual(expected);
+    });
+
+    it("a weak ETag on the response never matches", async () => {
+      expect(await get(weakPath, { "Range": "bytes=4-7", "If-Range": 'W/"v1"' })).toEqual(full);
+      expect(await get(weakPath, { "Range": "bytes=4-7", "If-Range": '"v1"' })).toEqual(full);
+    });
+
+    it("a failed If-Range also turns off 416", async () => {
+      expect(await get(path, { "Range": "bytes=100-200", "If-Range": '"v2"' })).toEqual(full);
+      expect(await get(path, { "Range": "bytes=100-200", "If-Range": '"v1"' })).toEqual({
+        status: 416,
+        contentRange: "bytes */16",
+        body: "",
+      });
+    });
+
+    it("If-Range without Range changes nothing", async () => {
+      expect(await get(path, { "If-Range": '"v2"' })).toEqual(full);
+    });
+  });
+
+  describe.concurrent("If-Range edge cases", () => {
+    it("HEAD on a FileRoute mirrors GET", async () => {
+      const head = async (ifRange: string) => {
+        const res = await fetch(new URL("/if-range-route", server.url), {
+          method: "HEAD",
+          headers: { "Range": "bytes=4-7", "If-Range": ifRange },
+        });
+        return {
+          status: res.status,
+          contentRange: res.headers.get("content-range"),
+          contentLength: res.headers.get("content-length"),
+        };
+      };
+      expect(await head('"v1"')).toEqual({ status: 206, contentRange: "bytes 4-7/16", contentLength: "4" });
+      expect(await head('"v2"')).toEqual({ status: 200, contentRange: null, contentLength: "16" });
+    });
+
+    it("FileRoute compares a date with the Last-Modified it sends", async () => {
+      const url = new URL("/partial.txt", server.url);
+      const lastModified = (await fetch(url)).headers.get("last-modified")!;
+      expect(lastModified).not.toBeEmpty();
+
+      const same = await fetch(url, { headers: { "Range": "bytes=4-7", "If-Range": lastModified } });
+      expect(same.status).toBe(206);
+      expect(await same.text()).toBe("4567");
+
+      const earlier = new Date(Date.parse(lastModified) - 1000).toUTCString();
+      const stale = await fetch(url, { headers: { "Range": "bytes=4-7", "If-Range": earlier } });
+      expect(stale.status).toBe(200);
+      expect(await stale.text()).toBe(files["partial.txt"]);
+    });
+
+    it.each([
+      ["FileRoute", "/partial.txt"],
+      ["fetch handler", "/range-handler"],
+    ])("an entity-tag cannot match a %s response with no ETag", async (_label, path) => {
+      const res = await fetch(new URL(path, server.url), { headers: { "Range": "bytes=4-7", "If-Range": '"v1"' } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBeNull();
+      expect(await res.text()).toBe(files["partial.txt"]);
+    });
+
+    it("a date cannot match a fetch handler response with no Last-Modified", async () => {
+      const res = await fetch(new URL("/range-handler", server.url), {
+        headers: { "Range": "bytes=4-7", "If-Range": "Wed, 21 Oct 2015 07:28:00 GMT" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(files["partial.txt"]);
+    });
+  });
+
   describe.concurrent("Range with custom headers (fetch handler)", () => {
     it("416 preserves user headers", async () => {
       const res = await fetch(new URL("/range-custom-headers", server.url), { headers: { Range: "bytes=100-200" } });
@@ -996,6 +1112,40 @@ describe("Bun.file in serve routes", () => {
       expect(res.headers.get("content-range")).not.toContain("/256");
     });
   });
+});
+
+// What If-Range is for: the client has part of a file, and the file changes on
+// disk before the client asks for the rest. A 206 here would splice the old
+// first half onto the new second half.
+test.concurrent("a download resumed with If-Range after the file changed gets the new file in full", async () => {
+  using dir = tempDir("serve-if-range-resume", { "asset.bin": Buffer.alloc(400, "A") });
+  const assetPath = join(String(dir), "asset.bin");
+  utimesSync(assetPath, new Date("2020-01-02T03:04:05Z"), new Date("2020-01-02T03:04:05Z"));
+
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/asset.bin": new Response(Bun.file(assetPath)) },
+  });
+  const url = new URL("/asset.bin", server.url);
+
+  const first = await fetch(url, { headers: { "Range": "bytes=0-199" } });
+  const validator = first.headers.get("last-modified")!;
+  expect(validator).toBe("Thu, 02 Jan 2020 03:04:05 GMT");
+  expect(await first.text()).toBe(Buffer.alloc(200, "A").toString());
+
+  const unchanged = await fetch(url, { headers: { "Range": "bytes=200-", "If-Range": validator } });
+  expect(unchanged.status).toBe(206);
+  expect(await unchanged.text()).toBe(Buffer.alloc(200, "A").toString());
+
+  writeFileSync(assetPath, Buffer.alloc(400, "B"));
+  utimesSync(assetPath, new Date("2021-06-07T08:09:10Z"), new Date("2021-06-07T08:09:10Z"));
+
+  const resumed = await fetch(url, { headers: { "Range": "bytes=200-", "If-Range": validator } });
+  expect({
+    status: resumed.status,
+    contentRange: resumed.headers.get("content-range"),
+    body: await resumed.text(),
+  }).toEqual({ status: 200, contentRange: null, body: Buffer.alloc(400, "B").toString() });
 });
 
 // A body write that returns backpressure must pause the reader until the

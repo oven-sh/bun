@@ -75,6 +75,8 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__isWsShim(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__wantsTextFrameAsBytes(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
@@ -148,6 +150,16 @@ impl CppWebSocket {
     /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
         WebSocket__rejectUnauthorized(self)
+    }
+
+    /// The `ws` module made this socket. Fixed before the connection exists.
+    pub(crate) fn is_ws_shim(&self) -> bool {
+        WebSocket__isWsShim(self)
+    }
+
+    /// Fields and the listener list, read on the C++ side: no JS runs.
+    pub(crate) fn wants_text_frame_as_bytes(&self) -> bool {
+        WebSocket__wantsTextFrameAsBytes(self)
     }
 
     /// `buffered_data` and `secure` are handed on to the connected client.

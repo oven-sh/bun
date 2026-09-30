@@ -214,7 +214,8 @@ public:
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
-    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    // Opcode::Text: the UTF-8 bytes of a text frame. They go out as a Buffer for every binaryType.
+    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData, Opcode);
     /// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
     struct FfiSlice {
         const uint8_t* ptr;
@@ -285,6 +286,23 @@ public:
         return m_rejectUnauthorized;
     }
 
+    // What the `ws` module (src/js/thirdparty/ws.js) is to this socket. Its EventEmitter takes a text
+    // frame as a Buffer, and the module forwards 'message' to it only when a listener asks for that.
+    enum class WsShim : uint8_t {
+        No,
+        MadeTheSocket,
+        ForwardsMessage,
+    };
+    void setWsShim(WsShim state)
+    {
+        // The native client reads isWsShim() once, when it connects. So the module marks its socket first.
+        ASSERT(state == WsShim::MadeTheSocket || m_wsShim != WsShim::No);
+        m_wsShim = std::max(m_wsShim, state);
+    }
+    bool isWsShim() const { return m_wsShim != WsShim::No; }
+    // For a socket of the `ws` module: whether the next text frame goes out as its bytes or as a string.
+    bool wantsTextFrameAsBytes() const;
+
     size_t memoryCost() const;
 
 private:
@@ -338,6 +356,7 @@ private:
     void cancelConnectedClient();
     bool m_rejectUnauthorized { false };
     bool m_paused { false };
+    WsShim m_wsShim { WsShim::No };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };

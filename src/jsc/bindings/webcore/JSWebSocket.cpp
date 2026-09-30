@@ -50,9 +50,11 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
+#include "JSMessageEvent.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -1080,10 +1082,63 @@ WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
     return nullptr;
 }
 
-// https://github.com/oven-sh/bun/issues/11866
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
+static JSC::EncodedJSValue setWsShim(CallFrame* callFrame, WebSocket::WsShim state)
 {
-    return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
+    if (auto* socket = dynamicDowncast<JSWebSocket>(callFrame->argument(0)))
+        socket->wrapped().setWsShim(state);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWebSocketMadeByWs, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return setWsShim(callFrame, WebSocket::WsShim::MadeTheSocket);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWebSocketForwardsMessageForWs, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return setWsShim(callFrame, WebSocket::WsShim::ForwardsMessage);
+}
+
+// Returns the payload of a 'message' event, and stores in `isTextFrame` whether a text frame brought it.
+// A text frame is the Buffer of its bytes for every binaryType:
+// https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L634-L655
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWebSocketReadFrameForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    // Script can dispatch an event of its own on the socket.
+    auto* event = dynamicDowncast<JSMessageEvent>(callFrame->argument(0));
+    bool textFrame = event && event->wrapped().isTextFrame();
+
+    auto* isTextFrame = dynamicDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
+    ASSERT(isTextFrame);
+    if (isTextFrame) [[likely]]
+        isTextFrame->putInternalField(JSC::getVM(lexicalGlobalObject), 0, jsBoolean(textFrame));
+
+    if (textFrame)
+        return JSValue::encode(event->wrapped().jsData().getValue());
+    return JSValue::encode(event ? event->data(*lexicalGlobalObject) : jsUndefined());
+}
+
+// What the `ws` module (src/js/thirdparty/ws.js) takes from the native client: the constructor
+// (https://github.com/oven-sh/bun/issues/11866), the three functions above, and the slot that
+// jsFunctionWebSocketReadFrameForWs writes.
+JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* binding = constructEmptyArray(globalObject, nullptr, 5);
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 0, WebCore::JSWebSocket::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 1, JSFunction::create(vm, globalObject, 1, "madeByWs"_s, jsFunctionWebSocketMadeByWs, ImplementationVisibility::Public));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "forwardsMessage"_s, jsFunctionWebSocketForwardsMessageForWs, ImplementationVisibility::Public));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 3, JSFunction::create(vm, globalObject, 2, "readFrame"_s, jsFunctionWebSocketReadFrameForWs, ImplementationVisibility::Public));
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, 4, InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsBoolean(false), jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, {});
+    return binding;
 }
 
 }

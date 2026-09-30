@@ -42,10 +42,13 @@ class MessageEvent final : public Event {
 
 public:
     struct JSValueTag {
+        // A WebSocket text frame kept as bytes: jsData() is a Buffer of the frame's UTF-8, `data` is the string it decodes to.
+        bool isTextFrame { false };
     };
     using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
     static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
     static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static Ref<MessageEvent> createForTextFrame(JSC::JSUint8Array* utf8, const String& origin);
 
     struct Init : EventInit {
         JSC::JSValue data;
@@ -77,6 +80,11 @@ public:
     const Vector<RefPtr<MessagePort>>& ports() const { return m_ports; }
 
     const DataType& data() const { return m_data; }
+    bool isTextFrame() const
+    {
+        auto* tag = std::get_if<JSValueTag>(&m_data);
+        return tag && tag->isTextFrame;
+    }
 
     JSValueInWrappedObject& jsData() { return m_jsData; }
     JSValueInWrappedObject& cachedData() { return m_cachedData; }

@@ -34,6 +34,7 @@
 
 #include "JSDOMBinding.h"
 #include "JSDOMConvert.h"
+#include "JSBuffer.h"
 #include "JSEventTarget.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -53,10 +54,20 @@ JSC::JSValue JSMessageEvent::ports(JSC::JSGlobalObject& lexicalGlobalObject) con
 JSC::JSValue JSMessageEvent::data(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
-    return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedData(), [this, &lexicalGlobalObject](JSC::ThrowScope&) {
+    return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedData(), [this, &lexicalGlobalObject](JSC::ThrowScope& scope) {
         return std::visit(
             WTF::makeVisitor(
-                [this](MessageEvent::JSValueTag) -> JSC::JSValue { return wrapped().jsData().getValue(JSC::jsNull()); },
+                [this, &lexicalGlobalObject, &scope](MessageEvent::JSValueTag tag) -> JSC::JSValue {
+                    auto value = wrapped().jsData().getValue(JSC::jsNull());
+                    if (!tag.isTextFrame) [[likely]]
+                        return value;
+                    // As in npm ws, the string is `toString()` of the Buffer that the listeners of on('message') get, and can change:
+                    // https://github.com/websockets/ws/blob/8.21.0/lib/event-target.js#L202-L206
+                    auto* utf8 = dynamicDowncast<JSC::JSArrayBufferView>(value);
+                    if (!utf8) [[unlikely]]
+                        return JSC::jsEmptyString(lexicalGlobalObject.vm());
+                    return JSC::JSValue::decode(jsBufferToString(&lexicalGlobalObject, scope, utf8, 0, utf8->byteLength(), BufferEncodingType::utf8));
+                },
                 [this, &lexicalGlobalObject](const Ref<SerializedScriptValue>& data) -> JSC::JSValue {
                     // FIXME: Is it best to handle errors by returning null rather than throwing an exception?
                     return data->deserialize(lexicalGlobalObject, globalObject(), wrapped().ports(), SerializationErrorMode::NonThrowing); },

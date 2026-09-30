@@ -113,6 +113,8 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) receiving_compressed: Cell<bool>,
     /// Track compression state of the entire message (across fragments)
     pub(crate) message_is_compressed: Cell<bool>,
+    /// `CppWebSocket::is_ws_shim`: a text frame can go to C++ as its bytes.
+    ws_shim: bool,
 
     /// `us_ssl_ctx_t` inherited from the upgrade client when it was built
     /// with a custom CA. The socket's `SSL*` references the `SSL_CTX`
@@ -375,6 +377,17 @@ impl<const SSL: bool> WebSocket<SSL> {
             .put_back_websocket_inflate_scratch(decompressed);
     }
 
+    /// Out of line, so that the text frames of every other socket run the code they ran before.
+    #[inline(never)]
+    fn dispatch_text_as_bytes(&self, out: &CppWebSocket, data: &[u8]) {
+        if !strings::is_valid_utf8(data) {
+            self.terminate(ErrorCode::InvalidUtf8);
+            return;
+        }
+        jsc::mark_binding!();
+        out.did_receive_bytes(data, Opcode::Text as u8);
+    }
+
     /// Data will be cloned in C++.
     fn dispatch_data(&self, data: &[u8], kind: Opcode) {
         let Some(out) = self.cpp_websocket() else {
@@ -383,6 +396,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         match kind {
+            Opcode::Text if self.ws_shim && out.wants_text_frame_as_bytes() => {
+                self.dispatch_text_as_bytes(&out, data);
+            }
             Opcode::Text => {
                 // this function encodes to UTF-16 if > 127
                 // so we don't need to worry about latin1 non-ascii code points
@@ -1395,6 +1411,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `handle_close` for adopted sockets and by `clear_data` in tunnel mode)
     /// and an optional permessage-deflate context.
     fn new_raw(
+        outgoing: &CppWebSocket,
         global_this: &JSGlobalObject,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
@@ -1428,6 +1445,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             ),
             receiving_compressed: Cell::new(false),
             message_is_compressed: Cell::new(false),
+            ws_shim: outgoing.is_ws_shim(),
             secure: Cell::new(secure),
             verified_hostname: Box::from(verified_hostname),
             proxy_tunnel: JsCell::new(proxy_tunnel),
@@ -1486,7 +1504,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure: Option<OwnedSslCtx>,
         verified_hostname: &[u8],
     ) -> *mut Self {
-        let ws = Self::new_raw(global_this, deflate_params, secure, verified_hostname, None);
+        let ws = Self::new_raw(
+            outgoing,
+            global_this,
+            deflate_params,
+            secure,
+            verified_hostname,
+            None,
+        );
         let this = ws.this_ptr();
 
         // `adopt_group` takes a closure to write the new socket.
@@ -1533,6 +1558,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // proxy_tunnel is detached. `finish_init` adds the C++ ref paired
         // with m_connectedWebSocket.
         let ws = Self::new_raw(
+            outgoing,
             global_this,
             deflate_params,
             None,

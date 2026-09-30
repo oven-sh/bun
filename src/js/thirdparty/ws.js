@@ -145,6 +145,11 @@ function controlPayload(binaryType, data) {
 
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+let madeByWs;
+let forwardsMessage;
+let readFrame;
+// readFrame() stores here whether a text frame brought the payload.
+let isTextFrame;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -175,7 +180,13 @@ class BunWebSocket extends EventEmitter {
     super();
     // https://github.com/oven-sh/bun/issues/11866
     if (!WebSocket) {
-      WebSocket = $cpp("JSWebSocket.cpp", "getWebSocketConstructor");
+      ({
+        0: WebSocket,
+        1: madeByWs,
+        2: forwardsMessage,
+        3: readFrame,
+        4: isTextFrame,
+      } = $cpp("JSWebSocket.cpp", "createWebSocketBindingForWs"));
     }
 
     if (protocols === undefined) {
@@ -311,6 +322,7 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    madeByWs(ws);
 
     return ws;
   }
@@ -417,18 +429,17 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "message") {
+        forwardsMessage(this.#ws);
         this.#ws.addEventListener(
           "message",
-          ({ data }) => {
-            const isBinary = typeof data !== "string";
-            if (isBinary) {
-              this.emit("message", this.#fragments ? [data] : data, isBinary);
+          event => {
+            const data = readFrame(event, isTextFrame);
+            if ($getInternalField(isTextFrame, 0)) {
+              // binaryType selects the shape of a binary message only:
+              // https://github.com/websockets/ws/blob/8.21.0/lib/receiver.js#L634-L655
+              this.emit("message", data, false);
             } else {
-              let encoded = encoder.encode(data);
-              if (this.#binaryType !== "arraybuffer") {
-                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-              }
-              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+              this.emit("message", this.#fragments ? [data] : data, true);
             }
           },
           once,

@@ -78,6 +78,13 @@ Ref<MessageEvent> MessageEvent::create(const AtomString& type, Init&& initialize
     return adoptRef(*new MessageEvent(type, WTF::move(initializer), isTrusted));
 }
 
+Ref<MessageEvent> MessageEvent::createForTextFrame(JSC::JSUint8Array* utf8, const String& origin)
+{
+    auto event = adoptRef(*new MessageEvent(eventNames().messageEvent, JSValueTag { .isTextFrame = true }, origin));
+    event->m_jsData.setWeakly(utf8);
+    return event;
+}
+
 MessageEvent::~MessageEvent() = default;
 
 auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports) -> std::optional<MessageEventWithStrongData>

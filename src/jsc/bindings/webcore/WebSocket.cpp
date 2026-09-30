@@ -1246,6 +1246,8 @@ void WebSocket::didReceiveMessage(String&& message)
 {
     // LOG(Network, "WebSocket %p didReceiveMessage() Text message '%s'", this, message.utf8().data());
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, message = WTF::move(message)]() mutable {
+    // The `ws` module reads a text frame as its bytes: wantsTextFrameAsBytes().
+    ASSERT(m_wsShim != WsShim::ForwardsMessage);
     if (m_state != OPEN)
         return;
 
@@ -1262,7 +1264,7 @@ void WebSocket::didReceiveMessage(String&& message)
         return;
     }
 
-    if (this->hasEventListeners("message"_s)) {
+    if (this->hasEventListeners(eventNames().messageEvent)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
         dispatchEvent(MessageEvent::create(WTF::move(message), m_url.string()));
         return;
@@ -1277,14 +1279,32 @@ void WebSocket::didReceiveMessage(String&& message)
     // });
 }
 
-void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
+bool WebSocket::wantsTextFrameAsBytes() const
+{
+    // With no listener the frame waits one task, and the listener that arrives can be the one that
+    // forwards 'message', which reads the bytes and has no use for a string.
+    return m_wsShim == WsShim::ForwardsMessage || !hasEventListeners(eventNames().messageEvent);
+}
+
+static Ref<MessageEvent> createBufferEvent(const AtomString& eventName, JSC::JSUint8Array* buffer, const String& origin, WebSocket::Opcode opcode)
+{
+    if (opcode == WebSocket::Opcode::Text)
+        return MessageEvent::createForTextFrame(buffer, origin);
+
+    MessageEvent::Init init;
+    init.data = buffer;
+    init.origin = origin;
+    return MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes);
+}
+
+void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData, Opcode opcode)
 {
     // LOG(Network, "WebSocket %p didReceiveBinaryData() %u byte binary message", this, static_cast<unsigned>(binaryData.size()));
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = WTF::move(binaryData)]() mutable {
     if (m_state != OPEN)
         return;
 
-    switch (m_binaryType) {
+    switch (opcode == Opcode::Text ? BinaryType::NodeBuffer : m_binaryType) {
     case BinaryType::Blob:
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
@@ -1318,6 +1338,11 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         break;
     }
     case BinaryType::NodeBuffer: {
+        auto failToAllocate = [&] {
+            ErrorEvent::Init errorInit;
+            errorInit.message = "Failed to allocate memory for binary data"_s;
+            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
+        };
 
         if (this->hasEventListeners(eventName)) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(scriptExecutionContext()->vm());
@@ -1325,34 +1350,30 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
             if (!buffer || scope.exception()) [[unlikely]] {
                 scope.clearExceptionExceptTermination();
-
-                ErrorEvent::Init errorInit;
-                errorInit.message = "Failed to allocate memory for binary data"_s;
-                dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
+                failToAllocate();
                 return;
             }
 
             JSC::EnsureStillAliveScope ensureStillAlive(buffer);
-            MessageEvent::Init init;
-            init.data = buffer;
-            init.origin = this->m_url.string();
-
-            dispatchEvent(MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes));
+            dispatchEvent(createBufferEvent(eventName, buffer, m_url.string(), opcode));
             return;
         }
 
         // No listener yet: dispatch on a later tick so a listener attached right after still sees it.
         if (scriptExecutionContext()) {
-            queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [name = eventName, buffer = JSC::ArrayBuffer::tryCreate(binaryData)](WebSocket& ws) mutable {
+            auto bytes = JSC::ArrayBuffer::tryCreate(binaryData);
+            if (!bytes) [[unlikely]] {
+                failToAllocate();
+                return;
+            }
+
+            queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [name = eventName, buffer = bytes.releaseNonNull(), opcode](WebSocket& ws) mutable {
                 size_t length = buffer->byteLength();
                 auto* globalObject = ws.scriptExecutionContext()->jsGlobalObject();
                 auto* subclassStructure = static_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
                 JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
-                MessageEvent::Init init;
-                init.data = uint8array;
-                init.origin = ws.m_url.string();
-                ws.dispatchEvent(MessageEvent::create(name, WTF::move(init), EventIsTrusted::Yes));
+                ws.dispatchEvent(createBufferEvent(name, uint8array, ws.m_url.string(), opcode));
             });
         }
 
@@ -1781,14 +1802,15 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
     size_t len = data.len;
     auto opcode = static_cast<WebCore::WebSocket::Opcode>(op);
     switch (opcode) {
+    case WebCore::WebSocket::Opcode::Text:
     case WebCore::WebSocket::Opcode::Binary:
-        webSocket->didReceiveBinaryData("message"_s, { bytes, len });
+        webSocket->didReceiveBinaryData(WebCore::eventNames().messageEvent, { bytes, len }, opcode);
         break;
     case WebCore::WebSocket::Opcode::Ping:
-        webSocket->didReceiveBinaryData("ping"_s, { bytes, len });
+        webSocket->didReceiveBinaryData("ping"_s, { bytes, len }, opcode);
         break;
     case WebCore::WebSocket::Opcode::Pong:
-        webSocket->didReceiveBinaryData("pong"_s, { bytes, len });
+        webSocket->didReceiveBinaryData("pong"_s, { bytes, len }, opcode);
         break;
     default:
         break;
@@ -1797,6 +1819,14 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
 extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
 {
     return webSocket->rejectUnauthorized();
+}
+extern "C" bool WebSocket__isWsShim(WebCore::WebSocket* webSocket)
+{
+    return webSocket->isWsShim();
+}
+extern "C" bool WebSocket__wantsTextFrameAsBytes(WebCore::WebSocket* webSocket)
+{
+    return webSocket->wantsTextFrameAsBytes();
 }
 
 // The Rust half of the context of the script that made the WebSocket. Called from connect(),

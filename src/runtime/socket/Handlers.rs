@@ -479,9 +479,8 @@ impl SocketConfig {
             uws::LIBUS_LISTEN_DEFAULT
         };
 
-        if self.allow_half_open {
-            flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
-        }
+        // The loop never closes on a FIN: `NewSocket::on_end` applies `allow_half_open`.
+        flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
         }

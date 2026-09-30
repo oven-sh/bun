@@ -6722,20 +6722,30 @@ declare module "bun" {
     data: Data;
 
     /**
-     * Sends the final data chunk and initiates a graceful shutdown of the socket's write side.
-     * After calling `end()`, no more data can be written using `write()` or `end()`.
-     * The socket remains readable until the remote end also closes its write side or the connection is terminated.
-     * This sends a TCP FIN packet after writing the data.
+     * Sends the final chunk of data, then closes the socket.
+     *
+     * `end(data)` accepts the whole chunk. Bun sends as much as the socket takes and queues the rest.
+     * Bun sends the queued data when the socket is writable again. Bun closes the socket after the
+     * last byte, so the TCP FIN packet follows the data.
+     *
+     * After `end()`, the socket accepts no more data: `write()` and `end()` return `-1`.
+     *
+     * `end()` returns a negative number when the socket accepts nothing. The number is `-1` if the
+     * socket is closed, shutting down, or already ended. The number is the negated system error
+     * code if the send fails.
+     *
+     * The raw socket that `upgradeTLS()` returns is the exception. Its `end(data)` makes one send
+     * and returns the number of bytes sent.
      *
      * @param data Optional final data to write before closing. Same types as `write()`.
      * @param byteOffset Optional offset for buffer data.
      * @param byteLength Optional length for buffer data.
-     * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
+     * @returns The byte length of the accepted chunk, which is the part of `data` that `byteOffset` and `byteLength` select. `0` without `data`. A negative number if the socket accepted nothing.
      * @example
      * ```ts
-     * // send some data and close the write side
+     * // send the final data, then close the socket
      * socket.end("Goodbye!");
-     * // or close write side without sending final data
+     * // or close the socket without sending final data
      * socket.end();
      * ```
      */
@@ -7263,17 +7273,17 @@ declare module "bun" {
      */
     data?: Data;
     /**
-     * Whether to allow half-open connections.
+     * Whether the socket stays open after the other end shuts down its side of the connection.
      *
-     * A half-open connection occurs when one end of the connection has called `close()`
-     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     * The other end shuts down its side with a TCP FIN packet. Bun then calls the `end` handler.
+     * The other end sends no more data, but this socket can still send.
      *
-     * - The socket won't automatically send FIN when the remote side closes its end
-     * - The local side can continue sending data even after the remote side has closed
-     * - The application must explicitly call `end()` to fully close the connection
+     * - `false` (default): Bun closes the socket after the `end` handler returns.
+     * - `true`: The socket stays open after the `end` handler returns. `write()` still sends data,
+     *   and `end()` closes the socket.
      *
-     * When `false`, the socket automatically closes both ends of the connection when
-     * either side closes.
+     * A socket with no `end` handler closes after the FIN for both values.
+     * Before Bun closes the socket, it sends the data that `end(data)` queued.
      *
      * @default false
      */
@@ -7306,17 +7316,17 @@ declare module "bun" {
      */
     exclusive?: boolean;
     /**
-     * Whether to allow half-open connections.
+     * Whether the socket stays open after the other end shuts down its side of the connection.
      *
-     * A half-open connection occurs when one end of the connection has called `close()`
-     * or sent a FIN packet, while the other end remains open. When set to `true`:
+     * The other end shuts down its side with a TCP FIN packet. Bun then calls the `end` handler.
+     * The other end sends no more data, but this socket can still send.
      *
-     * - The socket won't automatically send FIN when the remote side closes its end
-     * - The local side can continue sending data even after the remote side has closed
-     * - The application must explicitly call `end()` to fully close the connection
+     * - `false` (default): Bun closes the socket after the `end` handler returns.
+     * - `true`: The socket stays open after the `end` handler returns. `write()` still sends data,
+     *   and `end()` closes the socket.
      *
-     * When `false` (default), the socket automatically closes both ends of the connection
-     * when either side closes.
+     * A socket with no `end` handler closes after the FIN for both values.
+     * Before Bun closes the socket, it sends the data that `end(data)` queued.
      *
      * @default false
      */

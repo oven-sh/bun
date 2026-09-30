@@ -81,6 +81,20 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// What the `close` handler gets: a read error for a `close_code` above 2, else the errno of a failed write.
+fn close_error_to_js(close_code: c_int, write_errno: u16, global: &JSGlobalObject) -> JSValue {
+    if close_code > 2 {
+        <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(close_code), global)
+    } else if write_errno != 0 {
+        <sys::Error as jsc::SysErrorJsc>::to_js(
+            &sys::Error::from_code_int(i32::from(write_errno), sys::Tag::write),
+            global,
+        )
+    } else {
+        JSValue::UNDEFINED
+    }
+}
+
 /// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
@@ -310,6 +324,8 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) owned_ssl_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
 
     pub(crate) flags: Cell<Flags>,
+    /// Errno of a fatal write that `on_close` hands to the `close` handler. 0 when none.
+    pub(crate) write_errno: Cell<u16>,
     pub(crate) ref_count: bun_ptr::RefCount<Self>,
     /// The callbacks this socket dispatches to: shared with its listener and
     /// sibling sockets (server), or with its own reconnects and TLS twin
@@ -613,11 +629,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             uws::SocketKind::BunSocketTcp
         };
-        let flags: i32 = if self.flags.get().contains(Flags::ALLOW_HALF_OPEN) {
-            uws::LIBUS_SOCKET_ALLOW_HALF_OPEN
-        } else {
-            0
-        };
+        // The loop never closes on a FIN: `on_end` applies `Flags::ENDS_ON_PEER_FIN`.
+        let flags: i32 = uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
             self.owned_ssl_ctx
                 .get()
@@ -920,6 +933,38 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
+    /// Closes on a fatal write errno: `error` gets it, or `close` does with no `error` handler.
+    #[cfg(not(windows))]
+    fn fail_write(
+        this: bun_ptr::ThisPtr<Self>,
+        handlers: &Rc<Handlers>,
+        errno: i32,
+    ) -> JsResult<()> {
+        log!("failWrite {}", errno);
+        let _guard = RefPtr::from_this(this);
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        if handlers.on_error().is_empty() {
+            this.write_errno
+                .set(u16::try_from(errno).unwrap_or(u16::MAX));
+        } else {
+            let global = handlers.global_object;
+            let this_value = this.get_this_value(&global);
+            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(errno, sys::Tag::write),
+                &global,
+            );
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
+        }
+        // Closed without detaching: `on_close` runs, so JS observes `close`.
+        if !this.socket.get().is_detached() {
+            this.socket.get().close(uws::CloseCode::Normal);
+        }
+        Ok(())
+    }
+
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
     /// JS which can call `socket.write()`/`end()`/`reload()` on this same
     /// wrapper via the JS object's `m_ptr`, re-deriving a borrow and mutating
@@ -947,7 +992,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let handlers = this.get_handlers();
         let callback = handlers.on_writable();
-        if callback.is_empty() {
+        if callback.is_empty()
+            && this.buffered_data_for_node_net.get().len() == 0
+            && !this
+                .flags
+                .get()
+                .intersects(Flags::END_AFTER_FLUSH | Flags::EMPTY_PACKET_PENDING)
+        {
             return Ok(());
         }
 
@@ -970,28 +1021,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // longer re-armed, so this dispatch is the last place the errno is
         // visible - swallowing it here acknowledged the bytes to JS, sent a
         // clean FIN, and the peer saw a silently truncated stream. Deliver it
-        // like a failed write (syscall "write", same shape as net.ts
-        // failWrite) and close the socket so 'error' is followed by 'close'.
+        // like a failed write (syscall "write") and close the socket: see `fail_write`.
         #[cfg(not(windows))]
         if fatal_send_errno != 0 {
-            let global = handlers.global_object;
-            let _scope = ScopeExit {
-                socket: this,
-                scope: Some(handlers.enter()),
-            };
-            let this_value = this.get_this_value(&global);
-            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
-                &global,
-            );
-            handlers.call_error_handler(this_value, &[this_value, err_value])?;
-            // The error handler can destroy the socket itself; only close a
-            // still-attached socket. Close without detaching so on_close runs
-            // and JS observes 'close' (mirrors h2's dead-transport close).
-            if !this.socket.get().is_detached() {
-                this.socket.get().close(uws::CloseCode::Normal);
-            }
-            return Ok(());
+            return Self::fail_write(this, &handlers, fatal_send_errno);
         }
         #[cfg(windows)]
         let _ = fatal_send_errno;
@@ -1000,7 +1033,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.buffered_data_for_node_net.get().len()
         );
         // is not writable if we have buffered data or if we are already detached
-        if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
+        if callback.is_empty()
+            || this.buffered_data_for_node_net.get().len() > 0
+            || this.socket.get().is_detached()
+            || !this.handlers_are(&handlers)
+        {
             return Ok(());
         }
 
@@ -1082,6 +1119,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[inline]
     pub(crate) fn has_handlers(&self) -> bool {
         self.handlers.get().is_some()
+    }
+
+    /// False for a named pipe, an upgraded duplex, a pending connect and a detached wrapper.
+    #[inline]
+    pub(crate) fn is_usockets_backed(&self) -> bool {
+        matches!(self.socket.get().socket, uws::InternalSocket::Connected(_))
     }
 
     /// True when this socket still points at `handlers` — false once a
@@ -1636,8 +1679,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             // pending JS write the same way on_writable's tail does, otherwise
             // the do_socket_write backpressure arms the normal writable
             // subscription.
-            let _ = this.internal_flush();
-            if this.buffered_data_for_node_net.get().len() == 0 {
+            let fatal_send_errno = this.internal_flush();
+            #[cfg(not(windows))]
+            if fatal_send_errno != 0 {
+                return Self::fail_write(this, &handlers, fatal_send_errno);
+            }
+            #[cfg(windows)]
+            let _ = fatal_send_errno;
+            if this.buffered_data_for_node_net.get().len() == 0
+                && !this.socket.get().is_detached()
+                && this.handlers_are(&handlers)
+            {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {
@@ -1726,6 +1778,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
+            if this.is_usockets_backed() && this.buffered_data_for_node_net.get().len() > 0 {
+                // `on_writable` sends the queued tail, then ends the socket.
+                this.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
+                return Ok(());
+            }
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
@@ -1735,17 +1792,36 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let _scope = ScopeExit {
+        let scope = ScopeExit {
             socket: this,
             scope: Some(handlers.enter()),
         };
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
+        let handled = match callback.call(&global, this_value, &[this_value]) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])
+            }
+        };
+        drop(scope);
+        this.end_on_peer_fin();
+        handled
+    }
+
+    /// `allowHalfOpen: false`: the peer's FIN ends the socket once nothing is left to send.
+    fn end_on_peer_fin(&self) {
+        if !self.flags.get().contains(Flags::ENDS_ON_PEER_FIN)
+            || !self.is_usockets_backed()
+            || self.socket.get().is_closed()
+        {
+            return;
         }
-        Ok(())
+        self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
+        if self.can_end_after_flush() {
+            self.mark_inactive();
+        }
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
@@ -2151,6 +2227,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
+        let write_errno = this.write_errno.replace(0);
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2227,7 +2304,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        let mut js_error: JSValue = JSValue::UNDEFINED;
         // `err` is overloaded: when WE closed the socket it's a libus
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
         // close was driven by a recv() failure or a poll error (loop.c's
@@ -2237,10 +2313,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // values >2 are real read errors and 0/1/2 are self-initiated closes
         // that must not surface as a JS read error (matching Node's
         // onStreamRead, which only sees errors that came from uv_read_cb).
-        if err > 2 {
-            js_error =
-                <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
-        }
+        let js_error = close_error_to_js(err, write_errno, &global);
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;
@@ -2882,15 +2955,24 @@ impl<const SSL: bool> NewSocket<SSL> {
         args: &mut [JSValue],
         buffer_unwritten_data: bool,
     ) -> WriteResult {
+        // Nothing is accepted after `end()`, whose tail may still be draining. The raw half queues none.
+        let flags = self.flags.get();
+        let ended = flags.contains(Flags::END_AFTER_FLUSH) && !flags.contains(Flags::BYPASS_TLS);
         if args[0].is_undefined() {
-            if !self.flags.get().contains(Flags::END_AFTER_FLUSH) && IS_END {
+            if ended {
+                return WriteResult::Success {
+                    wrote: -1,
+                    total: 0,
+                };
+            }
+            if IS_END {
                 self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
             }
             log!("writeOrEnd undefined");
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        debug_assert!(self.buffered_data_for_node_net.get().len() == 0);
+        debug_assert!(ended || self.buffered_data_for_node_net.get().len() == 0);
         let mut encoding_value: JSValue = args[3];
         if args[2].is_string() {
             encoding_value = args[2];
@@ -3032,7 +3114,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket = self.socket.get();
-        if socket.is_shutdown() || socket.is_closed() {
+        if ended || socket.is_shutdown() || socket.is_closed() {
             return WriteResult::Success {
                 wrote: -1,
                 total: bytes.len(),
@@ -3061,7 +3143,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
+        // A negative result is a fatal send error: nothing will drain a tail.
+        if buffer_unwritten_data && wrote >= 0 {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
                 let _ = self
@@ -3101,8 +3184,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
     /// a fatal send error (buffer dropped, writable not re-armed).
-    /// On POSIX, `on_writable` consumes the errno: it dispatches the error
-    /// handler and closes the socket. On Windows the errno is still ignored
+    /// On POSIX, `on_writable`, `on_open` and `flush` pass it to `fail_write`. On Windows the errno is still ignored
     /// (the drain callback is dispatched regardless) - skipping the drain on
     /// fatal made Windows servers reset FIN-terminated responses (see
     /// a5e7ba5905) - until the Windows fatal-write detection is verified.
@@ -3189,7 +3271,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let _ = this.internal_flush();
+        let guard = this.ref_guard();
+        let this = guard.this_ptr();
+        let fatal_send_errno = this.internal_flush();
+        #[cfg(not(windows))]
+        if fatal_send_errno != 0 {
+            if let Some(handlers) = this.handlers_opt() {
+                Self::fail_write(this, &handlers, fatal_send_errno)?;
+            }
+        }
+        #[cfg(windows)]
+        let _ = fatal_send_errno;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3308,13 +3400,21 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         let _guard = this.ref_guard();
-        let result = match this.write_or_end::<true>(global, args.mut_(), false) {
+        // No writable event reaches the raw half of an `upgradeTLS` pair: it makes one send.
+        let queues_tail = !this.flags.get().contains(Flags::BYPASS_TLS);
+        let result = match this.write_or_end::<true>(global, args.mut_(), queues_tail) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
-                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
-                    let _ = this.internal_flush();
+                if wrote < 0 {
+                    JSValue::js_number(wrote as f64)
+                } else {
+                    let sent = usize::try_from(wrote).expect("int cast");
+                    if sent == total {
+                        let _ = this.internal_flush();
+                    }
+                    let accepted = if queues_tail { total } else { sent };
+                    JSValue::js_number(accepted as f64)
                 }
-                JSValue::js_number(wrote as f64)
             }
         };
         Ok(result)
@@ -3606,7 +3706,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 server_ctx_rejects_unauthorized(ctx_ptr),
             ),
         };
-        let mut initial_flags = Flags::initial(reject_unauthorized);
+        let ends_on_peer_fin = this.flags.get() & Flags::ENDS_ON_PEER_FIN;
+        let mut initial_flags = Flags::initial(reject_unauthorized) | ends_on_peer_fin;
         initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
@@ -3621,6 +3722,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
             flags: Cell::new(initial_flags),
+            write_errno: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3745,7 +3847,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            flags: Cell::new(
+                Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS | ends_on_peer_fin,
+            ),
+            write_errno: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -4186,7 +4291,8 @@ bitflags::bitflags! {
         const END_AFTER_FLUSH      = 1 << 5;
         const OWNED_PROTOS         = 1 << 6;
         const IS_PAUSED            = 1 << 7;
-        const ALLOW_HALF_OPEN      = 1 << 8;
+        /// `allowHalfOpen: false` from `Bun.listen` / `Bun.connect`: `on_end` ends the socket.
+        const ENDS_ON_PEER_FIN     = 1 << 8;
         /// Set on the `raw` half of an `upgradeTLS` pair. Writes route through
         /// `us_socket_raw_write` (bypassing the SSL layer) so node:net can pipe
         /// pre-handshake bytes / read the underlying TCP stream.
@@ -4802,6 +4908,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
         flags: Cell::new(initial_flags),
+        write_errno: Cell::new(0),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, getEventLoopStats, socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
@@ -15,6 +15,7 @@ import {
   tempDir,
   tls,
 } from "harness";
+import { randomFillSync } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -5026,4 +5027,1269 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
   serverSock.end();
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
+});
+
+describe.concurrent.each(["tcp", "tls"] as const)(
+  "%s end(data) with a chunk larger than the send buffer",
+  transport => {
+    // end(data) used to do one non-blocking send, drop the rest, and FIN. The
+    // tail must stay queued and the FIN must follow it.
+    const N = 16 * 1024 * 1024;
+
+    async function run(withDrain: boolean) {
+      const payload = randomFillSync(Buffer.allocUnsafe(N));
+      const received = Promise.withResolvers<number>();
+      let got = 0;
+      let mismatchAt = -1;
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+        socket: {
+          data(_, chunk) {
+            if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+            got += chunk.byteLength;
+          },
+          close() {
+            received.resolve(got);
+          },
+        },
+      });
+
+      const clientClosed = Promise.withResolvers<void>();
+      let endReturned = -2;
+      let drains = 0;
+      const afterEnd: number[] = [];
+      const errors: Error[] = [];
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: {
+          open(s) {
+            endReturned = s.end(payload);
+            afterEnd.push(s.write("more"), s.write(undefined as any), s.end("more"), s.end());
+          },
+          data() {},
+          ...(withDrain ? { drain: () => void drains++ } : {}),
+          close: () => clientClosed.resolve(),
+          error: (_, e) => errors.push(e),
+        },
+      });
+
+      const [serverGot] = await Promise.all([received.promise, clientClosed.promise]);
+      expect({ endReturned, afterEnd, serverGot, mismatchAt, errors, drains }).toEqual({
+        endReturned: N,
+        afterEnd: [-1, -1, -1, -1],
+        serverGot: N,
+        mismatchAt: -1,
+        errors: [],
+        drains: 0,
+      });
+    }
+
+    it("delivers the whole chunk before the FIN", () => run(true));
+    it("delivers the whole chunk without a drain handler", () => run(false));
+  },
+);
+
+// The flush that follows open() can send the whole tail and close the socket.
+// A drain event after that would run on a closed socket.
+it.skipIf(!socketFaultInjection.available())(
+  "end(data) in open() whose tail leaves in the flush after open() closes without a drain event",
+  async () => {
+    const src = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const N = 64 * 1024;
+      const events = [];
+      let got = 0;
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(_, chunk) { got += chunk.byteLength; },
+          close() { serverClosed.resolve(); },
+        },
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(s) {
+            // Only the first send is short: the retry takes the rest.
+            fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1 });
+            events.push("end " + s.end(Buffer.alloc(N, 120)));
+          },
+          data() {},
+          drain() { events.push("drain"); },
+          close() { events.push("close"); clientClosed.resolve(); },
+          error(_, e) { events.push("error " + e.message); },
+        },
+      });
+      await Promise.all([serverClosed.promise, clientClosed.promise]);
+      fault.clear();
+      server.stop(true);
+      console.log(JSON.stringify({ events, got }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout.trim(), stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({
+      result: JSON.stringify({ events: ["end 65536", "close"], got: 65536 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A send that failed for good reports its errno on POSIX only, and only on a socket without TLS.
+describe.concurrent.skipIf(isWindows)("end(data) whose queued tail cannot be sent", () => {
+  const N = 16 * 1024 * 1024;
+
+  // Its own process: an uncaught error sets the exit code, and fault rules are process-wide.
+  async function expectResult(script: string, result: unknown) {
+    // The unix path in the script is relative: an absolute tempdir path can exceed sun_path.
+    using dir = tempDir("socket-write-error", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let printed: unknown = stdout.trim();
+    try {
+      printed = JSON.parse(stdout.trim());
+    } catch {}
+    expect({ result: printed, stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({ result, stderr: "" });
+    expect(exitCode).toBe(0);
+  }
+
+  // `reports` are the handlers through which the socket under test tells how it ended.
+  const prelude = (size: number, withError: boolean) => /* js */ `
+    const payload = require("node:crypto").randomFillSync(Buffer.allocUnsafe(${size}));
+    const events = [];
+    let got = 0;
+    let mismatchAt = -1;
+    const closed = Promise.withResolvers();
+    const peerClosed = Promise.withResolvers();
+    function receive(chunk) {
+      if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+      got += chunk.byteLength;
+    }
+    const reports = {
+      ...(${withError} && { error: (s, err) => void events.push("error " + err.code + " " + err.syscall) }),
+      close(s, err) {
+        events.push(err === undefined ? "close" : "close " + err.code + " " + err.syscall);
+        closed.resolve();
+      },
+    };
+  `;
+
+  // The server answers end(payload), and the peer leaves once it has read what the kernel took of it.
+  const disconnectScript = (peerFin: boolean, withError: boolean) => /* js */ `
+    ${prelude(N, withError)}
+    const server = Bun.listen({
+      unix: "s.sock",
+      socket: {
+        data(s) {
+          events.push("end " + s.end(payload));
+        },
+        ...reports,
+      },
+    });
+    await Bun.connect({
+      unix: "s.sock",
+      allowHalfOpen: true,
+      socket: {
+        open(s) {
+          s.write("request");
+          if (${peerFin}) s.shutdown();
+        },
+        data(s, chunk) {
+          receive(chunk);
+          // A read shorter than the 512 KiB receive buffer emptied the kernel queue, so this close is not a reset.
+          if (chunk.byteLength >= 512 * 1024) return;
+          events.push("peer closes");
+          s.close();
+        },
+        close: () => peerClosed.resolve(),
+        error() {},
+      },
+    });
+    await Promise.all([closed.promise, peerClosed.promise]);
+    server.stop(true);
+    console.log(JSON.stringify({ events, complete: got === payload.length, mismatchAt }));
+  `;
+
+  // `retry` is what sends the queued tail again: the writable event, socket.flush(), or the flush after open().
+  const injectedScript = (retry: "writable" | "flush" | "open", withError: boolean) => /* js */ `
+    const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+    ${prelude(64 * 1024, withError)}
+    const retry = ${JSON.stringify(retry)};
+    function endThenFailTheRetry(s) {
+      // Only the first send is short, so a tail is queued. Its retry is the next send on this fd.
+      fault.set({ syscall: "send", action: "short", bytes: 1024, repeat: 1, fd: s.fd });
+      events.push("end " + s.end(payload));
+      fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: 1, fd: s.fd });
+    }
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          if (retry === "open") endThenFailTheRetry(s);
+        },
+        data(s) {
+          endThenFailTheRetry(s);
+          if (retry !== "flush") return;
+          events.push("flush");
+          s.flush();
+        },
+        drain: () => void events.push("drain"),
+        ...reports,
+      },
+    });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          if (retry !== "open") s.write("request");
+        },
+        data: (s, chunk) => receive(chunk),
+        close: () => peerClosed.resolve(),
+        error() {},
+      },
+    });
+    await Promise.all([closed.promise, peerClosed.promise]);
+    fault.clear();
+    server.stop(true);
+    console.log(JSON.stringify({ events, got, mismatchAt }));
+  `;
+
+  const rows = [
+    ["without an error handler the process stays up and close carries the write error", false],
+    ["the error handler gets the write error, then close carries none", true],
+  ] as const;
+  // The error is reported once: by close, or by the error handler ahead of a close without one.
+  const reported = (withError: boolean) => (withError ? ["error EPIPE write", "close"] : ["close EPIPE write"]);
+
+  describe.each([
+    ["a peer that disconnects early", false],
+    ["a peer that disconnects early after its FIN", true],
+  ] as const)("%s", (_name, peerFin) => {
+    // Linux only: kqueue reports a peer that left as an error event, so the retry never runs there.
+    it.skipIf(!isLinux).each(rows)("%s", (_title, withError) =>
+      expectResult(disconnectScript(peerFin, withError), {
+        events: [`end ${N}`, "peer closes", ...reported(withError)],
+        complete: false,
+        mismatchAt: -1,
+      }),
+    );
+  });
+
+  describe.each([
+    ["the event loop's retry", "writable", []],
+    ["socket.flush()", "flush", ["flush"]],
+    ["the flush after open()", "open", []],
+  ] as const)("an injected EPIPE in %s", (_name, retry, called) => {
+    it.skipIf(!socketFaultInjection.available()).each(rows)("%s", (_title, withError) =>
+      expectResult(injectedScript(retry, withError), {
+        events: ["end 65536", ...called, ...reported(withError)],
+        got: 1024,
+        mismatchAt: -1,
+      }),
+    );
+  });
+});
+
+// TLS took all of end(data), so the wrapper is detached and only usockets holds the unsent ciphertext.
+it.concurrent.skipIf(!socketFaultInjection.available()).each([
+  ["TLSv1.2", "close_notify and FIN"],
+  ["TLSv1.3", "close_notify and FIN"],
+  ["TLSv1.2", "bare FIN"],
+  ["TLSv1.3", "bare FIN"],
+] as const)(
+  "%s end(data) held in the TLS ciphertext spill reaches a peer that already sent its %s",
+  async (version, fin) => {
+    // 8 records is the most one TLS write takes whole while each send() takes 16 KiB.
+    const N = 8 * 16384;
+    const src = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const { TLS_VERSION: version, KEY: key, CERT: cert } = process.env;
+      const N = ${N};
+      const payload = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
+      const events = [];
+      let got = 0;
+      let mismatchAt = -1;
+      let negotiated;
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+      function verify(chunk) {
+        if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+        got += chunk.byteLength;
+      }
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key, cert },
+        socket: {
+          data(s) {
+            fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1 });
+            events.push("server end() " + s.end(payload));
+          },
+          end() { events.push("server end"); },
+          close(_, err) { events.push(err ? "server close " + err.code : "server close"); serverClosed.resolve(); },
+        },
+      });
+      // Both ends share one loop: the client's FIN is out before the server reads the request.
+      if (process.env.BARE_FIN) {
+        // TLS over a plain socket this script owns, so the FIN leaves without a close_notify.
+        const raw = require("node:net").connect({ host: "127.0.0.1", port: server.port, allowHalfOpen: true });
+        let finWithNextRecord = false;
+        const transport = new (require("node:stream").Duplex)({
+          read() {},
+          write(chunk, _encoding, callback) {
+            if (raw.writableEnded) return callback();
+            if (finWithNextRecord) return raw.end(chunk, callback);
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => transport.push(chunk));
+        raw.on("end", () => transport.push(null));
+        raw.on("error", e => events.push("client error " + e.message));
+        const client = require("node:tls").connect({
+          socket: transport,
+          ca: cert,
+          servername: "localhost",
+          minVersion: version,
+          maxVersion: version,
+        });
+        client.on("secureConnect", () => {
+          negotiated = client.getProtocol();
+          finWithNextRecord = true;
+          client.write("request");
+        });
+        client.on("data", verify);
+        const ended = Promise.withResolvers();
+        client.on("end", () => ended.resolve("client end"));
+        client.on("error", e => ended.resolve("client error " + e.message));
+        raw.on("close", async () => {
+          events.push(await ended.promise, "client close");
+          clientClosed.resolve();
+        });
+      } else {
+        const { SSL_OP_NO_TLSv1_2, SSL_OP_NO_TLSv1_3 } = require("node:crypto").constants;
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: { ca: cert, secureOptions: version === "TLSv1.2" ? SSL_OP_NO_TLSv1_3 : SSL_OP_NO_TLSv1_2 },
+          socket: {
+            handshake(s) {
+              negotiated = s.getTLSVersion();
+              s.write("request");
+              s.shutdown();
+            },
+            data: (_, chunk) => verify(chunk),
+            end() { events.push("client end"); },
+            close(_, err) { events.push(err ? "client close " + err.code : "client close"); clientClosed.resolve(); },
+            error(_, e) { events.push("client error " + e.message); },
+          },
+        });
+      }
+      await Promise.all([serverClosed.promise, clientClosed.promise]);
+      fault.clear();
+      server.stop(true);
+      console.log(JSON.stringify({ negotiated, events, got, mismatchAt }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        KEY: tls.key,
+        CERT: tls.cert,
+        TLS_VERSION: version,
+        BARE_FIN: fin === "bare FIN" ? "1" : "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout.trim(), stderr: exitCode === 0 ? "" : stderr.slice(-2000) }).toEqual({
+      result: JSON.stringify({
+        negotiated: version,
+        // No "server end": end() detached the wrapper before the FIN was read.
+        events: ["server end() " + N, "server close", "client end", "client close"],
+        got: N,
+        mismatchAt: -1,
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Bun.listen and Bun.connect: a socket without allowHalfOpen ends at its peer's FIN, behind what it has queued.
+describe.concurrent("a socket whose peer sends its FIN first", () => {
+  type Transport = "tcp" | "unix" | "tls";
+  type Side = "listen" | "connect";
+  const STEP = 256 * 1024;
+  const TAIL = 4 * 1024 * 1024;
+  const source = randomFillSync(Buffer.allocUnsafe(16 * 1024 * 1024));
+
+  // `subject` is the socket under test, on `side`. `peer` is the other end and is half-open.
+  function openPair(
+    transport: Transport,
+    side: Side,
+    allowHalfOpen: boolean,
+    subject: SocketHandler,
+    peer: SocketHandler,
+  ) {
+    const dir = transport === "unix" ? tempDir("peer-fin", {}) : undefined;
+    const subjectOptions = allowHalfOpen ? { allowHalfOpen: true } : {};
+    const accepting = {
+      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: side === "listen" ? subject : peer,
+      ...(side === "listen" ? subjectOptions : { allowHalfOpen: true }),
+    };
+    const connecting = {
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: side === "connect" ? subject : peer,
+      ...(side === "connect" ? subjectOptions : { allowHalfOpen: true }),
+    };
+    let listener: Bun.SocketListener<unknown>;
+    let connected: Promise<Socket<unknown>>;
+    if (dir) {
+      const unix = join(String(dir), "s.sock");
+      listener = Bun.listen({ unix, ...accepting });
+      connected = Bun.connect({ unix, ...connecting });
+    } else {
+      const tcp = Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting });
+      listener = tcp;
+      connected = Bun.connect({ hostname: "127.0.0.1", port: tcp.port, ...connecting });
+    }
+    return {
+      listener,
+      connected,
+      [Symbol.dispose]() {
+        listener.stop(true);
+        dir?.[Symbol.dispose]();
+      },
+    };
+  }
+
+  // The other end of every row: it sends its request and its FIN at once, and from then on only reads.
+  function makePeer(transport: Transport, startPaused: boolean, onData: (chunk: Buffer) => void) {
+    const closed = Promise.withResolvers<void>();
+    const closeErrors: unknown[] = [];
+    const errors: string[] = [];
+    let socket: Socket<unknown> | undefined;
+    function sendRequestAndFin(opened: Socket<unknown>) {
+      socket = opened;
+      if (startPaused) opened.pause();
+      opened.write("request");
+      opened.shutdown();
+    }
+    const handlers: SocketHandler = {
+      // A TLS socket writes once its handshake is done.
+      ...(transport === "tls" ? { handshake: sendRequestAndFin } : { open: sendRequestAndFin }),
+      data: (_socket, chunk) => onData(chunk),
+      close(_socket, error) {
+        closeErrors.push(error);
+        closed.resolve();
+      },
+      error: (_socket, error) => void errors.push(String(error)),
+    };
+    return { handlers, closed: closed.promise, closeErrors, errors, resume: () => socket?.resume() };
+  }
+
+  describe.each(["tcp", "unix", "tls"] as const)("%s, nothing queued", transport => {
+    describe.each(["listen", "connect"] as const)("%s side", side => {
+      async function peerEndsFirst({ allowHalfOpen, withEnd }: { allowHalfOpen: boolean; withEnd: boolean }) {
+        const events: string[] = [];
+        const closeErrors: unknown[] = [];
+        const sawEnd = Promise.withResolvers<Socket<unknown>>();
+        const closed = Promise.withResolvers<void>();
+        const peerReadLate = Promise.withResolvers<void>();
+        let peerRead = "";
+        let endedAt = -1;
+        let closedAt = -1;
+        const peer = makePeer(transport, false, chunk => {
+          peerRead += chunk.toString();
+          if (peerRead.endsWith("still open")) peerReadLate.resolve();
+        });
+        const subject: SocketHandler = {
+          data(socket, chunk) {
+            events.push(`data ${chunk}`, `write ${socket.write("response")}`);
+          },
+          ...(withEnd
+            ? {
+                end(socket: Socket<unknown>) {
+                  events.push("end");
+                  endedAt = getEventLoopStats().iteration;
+                  sawEnd.resolve(socket);
+                },
+              }
+            : {}),
+          close(_socket, error) {
+            events.push("close");
+            closedAt = getEventLoopStats().iteration;
+            closeErrors.push(error);
+            closed.resolve();
+          },
+          error: (_socket, error) => void events.push(`error ${error}`),
+        };
+        using pair = openPair(transport, side, allowHalfOpen, subject, peer.handlers);
+        await pair.connected;
+
+        let whileOpen: { wrote: number; events: string[]; peerRead: string } | undefined;
+        if (allowHalfOpen && withEnd) {
+          const socket = await Promise.race([sawEnd.promise, closed.promise]);
+          if (socket) {
+            const wrote = socket.write("still open");
+            await Promise.race([peerReadLate.promise, closed.promise]);
+            whileOpen = { wrote, events: events.slice(), peerRead };
+            socket.end();
+          }
+        }
+        await Promise.all([closed.promise, peer.closed]);
+        return {
+          events,
+          closeErrors,
+          // A socket that ends at the FIN closes in the loop iteration that read it.
+          loopIterationsFromEndToClose: withEnd && !allowHalfOpen ? closedAt - endedAt : undefined,
+          whileOpen,
+          peer: { read: peerRead, closeErrors: peer.closeErrors, errors: peer.errors },
+        };
+      }
+
+      const skip = isWindows && transport === "unix";
+
+      it.skipIf(skip)("a default socket with an end handler gets end, then close at the FIN", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: false, withEnd: true })).toEqual({
+          events: ["data request", "write 8", "end", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: 0,
+          whileOpen: undefined,
+          peer: { read: "response", closeErrors: [undefined], errors: [] },
+        });
+      });
+
+      it.skipIf(skip)("a default socket without an end handler closes at the FIN", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: false, withEnd: false })).toEqual({
+          events: ["data request", "write 8", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: undefined,
+          whileOpen: undefined,
+          peer: { read: "response", closeErrors: [undefined], errors: [] },
+        });
+      });
+
+      it.skipIf(skip)("an allowHalfOpen socket without an end handler closes at the FIN", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: true, withEnd: false })).toEqual({
+          events: ["data request", "write 8", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: undefined,
+          whileOpen: undefined,
+          peer: { read: "response", closeErrors: [undefined], errors: [] },
+        });
+      });
+
+      it.skipIf(skip)("an allowHalfOpen socket with an end handler stays open until it calls end()", async () => {
+        expect(await peerEndsFirst({ allowHalfOpen: true, withEnd: true })).toEqual({
+          events: ["data request", "write 8", "end", "close"],
+          closeErrors: [undefined],
+          loopIterationsFromEndToClose: undefined,
+          whileOpen: { wrote: 10, events: ["data request", "write 8", "end"], peerRead: "responsestill open" },
+          peer: { read: "responsestill open", closeErrors: [undefined], errors: [] },
+        });
+      });
+    });
+  });
+
+  // write() fills the kernel first, so end() has to queue its chunk: Windows takes a first send of any size whole.
+  function endBehindFullBuffers(socket: Socket<unknown>) {
+    let filled = 0;
+    let took = STEP;
+    while (took === STEP && filled + STEP + TAIL <= source.length) {
+      took = socket.write(source.subarray(filled, filled + STEP));
+      filled += Math.max(took, 0);
+    }
+    const endReturned = socket.end(source.subarray(filled, filled + TAIL));
+    return { kernelFull: took !== STEP, endReturned, length: filled + TAIL };
+  }
+
+  // A connection that its peer answers: a FIN that was sent before it has been read by the time it resolves.
+  async function pendingReadsDone() {
+    const server = net.createServer(socket => socket.end("x"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    await once(socket, "data");
+    socket.destroy();
+    server.close();
+  }
+
+  const reloads: { change: string; endAtFin: boolean; expected: string[] }[] = [
+    { change: "adds", endAtFin: true, expected: ["first data", "second end", "second close"] },
+    { change: "removes", endAtFin: false, expected: ["first data", "second close"] },
+  ];
+  describe.each([
+    { side: "listen", via: "listener" },
+    { side: "listen", via: "socket" },
+    { side: "connect", via: "socket" },
+  ] as const)("reload() on the $via before the FIN, $side side", ({ side, via }) => {
+    it.each(reloads)("that $change the end handler still delivers the queued tail of end(data)", async row => {
+      const { endAtFin, expected } = row;
+      const events: string[] = [];
+      const closeErrors: unknown[] = [];
+      const answered = Promise.withResolvers<void>();
+      const sawEnd = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const peerSaw = { bytes: 0, mismatchAt: -1 };
+      const peer = makePeer("tcp", true, chunk => {
+        const want = source.subarray(peerSaw.bytes, peerSaw.bytes + chunk.byteLength);
+        if (peerSaw.mismatchAt === -1 && !chunk.equals(want)) peerSaw.mismatchAt = peerSaw.bytes;
+        peerSaw.bytes += chunk.byteLength;
+      });
+      let sent = { kernelFull: false, endReturned: NaN, length: NaN };
+      const handlers = (generation: "first" | "second", withEnd: boolean): SocketHandler => ({
+        data(socket) {
+          events.push(`${generation} data`);
+          if (generation === "second") return;
+          sent = endBehindFullBuffers(socket);
+          const reloaded = { socket: handlers("second", endAtFin) };
+          if (via === "listener") pair.listener.reload(reloaded);
+          else socket.reload(reloaded);
+          answered.resolve();
+        },
+        ...(withEnd
+          ? {
+              end() {
+                events.push(`${generation} end`);
+                sawEnd.resolve();
+              },
+            }
+          : {}),
+        close(_socket, error) {
+          events.push(`${generation} close`);
+          closeErrors.push(error);
+          closed.resolve();
+        },
+        error: (_socket, error) => void events.push(`${generation} error ${error}`),
+      });
+      using pair = openPair("tcp", side, false, handlers("first", !endAtFin), peer.handlers);
+      await pair.connected;
+
+      // The peer reads only after the socket under test has read the FIN. Without an end handler no event reports it.
+      if (endAtFin) {
+        await Promise.race([sawEnd.promise, closed.promise]);
+      } else {
+        await answered.promise;
+        await pendingReadsDone();
+      }
+      peer.resume();
+      await Promise.all([closed.promise, peer.closed]);
+
+      expect({
+        events,
+        kernelFull: sent.kernelFull,
+        endReturned: sent.endReturned,
+        closeErrors,
+        peer: {
+          unreceived: sent.length - peerSaw.bytes,
+          mismatchAt: peerSaw.mismatchAt,
+          closeErrors: peer.closeErrors,
+          errors: peer.errors,
+        },
+      }).toEqual({
+        events: expected,
+        kernelFull: true,
+        endReturned: TAIL,
+        closeErrors: [undefined],
+        peer: { unreceived: 0, mismatchAt: -1, closeErrors: [undefined], errors: [] },
+      });
+    });
+  });
+});
+
+// Bun.listen and Bun.connect: what the kernel has not taken of end(data) has to outlive the peer's FIN.
+// With allowHalfOpen: true and an `end` handler the FIN never closed the socket, so those rows need only the
+// queue of end(data). In every other row the close that follows the FIN has to wait for that queue too.
+describe.concurrent("end(data) whose tail is still queued when the peer's FIN is read", () => {
+  const pins = {
+    "tls 1.2": { version: 0x0303, protocol: "TLSv1.2" },
+    "tls 1.3": { version: 0x0304, protocol: "TLSv1.3" },
+  } as const;
+  // More than one send takes from a paused peer on Linux: 2634240 (tcp), 2621440 (tls), 219264 (unix).
+  const sizes = { "tcp": 4 << 20, "unix": 1 << 20, "tls 1.2": 4 << 20, "tls 1.3": 4 << 20 } as const;
+  type Transport = keyof typeof sizes;
+  const STEP = 256 * 1024;
+  const REQUEST = "request\n";
+  let source: Buffer | undefined;
+
+  type Row = {
+    transport: Transport;
+    side: "listen" | "connect";
+    allowHalfOpen: boolean;
+    callSite: "data" | "open" | "end";
+    endHandler: boolean;
+  };
+
+  // A connection that the peer answers: the loop accepts it in one iteration and reads the answer in a later
+  // one, so a read that was due when it started is done by the time it resolves.
+  async function pendingReadsDone() {
+    using cleanup = new DisposableStack();
+    const server = net.createServer(socket => socket.end("x"));
+    cleanup.defer(() => void server.close());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    cleanup.defer(() => void socket.destroy());
+    await once(socket, "data");
+  }
+
+  async function run({ transport, side, allowHalfOpen, callSite, endHandler }: Row) {
+    const N = sizes[transport];
+    const pin = transport === "tls 1.2" || transport === "tls 1.3" ? pins[transport] : undefined;
+    const bytes = (source ??= randomFillSync(Buffer.allocUnsafe(16 << 20)));
+    using dir = transport === "unix" ? tempDir("end-fin", {}) : undefined;
+    const requested = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const peerClosed = Promise.withResolvers<void>();
+    const closeErrors: unknown[] = [];
+    const errors: string[] = [];
+    let filled = 0;
+    let kernelFull = false;
+    let endReturned = -2;
+    let endEvents = 0;
+    let request = "";
+    let protocol: string | undefined;
+    let peer: Socket<unknown> | undefined;
+    let got = 0;
+    let mismatchAt = -1;
+
+    function fillAndEnd(socket: Socket<unknown>) {
+      // The kernel is filled first: Windows takes a first send of any size whole.
+      let took = STEP;
+      while (took === STEP && filled + STEP + N <= bytes.length) {
+        took = socket.write(bytes.subarray(filled, filled + STEP));
+        filled += Math.max(took, 0);
+      }
+      kernelFull = took !== STEP;
+      endReturned = socket.end(bytes.subarray(filled, filled + N));
+    }
+    const underTest: SocketHandler = {
+      open(socket) {
+        if (callSite === "open") fillAndEnd(socket);
+      },
+      data(socket, chunk) {
+        request += chunk.toString();
+        if (request !== REQUEST) return;
+        if (pin) protocol = socket.getTLSVersion();
+        if (callSite === "data") fillAndEnd(socket);
+        requested.resolve();
+      },
+      ...(endHandler
+        ? {
+            end(socket: Socket<unknown>) {
+              endEvents++;
+              if (callSite === "end") fillAndEnd(socket);
+              ended.resolve();
+            },
+          }
+        : {}),
+      close(_socket, error) {
+        closeErrors.push(error);
+        requested.resolve();
+        ended.resolve();
+        closed.resolve();
+      },
+      error(_socket, error) {
+        errors.push(String(error));
+      },
+    };
+
+    function sendRequestAndFin(socket: Socket<unknown>) {
+      peer = socket;
+      socket.pause();
+      socket.write(REQUEST);
+      socket.shutdown();
+    }
+    const peerHandlers: SocketHandler = {
+      // A TLS socket cannot be paused before its handshake has been read.
+      ...(pin ? { handshake: sendRequestAndFin } : { open: sendRequestAndFin }),
+      data(_socket, chunk) {
+        if (mismatchAt === -1 && !chunk.equals(bytes.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+        got += chunk.byteLength;
+      },
+      end() {},
+      close: () => peerClosed.resolve(),
+      error() {},
+    };
+
+    const pinned = (options: Bun.TLSOptions) =>
+      pin && ({ ...options, minVersion: pin.version, maxVersion: pin.version } as Bun.TLSOptions);
+    const accepting = {
+      allowHalfOpen: side === "listen" ? allowHalfOpen : true,
+      tls: pinned({ key: tls.key, cert: tls.cert }),
+      socket: side === "listen" ? underTest : peerHandlers,
+    };
+    const connecting = {
+      allowHalfOpen: side === "connect" ? allowHalfOpen : true,
+      tls: pinned({ ca: tls.cert }),
+      socket: side === "connect" ? underTest : peerHandlers,
+    };
+    const path = dir && join(String(dir), "s.sock");
+    using listener =
+      path === undefined
+        ? Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting })
+        : Bun.listen({ unix: path, ...accepting });
+    using _connected = await (path === undefined
+      ? Bun.connect({ hostname: "127.0.0.1", port: (listener as Bun.TCPSocketListener).port, ...connecting })
+      : Bun.connect({ unix: path, ...connecting }));
+
+    await requested.promise;
+    // Without an `end` handler nothing reports the FIN. It follows the request on the same connection, so the
+    // loop reads it one iteration after the request at the latest.
+    await (endHandler ? ended.promise : pendingReadsDone());
+    const closedBeforePeerRead = closeErrors.length > 0;
+    peer?.resume();
+    await Promise.all([closed.promise, peerClosed.promise]);
+
+    expect({
+      protocol,
+      request,
+      kernelFull,
+      endReturned,
+      endEvents,
+      closedBeforePeerRead,
+      closeErrors,
+      errors,
+      unreceived: filled + N - got,
+      mismatchAt,
+    }).toEqual({
+      protocol: pin?.protocol,
+      request: REQUEST,
+      kernelFull: true,
+      endReturned: N,
+      endEvents: endHandler ? 1 : 0,
+      closedBeforePeerRead: false,
+      closeErrors: [undefined],
+      errors: [],
+      unreceived: 0,
+      mismatchAt: -1,
+    });
+  }
+
+  // end(data) in `end` needs the handler: 5 of the 6 pairs are rows, for 4 transports, 2 sides and 2 options.
+  const calls = (["data", "open", "end"] as const).flatMap(callSite =>
+    (callSite === "end" ? [true] : [true, false]).map(
+      endHandler => [`${callSite}()`, endHandler ? "with" : "without", callSite, endHandler] as const,
+    ),
+  );
+
+  describe.each(["tcp", "unix", "tls 1.2", "tls 1.3"] as const)("%s", transport => {
+    describe.each(["listen", "connect"] as const)("Bun.%s socket", side => {
+      describe.each([false, true])("allowHalfOpen: %p", allowHalfOpen => {
+        // AF_UNIX runs on POSIX only, like the other `unix` tests of this file.
+        it.skipIf(isWindows && transport === "unix").each(calls)(
+          "end(data) in %s %s an end handler",
+          (_where, _handler, callSite, endHandler) => run({ transport, side, allowHalfOpen, callSite, endHandler }),
+        );
+      });
+    });
+  });
+});
+
+// upgradeTLS: both halves keep what allowHalfOpen asked of the socket that was upgraded.
+describe.concurrent("upgradeTLS halves from a default Bun.connect socket and under node:tls", () => {
+  const TAIL_SIZE = 16 * 1024 * 1024;
+
+  function closeEvent(err: unknown) {
+    return err === undefined ? "close" : `close ${(err as any).code} ${(err as any).syscall}`;
+  }
+
+  // The other end of the TLS rows: a half-open TLS server socket that sends "request" and its FIN, then only reads.
+  function halfOpenPeer(onData: (chunk: Buffer) => void, paused = false) {
+    const closed = Promise.withResolvers<void>();
+    let socket: Socket<unknown> | undefined;
+    const handlers: SocketHandler = {
+      // Without a handshake handler, open() runs once the handshake is done.
+      open(s) {
+        socket = s;
+        if (paused) s.pause();
+        s.write("request");
+        s.shutdown();
+      },
+      data(_s, chunk) {
+        onData(chunk);
+      },
+      end(s) {
+        s.end();
+      },
+      close() {
+        closed.resolve();
+      },
+      error() {},
+    };
+    return { handlers, closed: closed.promise, resume: () => socket?.resume() };
+  }
+
+  function listen(peer: ReturnType<typeof halfOpenPeer>) {
+    return Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: tls.key, cert: tls.cert },
+      allowHalfOpen: true,
+      socket: peer.handlers,
+    });
+  }
+
+  type Upgraded = {
+    secure: Socket<unknown>;
+    peer: ReturnType<typeof halfOpenPeer>;
+    events: string[];
+    late: string[];
+    peerGotLate: Promise<void>;
+    closed: Promise<void>;
+  };
+
+  // The socket under test is the TLS half of an upgraded Bun.connect socket.
+  async function upgraded(
+    { allowHalfOpen, payload }: { allowHalfOpen: boolean; payload?: Buffer },
+    afterEnd: (ctx: Upgraded) => unknown,
+  ) {
+    const events: string[] = [];
+    const late: string[] = [];
+    const sawEnd = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const peerGotLate = Promise.withResolvers<void>();
+    let endedAt = -1;
+    let closedAt = -1;
+    let got = 0;
+    let mismatchAt = -1;
+    // A peer that is sent a payload starts paused: it reads after the socket under test has read the FIN.
+    const peer = halfOpenPeer(chunk => {
+      if (payload === undefined) {
+        late.push(chunk.toString());
+        return peerGotLate.resolve();
+      }
+      if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+      got += chunk.byteLength;
+    }, payload !== undefined);
+    using server = listen(peer);
+    const tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      // A default socket is given no allowHalfOpen at all.
+      ...(allowHalfOpen ? { allowHalfOpen: true } : {}),
+      socket: {
+        data() {},
+        close(_s, err) {
+          events.push(`raw ${closeEvent(err)}`);
+        },
+        error(_s, err: any) {
+          events.push(`raw error ${err.code}`);
+        },
+      },
+    });
+    const [, secure] = tcp.upgradeTLS({
+      tls: { ca: tls.cert },
+      socket: {
+        data(s: Socket, chunk: Buffer) {
+          events.push(`data ${chunk}`);
+          if (payload) events.push(`end ${s.end(payload)}`);
+        },
+        end() {
+          events.push("end");
+          endedAt = getEventLoopStats().iteration;
+          sawEnd.resolve();
+        },
+        close(_s: Socket, err: unknown) {
+          events.push(closeEvent(err));
+          closedAt = getEventLoopStats().iteration;
+          closed.resolve();
+        },
+        error(_s: Socket, err: any) {
+          events.push(`error ${err.code}`);
+        },
+      },
+    } as any);
+    await Promise.race([sawEnd.promise, closed.promise]);
+    const extra = await afterEnd({
+      secure,
+      peer,
+      events,
+      late,
+      peerGotLate: peerGotLate.promise,
+      closed: closed.promise,
+    });
+    await Promise.all([closed.promise, peer.closed]);
+    // A socket that ends at the FIN closes in the loop iteration that read it.
+    return { events, closedAtFin: closedAt === endedAt, got, mismatchAt, extra };
+  }
+
+  it("the TLS half sends the queued tail of end(data) after the peer's FIN", async () => {
+    const payload = randomFillSync(Buffer.allocUnsafe(TAIL_SIZE));
+    expect(await upgraded({ allowHalfOpen: false, payload }, ({ peer }) => void peer.resume())).toEqual({
+      events: ["data request", `end ${TAIL_SIZE}`, "end", "raw close", "close"],
+      closedAtFin: false,
+      got: TAIL_SIZE,
+      mismatchAt: -1,
+      extra: undefined,
+    });
+  });
+
+  it("the TLS half of a default socket ends at the peer's FIN", async () => {
+    expect(await upgraded({ allowHalfOpen: false }, () => {})).toEqual({
+      events: ["data request", "end", "raw close", "close"],
+      closedAtFin: true,
+      got: 0,
+      mismatchAt: -1,
+      extra: undefined,
+    });
+  });
+
+  it("the TLS half of an allowHalfOpen socket stays open until it calls end()", async () => {
+    expect(
+      await upgraded({ allowHalfOpen: true }, async ({ secure, events, late, peerGotLate, closed }) => {
+        const wrote = secure.write("still open");
+        // A socket that closed at the FIN delivers nothing.
+        await Promise.race([peerGotLate, closed]);
+        const whileOpen = { wrote, events: events.slice(), late: late.slice() };
+        secure.end();
+        return whileOpen;
+      }),
+    ).toEqual({
+      events: ["data request", "end", "raw close", "close"],
+      closedAtFin: false,
+      got: 0,
+      mismatchAt: -1,
+      extra: { wrote: 10, events: ["data request", "end"], late: ["still open"] },
+    });
+  });
+
+  it("the raw half's end(data) does one send and returns what it took", async () => {
+    const payload = randomFillSync(Buffer.allocUnsafe(TAIL_SIZE));
+    // A handshake record starts with 0x16: the payload must not.
+    payload[0] = 0;
+    const chunks: Buffer[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    // A plain TCP server: it reads the ClientHello, then what the raw half sent, then the FIN.
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(_s, chunk) {
+          chunks.push(Buffer.from(chunk));
+        },
+        close() {
+          serverClosed.resolve();
+        },
+        error() {},
+      },
+    });
+    const tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: { data() {}, close() {}, error() {} },
+    });
+    const [raw, secure] = tcp.upgradeTLS({
+      tls: { rejectUnauthorized: false },
+      socket: { data() {}, close() {}, error() {} },
+    } as any);
+    const endReturned = raw.end(payload);
+    // The FIN follows what the kernel took: the server has read all of it when it closes.
+    secure.close();
+    await serverClosed.promise;
+
+    const all = Buffer.concat(chunks);
+    let hello = 0;
+    while (hello + 5 <= all.length && all[hello] === 0x16) hello += 5 + all.readUInt16BE(hello + 3);
+    const body = all.subarray(hello);
+    expect({
+      sawClientHello: hello > 0,
+      endReturned,
+      isPrefix: body.equals(payload.subarray(0, body.length)),
+    }).toEqual({
+      sawClientHello: true,
+      endReturned: body.length,
+      isPrefix: true,
+    });
+  });
+
+  type UnderNodeTls = {
+    client: ReturnType<typeof tlsConnect>;
+    events: string[];
+    late: string[];
+    peerGotLate: Promise<void>;
+    closed: Promise<void>;
+  };
+
+  // The socket under test is a node:tls socket over a connected net.Socket, whose native handle node:tls upgrades.
+  async function upgradedByNodeTls(allowHalfOpen: boolean, afterEnd: (ctx: UnderNodeTls) => unknown) {
+    const events: string[] = [];
+    const late: string[] = [];
+    const sawEnd = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const peerGotLate = Promise.withResolvers<void>();
+    const peer = halfOpenPeer(chunk => {
+      late.push(chunk.toString());
+      peerGotLate.resolve();
+    });
+    using server = listen(peer);
+    // node:net opens every native handle half-open, and a TLSSocket takes the allowHalfOpen of the socket it wraps.
+    const raw = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen });
+    raw.on("error", (err: NodeJS.ErrnoException) => events.push(`raw error ${err.code}`));
+    await once(raw, "connect");
+    const client = tlsConnect({ socket: raw, ca: tls.cert, servername: "localhost" });
+    client.on("data", chunk => events.push(`data ${chunk}`));
+    client.on("end", () => {
+      events.push("end");
+      sawEnd.resolve();
+    });
+    client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    client.on("close", hadError => {
+      events.push(hadError ? "close after an error" : "close");
+      closed.resolve();
+    });
+    try {
+      await Promise.race([sawEnd.promise, closed.promise]);
+      const extra = await afterEnd({
+        client,
+        events,
+        late,
+        peerGotLate: peerGotLate.promise,
+        closed: closed.promise,
+      });
+      await Promise.all([closed.promise, peer.closed]);
+      return { events, extra };
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  }
+
+  it("under node:tls a default socket ends at the peer's FIN", async () => {
+    expect(await upgradedByNodeTls(false, () => {})).toEqual({
+      events: ["data request", "end", "close"],
+      extra: undefined,
+    });
+  });
+
+  it("under node:tls an allowHalfOpen socket stays open until it calls end()", async () => {
+    expect(
+      await upgradedByNodeTls(true, async ({ client, events, late, peerGotLate, closed }) => {
+        const wrote = client.write("still open");
+        // A native handle that closed at the FIN delivers nothing.
+        await Promise.race([peerGotLate, closed]);
+        const whileOpen = { wrote, events: events.slice(), late: late.slice() };
+        client.end();
+        return whileOpen;
+      }),
+    ).toEqual({
+      events: ["data request", "end", "close"],
+      extra: { wrote: true, events: ["data request", "end"], late: ["still open"] },
+    });
+  });
+});
+
+// Only the socket keeps the child running: a test in this process cannot see a keep-alive that was dropped.
+it.concurrent("end(data) without an end handler keeps the process alive until the queued tail is sent", async () => {
+  const N = 4 * 1024 * 1024;
+  const child = /* js */ `
+    const { getEventLoopStats } = require("bun:internal-for-testing");
+    const N = ${N};
+    const STEP = 256 * 1024;
+    const payload = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
+    let accepted;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: Number(process.env.PEER_PORT),
+      socket: {
+        data(socket) {
+          if (accepted !== undefined) return;
+          // write() fills the kernel first, so that end() has to queue its chunk.
+          let sent = 0;
+          let wrote = STEP;
+          while (wrote === STEP && sent + 2 * STEP <= N) {
+            wrote = socket.write(payload.subarray(sent, sent + STEP));
+            sent += Math.max(wrote, 0);
+          }
+          accepted = sent + socket.end(payload.subarray(sent));
+          // Nothing reports the FIN here: it is read at most one loop iteration after the request.
+          const at = getEventLoopStats().iteration;
+          const poll = () => (getEventLoopStats().iteration < at + 2 ? setImmediate(poll) : console.log("fin read"));
+          poll();
+        },
+        close(_socket, error) {
+          console.log("close " + error + " accepted " + accepted);
+        },
+      },
+    });
+  `;
+  const expected = Buffer.from(Uint32Array.from({ length: N / 4 }, (_, i) => Math.imul(i + 1, 0x9e3779b1)).buffer);
+  const accepted = Promise.withResolvers<Socket<unknown>>();
+  const peerClosed = Promise.withResolvers<unknown>();
+  let got = 0;
+  let mismatchAt = -1;
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      open(socket) {
+        socket.pause();
+        socket.write("request");
+        socket.shutdown();
+        accepted.resolve(socket);
+      },
+      data(_socket, chunk) {
+        if (mismatchAt === -1 && !chunk.equals(expected.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+        got += chunk.byteLength;
+      },
+      end() {},
+      close: (_socket, error) => peerClosed.resolve(error),
+      error() {},
+    },
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", child],
+    env: { ...bunEnv, PEER_PORT: String(listener.port) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderrText = proc.stderr.text();
+  void proc.exited.then(code => accepted.reject(new Error(`the child exited with ${code} before it connected`)));
+  const peer = await accepted.promise;
+
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    // The peer reads only after the child has read the FIN.
+    if (stdout.includes("fin read\n")) peer.resume();
+  }
+  const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+  // A child that exited early left the peer paused.
+  peer.resume();
+  const peerCloseError = await peerClosed.promise;
+
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr.slice(-2000), peerCloseError, got, mismatchAt }).toEqual({
+    // An end() with nothing to queue closes at once, so it would print its close first, without `accepted`.
+    stdout: `fin read\nclose undefined accepted ${N}\n`,
+    stderr: "",
+    peerCloseError: undefined,
+    got: N,
+    mismatchAt: -1,
+  });
+  expect(exitCode).toBe(0);
 });

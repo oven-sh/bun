@@ -92,6 +92,8 @@ pub(crate) struct Listener {
     pub(crate) reject_unauthorized: bool,
     /// Accepted sockets carry `Flags::PAUSE_ON_CONNECT` (see `NewSocket::on_open`).
     pub(crate) pause_on_connect: bool,
+    /// `allowHalfOpen`: unless set, accepted sockets carry `Flags::ENDS_ON_PEER_FIN`.
+    pub(crate) allow_half_open: bool,
     pub(crate) strong_data: JsCell<Strong>,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
@@ -212,6 +214,7 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
+        let allow_half_open = socket_config.allow_half_open;
 
         #[cfg(windows)]
         if port.is_none() {
@@ -254,6 +257,7 @@ impl Listener {
                         true,
                     ),
                     pause_on_connect,
+                    allow_half_open,
                     poll_ref: JsCell::new(KeepAlive::init()),
                     group: JsCell::new(uws::SocketGroup::default()),
                     secure_ctx: JsCell::new(None),
@@ -382,6 +386,7 @@ impl Listener {
                 true,
             ),
             pause_on_connect,
+            allow_half_open,
             listener: Cell::new(ListenerType::None),
             poll_ref: JsCell::new(KeepAlive::init()),
             group: JsCell::new(uws::SocketGroup::default()),
@@ -612,6 +617,7 @@ impl Listener {
         let mut flags = SocketFlags::empty();
         flags.set(SocketFlags::REJECT_UNAUTHORIZED, self.reject_unauthorized);
         flags.set(SocketFlags::PAUSE_ON_CONNECT, self.pause_on_connect);
+        flags.set(SocketFlags::ENDS_ON_PEER_FIN, !self.allow_half_open);
         flags
     }
 
@@ -624,6 +630,7 @@ impl Listener {
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
+            write_errno: Cell::new(0),
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
@@ -675,6 +682,7 @@ impl Listener {
             // `protos` is `Option<Box<[u8]>>` so each accepted socket clones
             // the listener's slice; one small allocation per accept.
             flags: Cell::new(listener.accepted_socket_flags()),
+            write_errno: Cell::new(0),
             owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -1288,6 +1296,7 @@ impl Listener {
                             ),
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
+                            write_errno: Cell::new(0),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1382,6 +1391,7 @@ impl Listener {
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
+                            write_errno: Cell::new(0),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1627,6 +1637,7 @@ fn connect_finish<const IS_SSL: bool>(
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: JsCell::new(owned_ssl_ctx),
             flags: Cell::new(SocketFlags::default()),
+            write_errno: Cell::new(0),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -1650,7 +1661,7 @@ fn connect_finish<const IS_SSL: bool>(
         IS_SSL && crate::socket::resolve_reject_unauthorized(vm, ssl.as_deref(), false),
     );
     socket_ref.update_flags(|f| {
-        f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
+        f.set(SocketFlags::ENDS_ON_PEER_FIN, !allow_half_open);
         f.set(SocketFlags::PAUSE_ON_CONNECT, pause_on_connect);
     });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.

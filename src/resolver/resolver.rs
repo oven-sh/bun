@@ -1352,9 +1352,16 @@ impl<'a> Resolver<'a> {
                 break 'brk Fs::FileSystem::instance().top_level_dir;
             }
 
-            break 'brk source_dir_resolver
-                .resolve_cwd(source_dir)
-                .unwrap_or_else(|_| panic!("Failed to query CWD"));
+            break 'brk match source_dir_resolver.resolve_cwd(source_dir) {
+                Ok(dir) => dir,
+                // Windows: a rooted directory that does not fit a path buffer once it has a drive.
+                Err(::bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {
+                    let _ = self.flush_debug_logs(FlushMode::Fail);
+                    self.extension_order = original_order;
+                    return ResultUnion::NotFound;
+                }
+                Err(_) => panic!("Failed to query CWD"),
+            };
         };
 
         // A path with a null byte cannot exist on the filesystem. Continuing

@@ -2719,9 +2719,11 @@ impl RunCommand {
             // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
             // input slice untouched).
             let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
-            let resolved = win_resolver
-                .resolve_cwd(target)
-                .unwrap_or_else(|_| panic!("Could not resolve path"));
+            let resolved = match win_resolver.resolve_cwd(target) {
+                Ok(resolved) => resolved,
+                Err(paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return false,
+                Err(_) => panic!("Could not resolve path"),
+            };
             #[cfg(windows)]
             let resolved: &[u8] =
                 paths::resolve_path::normalize_string::<false, paths::platform::Windows>(resolved);

@@ -303,6 +303,7 @@ mod _impl {
         let mut id: Option<usize> = None;
         for line in strings::tokenize(cpuinfo, b"\n") {
             if let Some(digits) = line.strip_prefix(KEY_PROCESSOR) {
+                // libuv stops at a `processor` line without a number: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1809. Bun skips that block.
                 id = bun_fmt::parse_decimal::<u32>(strings::trim(digits, b" \t\n"))
                     .map(|id| id as usize);
             } else if let Some(model) = line.strip_prefix(KEY_MODEL_NAME) {
@@ -368,6 +369,7 @@ mod _impl {
 
         let count = cpus.iter().flatten().count();
         if count == 0 {
+            // Node returns [] here. lazyCpus in os.ts cannot take an empty result, so this stays an error.
             return Err(OsError::Any);
         }
 
@@ -385,6 +387,7 @@ mod _impl {
             )
             .map_err(|_| OsError::Any)?;
             let mut khz_buf = [0u8; 32];
+            // libuv aborts when this file opens but has no number: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1877. Bun reports 0.
             let speed = bun_sys::File::open(path, bun_sys::O::RDONLY, 0)
                 .and_then(|file| file.read(&mut khz_buf))
                 .ok()

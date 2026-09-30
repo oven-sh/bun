@@ -1293,38 +1293,27 @@ mod draft {
         const FLAGS: c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         const FLAGS: c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+        const PROT: c_int = libc::PROT_READ | libc::PROT_WRITE;
+        // An anonymous mapping takes fd -1, which `Fd::INVALID` is not.
+        const NO_FD: bun_sys::Fd = bun_sys::Fd::from_native(-1);
 
-        // SAFETY: an anonymous mapping ignores the fd and offset; nothing is
-        // written through the mapping before it is unmapped again.
-        unsafe {
-            let ptr = libc::mmap(
-                core::ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                FLAGS,
-                -1,
-                0,
-            );
-            if ptr == libc::MAP_FAILED {
-                return false;
-            }
-            libc::munmap(ptr, len);
-        }
+        let Ok(ptr) = bun_sys::mmap(core::ptr::null_mut(), len, PROT, FLAGS, NO_FD, 0) else {
+            return false;
+        };
+        let _ = bun_sys::munmap(ptr, len);
         true
     }
 
     /// The soft `RLIMIT_AS` limit in bytes, `None` when it is unlimited.
     #[cfg(unix)]
     fn address_space_limit() -> Option<usize> {
-        // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
-        let mut lim: libc::rlimit = bun_core::ffi::zeroed();
-        // SAFETY: &mut lim is a valid out-pointer.
-        if unsafe { libc::getrlimit(libc::RLIMIT_AS, &raw mut lim) } != 0
-            || lim.rlim_cur == libc::RLIM_INFINITY
-        {
+        use bun_sys::posix::{RlimitResource, getrlimit};
+
+        let limit = getrlimit(RlimitResource::AS).ok()?.cur;
+        if limit == libc::RLIM_INFINITY as u64 {
             return None;
         }
-        usize::try_from(lim.rlim_cur).ok()
+        usize::try_from(limit).ok()
     }
 
     /// This is called when `main` returns an error.

@@ -157,3 +157,48 @@ test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not b
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });
+
+// A flaky test first rejects with an object that holds a value whose inspection throws. Printing that failure
+// left the exception of the hook pending. The next test was then reported as passed without running, and the
+// run exited 0.
+test.concurrent("a retried rejection with a value whose inspection throws does not skip the next test", async () => {
+  using dir = tempDir("test-hostile-retry", {
+    "retry.test.js": `
+      import { test, expect } from "bun:test";
+      import { inspect } from "node:util";
+
+      const doc = { [inspect.custom]() { throw new Error("inspect"); } };
+      let attempts = 0;
+
+      test("flaky", async () => {
+        if (attempts++ === 0) throw { status: 400, doc };
+      }, { retry: 2 });
+
+      test("must fail", () => {
+        console.log("must fail body ran");
+        expect(1).toBe(2);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "retry.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    stdout: normalizeBunSnapshot(stdout, dir),
+    summary: stderr.match(/^ *\d+ (?:pass|fail)$/gm)?.map(line => line.trim()),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: "bun test <version> (<revision>)\nmust fail body ran",
+    summary: ["1 pass", "1 fail"],
+    exitCode: 1,
+    signalCode: null,
+  });
+});

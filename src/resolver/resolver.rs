@@ -1604,7 +1604,11 @@ impl<'a> Resolver<'a> {
             if let Some(query) = dir.get_entry(self.generation, name.filename) {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
-                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let symlink_path = unsafe {
+                    query
+                        .entry()
+                        .symlink(self.rfs_ptr(), self.store_fd, dir.abs_real_path)
+                };
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1670,20 +1674,17 @@ impl<'a> Resolver<'a> {
                         }
                     }
 
-                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    let symlink = query
+                        .entry()
+                        .set_derived_symlink(&buf[..out_len], |joined| {
+                            Fs::FilenameStore::instance().append_slice(joined)
+                        })?;
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
                             bstr::BStr::new(symlink),
                             bstr::BStr::new(path.text())
                         ));
-                    }
-                    {
-                        // Every cached-`Entry` rewrite takes the per-entry mutex.
-                        let _entry_guard = query.entry().mutex.lock_guard();
-                        query
-                            .entry()
-                            .set_cache_symlink(Interned::from_static(symlink));
                     }
                     if !result.file_fd.is_valid() && store_fd {
                         result.file_fd = query.entry().cache().fd;
@@ -6278,7 +6279,8 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                        let mut symlink =
+                            unsafe { entry.symlink(rfs_ptr, self.store_fd, parent_.abs_real_path) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6299,10 +6301,10 @@ impl<'a> Resolver<'a> {
                             let joined = self
                                 .fs_ref()
                                 .abs_buf(&parts, bufs!(dir_info_uncached_filename));
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
+                            symlink = entry
+                                .set_derived_symlink(joined, |joined| {
+                                    self.fs_ref().dirname_store.append_slice(joined)
+                                })
                                 .expect("unreachable");
 
                             if let Some(logs) = self.debug_logs.as_mut() {
@@ -6314,13 +6316,6 @@ impl<'a> Resolver<'a> {
                                     bstr::BStr::new(symlink)
                                 );
                                 logs.add_note(buf);
-                            }
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
                             }
                             info.abs_real_path = symlink;
                         }

@@ -895,6 +895,24 @@ describe.concurrent("credentials in the registry url", () => {
     },
   );
 
+  test('bunfig registry = "$VAR" with user:pass@ publishes with Basic auth', async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("userinfo-bunfig-env-pkg");
+    await write(join(packageDir, "bunfig.toml"), `[install]\nregistry = "$PUBLISH_REGISTRY"\n`);
+
+    const { out, err, exitCode } = await publish(
+      { ...env, PUBLISH_REGISTRY: `http://pubuser:hunter2@localhost:${mock.port}/` },
+      packageDir,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
+    expect(out).toContain(" + userinfo-bunfig-env-pkg@1.0.0");
+    expect(out).not.toContain("hunter2");
+    expect(err).not.toContain("hunter2");
+    expect(mock.requests).toEqual([{ method: "PUT", pathname: "/userinfo-bunfig-env-pkg", authorization: basicAuth }]);
+    expect(exitCode).toBe(0);
+  });
+
   test("no credentials at all fails before sending a request", async () => {
     using mock = registryMock();
     const packageDir = await packageDirFor("no-credentials-pkg");
@@ -1349,45 +1367,6 @@ test("dist.tarball in the published manifest does not include userinfo from the 
   expect(tarball).not.toContain("hunter2");
   expect(tarball).not.toContain("@");
   expect(tarball).toBe(`http://localhost:${mock.port}/tarball-url-pkg/-/tarball-url-pkg-1.0.0.tgz`);
-  expect(exitCode).toBe(0);
-});
-
-test("user:pass@ in a registry url taken from an env var is sent as Basic auth", async () => {
-  const requests: { method: string; pathname: string; authorization: string | null }[] = [];
-  using mock = Bun.serve({
-    port: 0,
-    fetch(req) {
-      requests.push({
-        method: req.method,
-        pathname: new URL(req.url).pathname,
-        authorization: req.headers.get("authorization"),
-      });
-      return new Response("OK", { status: 200 });
-    },
-  });
-
-  using packageDir = tempDir("publish-env-registry-userinfo", {
-    "package.json": JSON.stringify({ name: "env-userinfo-pkg", version: "1.0.0" }),
-    "bunfig.toml": `[install]\nregistry = "$PUBLISH_REGISTRY"\n`,
-  });
-
-  const { out, err, exitCode } = await publish(
-    { ...env, PUBLISH_REGISTRY: `http://pubuser:hunter2@localhost:${mock.port}/` },
-    String(packageDir),
-  );
-  expect({ requests, err }).toEqual({
-    requests: [
-      {
-        method: "PUT",
-        pathname: "/env-userinfo-pkg",
-        authorization: `Basic ${Buffer.from("pubuser:hunter2").toString("base64")}`,
-      },
-    ],
-    err: expect.not.stringContaining("error:"),
-  });
-  expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
-  expect(out).toContain(" + env-userinfo-pkg@1.0.0");
-  expect(out).not.toContain("hunter2");
   expect(exitCode).toBe(0);
 });
 

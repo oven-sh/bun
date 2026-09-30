@@ -63,10 +63,25 @@ enum AfterModifiers {
 enum MemberName {
     /// Nothing, as in a call signature.
     None,
-    /// One token.
+    /// A word, a string or a number.
     Word,
-    /// "[" to "]".
+    /// "[" to "]" with a type between them.
     Bracket,
+    /// "[" to "]" with an index signature or the head of a mapped type between them.
+    Index,
+}
+
+/// What `P::parse_bracketed_name` read between "[" and "]".
+#[derive(Clone, Copy)]
+enum Bracketed {
+    /// A type, which stands for a name.
+    Type,
+    /// A type with ": type" or "in type" after it, or a sign after the "]".
+    TypeWithIndex,
+    /// The expression of parseComputedPropertyName.
+    Expression,
+    /// The parameters of parseIndexSignatureDeclaration.
+    Parameters,
 }
 
 /// What `P::parse_and_drop_in_type` reads.
@@ -276,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "[a = 1]"
                     if self.lexer.token == T::TEquals {
-                        self.skip_type_script_signature_initializer()?;
+                        self.parse_initializer_in_type()?;
                     }
 
                     if self.lexer.token != T::TComma {
@@ -339,7 +354,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "{a = 1}"
                     if self.lexer.token == T::TEquals {
-                        self.skip_type_script_signature_initializer()?;
+                        self.parse_initializer_in_type()?;
                     }
 
                     if self.lexer.token != T::TComma {
@@ -392,7 +407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "(a = 1)"
             if self.lexer.token == T::TEquals {
-                self.skip_type_script_signature_initializer()?;
+                self.parse_initializer_in_type()?;
             }
 
             // "(a, b)"
@@ -426,18 +441,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// At "=" after a parameter or after an element of a binding pattern. Reads `= expression` and keeps the position after it, nothing else.
-    #[cold]
-    #[inline(never)]
-    fn skip_type_script_signature_initializer(&mut self) -> Result<(), Error> {
-        // Inside an attempt the "=" ends the attempt, as before.
-        if self.lexer.is_log_disabled {
-            return Ok(());
-        }
-        let _ = self.skip_type_script_signature_expression(Level::Comma)?;
-        Ok(())
-    }
-
     /// At a token that starts no property name of a binding pattern read before. True where it read a bigint or `[expression]`.
     #[cold]
     #[inline(never)]
@@ -452,59 +455,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Ok(true)
             }
             T::TOpenBracket => {
-                let at_bracket = self.lexer.snapshot();
-                if self.skip_type_script_signature_expression(Level::Lowest)?
-                    && self.lexer.token == T::TCloseBracket
-                {
-                    self.lexer.next()?;
-                    return Ok(true);
+                let mark = self.read_mark();
+                match self.parse_computed_property_name() {
+                    Ok(()) if self.log().errors == mark.errors => Ok(true),
+                    Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+                    _ => {
+                        self.rewind_to_read_mark(&mark);
+                        Ok(false)
+                    }
                 }
-                self.lexer.restore(&at_bracket);
-                Ok(false)
             }
             _ => Ok(false),
         }
     }
 
-    /// Reads the current token and the expression after it. True where both were read without an error, else nothing moved and nothing was logged.
+    /// The flag kept for the token at `offset`: for "(", whether a reading outside an attempt found a function type there.
+    #[inline]
+    fn type_script_memo_at(&self, offset: usize) -> Option<bool> {
+        if self.ts_conditional_arrow_attempts.is_empty() {
+            return None;
+        }
+        let key = offset as u32;
+        self.ts_conditional_arrow_attempts
+            .binary_search_by_key(&key, |&entry| entry >> 1)
+            .ok()
+            .and_then(|i| self.ts_conditional_arrow_attempts.get(i))
+            .map(|&entry| entry & 1 == 1)
+    }
+
+    /// Keeps `flag` for the token at `offset`. The list is the one of the ":" offsets: no ":" starts where a "(" or a "=>" does.
     #[cold]
     #[inline(never)]
-    fn skip_type_script_signature_expression(&mut self, level: Level) -> Result<bool, Error> {
-        let errors = self.log().errors;
-        let has_import_meta = self.has_import_meta;
-        let has_with_scope = self.has_with_scope;
-        let needs_jsx_import = self.needs_jsx_import;
-        let top_level_await_keyword = self.top_level_await_keyword;
-        // A name in what is dropped is no use of an import.
-        let parse_pass_symbol_uses = self.parse_pass_symbol_uses.take();
-        let snapshot = self.parser_snapshot();
-
-        self.allow_in = true;
-        let result = match self.lexer.next() {
-            Ok(()) => self.parse_expr(level).map(|_| ()),
-            Err(err) => Err(err.into()),
-        };
-        let is_clean = result.is_ok() && self.log().errors == errors;
-        let mut end = self.lexer.snapshot();
-
-        // Scopes, symbols, import records and messages of the expression go away, and the lexer goes back.
-        self.restore_parser_snapshot(snapshot);
-        self.parse_pass_symbol_uses = parse_pass_symbol_uses;
-        self.has_import_meta = has_import_meta;
-        self.has_with_scope = has_with_scope;
-        self.needs_jsx_import = needs_jsx_import;
-        self.top_level_await_keyword = top_level_await_keyword;
-
-        if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = result {
-            return Err(err);
+    fn set_type_script_memo_at(&mut self, offset: usize, flag: bool) {
+        debug_assert!(offset <= (u32::MAX >> 1) as usize);
+        let key = offset as u32;
+        let packed = (key << 1) | flag as u32;
+        match self
+            .ts_conditional_arrow_attempts
+            .binary_search_by_key(&key, |&entry| entry >> 1)
+        {
+            Ok(i) => {
+                if let Some(entry) = self.ts_conditional_arrow_attempts.get_mut(i) {
+                    *entry = packed;
+                }
+            }
+            Err(insert_at) => self.ts_conditional_arrow_attempts.insert(insert_at, packed),
         }
-        if is_clean {
-            // Only the position moves: the comments inside the expression are dropped with it.
-            end.all_comments_len = self.lexer.all_comments.len();
-            end.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
-            self.lexer.restore(&end);
-        }
-        Ok(is_clean)
     }
 
     /// This is a spot where the TypeScript grammar is highly ambiguous. Here are
@@ -543,18 +539,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.skip_type_script_paren_type::<S>(out);
         }
 
-        let at_paren = self.lexer.snapshot();
-        let log = self.log();
-        let (msgs_len, errors, warnings) = (log.msgs.len(), log.errors, log.warnings);
+        let mark = self.read_mark();
+        // Where the expression around this type is read twice, the second reading starts with what the first found
+        let known = self.type_script_memo_at(mark.lexer.start);
+        if known == Some(true) && self.skip_known_type_script_fn_type(&mark)? {
+            S::function_type(out);
+            return Ok(());
+        }
         let result = self.skip_type_script_paren_type::<S>(out);
-        if (result.is_ok() && self.log().errors == errors)
-            || matches!(result, Err(Error::StackOverflow | Error::Alloc(_)))
-        {
+        if known.is_some() || matches!(result, Err(Error::StackOverflow | Error::Alloc(_))) {
+            return result;
+        }
+        // "=>" after the ")" is an error, but for the arrow that a conditional expression was read with
+        let is_before_arrow = self.lexer.token == T::TEqualsGreaterThan
+            && self.type_script_memo_at(self.lexer.start).is_none();
+        if result.is_ok() && self.log().errors == mark.errors && !is_before_arrow {
             return result;
         }
 
         // "(a = 1) => void"
-        if self.reread_type_script_fn_type(&at_paren, msgs_len, errors, warnings)? {
+        if self.reread_type_script_fn_type(&mark)? {
             S::function_type(out);
             return Ok(());
         }
@@ -577,50 +581,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// The type in parentheses at `at_paren` was read with an error. True where `(parameters) => type` was read there without one, else that error and its position stay.
+    /// The type in parentheses at `mark` was read with an error, or "=>" follows it. True where `(parameters) => type` is read there instead, else what that reading left stays.
     #[cold]
     #[inline(never)]
-    fn reread_type_script_fn_type(
-        &mut self,
-        at_paren: &crate::lexer::LexerSnapshot<'a>,
-        msgs_len: usize,
-        errors: u32,
-        warnings: u32,
-    ) -> Result<bool, Error> {
-        let mut failed_end = self.lexer.snapshot();
-        let log = self.log();
-        let first = msgs_len.min(log.msgs.len());
-        let failed_msgs = log.msgs.split_off(first);
-        let (failed_errors, failed_warnings) = (log.errors, log.warnings);
-        log.errors = errors;
-        log.warnings = warnings;
-        self.lexer.restore(at_paren);
-
+    fn reread_type_script_fn_type(&mut self, mark: &ReadMark<'a>) -> Result<bool, Error> {
+        let failed = self.set_aside_failed_read(mark);
         let reread = self.skip_type_script_fn_type_signature();
-        if reread.is_ok() && self.log().errors == errors {
-            return Ok(true);
-        }
         if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = reread {
             return Err(err);
         }
+        let is_fn_type = reread.is_ok() && self.log().errors == mark.errors;
+        self.set_type_script_memo_at(mark.lexer.start, is_fn_type);
+        if !is_fn_type {
+            // Neither reading fits: the errors stay the ones of the first.
+            self.restore_failed_read(mark, failed);
+        }
+        Ok(is_fn_type)
+    }
 
-        // Neither reading fits: the errors stay the ones of the first, and no reading runs twice.
-        self.lexer.restore(at_paren);
-        let log = self.log();
-        log.msgs.truncate(first);
-        log.msgs.extend(failed_msgs);
-        log.errors = failed_errors;
-        log.warnings = failed_warnings;
-        failed_end.all_comments_len = self.lexer.all_comments.len();
-        failed_end.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
-        self.lexer.restore(&failed_end);
+    /// A reading before this one found `(parameters) => type` at `mark`. False where it is none now: nothing moved then.
+    #[cold]
+    #[inline(never)]
+    fn skip_known_type_script_fn_type(&mut self, mark: &ReadMark<'a>) -> Result<bool, Error> {
+        let reread = self.skip_type_script_fn_type_signature();
+        if let Err(err @ (Error::StackOverflow | Error::Alloc(_))) = reread {
+            return Err(err);
+        }
+        if reread.is_ok() && self.log().errors == mark.errors {
+            return Ok(true);
+        }
+        // The flags of the parser are not the ones of that reading.
+        self.rewind_to_read_mark(mark);
+        self.set_type_script_memo_at(mark.lexer.start, false);
         Ok(false)
     }
 
     /// `(parameters) => type`
     fn skip_type_script_fn_type_signature(&mut self) -> Result<(), Error> {
         self.skip_typescript_fn_args()?;
-        self.lexer.expect(T::TEqualsGreaterThan)?;
+        if self.lexer.token != T::TEqualsGreaterThan {
+            return Err(Error::Backtrack);
+        }
+        self.lexer.next()?;
         self.skip_typescript_return_type()
     }
 
@@ -1259,7 +1261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.lexer.token == T::TPlus || self.lexer.token == T::TMinus {
             self.lexer.next()?;
         }
-        self.parse_property_or_method_signature(MemberName::Bracket, false)?;
+        self.parse_property_or_method_signature(MemberName::Index, false)?;
         self.parse_type_member_list()
     }
 
@@ -1317,14 +1319,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             AfterModifiers::Member => {
                 if self.lexer.token == T::TOpenBracket {
                     // isIndexSignature and parseIndexSignatureDeclaration, or a computed name
-                    self.parse_bracketed_name(true)?;
-                    self.parse_property_or_method_signature(MemberName::Bracket, false)
-                } else if self.is_property_name_of_type_member() {
-                    self.lexer.next()?;
-                    self.parse_property_or_method_signature(MemberName::Word, false)
-                } else {
-                    self.parse_property_or_method_signature(MemberName::None, false)
+                    return match self.parse_bracketed_name(true)? {
+                        Bracketed::Type => {
+                            self.parse_property_or_method_signature(MemberName::Bracket, false)
+                        }
+                        Bracketed::TypeWithIndex => {
+                            self.parse_property_or_method_signature(MemberName::Index, false)
+                        }
+                        Bracketed::Expression => {
+                            self.parse_property_or_method_signature_of_reference(false)
+                        }
+                        Bracketed::Parameters => self.parse_type_of_index_signature(),
+                    };
                 }
+                if self.is_property_name_of_one_loop() {
+                    self.lexer.next()?;
+                    return self.parse_property_or_method_signature(MemberName::Word, false);
+                }
+                // A private name. A bigint too, but not inside an attempt, so that `f<{ 1n: a }>(b)` stays a comparison.
+                if self.lexer.token == T::TPrivateIdentifier
+                    || (self.lexer.token == T::TBigIntegerLiteral && !self.lexer.is_log_disabled)
+                {
+                    self.lexer.next()?;
+                    return self.parse_property_or_method_signature_of_reference(false);
+                }
+                self.parse_property_or_method_signature(MemberName::None, false)
             }
         }
     }
@@ -1423,13 +1442,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.lexer.token == T::TNumericLiteral
     }
 
-    /// Whether parsePropertyName reads the token. Inside an attempt a bigint is no name, so that `f<{ 1n: a }>(b)` stays a comparison.
-    fn is_property_name_of_type_member(&self) -> bool {
-        self.is_property_name_of_one_loop()
-            || self.lexer.token == T::TPrivateIdentifier
-            || (self.lexer.token == T::TBigIntegerLiteral && !self.lexer.is_log_disabled)
-    }
-
     /// nextTokenCanFollowDefaultKeyword, after "default".
     fn can_follow_default_keyword(&mut self) -> bool {
         match self.lexer.token {
@@ -1499,11 +1511,71 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// parseAccessorDeclaration, after "get" or "set" and on the name.
     fn parse_accessor_declaration(&mut self) -> Result<(), Error> {
         if self.lexer.token == T::TOpenBracket {
-            self.parse_bracketed_name(false)?;
-            return self.parse_property_or_method_signature(MemberName::Bracket, true);
+            return match self.parse_bracketed_name(false)? {
+                Bracketed::Type => {
+                    self.parse_property_or_method_signature(MemberName::Bracket, true)
+                }
+                Bracketed::TypeWithIndex => {
+                    self.parse_property_or_method_signature(MemberName::Index, true)
+                }
+                Bracketed::Expression | Bracketed::Parameters => {
+                    self.parse_property_or_method_signature_of_reference(true)
+                }
+            };
         }
+        let is_name_of_one_loop = self.is_property_name_of_one_loop();
         self.lexer.next()?;
-        self.parse_property_or_method_signature(MemberName::Word, true)
+        if is_name_of_one_loop {
+            self.parse_property_or_method_signature(MemberName::Word, true)
+        } else {
+            self.parse_property_or_method_signature_of_reference(true)
+        }
+    }
+
+    /// parsePropertyOrMethodSignature after a name that only the reference reads, or parseAccessorDeclaration after such a name.
+    fn parse_property_or_method_signature_of_reference(
+        &mut self,
+        is_accessor: bool,
+    ) -> Result<(), Error> {
+        if !is_accessor && self.lexer.token == T::TQuestion {
+            self.lexer.next()?;
+        }
+        if is_accessor || self.lexer.token == T::TOpenParen || self.lexer.token == T::TLessThan {
+            // parseTypeParameters, parseParameters and parseReturnType
+            let _ =
+                self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            self.skip_typescript_fn_args()?;
+            if self.lexer.token == T::TColon {
+                self.lexer.next()?;
+                self.skip_typescript_return_type()?;
+            }
+            // parseFunctionBlockOrSemicolon
+            if is_accessor
+                && self.lexer.token == T::TOpenBrace
+                && self.parse_function_block_in_type()?
+            {
+                return Ok(());
+            }
+        } else {
+            // parseTypeAnnotation and parseInitializer
+            if self.lexer.token == T::TColon {
+                self.lexer.next()?;
+                self.skip_type_script_type(Level::Lowest)?;
+            }
+            if self.lexer.token == T::TEquals {
+                self.parse_initializer_in_type()?;
+            }
+        }
+        self.parse_type_member_semicolon()
+    }
+
+    /// The type annotation and the separator of parseIndexSignatureDeclaration.
+    fn parse_type_of_index_signature(&mut self) -> Result<(), Error> {
+        if self.lexer.token == T::TColon {
+            self.lexer.next()?;
+            self.skip_type_script_type(Level::Lowest)?;
+        }
+        self.parse_type_member_semicolon()
     }
 
     /// parsePropertyOrMethodSignature after the name, and the signature of parseSignatureMember and parseAccessorDeclaration.
@@ -1512,6 +1584,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: MemberName,
         is_accessor: bool,
     ) -> Result<(), Error> {
+        // Whether the member is one that the reference reads too: only then may a block or an initializer follow.
+        let mut is_reference_form = name == MemberName::Word || name == MemberName::Bracket;
         if name != MemberName::None {
             // "a b: c": a name that a name or "[" follows is a member of its own, with or without a separator
             if name == MemberName::Word
@@ -1519,14 +1593,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 return Ok(());
             }
-            // "a?: b". "a!: b" is accepted too
-            if self.lexer.token == T::TQuestion || self.lexer.token == T::TExclamation {
+            if self.lexer.token == T::TQuestion {
+                // "a?: b". The reference reads no "?" after the name of an accessor
                 self.lexer.next()?;
+                if is_accessor {
+                    is_reference_form = false;
+                }
+            } else if self.lexer.token == T::TExclamation {
+                // "a!: b" is accepted
+                self.lexer.next()?;
+                is_reference_form = false;
             }
         }
 
         // parseTypeParameters
+        let has_type_parameters = self.lexer.token == T::TLessThan;
         let _ = self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        // The reference reads parameters after type parameters and after the name of an accessor
+        let may_have_initializer = is_reference_form && !has_type_parameters && !is_accessor;
 
         match self.lexer.token {
             T::TOpenParen => {
@@ -1538,6 +1622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // parseFunctionBlockOrSemicolon
                 if is_accessor
+                    && is_reference_form
                     && self.lexer.token == T::TOpenBrace
                     && self.parse_function_block_in_type()?
                 {
@@ -1551,7 +1636,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // parseTypeAnnotation and parseInitializer
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
-                if self.lexer.token == T::TEquals {
+                if may_have_initializer && self.lexer.token == T::TEquals {
                     self.parse_initializer_in_type()?;
                 }
             }
@@ -1560,7 +1645,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.unexpected()?;
                     return Err(Error::SyntaxError);
                 }
-                if self.lexer.token == T::TEquals {
+                if may_have_initializer && self.lexer.token == T::TEquals {
                     self.parse_initializer_in_type()?;
                 }
             }
@@ -1587,7 +1672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// "[" to "]" where a member or the name of an accessor starts: read as a type first, then as the reference reads it.
-    fn parse_bracketed_name(&mut self, is_member_start: bool) -> Result<(), Error> {
+    fn parse_bracketed_name(&mut self, is_member_start: bool) -> Result<Bracketed, Error> {
         let mark = self.read_mark();
         let result = self.skip_type_script_bracketed_name();
         // Inside an attempt only the first reading counts, so that `f<{ [a + b]: c }>(d)` stays a comparison.
@@ -1603,19 +1688,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         mark: &ReadMark<'a>,
         is_member_start: bool,
-        result: Result<(), Error>,
-    ) -> Result<(), Error> {
+        result: Result<Bracketed, Error>,
+    ) -> Result<Bracketed, Error> {
         if let Err(Error::StackOverflow | Error::Alloc(_)) = result {
             return result;
         }
         let failed = self.set_aside_failed_read(mark);
         let reread = if is_member_start && self.is_index_signature() {
             self.parse_index_signature_declaration()
+                .map(|()| Bracketed::Parameters)
         } else {
             self.parse_computed_property_name()
+                .map(|()| Bracketed::Expression)
         };
         match reread {
-            Ok(()) if self.log().errors == mark.errors => Ok(()),
+            Ok(bracketed) if self.log().errors == mark.errors => Ok(bracketed),
             Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
             _ => {
                 // Neither reading fits: the errors stay the ones of the first.
@@ -1626,7 +1713,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// "[" type "]" with ": type" or "in type as type" before the "]" and a sign after it: an index signature, the head of a mapped type or a name, not told apart.
-    fn skip_type_script_bracketed_name(&mut self) -> Result<(), Error> {
+    fn skip_type_script_bracketed_name(&mut self) -> Result<Bracketed, Error> {
         self.lexer.next()?;
         self.skip_type_script_type_with_opts::<Discard>(
             Level::Lowest,
@@ -1634,14 +1721,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &mut (),
         )?;
 
+        let mut bracketed = Bracketed::Type;
         match self.lexer.token {
             // "{ [key: string]: number }"
             T::TColon => {
+                bracketed = Bracketed::TypeWithIndex;
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
             }
             // "{ [K in keyof T as `get-${K}`]: T[K] }"
             T::TIn => {
+                bracketed = Bracketed::TypeWithIndex;
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
                 if self.lexer.is_contextual_keyword(b"as") {
@@ -1656,9 +1746,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // "{ [K in keyof T]+?: T[K] }"
         if self.lexer.token == T::TPlus || self.lexer.token == T::TMinus {
+            bracketed = Bracketed::TypeWithIndex;
             self.lexer.next()?;
         }
-        Ok(())
+        Ok(bracketed)
     }
 
     /// isIndexSignature
@@ -2304,6 +2395,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let log = self.log();
+        let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
         match func(self) {
@@ -2315,6 +2408,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if backtrack {
             self.lexer.restore(&old_lexer);
+            // What the attempt logged without asking the lexer goes with it.
+            let log = self.log();
+            log.msgs.truncate(old_msgs_len);
+            log.errors = old_errors;
+            log.warnings = old_warnings;
         }
         self.lexer.is_log_disabled = old_log_disabled;
 
@@ -2329,6 +2427,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.mark_type_script_only();
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let log = self.log();
+        let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
         let result = match func(self) {
@@ -2341,6 +2441,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if backtrack {
             self.lexer.restore(&old_lexer);
+            // `<out T>x`: the modifier that no type parameter of a function has is logged past the lexer
+            let log = self.log();
+            log.msgs.truncate(old_msgs_len);
+            log.errors = old_errors;
+            log.warnings = old_warnings;
         }
         self.lexer.is_log_disabled = old_log_disabled;
 

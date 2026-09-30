@@ -1344,10 +1344,8 @@ impl BunxCommand {
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 
-        // Install, then look for the bin. An install without `--force` keeps
-        // every package whose version already matches, so a tree an earlier
-        // install left partial yields no bin. Then install once more with
-        // `--force`, which links every package again, and look again.
+        // Two passes at most: an install without `--force` keeps a package whose
+        // version matches even when files are missing, so a second pass forces it.
         loop {
             let mut args: BoundedArray<&[u8], 8> =
                 BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known

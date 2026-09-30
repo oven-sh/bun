@@ -117,7 +117,7 @@ static void appendLatin1(StringBuilder& builder, ASCIILiteral delimiter, const S
 }
 
 // String::MaxLength, or the limit that a test lowered through bun:internal-for-testing.
-static bool passesStringLimit(uint64_t length)
+static bool exceedsStringLimit(uint64_t length)
 {
     return length > std::min<uint64_t>(String::MaxLength, Bun__stringSyntheticAllocationLimit);
 }
@@ -142,7 +142,7 @@ ALWAYS_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combine(String& stored, AS
 NEVER_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combineLong(String& stored, ASCIILiteral delimiter, const String& value)
 {
     uint64_t combinedLength = static_cast<uint64_t>(stored.length()) + delimiter.length() + value.length();
-    if (passesStringLimit(combinedLength)) [[unlikely]]
+    if (exceedsStringLimit(combinedLength)) [[unlikely]]
         return AddResult::ValueTooLong;
 
     auto* builder = m_growing.builderOf(stored);
@@ -374,7 +374,7 @@ std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
     uint64_t length = 2 * static_cast<uint64_t>(count - 1);
     for (auto& header : m_setCookieHeaders)
         length += header.length();
-    if (passesStringLimit(length)) [[unlikely]]
+    if (exceedsStringLimit(length)) [[unlikely]]
         return std::nullopt;
 
     StringBuilder builder;

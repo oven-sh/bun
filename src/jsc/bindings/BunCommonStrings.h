@@ -87,6 +87,8 @@
     macro(httpUNLINK, "UNLINK") \
     macro(httpUNLOCK, "UNLOCK") \
     macro(httpUNSUBSCRIBE, "UNSUBSCRIBE") \
+    macro(headerCookieDelimiter, "; ") \
+    macro(headerListDelimiter, ", ") \
     macro(alpnH2, "h2") \
     macro(alpnHttp11, "http/1.1") \
     macro(ascii, "ascii") \

@@ -75,8 +75,6 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
     JSC::JSObject* obj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* sensitive = nullptr;
-    JSString* cookieDelimiter = nullptr;
-    JSString* listDelimiter = nullptr;
     auto& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     size_t offset = 0;
@@ -174,9 +172,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
                 // cookie joins with "; ", everything else with ", " (RFC 7230 §3.2.2). As a rope: no copy, and past the string length limit it throws.
-                JSString*& delimiter = isCookie ? cookieDelimiter : listDelimiter;
-                if (!delimiter)
-                    delimiter = jsNontrivialString(vm, isCookie ? "; "_s : ", "_s);
+                auto& strings = Bun::commonStrings(vm);
+                JSString* delimiter = isCookie ? strings.headerCookieDelimiterString() : strings.headerListDelimiterString();
                 JSString* joined = jsString(globalObject, asString(existing), delimiter, valueStr);
                 RETURN_IF_EXCEPTION(scope, {});
                 obj->putDirect(vm, ident, joined, 0);

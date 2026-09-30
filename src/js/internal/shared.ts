@@ -88,7 +88,7 @@ class ExceptionWithHostPort extends Error {
 }
 
 class NodeAggregateError extends AggregateError {
-  constructor(errors, message) {
+  constructor(errors, message?) {
     super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
     this.code = errors[0]?.code;
   }
@@ -111,7 +111,7 @@ class ErrnoException extends Error {
   errno: number;
   syscall: string;
 
-  constructor(err, syscall, original) {
+  constructor(err, syscall, original?) {
     util ??= require("node:util");
     const code = util.getSystemErrorName(err);
     const message = original ? `${syscall} ${code} ${original}` : `${syscall} ${code}`;
@@ -159,7 +159,7 @@ const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionRep
 // callback keeps its place in the event loop; only the throw is rerouted. The
 // arity switch avoids materializing `arguments` for the shapes fs and dns use.
 function guardCallback(callback) {
-  return function guarded(a, b, c) {
+  return function guarded(a?, b?, c?) {
     try {
       switch (arguments.length) {
         case 0:
@@ -202,8 +202,8 @@ function isInsideNodeModules(frameLimit: number): boolean {
   } catch {
   } finally {
     try {
-      Error.stackTraceLimit = prevLimit;
-      Error.prepareStackTrace = prevPrepare;
+      Error.stackTraceLimit = prevLimit as typeof Error.stackTraceLimit;
+      Error.prepareStackTrace = prevPrepare as typeof Error.prepareStackTrace;
     } catch {}
   }
   if (!$isJSArray(frames)) return false;
@@ -223,7 +223,7 @@ function isInsideNodeModules(frameLimit: number): boolean {
 // listener after an unrelated listener called event.stopImmediatePropagation().
 // `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
 // only these internal modules can reach it.
-function resistStopPropagation<T extends object>(options: T): T {
+function resistStopPropagation<T extends object>(options: T): T & AddEventListenerOptions {
   (options as AddEventListenerOptions).$kResistStopPropagation = true;
   return options;
 }
@@ -248,7 +248,7 @@ function getLazy<T>(initializer: () => T) {
 // https://github.com/nodejs/node/blob/v25.2.1/lib/internal/perf/observe.js
 
 const observerCounts = new Map();
-const kObservers = new Set();
+const kObservers = new Set<NodeEntryObserver>();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
 const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
@@ -305,7 +305,7 @@ function startPerf(target, key, context) {
   target[key] = context;
 }
 
-function stopPerf(target, key, context) {
+function stopPerf(target, key, context?) {
   const ctx = target[key];
   if (!ctx) {
     return;
@@ -333,7 +333,7 @@ class NodeEntryObserver {
   callback;
   owner;
   types = new Set();
-  buffer = [];
+  buffer: PerformanceNodeEntry[] = [];
   scheduled = false;
   // The frame of the Bun.ModuleGraph the observer was made in, if any. Entries are delivered in
   // that graph's context (or the host's), not the one of whatever produced the entry: set from a

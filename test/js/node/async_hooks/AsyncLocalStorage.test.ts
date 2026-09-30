@@ -1769,3 +1769,10 @@ test("node:http: socket events of a server and of a client request run in the as
     exitCode: 0,
   });
 });
+
+test("AsyncLocalStorage.bind() names the argument when it is not a function", () => {
+  // @ts-expect-error
+  expect(() => AsyncLocalStorage.bind(1)).toThrow(
+    'The "fn" argument must be of type function. Received type number (1)',
+  );
+});

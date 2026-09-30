@@ -68,6 +68,26 @@ pub(crate) trait TypeSink {
     ) -> Operand<Self::Out>;
     fn conditional_false(out: &mut Self::Out, left: Self::Out);
 
+    /// `import("module")`, before its arguments are read.
+    #[inline]
+    fn import_type(_out: &mut Self::Out) {}
+    /// `unique` and the operand that follows it.
+    #[inline]
+    fn unique_type(_out: &mut Self::Out) {}
+    /// `x is T` and `this is T`. Where `asserts` holds, `asserts x` with or without `is T`.
+    #[inline]
+    fn type_predicate(_out: &mut Self::Out, _asserts: bool) {}
+    /// What a type in parentheses is read into. `out` is where the parentheses stand.
+    #[inline]
+    fn nested(_out: &Self::Out) -> Self::Out {
+        Self::Out::default()
+    }
+    /// What the type between "?" and ":" of a conditional type is read into.
+    #[inline]
+    fn branch() -> Self::Out {
+        Self::Out::default()
+    }
+
     /// The type in `out`, as a parent keeps it.
     #[inline]
     fn node(_out: &Self::Out) -> Kept<Self> {
@@ -347,31 +367,85 @@ impl TypeSink for Discard {
     fn conditional_false(_out: &mut (), _left: ()) {}
 }
 
+/// Whether a tag is the one of a single type or what the operands of "|" or "&" merged to so far.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Shape {
+    /// A single type: a keyword in it stands for itself.
+    #[default]
+    Leaf,
+    Union,
+    Intersection,
+}
+
+/// A `design:type` tag while its type is read.
+#[derive(Clone, Default)]
+pub(crate) struct Tag {
+    pub(crate) metadata: Metadata,
+    shape: Shape,
+    /// The type stands in a branch of a conditional type.
+    in_branch: bool,
+}
+
+impl Tag {
+    const NONE: Tag = Tag::start(false);
+
+    /// No type read yet, in a branch of a conditional type or outside of one.
+    const fn start(in_branch: bool) -> Tag {
+        Tag {
+            metadata: Metadata::DEFAULT,
+            shape: Shape::Leaf,
+            in_branch,
+        }
+    }
+
+    /// A single type was read: `metadata` is its tag.
+    #[inline]
+    fn set(&mut self, metadata: Metadata) {
+        self.metadata = metadata;
+        self.shape = Shape::Leaf;
+    }
+
+    /// The union or the intersection that was read so far has no operand left.
+    #[inline]
+    fn close(&mut self) {
+        self.metadata.finish_combined();
+        self.shape = Shape::Leaf;
+    }
+
+    /// The type that was read is an operand of "|" or "&", or a branch of a conditional type.
+    #[inline]
+    fn operand(&mut self) {
+        if self.in_branch {
+            self.metadata.finish_reference_in_branch();
+        }
+    }
+}
+
 /// Computes the `design:type` tag of `emitDecoratorMetadata`.
 pub(crate) struct DecoratorMetadata;
 
 impl TypeSink for DecoratorMetadata {
-    type Out = Metadata;
+    type Out = Tag;
 
-    const NONE: Metadata = Metadata::MNone;
+    const NONE: Tag = Tag::NONE;
     const STRICT: bool = false;
     const BUILDS: bool = false;
     type Sub = Discard;
     type K<V: ConstDefault> = ();
 
     #[inline]
-    fn literal(out: &mut Metadata, literal: TypeLiteral) {
-        *out = match literal {
+    fn literal(out: &mut Tag, literal: TypeLiteral) {
+        out.set(match literal {
             TypeLiteral::Number => Metadata::MNumber,
             TypeLiteral::Bigint => Metadata::MBigint,
             TypeLiteral::String => Metadata::MString,
             TypeLiteral::Boolean => Metadata::MBoolean,
-        };
+        });
     }
 
     #[inline]
-    fn keyword(out: &mut Metadata, keyword: TypeKeyword) {
-        *out = match keyword {
+    fn keyword(out: &mut Tag, keyword: TypeKeyword) {
+        out.set(match keyword {
             TypeKeyword::Any => Metadata::MAny,
             TypeKeyword::Never => Metadata::MNever,
             TypeKeyword::Unknown => Metadata::MUnknown,
@@ -384,76 +458,81 @@ impl TypeSink for DecoratorMetadata {
             TypeKeyword::Symbol => Metadata::MSymbol,
             TypeKeyword::Null => Metadata::MNull,
             TypeKeyword::Void => Metadata::MVoid,
-        };
+        });
     }
 
     #[inline]
-    fn function_type(out: &mut Metadata) {
-        *out = Metadata::MFunction;
+    fn function_type(out: &mut Tag) {
+        out.set(Metadata::MFunction);
     }
 
     #[inline]
-    fn parenthesized(out: &mut Metadata, inner: Metadata) {
-        *out = inner;
+    fn parenthesized(out: &mut Tag, mut inner: Tag) {
+        // tsc looks through parentheses at a keyword, and at no other type
+        if inner.shape != Shape::Leaf {
+            inner.close();
+        }
+        out.set(inner.metadata);
     }
 
     #[inline]
-    fn keyof_type(out: &mut Metadata) {
-        *out = Metadata::MObject;
+    fn keyof_type(out: &mut Tag) {
+        out.set(Metadata::MObject);
     }
 
     #[inline]
-    fn readonly_type(out: &mut Metadata) {
+    fn readonly_type(out: &mut Tag) {
         // assume array or tuple literal
-        *out = Metadata::MArray;
+        out.set(Metadata::MArray);
     }
 
     #[inline]
-    fn typeof_query(out: &mut Metadata) {
+    fn typeof_query(out: &mut Tag) {
         // always `Object`
-        *out = Metadata::MObject;
+        out.set(Metadata::MObject);
     }
 
     #[inline]
-    fn tuple_type(out: &mut Metadata) {
-        *out = Metadata::MArray;
+    fn tuple_type(out: &mut Tag) {
+        out.set(Metadata::MArray);
     }
 
     #[inline]
-    fn object_type(out: &mut Metadata) {
-        *out = Metadata::MObject;
+    fn object_type(out: &mut Tag) {
+        out.set(Metadata::MObject);
     }
 
     #[inline]
-    fn template_literal_type(out: &mut Metadata) {
-        *out = Metadata::MString;
+    fn template_literal_type(out: &mut Tag) {
+        out.set(Metadata::MString);
     }
 
     #[inline]
     fn reference<'a, E>(
-        out: &mut Metadata,
+        out: &mut Tag,
         name: &'a [u8],
         find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
     ) -> Result<(), E> {
-        *out = Metadata::MIdentifier(find(name)?);
+        out.set(Metadata::MIdentifier(find(name)?));
         Ok(())
     }
 
     #[inline]
     fn member<'a, E>(
-        out: &mut Metadata,
+        out: &mut Tag,
         name: &'a [u8],
         is_name: bool,
         find: impl FnOnce(&'a [u8]) -> Result<Ref, E>,
     ) -> Result<(), E> {
-        match out {
+        let metadata = &mut out.metadata;
+        match metadata {
             Metadata::MIdentifier(id) => {
                 let id = *id;
                 let mut dot: Vec<Ref> = Vec::with_capacity(2);
                 dot.push(id);
                 let member = find(name)?;
                 dot.push(member);
-                *out = Metadata::MDot(dot);
+                *metadata = Metadata::MDot(dot);
             }
             Metadata::MDot(dot) => {
                 if is_name {
@@ -466,28 +545,28 @@ impl TypeSink for DecoratorMetadata {
     }
 
     #[inline]
-    fn index_or_array(out: &mut Metadata, has_index: bool) {
-        if matches!(*out, Metadata::MNone) {
-            *out = Metadata::MArray;
+    fn index_or_array(out: &mut Tag, has_index: bool) {
+        // if something was skipped, it is object type
+        let is_object = has_index && !matches!(out.metadata, Metadata::MNone);
+        out.set(if is_object {
+            Metadata::MObject
         } else {
-            // if something was skipped, it is object type
-            if has_index {
-                *out = Metadata::MObject;
-            } else {
-                *out = Metadata::MArray;
-            }
-        }
+            Metadata::MArray
+        });
     }
 
     #[inline]
-    fn union_left<'n>(
-        out: &mut Metadata,
-        load_name: impl Fn(Ref) -> &'n [u8],
-    ) -> Operand<Metadata> {
+    fn union_left<'n>(out: &mut Tag, load_name: impl Fn(Ref) -> &'n [u8]) -> Operand<Tag> {
+        // "A & B | C": the intersection is an operand of "|"
+        if out.shape == Shape::Intersection {
+            out.close();
+        }
+        out.operand();
         let mut left = out.clone();
-        match left.finish_union(load_name) {
+        match left.metadata.finish_union(load_name) {
             Some(done) => {
-                *out = done;
+                out.metadata = done;
+                out.shape = Shape::Union;
                 Operand::Decided
             }
             None => Operand::Open(left),
@@ -495,19 +574,24 @@ impl TypeSink for DecoratorMetadata {
     }
 
     #[inline]
-    fn union_right(out: &mut Metadata, left: Metadata) {
-        out.merge_union(left);
+    fn union_right(out: &mut Tag, left: Tag) {
+        // "A | B & C": the intersection is an operand of "|"
+        if out.shape == Shape::Intersection {
+            out.close();
+        }
+        out.operand();
+        out.metadata.merge_union(left.metadata);
+        out.shape = Shape::Union;
     }
 
     #[inline]
-    fn intersection_left<'n>(
-        out: &mut Metadata,
-        load_name: impl Fn(Ref) -> &'n [u8],
-    ) -> Operand<Metadata> {
+    fn intersection_left<'n>(out: &mut Tag, load_name: impl Fn(Ref) -> &'n [u8]) -> Operand<Tag> {
+        out.operand();
         let mut left = out.clone();
-        match left.finish_intersection(load_name) {
+        match left.metadata.finish_intersection(load_name) {
             Some(done) => {
-                *out = done;
+                out.metadata = done;
+                out.shape = Shape::Intersection;
                 Operand::Decided
             }
             None => Operand::Open(left),
@@ -515,29 +599,77 @@ impl TypeSink for DecoratorMetadata {
     }
 
     #[inline]
-    fn intersection_right(out: &mut Metadata, left: Metadata) {
-        out.merge_intersection(left);
+    fn intersection_right(out: &mut Tag, left: Tag) {
+        out.operand();
+        out.metadata.merge_intersection(left.metadata);
+        out.shape = Shape::Intersection;
     }
 
     #[inline]
     fn conditional_true<'n>(
-        out: &mut Metadata,
-        when_true: Metadata,
+        out: &mut Tag,
+        when_true: Tag,
         load_name: impl Fn(Ref) -> &'n [u8],
-    ) -> Operand<Metadata> {
+    ) -> Operand<Tag> {
+        // tsc serializes the two branches as it serializes the operands of "|"
         let mut left = when_true;
-        match left.finish_intersection(load_name) {
+        if left.shape != Shape::Leaf {
+            left.close();
+        }
+        left.operand();
+        match left.metadata.finish_union(load_name) {
             Some(done) => {
-                *out = done;
+                out.set(done);
                 Operand::Decided
             }
-            None => Operand::Open(left),
+            None => {
+                // The type after ":" is read into `out`: `left` keeps where the conditional type stands
+                left.in_branch = out.in_branch;
+                *out = Tag::start(true);
+                Operand::Open(left)
+            }
         }
     }
 
     #[inline]
-    fn conditional_false(out: &mut Metadata, left: Metadata) {
-        out.merge_intersection(left);
+    fn conditional_false(out: &mut Tag, left: Tag) {
+        if out.shape != Shape::Leaf {
+            out.close();
+        }
+        out.operand();
+        out.metadata.merge_union(left.metadata);
+        out.close();
+        out.in_branch = left.in_branch;
+    }
+
+    #[inline]
+    fn import_type(out: &mut Tag) {
+        out.set(Metadata::MObject);
+    }
+
+    #[inline]
+    fn unique_type(out: &mut Tag) {
+        out.set(Metadata::MObject);
+    }
+
+    #[inline]
+    fn type_predicate(out: &mut Tag, asserts: bool) {
+        // tsc serializes a predicate as Boolean and an assertion as void 0
+        out.set(if asserts {
+            Metadata::MVoid
+        } else {
+            Metadata::MBoolean
+        });
+    }
+
+    #[inline]
+    fn nested(out: &Tag) -> Tag {
+        Tag::start(out.in_branch)
+    }
+
+    #[inline]
+    fn branch() -> Tag {
+        Tag::start(true)
     }
 }
 

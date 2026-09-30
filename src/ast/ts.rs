@@ -300,4 +300,23 @@ impl Metadata {
             }
         }
     }
+
+    /// A union, an intersection or a conditional type that is read to its end is a keyword no longer: tsc compares what it serializes to.
+    pub fn finish_combined(&mut self) {
+        if matches!(
+            self,
+            Metadata::MNever | Metadata::MNull | Metadata::MUndefined
+        ) {
+            *self = Metadata::MVoid;
+        } else if matches!(self, Metadata::MAny | Metadata::MUnknown) {
+            *self = Metadata::MObject;
+        }
+    }
+
+    /// A type reference in a branch of a conditional type: tsc serializes one that it cannot resolve as `Object`, and none is resolved here.
+    pub fn finish_reference_in_branch(&mut self) {
+        if matches!(self, Metadata::MIdentifier(_) | Metadata::MDot(_)) {
+            *self = Metadata::MObject;
+        }
+    }
 }

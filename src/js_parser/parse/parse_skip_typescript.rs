@@ -4,7 +4,8 @@ use crate::lexer::LexerSnapshot;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parse::type_sink::{
-    ConstDefault, DecoratorMetadata, Discard, KK, Operand, TypeKeyword, TypeLiteral, TypeSink, b,
+    ConstDefault, DecoratorMetadata, Discard, KK, Operand, Tag, TypeKeyword, TypeLiteral, TypeSink,
+    b,
 };
 use crate::parser::{
     FnOrArrowDataParse, ParseStatementOptions, SkipTypeParameterResult, TypeParameterFlag,
@@ -140,13 +141,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return Ok(Metadata::MBoolean);
         }
-        let mut result = Metadata::DEFAULT;
+        let mut result = Tag::default();
         self.skip_type_script_type_with_opts::<DecoratorMetadata>(
             Level::Lowest,
             SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
             &mut result,
         )?;
-        Ok(result)
+        Ok(result.metadata)
     }
 
     #[inline]
@@ -165,13 +166,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
     ) -> Result<Metadata, Error> {
         self.mark_type_script_only();
-        let mut result = Metadata::DEFAULT;
+        let mut result = Tag::default();
         self.skip_type_script_type_with_opts::<DecoratorMetadata>(
             level,
             SkipTypeOptionsBitset::empty(),
             &mut result,
         )?;
-        Ok(result)
+        Ok(result.metadata)
     }
 
     /// Whether the word "is" and a blank follow the current token on its line.
@@ -570,7 +571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn skip_type_script_paren_type<S: TypeSink>(&mut self, out: &mut S::Out) -> Result<(), Error> {
         self.lexer.expect(T::TOpenParen)?;
-        let mut inner = S::Out::default();
+        let mut inner = S::nested(out);
         self.mark_type_script_only();
         self.skip_type_script_type_with_opts::<S>(
             Level::Lowest,
@@ -692,7 +693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.lexer.expect(T::TQuestion)?;
-        let mut when_true = S::Out::default();
+        let mut when_true = S::branch();
         self.parse_type::<S>(SkipTypeOptionsBitset::empty(), &mut when_true)?;
         if S::BUILDS {
             true_type = S::node(&when_true);
@@ -909,6 +910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 self.lexer.next()?;
                 self.parse_postfix_type_rest::<S::Sub>(&mut operand)?;
+                S::unique_type(out);
                 if S::BUILDS {
                     S::b_operator(
                         &self.lexer,
@@ -920,7 +922,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 return Ok(());
             }
-            // Without "symbol" after it, "unique" is a name, as before.
+            // "unique [A]": a tuple on the line of "unique" is its operand
+            if self.lexer.token == T::TOpenBracket && !self.lexer.has_newline_before {
+                self.parse_type_operator_or_higher::<S::Sub>(
+                    SkipTypeOptionsBitset::empty(),
+                    &mut operand,
+                )?;
+                S::unique_type(out);
+                if S::BUILDS {
+                    S::b_operator(
+                        &self.lexer,
+                        out,
+                        &start,
+                        ts::TypeOperatorKind::Unique,
+                        operand,
+                    );
+                }
+                return Ok(());
+            }
+            // Without "symbol" or a tuple after it, "unique" is a name, as before.
             if !self.parse_type_predicate_after_name::<S>(out)? {
                 self.parse_type_arguments_of_type_reference::<S>(out)?;
             }
@@ -1226,8 +1246,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if S::BUILDS {
             S::b_token(&mut self.lexer, out)?;
         }
+        let name = self.lexer.identifier;
+        // tsc finds no declaration of the global "undefined" and serializes a name in it as Object
+        let is_undefined = matches!(keyword, TypeKeyword::Undefined);
         self.lexer.next()?;
         S::keyword(out, keyword);
+        // "any.b": the keyword is the first name of a type reference
+        if self.lexer.token == T::TDot {
+            if is_undefined {
+                S::keyword(out, TypeKeyword::Object);
+            } else {
+                S::reference(out, name, |name| {
+                    self.find_symbol(bun_ast::Loc::EMPTY, name)
+                        .map(|found| found.r#ref)
+                })?;
+            }
+        }
         let _ = self.parse_type_predicate_after_name::<S>(out)?;
         Ok(())
     }
@@ -1243,6 +1277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.next()?;
         let mut type_node = <S::Sub as TypeSink>::NONE;
         self.parse_type::<S::Sub>(SkipTypeOptionsBitset::empty(), &mut type_node)?;
+        S::type_predicate(out, false);
         if S::BUILDS {
             S::b_predicate(&mut self.lexer, out, ConstDefault::DEFAULT, type_node)?;
         }
@@ -1272,6 +1307,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out: &mut S::Out,
     ) -> Result<(), Error> {
         let mut asserts: KK<S, Option<ts::Token>> = ConstDefault::DEFAULT;
+        let mut is_assertion = false;
         if S::BUILDS {
             S::b_reference(&self.lexer, out);
             asserts = S::b_tok(&self.lexer, ts::TokenKind::Asserts);
@@ -1293,6 +1329,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 S::b_predicate(&mut self.lexer, out, asserts, subject_only)?;
             }
             self.lexer.next()?;
+            is_assertion = true;
+            S::type_predicate(out, true);
 
             // "asserts x is boolean", where "is" may stand on the next line
             if S::BUILDS && self.lexer.is_contextual_keyword(b"is") {
@@ -1312,7 +1350,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !self.parse_type_predicate_after_name::<S>(out)? {
+        if self.parse_type_predicate_after_name::<S>(out)? {
+            // "asserts x is T" is an assertion, as "asserts x" is
+            if is_assertion {
+                S::type_predicate(out, true);
+            }
+        } else {
             self.parse_type_arguments_of_type_reference::<S>(out)?;
         }
         Ok(())
@@ -1486,6 +1529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.is_tuple_label(opts) {
             return Ok(());
         }
+        S::import_type(out);
 
         self.lexer.expect(T::TOpenParen)?;
         self.lexer.expect(T::TStringLiteral)?;

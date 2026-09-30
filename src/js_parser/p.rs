@@ -191,6 +191,7 @@ pub(crate) struct ParserSnapshot<'a> {
     allocated_names_len: usize,
     import_records_len: usize,
     erased: Option<crate::parse::erased::ErasedMark>,
+    attached: Option<crate::parse::attached::AttachedMark>,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -225,6 +226,8 @@ pub struct StartsForParseOnly {
     pub erased: crate::parse::erased::ErasedTables,
     /// What a lint parse keeps of the syntax around an expression that leaves no node.
     pub wrappers: crate::parse::wrappers::Wrappers,
+    /// What a lint parse keeps of the TypeScript syntax of the nodes that stay.
+    pub attached: crate::parse::attached::Attached,
     /// What the reference reports for the syntax errors of a lint parse, while the parse runs.
     pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
     /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
@@ -8364,6 +8367,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .starts_for_parse_only
                 .as_deref()
                 .map(|starts| starts.erased.mark()),
+            attached: self
+                .starts_for_parse_only
+                .as_deref()
+                .map(|starts| starts.attached.mark()),
         }
     }
 
@@ -8423,6 +8430,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_records.truncate(snapshot.import_records_len);
         if let (Some(starts), Some(mark)) = (&mut self.starts_for_parse_only, snapshot.erased) {
             starts.erased.rewind(mark);
+        }
+        if let (Some(starts), Some(mark)) = (&mut self.starts_for_parse_only, snapshot.attached) {
+            starts.attached.rewind(mark);
         }
         if let Some(starts) = &mut self.starts_for_parse_only {
             starts.wrappers.rewind_to(snapshot.lexer.start);

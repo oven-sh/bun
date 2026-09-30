@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+pub mod attached;
 pub mod erased;
 #[cfg(test)]
 mod erased_tests;

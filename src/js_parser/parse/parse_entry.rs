@@ -605,7 +605,8 @@ impl<'a> Parser<'a> {
             }
         };
         drop(action_guard);
-        let sidecar = p.starts_for_parse_only.take().unwrap_or_default();
+        let mut sidecar = p.starts_for_parse_only.take().unwrap_or_default();
+        sidecar.attached.sort();
         Ok(f(&ParsedForLint {
             stmts: stmts.as_slice(),
             scopes_in_order: p.scopes_in_order.as_slice(),

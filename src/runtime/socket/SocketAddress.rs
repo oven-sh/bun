@@ -826,7 +826,6 @@ impl AF {
 ///   They're no longer the same size.
 /// - This replaces `sockaddr_storage` because it's huge. This is 28 bytes,
 ///   while `sockaddr_storage` is 128 bytes.
-#[allow(non_camel_case_types)]
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub(crate) union sockaddr {

@@ -558,7 +558,7 @@ static bool handleMatchResult(JSGlobalObject* globalObject, ASCIILiteral errorMe
     }
 }
 
-bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const char> name, uint32_t flags, ncrypto::DataPointer* peerName)
+bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const char> name, uint32_t flags, WTF::String* peerName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

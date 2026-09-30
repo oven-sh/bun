@@ -21,7 +21,6 @@
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
 #![allow(internal_features)]
-#![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
@@ -332,7 +331,7 @@ pub mod debug {
         }
     }
     /// Detect whether stderr supports ANSI color escapes.
-    #[allow(dead_code)]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(crate) fn detect_tty_config_stderr() -> TtyConfig {
         if bun_core::Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
             TtyConfig::EscapeCodes
@@ -2855,7 +2854,6 @@ mod draft {
             // `CloseHandle`. `report()` runs immediately before
             // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
             let _ = spawn_result;
-            let _ = url;
         }
         #[cfg(any(
             target_os = "macos",
@@ -2920,8 +2918,6 @@ mod draft {
                 _ => {}
             }
         }
-        #[cfg(not(unix))]
-        let _ = url;
     }
 
     /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.

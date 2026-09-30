@@ -99,6 +99,13 @@ impl Drop for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        self.connection.get().server_identity(ssl)
+    }
+
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     fn ref_guard(&self) -> RefPtr<Self> {
@@ -525,7 +532,6 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = this;
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.

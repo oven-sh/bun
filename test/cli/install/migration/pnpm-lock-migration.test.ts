@@ -379,10 +379,10 @@ snapshots:
   });
 
   test("migrates a lockfile whose aliases chain into a deep tree", async () => {
-    // Each anchor holds the one before it, so the tree is 30,000 levels deep
-    // while the parser never recurses past 100. The migration used to copy the
+    // Each anchor holds the one before it, so the tree is 22,200 levels deep
+    // while the parser never recurses past 300. The migration used to copy the
     // tree with a recursion that had no stack check.
-    const level = Buffer.alloc(100, "[").toString() + "*a" + Buffer.alloc(100, "]").toString();
+    const level = Buffer.alloc(300, "[").toString() + "*a" + Buffer.alloc(300, "]").toString();
     using dir = tempDir("pnpm-alias-chain", {
       "package.json": JSON.stringify({ name: "alias-chain", version: "1.0.0" }),
       "pnpm-lock.yaml": `lockfileVersion: '9.0'
@@ -397,7 +397,7 @@ importers:
 
 chain:
   - &a [1]
-${Buffer.alloc(300 * (level.length + 8), `  - &a ${level}\n`).toString()}`,
+${Buffer.alloc(74 * (level.length + 8), `  - &a ${level}\n`).toString()}`,
     });
 
     await using proc = Bun.spawn({

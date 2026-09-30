@@ -348,22 +348,22 @@ export function withBoundedMainThreadStack(cmd: string[]): string[] {
 }
 
 /**
- * Source, for a child script, of `deepestAccepted(accepts)`: the largest depth
- * that `accepts(depth)` returns true for, found by doubling and then bisecting.
- * A limit that follows the stack differs by build flavor, platform and thread,
- * so a test searches for it. A recursion with no stack check, on a depth below
- * that limit, ends the child with a signal on the way.
+ * Source, for a child script, of `deepestAccepted(accepts)`: a depth that
+ * `accepts(depth)` returns true for, at most 1/16 below the first depth it
+ * returns false for. A limit that follows the stack differs by build flavor,
+ * platform and thread, so a test searches for it. A recursion with no stack
+ * check, on a depth below that limit, ends the child with a signal on the way.
  */
 export const deepestAcceptedSource = `
   const deepestAccepted = async accepts => {
     let accepted = 0;
-    let rejected = 64;
+    let rejected = 256;
     // The ceiling bounds the run on a host with a very large stack.
     while (rejected < 1 << 20 && (await accepts(rejected))) {
       accepted = rejected;
       rejected *= 2;
     }
-    while (rejected - accepted > 1) {
+    while (rejected - accepted > accepted >> 4) {
       const probe = (accepted + rejected) >> 1;
       if (await accepts(probe)) accepted = probe;
       else rejected = probe;

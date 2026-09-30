@@ -11933,7 +11933,7 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
 // happened follows the frame sizes of the build, so this walks a ladder of
 // depths: each one must install or fail with the parser's error.
 it.concurrent("installs with a deeply nested value in package.json", async () => {
-  const depths = Array.from({ length: 12 }, (_, i) => Math.round(384 * 1.5 ** i));
+  const depths = Array.from({ length: 8 }, (_, i) => 384 << i);
   const outcomes = await Promise.all(
     depths.map(async depth => {
       const deep = Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString();

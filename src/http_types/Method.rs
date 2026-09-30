@@ -244,21 +244,6 @@ impl Optional {
     }
 }
 
-#[unsafe(no_mangle)]
-/// # Safety
-/// `str` must point to `len` initialised bytes for the duration of the call.
-unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
-    // SAFETY: genuine FFI boundary — C++ caller passes a non-null, byte-aligned
-    // pointer to `len` initialised bytes. The (ptr,len) pair cannot be a `&[u8]` across
-    // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not
-    // outlive this stack frame.
-    let slice = unsafe { core::slice::from_raw_parts(str, len) };
-    let Some(method) = Method::find(slice) else {
-        return -1;
-    };
-    method as i16
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // HTTPHeaderName — moved from bun_runtime::webcore::FetchHeaders.
 //
@@ -393,5 +378,27 @@ mod tests {
         assert_eq!(Method::which(b"GETS"), None);
         assert_eq!(Method::which(b"BREW"), None);
         assert_eq!(Method::which(b"MKADDRESSBOOKS"), None);
+    }
+
+    /// uWS resolves a request's method to this enum's discriminant
+    /// (`methodIdFromWire`, packages/bun-uws/src/HttpMethod.h). Its name table
+    /// has the same check: both sides list the same names in ascending byte
+    /// order, so a name has the same index on both.
+    #[test]
+    fn discriminants_follow_wire_name_order() {
+        let all = enumset::EnumSet::<Method>::all();
+        assert_eq!(all.len(), 36);
+        let mut previous: Option<&'static str> = None;
+        for (index, m) in all.iter().enumerate() {
+            assert_eq!(m as usize, index, "{}", m.as_str());
+            if let Some(previous) = previous {
+                assert!(
+                    previous.as_bytes() < m.as_str().as_bytes(),
+                    "{previous} < {}",
+                    m.as_str()
+                );
+            }
+            previous = Some(m.as_str());
+        }
     }
 }

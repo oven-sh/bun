@@ -4,6 +4,7 @@
 #include "wtf/text/WTFString.h"
 
 #include "ncrypto.h"
+#include "headers-handwritten.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
 #include <openssl/dh.h>
@@ -1063,26 +1064,22 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
 // options were no-ops. This implements OpenSSL's semantics over the same
 // matcher fetch()/tls.connect use.
 extern "C" int Bun__X509__checkHost(X509* x509, const uint8_t* host, size_t host_len,
-    uint32_t flags, uint8_t** out_peer, size_t* out_len);
+    uint32_t flags, BunString* out_peer);
 
 X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     int flags,
-    DataPointer* peerName) const
+    WTF::String* peerName) const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    uint8_t* peer = nullptr;
-    size_t peerLen = 0;
+    BunString peer = { BunStringTag::Empty, nullptr };
     switch (Bun__X509__checkHost(const_cast<X509*>(cert_),
         reinterpret_cast<const uint8_t*>(host.data()), host.size(),
-        static_cast<uint32_t>(flags), &peer, &peerLen)) {
+        static_cast<uint32_t>(flags), peerName ? &peer : nullptr)) {
     case 0:
         return CheckMatch::NO_MATCH;
     case 1: {
-        if (peer != nullptr) {
-            DataPointer name(peer, peerLen);
-            if (peerName != nullptr) *peerName = WTF::move(name);
-        }
+        if (peerName != nullptr) *peerName = peer.transferToWTFString();
         return CheckMatch::MATCH;
     }
     case -2:
@@ -1637,7 +1634,7 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     auto nameUtf8 = name.tryGetUTF8();
     if (!nameUtf8) [[unlikely]]
         return nullptr;
-    return EVP_get_digestbyname(nameUtf8->characters());
+    return EVP_get_digestbyname(nameUtf8->legacyCStringPointer());
 }
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
@@ -1645,7 +1642,7 @@ const EVP_CIPHER* getCipherByName(const WTF::StringView name)
     auto nameUtf8 = name.tryGetUTF8();
     if (!nameUtf8) [[unlikely]]
         return nullptr;
-    return EVP_get_cipherbyname(nameUtf8->characters());
+    return EVP_get_cipherbyname(nameUtf8->legacyCStringPointer());
 }
 
 bool checkHkdfLength(const Digest& md, size_t length)
@@ -3422,9 +3419,9 @@ int Ec::GetCurveIdFromName(WTF::StringView name)
     auto nameUtf8 = name.tryGetUTF8();
     if (!nameUtf8) [[unlikely]]
         return NID_undef;
-    int nid = EC_curve_nist2nid(nameUtf8->characters());
+    int nid = EC_curve_nist2nid(nameUtf8->legacyCStringPointer());
     if (nid == NID_undef) {
-        nid = OBJ_sn2nid(nameUtf8->characters());
+        nid = OBJ_sn2nid(nameUtf8->legacyCStringPointer());
     }
     return nid;
 }

@@ -391,7 +391,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Zig::functionName(vm, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append("[Function: "_s);
@@ -469,7 +469,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
     }
     if (cell->isCallable()) {
         builder.append("function "_s);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Zig::functionName(vm, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append(name);
@@ -1290,7 +1290,7 @@ JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObje
 
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
-    auto message = makeString("Cannot create a string longer than "_s, WTF::String ::MaxLength, " characters"_s);
+    auto message = makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
     throwScope.release();
     return {};
@@ -1895,6 +1895,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_INVALID_STATE_TypeError, 1, { "Invalid state: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_INVALID_STATE_RangeError, 1, { "Invalid state: "_s, ""_s, ""_s } },
     { ErrorCode::ERR_INVALID_PROTOCOL, 2, { "Protocol \""_s, "\" not supported. Expected \""_s, "\""_s } },
+    { ErrorCode::ERR_INVALID_URL_SCHEME, 1, { "The URL must be of scheme "_s, ""_s, ""_s } },
     { ErrorCode::ERR_BROTLI_INVALID_PARAM, 1, { ""_s, " is not a valid Brotli parameter"_s, ""_s } },
     { ErrorCode::ERR_BUFFER_TOO_LARGE, 1, { "Cannot create a Buffer larger than "_s, " bytes"_s, ""_s } },
     { ErrorCode::ERR_INVALID_THIS, 1, { "Value of \"this\" must be of type "_s, ""_s, ""_s } },
@@ -1913,6 +1914,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_HTTP_HEADERS_SENT, 1, { "Cannot "_s, " headers after they are sent to the client"_s, ""_s } },
     { ErrorCode::ERR_UNESCAPED_CHARACTERS, 1, { ""_s, " contains unescaped characters"_s, ""_s } },
     { ErrorCode::ERR_HTTP_INVALID_STATUS_CODE, 1, { "Invalid status code: "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, 2, { "Response body's content-length of "_s, " byte(s) does not match the content-length of "_s, " byte(s) set in header"_s } },
     { ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, 2, { "Invalid key object type "_s, ", expected "_s, "."_s } },
     { ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY, 2, { "Incompatible "_s, ": "_s, ""_s } },
     { ErrorCode::ERR_CHILD_PROCESS_IPC_REQUIRED, 1, { "Forked processes must have an IPC channel, missing value 'ipc' in "_s, ""_s, ""_s } },
@@ -2321,6 +2323,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_DGRAM_NOT_RUNNING, "Not running"_s));
     case ErrorCode::ERR_INVALID_CURSOR_POS:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_CURSOR_POS, "Cannot set cursor row without setting its column"_s));
+    case ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s));
     case ErrorCode::ERR_INVALID_HANDLE_TYPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent"_s));
     case ErrorCode::ERR_MULTIPLE_CALLBACK:
@@ -2426,6 +2430,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_GOAWAY_SESSION, "New streams cannot be created after receiving a GOAWAY"_s));
     case ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
+    case ErrorCode::ERR_HTTP_TRAILER_INVALID:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:

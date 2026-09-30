@@ -49,7 +49,7 @@ static int curveNidFromShortName(const WTF::String& name)
     auto nameUtf8 = name.tryGetUTF8();
     if (!nameUtf8) [[unlikely]]
         return NID_undef;
-    return OBJ_sn2nid(nameUtf8->characters());
+    return OBJ_sn2nid(nameUtf8->legacyCStringPointer());
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

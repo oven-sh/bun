@@ -90,7 +90,8 @@ Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
     auto utf8 = name.tryGetUTF8();
     if (!utf8) [[unlikely]]
         return nullptr;
-    return Bun__CryptoHasherExtern__getByName(globalObject, utf8->characters(), utf8->length());
+    auto bytes = byteCast<char>(utf8->span());
+    return Bun__CryptoHasherExtern__getByName(globalObject, bytes.data(), bytes.size());
 }
 
 extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);

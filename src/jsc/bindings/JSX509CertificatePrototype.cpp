@@ -276,16 +276,14 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     if (!hostView) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ncrypto::DataPointer peerName;
+    WTF::String peerName;
     auto check = thisObject->checkHost(globalObject, hostView->span(), flags, &peerName);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     // Node returns the subject name that matched, which differs from the query
     // for wildcard SAN entries and for case-insensitive matches.
-    if (peerName) {
-        auto matched = WTF::String::fromUTF8ReplacingInvalidSequences(peerName.span());
-        return JSValue::encode(jsString(vm, WTF::move(matched)));
-    }
+    if (!peerName.isEmpty())
+        return JSValue::encode(jsString(vm, WTF::move(peerName)));
     return JSValue::encode(hostString);
 }
 

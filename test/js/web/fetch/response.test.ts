@@ -135,8 +135,8 @@ test("Response.redirect rejects a non-absolute url that is not a valid header va
   // A code point above U+00FF cannot be a header value, so this throws the same
   // TypeError that `new Headers({ location: "/€" })` does, instead of silently
   // writing a latin-1-corrupted Location ("/â¬").
-  expect(() => Response.redirect("/€")).toThrow("Header 'Location' has invalid value: '/€'");
-  expect(() => Response.redirect("/搜索")).toThrow("Header 'Location' has invalid value: '/搜索'");
+  expect(() => Response.redirect("/€")).toThrow(new TypeError("Header 'Location' has invalid value"));
+  expect(() => Response.redirect("/搜索")).toThrow(new TypeError("Header 'Location' has invalid value"));
 });
 
 test("new Response(123, { statusText: 123 }) does not throw", () => {

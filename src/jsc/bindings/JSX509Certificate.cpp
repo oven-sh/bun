@@ -558,7 +558,7 @@ static bool handleMatchResult(JSGlobalObject* globalObject, ASCIILiteral errorMe
     }
 }
 
-bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const char> name, uint32_t flags, ncrypto::DataPointer* peerName)
+bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const char> name, uint32_t flags, WTF::String* peerName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -583,7 +583,7 @@ bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, WTF::StringView ip
 
     // `utf8()` asserts that the conversion worked. A string too long to convert is not an IP address.
     auto ipUtf8 = ip.tryGetUTF8();
-    auto result = ipUtf8 ? view().checkIp(ipUtf8->characters(), 0) : ncrypto::X509View::CheckMatch::INVALID_NAME;
+    auto result = ipUtf8 ? view().checkIp(ipUtf8->legacyCStringPointer(), 0) : ncrypto::X509View::CheckMatch::INVALID_NAME;
     return handleMatchResult(globalObject, "Invalid IP address"_s, scope, result);
 }
 

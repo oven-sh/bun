@@ -26,6 +26,18 @@ pub(crate) fn refuse(what: &str) -> ! {
     Global::exit(1);
 }
 
+/// Refuses `--lint` among the options of `BUN_OPTIONS`: `bun_core::argv` has them directly after the name of the program.
+#[cold]
+#[inline(never)]
+pub(crate) fn refuse_in_bun_options() {
+    let argv = bun_core::argv();
+    let mut options = argv.iter().skip(1).take(bun_core::bun_options_argc());
+    if options.any(is_lint_token) {
+        bun_core::err_generic!("--lint cannot be set in BUN_OPTIONS");
+        Global::exit(1);
+    }
+}
+
 /// Refuses `--lint` among the flags that `bunx_command::Options::parse` reads before the package name.
 #[inline(never)]
 pub(crate) fn refuse_in_bunx(argv: &[&'static ZStr]) {

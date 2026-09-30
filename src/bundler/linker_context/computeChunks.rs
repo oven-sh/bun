@@ -31,6 +31,29 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
     f
 }
 
+/// `LinkerContext::segment_of_file` of a file.
+pub(crate) fn segment_of(segment_of_file: &[u32], source_index: IndexInt) -> u32 {
+    segment_of_file
+        .get(source_index as usize)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// The files of one JS chunk have the same entry bits and the same segment.
+pub(crate) fn chunk_key<'a>(
+    buffer: &'a mut Vec<u8>,
+    entry_bits: &'a [u8],
+    segment: u32,
+) -> &'a [u8] {
+    if segment == 0 {
+        return entry_bits;
+    }
+    buffer.clear();
+    buffer.extend_from_slice(entry_bits);
+    buffer.extend_from_slice(&segment.to_le_bytes());
+    buffer
+}
+
 #[inline(never)]
 pub(crate) fn compute_chunks(
     this: &mut LinkerContext,
@@ -312,6 +335,7 @@ pub(crate) fn compute_chunks(
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();
+    let mut key_buffer: Vec<u8> = Vec::new();
 
     // Figure out which JS files are in which chunk
     if js_chunks.count() > 0 {
@@ -327,8 +351,12 @@ pub(crate) fn compute_chunks(
                         if !contributes_code.is_set(source_index.get() as usize) {
                             continue;
                         }
-                        let js_chunk_key =
-                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
+                        let segment = segment_of(&this.segment_of_file, source_index.get());
+                        let js_chunk_key = temp.alloc_slice_copy(chunk_key(
+                            &mut key_buffer,
+                            entry_bits.bytes(this.graph.entry_points.len()),
+                            segment,
+                        ));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {
@@ -341,9 +369,10 @@ pub(crate) fn compute_chunks(
                                     source_index.get(),
                                     0,
                                 ),
-                                content: chunk::Content::Javascript(
-                                    chunk::JavaScriptChunk::default(),
-                                ),
+                                content: chunk::Content::Javascript(chunk::JavaScriptChunk {
+                                    segment,
+                                    ..Default::default()
+                                }),
                                 output_source_map: SourceMapPieces::init(),
                                 flags: make_flags(false, is_browser_chunk_from_server_build),
                                 ..Default::default()
@@ -410,7 +439,11 @@ pub(crate) fn compute_chunks(
     }
 
     for &(entry_id, parent_file) in this.parents_of_pinned_entries.iter() {
-        let key = file_entry_bits[parent_file as usize].bytes(this.graph.entry_points.len());
+        let key: &[u8] = temp.alloc_slice_copy(chunk_key(
+            &mut key_buffer,
+            file_entry_bits[parent_file as usize].bytes(this.graph.entry_points.len()),
+            segment_of(&this.segment_of_file, parent_file),
+        ));
         if let Some(parent) = js_chunks.get_mut(&key) {
             parent.content.javascript_mut().took_fold_of =
                 Some(this.graph.entry_points.items_source_index()[entry_id as usize]);

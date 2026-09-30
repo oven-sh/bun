@@ -79,6 +79,17 @@ pub(crate) fn is_relative_external(record: &ImportRecord) -> bool {
         && (path.starts_with(b"./") || path.starts_with(b"../") || path == b"." || path == b"..")
 }
 
+/// A chunk that took the fold in place of a pinned entry point's chunk. The walk of the entry point lays it out.
+#[derive(Clone, Copy)]
+pub(crate) struct EntryImportsInParent {
+    pub(crate) entry_id: u32,
+    /// The chunk also runs what the `import` statements in these parts of the entry point's file run.
+    pub(crate) parts_begin: u32,
+    pub(crate) parts_end: u32,
+    /// A file of the chunk.
+    pub(crate) parent_file: u32,
+}
+
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -150,8 +161,10 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The files that run something in a chunk that took the fold in place of a pinned entry point's chunk. Its rank among imports is that of the last one, not the first.
     pub(crate) ranks_chunk_again: Option<AutoBitSet>,
-    /// Per entry point id (or empty): that chunk also runs what the `import` statements in the parts below `.0` of the entry point's file run. `.1` is a file of the chunk.
-    pub(crate) entry_imports_in_parent: Vec<(u32, u32)>,
+    /// By entry point id, then by part.
+    pub(crate) entry_imports_in_parent: Vec<EntryImportsInParent>,
+    /// Per file (or empty): which of the chunks with its entry bits holds it. `merge_small_chunks` cuts that chunk where the chunk of another entry point loads between two of its files.
+    pub(crate) segment_of_file: Vec<u32>,
     /// The chunks that took the fold in place of the chunk of an entry point that only its name pins: the entry point id, and a file of the chunk.
     pub(crate) parents_of_pinned_entries: Vec<(u32, u32)>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
@@ -197,6 +210,7 @@ impl<'a> Default for LinkerContext<'a> {
             inits_already_done: None,
             ranks_chunk_again: None,
             entry_imports_in_parent: Vec::new(),
+            segment_of_file: Vec::new(),
             parents_of_pinned_entries: Vec::new(),
             entry_point_part_indices: Vec::new(),
         }
@@ -628,6 +642,7 @@ impl<'a> LinkerContext<'a> {
         self.inits_already_done = None;
         self.ranks_chunk_again = None;
         self.entry_imports_in_parent = Vec::new();
+        self.segment_of_file = Vec::new();
         self.parents_of_pinned_entries = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the

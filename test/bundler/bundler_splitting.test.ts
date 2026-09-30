@@ -791,7 +791,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     format: "esm",
-    run: { file: "/out/a.js", stdout: "globals\nstore1\nstore2 1\na 1 2\nlazy 1 2" },
+    run: { file: "/out/a.js", stdout: "store1\nglobals\nstore2 1\na 1 2\nlazy 1 2" },
   });
   itBundled("splitting/SharedCodeRunsBeforeLaterChunkOfOtherEntry", {
     files: {
@@ -815,6 +815,255 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     run: { file: "/out/app.js", stdout: "helper\nregistry\nplugin\napp 1 declared\nroute declared" },
+  });
+  // plugin.js is in a chunk that admin.js loads too. That chunk has one place among the imports of index.js, so the chunk of the shared files is cut there.
+  const cutAtPlugin = (files: Record<string, string>) => ({
+    files: {
+      "/admin.js": `import { plugin } from "./plugin.js"; console.log("admin", plugin);`,
+      "/registry.js": `console.log("registry"); globalThis.REGISTRY = new Map();`,
+      "/plugin.js": `globalThis.REGISTRY?.set("p", 1); globalThis.PLUGIN = 1; console.log("plugin"); export const plugin = 1;`,
+      "/listing.js": `console.log("listing", globalThis.REGISTRY.size, globalThis.PLUGIN);`,
+      "/route.js": `import "./registry.js"; import "./listing.js"; console.log("route");`,
+      ...files,
+    },
+    entryPoints: ["/index.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+  });
+  for (const [name, files, stdout] of [
+    [
+      "ImportsOfEntryFile",
+      {
+        "/index.js": /* js */ `
+          import "./registry.js";
+          import { plugin } from "./plugin.js";
+          import "./listing.js";
+          console.log("index", plugin);
+          import("./route.js");
+        `,
+      },
+      "registry\nplugin\nlisting 1 1\nindex 1\nroute",
+    ],
+    [
+      "ImportsOfOtherFile",
+      {
+        "/index.js": `import "./main.js"; console.log("index");`,
+        "/main.js": /* js */ `
+          import "./registry.js";
+          import { plugin } from "./plugin.js";
+          import "./listing.js";
+          console.log("main", plugin);
+          import("./route.js");
+        `,
+      },
+      "registry\nplugin\nlisting 1 1\nmain 1\nindex\nroute",
+    ],
+    [
+      "FilesThatMoveAndImportsThatRepeat",
+      {
+        "/index.js": /* js */ `
+          import "./setup.cjs";
+          import "./own1.js";
+          import "./registry.js";
+          import "./own2.js";
+          import { plugin } from "./plugin.js";
+          import "./late.cjs";
+          import "./own3.js";
+          import "./listing.js";
+          import "./own4.js";
+          console.log("index", plugin);
+          import("./route.js");
+        `,
+        "/setup.cjs": `console.log("setup");`,
+        "/late.cjs": `console.log("late", globalThis.PLUGIN);`,
+        "/own1.js": `console.log("own1");`,
+        "/own2.js": `console.log("own2", globalThis.PLUGIN);`,
+        "/own3.js": `console.log("own3", globalThis.PLUGIN);`,
+        "/own4.js": `console.log("own4");`,
+      },
+      "setup\nown1\nregistry\nown2 undefined\nplugin\nlate 1\nown3 1\nlisting 1 1\nown4\nindex 1\nroute",
+    ],
+    [
+      "BindingsAndWrappersOfBothPieces",
+      {
+        "/index.js": /* js */ `
+          import { one } from "./one.js";
+          import c1 from "./c1.cjs";
+          import { plugin } from "./plugin.js";
+          import { two } from "./two.js";
+          import c2 from "./c2.cjs";
+          console.log("index", one, two, c1, c2, plugin);
+          import("./route.js");
+        `,
+        "/one.js": `console.log("one", globalThis.PLUGIN); export const one = 1;`,
+        "/two.js": `import { one } from "./one.js"; console.log("two", one, globalThis.PLUGIN); export const two = one + 1;`,
+        "/c1.cjs": `console.log("c1"); module.exports = "c1";`,
+        "/c2.cjs": `console.log("c2"); module.exports = "c2";`,
+        "/route.js": /* js */ `
+          import { one } from "./one.js";
+          import { two } from "./two.js";
+          import c1 from "./c1.cjs";
+          import c2 from "./c2.cjs";
+          console.log("route", one, two, c1, c2);
+        `,
+      },
+      "one undefined\nc1\nplugin\ntwo 1 1\nc2\nindex 1 2 c1 c2 1\nroute 1 2 c1 c2",
+    ],
+    [
+      "ImportCycleAfterCut",
+      {
+        "/index.js": `import { g } from "./g.js"; console.log("index", g()); import("./route.js");`,
+        "/g.js": /* js */ `
+          import "./registry.js";
+          import { plugin } from "./plugin.js";
+          import { f } from "./f.js";
+          console.log("g", plugin);
+          export function g() { return "g" + f(); }
+        `,
+        "/f.js": `import { g } from "./g.js"; console.log("f", typeof g); export function f() { return "f"; }`,
+        "/route.js": `import { g } from "./g.js"; console.log("route", g());`,
+      },
+      "registry\nplugin\nf function\ng 1\nindex gf\nroute gf",
+    ],
+  ] as const) {
+    itBundled("splitting/SharedChunkIsCutWhereChunkOfOtherEntryLoads/" + name, {
+      ...cutAtPlugin(files),
+      onAfterBundle(api) {
+        noChunkImportsIndex(api);
+        expect(jsFilesIn(api)).toHaveLength(6);
+      },
+      run: { file: "/out/index.js", stdout },
+    });
+  }
+  // a.js and g.js import each other, so they stay in one chunk, and no cut can put plugin.js between them.
+  itBundled("splitting/SharedChunkIsNotCutInsideImportCycle", {
+    ...cutAtPlugin({
+      "/index.js": `import { g } from "./g.js"; console.log("index", g()); import("./route.js");`,
+      "/g.js": /* js */ `
+        import { a } from "./a.js";
+        import { plugin } from "./plugin.js";
+        import "./b.js";
+        console.log("g", plugin);
+        export function g() { return "g" + a(); }
+      `,
+      "/a.js": `import { g } from "./g.js"; console.log("a", typeof g); export function a() { return "a"; }`,
+      "/b.js": `console.log("b");`,
+      "/route.js": `import { g } from "./g.js"; console.log("route", g());`,
+    }),
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(5);
+    },
+    run: { file: "/out/index.js", stdout: "plugin\na function\nb\ng 1\nindex ga\nroute ga" },
+  });
+  // A chunk loads once. Only its first file with side effects can cut: s1.js and s2.js are in one chunk, also when route.js shares s2.js.
+  for (const [name, imports, route, count, stdout] of [
+    ["LoadsBeforeSharedFiles", ["s1", "p1", "s2", "p2"], "", 5, "s1\ns2\np1\np2\nindex\nroute"],
+    ["LoadsOnce", ["p1", "s1", "p2", "s2", "p3"], `import "./p3.js";`, 6, "p1\ns1\ns2\np2\np3\nindex\nroute"],
+    [
+      "TwoKeysOfOneClass",
+      ["p1", "s1", "p2", "s2", "p3"],
+      `import "./p3.js"; import "./s2.js";`,
+      6,
+      "p1\ns1\ns2\np2\np3\nindex\nroute",
+    ],
+  ] as const) {
+    itBundled("splitting/SharedChunkIsCutOnceForEachOtherChunk/" + name, {
+      files: {
+        "/index.js":
+          imports.map(file => `import "./${file}.js";`).join("") + `console.log("index"); import("./route.js");`,
+        "/admin.js": `import "./s1.js"; import "./s2.js"; console.log("admin");`,
+        "/route.js": `import "./p1.js"; import "./p2.js"; ${route} console.log("route");`,
+        ...Object.fromEntries(["p1", "p2", "p3", "s1", "s2"].map(file => [`/${file}.js`, `console.log("${file}");`])),
+      },
+      entryPoints: ["/index.js", "/admin.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toHaveLength(count);
+      },
+      run: { file: "/out/index.js", stdout },
+    });
+  }
+  itBundled("splitting/SharedChunkIsCutForEachOtherChunk", {
+    files: {
+      "/index.js": /* js */ `
+        import "./p1.js";
+        import "./sa.js";
+        import "./p2.js";
+        import "./sb.js";
+        import "./p3.js";
+        console.log("index");
+        import("./route.js");
+      `,
+      "/a.js": `import "./sa.js"; console.log("a");`,
+      "/b.js": `import "./sb.js"; console.log("b");`,
+      "/route.js": `import "./p1.js"; import "./p2.js"; import "./p3.js"; console.log("route");`,
+      ...Object.fromEntries(["p1", "p2", "p3", "sa", "sb"].map(file => [`/${file}.js`, `console.log("${file}");`])),
+    },
+    entryPoints: ["/index.js", "/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "p1\nsa\np2\nsb\np3\nindex\nroute" },
+  });
+  // The chunk of s1.js and s2.js has loaded when the walk is at s2.js. The chunk of t.js, which all three entry points share, loads only there. c1.js and c2.js import each other.
+  itBundled("splitting/SharedChunkIsCutWhereFileOfLoadedChunkLoadsAnotherChunk", {
+    files: {
+      "/index.js": /* js */ `
+        import "./p1.js";
+        import "./s1.js";
+        import "./p2.js";
+        import "./s2.js";
+        import "./p3.js";
+        console.log("index");
+        import("./route.js");
+      `,
+      "/a.js": `import "./s1.js"; import "./s2.js"; console.log("a");`,
+      "/b.js": `import "./c1.js"; console.log("b");`,
+      "/s1.js": `console.log("s1");`,
+      "/s2.js": `import "./c1.js"; console.log("s2");`,
+      "/c1.js": `import { c2 } from "./c2.js"; export function c1() { return c2; }`,
+      "/c2.js": `import { c1 } from "./c1.js"; import "./t.js"; export function c2() { return c1; }`,
+      "/t.js": `console.log("t");`,
+      "/route.js": `import "./p1.js"; import "./p2.js"; import "./p3.js"; console.log("route");`,
+      ...Object.fromEntries(["p1", "p2", "p3"].map(file => [`/${file}.js`, `console.log("${file}");`])),
+    },
+    entryPoints: ["/index.js", "/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "p1\ns1\ns2\np2\nt\np3\nindex\nroute" },
+  });
+  // Syntax decides what runs, so a piece with only files of a "sideEffects": false package has its place among the imports too.
+  itBundled("splitting/PieceOfSharedChunkWithoutSideEffectsKeepsItsPlace", {
+    files: {
+      "/index.js": /* js */ `
+        import { first } from "first";
+        import "./sa.js";
+        import { mid } from "mid";
+        import "./sb.js";
+        import "./last.js";
+        console.log("index", first, mid);
+        import("./route.js");
+      `,
+      "/a.js": `import "./sa.js"; console.log("a");`,
+      "/b.js": `import "./sb.js"; console.log("b");`,
+      "/sa.js": `globalThis.LOG.push("sa");`,
+      "/sb.js": `globalThis.LOG.push("sb");`,
+      "/last.js": `console.log(globalThis.LOG.join(" "), "last");`,
+      "/route.js": `import { first } from "first"; import { mid } from "mid"; import "./last.js"; console.log("route", first, mid);`,
+      "/node_modules/first/package.json": `{ "name": "first", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/first/index.js": `globalThis.LOG = ["first"]; export const first = 1;`,
+      "/node_modules/mid/package.json": `{ "name": "mid", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/mid/index.js": `globalThis.LOG.push("mid"); export const mid = 2;`,
+    },
+    entryPoints: ["/index.js", "/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "first sa mid sb last\nindex 1 2\nroute 1 2" },
   });
   itBundled("splitting/EntryFileAfterOneThatStaysAlsoStays", {
     files: {
@@ -1176,6 +1425,31 @@ describe("bundler", () => {
       run: { file: "/out/api/index.js", stdout },
     });
   }
+  itBundled("splitting/RelativeExternalImportCountsFromEntryChunk/InLaterPieceOfCutChunk", {
+    files: {
+      "/src/api/index.js": /* js */ `
+        import "./registry.js";
+        import { plugin } from "../plugin.js";
+        import "./listing.js";
+        console.log("api", plugin);
+        import("./route.js");
+      `,
+      "/src/api/registry.js": `console.log("registry");`,
+      "/src/api/listing.js": `import "./local.js"; console.log("listing");`,
+      "/src/api/route.js": `import "./registry.js"; import "./listing.js"; console.log("route");`,
+      "/src/plugin.js": `console.log("plugin"); export const plugin = 1;`,
+      "/src/admin.js": `import { plugin } from "./plugin.js"; console.log("admin", plugin);`,
+    },
+    external: ["*local.js"],
+    runtimeFiles: { "/out/api/local.js": `console.log("local");` },
+    entryPoints: ["/src/api/index.js", "/src/admin.js"],
+    outputPaths: ["/out/api/index.js", "/out/admin.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/api/index.js", stdout: "registry\nplugin\nlocal\nlisting\napi 1\nroute" },
+  });
   // The chunk beside an entry point with exports is the same as before the fold existed, so it keeps its paths, and lazy.js stays.
   itBundled("splitting/EntryWithExportsKeepsFileWithRelativeExternalImport", {
     ...relativeExternal(`import "./lazy.js";`, "", `export const version = 1;`),

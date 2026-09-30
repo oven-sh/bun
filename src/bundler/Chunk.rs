@@ -1320,6 +1320,8 @@ pub struct JavaScriptChunk {
     // for code splitting
     /// The file of a pinned entry point, which is in another chunk. Its part ranges here print only what their `import` statements run (`LinkerContext::entry_imports_in_parent`).
     pub(crate) repeats_imports_of: Option<IndexInt>,
+    /// `LinkerContext::segment_of_file` of its files.
+    pub(crate) segment: u32,
     /// The file of the entry point in `LinkerContext::parents_of_pinned_entries`, in whose place this chunk took the fold.
     pub(crate) took_fold_of: Option<IndexInt>,
     /// Not empty: goes in place of the `./` of an external module's relative path, which then counts from the directory of that entry point's chunk.

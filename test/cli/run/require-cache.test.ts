@@ -57,13 +57,23 @@ describe.concurrent("require.cache", () => {
         "-e",
         `
           const OriginalSymbol = Symbol;
+          const Module = require("module");
+          const attempt = read => { try { read(); return "no error"; } catch (e) { return e; } };
+          const readCache = () => require.cache;
+          const readModuleCache = () => Module._cache;
+
+          // Symbol is not an object: the builtin's Symbol.for() call throws.
           globalThis.Symbol = 0;
-          const errors = [];
-          try { require.cache; } catch (e) { errors.push(e.name); }
-          try { require("module")._cache; } catch (e) { errors.push(e.name); }
-          globalThis.Symbol = OriginalSymbol;
+          const replaced = [attempt(readCache), attempt(readModuleCache)].map(e => e.name);
+
+          // The Symbol getter throws: each read throws that same error object.
+          const thrown = new Error("thrown by the Symbol getter");
+          Object.defineProperty(globalThis, "Symbol", { configurable: true, get() { throw thrown; } });
+          const rethrown = [attempt(readCache), attempt(readModuleCache)].map(e => e === thrown);
+
+          Object.defineProperty(globalThis, "Symbol", { value: OriginalSymbol, writable: true, configurable: true });
           const cache = require.cache;
-          console.log(errors.join(","), typeof cache, require("module")._cache === cache);
+          console.log(JSON.stringify({ replaced, rethrown, cache: typeof cache, sameAsModuleCache: Module._cache === cache }));
         `,
       ],
       env: bunEnv,
@@ -72,7 +82,14 @@ describe.concurrent("require.cache", () => {
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stdout).toBe("TypeError,TypeError object true\n");
+    expect(stdout).toBe(
+      JSON.stringify({
+        replaced: ["TypeError", "TypeError"],
+        rethrown: [true, true],
+        cache: "object",
+        sameAsModuleCache: true,
+      }) + "\n",
+    );
     expect(exitCode).toBe(0);
   });
 

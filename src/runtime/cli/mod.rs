@@ -344,6 +344,7 @@ pub(crate) mod filter_arg;
 pub(crate) mod filter_run;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
+pub(crate) mod lint_command;
 #[path = "multi_run.rs"]
 pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
@@ -1528,6 +1529,7 @@ pub(crate) mod command {
             1
         };
         let argv = argv_zslice();
+        super::lint_command::refuse_in_bunx(&argv[start_idx..]);
         super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
     }
 

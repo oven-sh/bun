@@ -13,6 +13,43 @@ use bun_options_types::context::Context;
 const SUPPORTED_EXTENSIONS: &str =
     "'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'";
 
+/// `true` for `--lint` and `--lint=...`.
+fn is_lint_token(token: &[u8]) -> bool {
+    token == b"--lint" || token.starts_with(b"--lint=")
+}
+
+/// Says what `--lint` cannot be combined with and exits with 1.
+#[cold]
+#[inline(never)]
+pub(crate) fn refuse(what: &str) -> ! {
+    bun_core::err_generic!("--lint cannot be used with {}", what);
+    Global::exit(1);
+}
+
+/// Refuses `--lint` among the flags that `bunx_command::Options::parse` reads before the package name.
+#[inline(never)]
+pub(crate) fn refuse_in_bunx(argv: &[&'static ZStr]) {
+    let mut seen_command_word = false;
+    let mut tokens = argv.iter();
+    while let Some(token) = tokens.next() {
+        let token = token.as_bytes();
+        if token.first() != Some(&b'-') {
+            if seen_command_word {
+                return;
+            }
+            seen_command_word = true;
+            continue;
+        }
+        if is_lint_token(token) {
+            refuse("bunx");
+        }
+        // The next token is the value of the flag, whatever it is.
+        if token == b"--package" || token == b"-p" {
+            let _ = tokens.next();
+        }
+    }
+}
+
 /// Checks every operand and runs none. Exits with 1 without an operand, with 2 when a diagnostic is an error, else with 0.
 #[cold]
 #[inline(never)]

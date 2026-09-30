@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
-import { bun, markerExists, markerSource } from "./lint-helpers";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
+import { bun, lintEnv, markerExists, markerSource } from "./lint-helpers";
 
 describe("a file that writes a marker when it is run", () => {
   test.concurrent.each(["--lint file.ts", "run --lint file.ts"])("is not run by `bun %s`", async command => {
@@ -8,6 +10,57 @@ describe("a file that writes a marker when it is run", () => {
     const cwd = String(dir);
     expect(await bun(cwd, command.split(" "))).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(await markerExists(cwd)).toBe(false);
+  });
+});
+
+describe("--lint among the flags that bunx reads before the package name", () => {
+  const refused = { stdout: "", stderr: "error: --lint cannot be used with bunx\n", exitCode: 1 };
+  // The refusal does not depend on the variable that turns `--lint` on.
+  const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+
+  /** Runs Bun under the name `bunx`, which makes it bunx, and returns what `bun` returns. */
+  async function bunx(cwd: string, args: string[], env: NodeJS.Dict<string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      argv0: "bunx",
+      env,
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    "bunx --lint lint-marker",
+    "bun x --lint lint-marker",
+    "bun --lint x lint-marker",
+    "bun x --lint=value lint-marker",
+    "bun x --package lint-marker --lint lint-marker",
+  ])("`%s` is refused and the package is not run", async command => {
+    // bunx finds this package in node_modules/.bin and installs nothing. Run, it writes the marker and prints its arguments.
+    using dir = tempDir("lint-bunx", {
+      [isWindows ? "node_modules/.bin/lint-marker.cmd" : "node_modules/.bin/lint-marker"]: isWindows
+        ? "@echo off\r\necho ran> marker.txt\r\necho %*\r\n"
+        : '#!/bin/sh\necho ran > marker.txt\necho "$@"\n',
+    });
+    const cwd = String(dir);
+    if (!isWindows) chmodSync(join(cwd, "node_modules/.bin/lint-marker"), 0o755);
+
+    const [name, ...args] = command.split(" ");
+    const run = name === "bunx" ? bunx : bun;
+    const [set, unset] = await Promise.all([run(cwd, args, lintEnv), run(cwd, args, withoutVariable)]);
+    expect(set).toEqual(refused);
+    expect(unset).toEqual(refused);
+    expect(await markerExists(cwd)).toBe(false);
+
+    // After the name of the package the flag is an argument of the package, and bunx runs the package.
+    const after = await bun(cwd, ["x", "lint-marker", "--lint"]);
+    expect(after.stdout.trim()).toBe("--lint");
+    expect(after.exitCode).toBe(0);
+    expect(await markerExists(cwd)).toBe(true);
   });
 });
 

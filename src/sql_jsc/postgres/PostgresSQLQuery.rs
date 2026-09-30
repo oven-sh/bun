@@ -78,8 +78,7 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Rejected while the server still answers it: in flight, the rest of its response
-    /// skipped, until its `ReadyForQuery`.
+    /// Rejected while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
@@ -226,8 +225,7 @@ impl PostgresSQLQuery {
         self.reject(err, global_object);
     }
 
-    /// Rejects now. `status`, the connection counter and the head of the queue stay with this
-    /// request until its `ReadyForQuery`: the server is still answering it.
+    /// Rejects now. `status`, the counter and the queue head stay until its `ReadyForQuery`.
     pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);

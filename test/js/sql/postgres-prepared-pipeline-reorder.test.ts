@@ -195,10 +195,11 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     try {
       await using sql = new SQL({
         url: `postgres://bun_sql_test@127.0.0.1:${proxy.port}/bun_sql_test`,
-        max: 1,
+        max: reserve ? 10 : 1,
         idleTimeout: 30,
       });
-      await using q: Handle = reserve ? await sql.reserve() : sql;
+      await using reserved = reserve ? await sql.reserve() : undefined;
+      const q: Handle = reserved ?? sql;
       await q.unsafe(`
         create temp table swap_a (id int, owner text, secret text);
         create temp table swap_b (id int, owner text, secret text);
@@ -228,7 +229,8 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     });
   });
 
-  test("on a reserved connection, a new statement and a prepared one resolve with their own rows", async () => {
+  // A reserved handle keeps its queries on one connection, whatever the size of the pool.
+  test("on a connection reserved from a pool of 10, a new statement and a prepared one resolve with their own rows", async () => {
     expect(await run(failsBehindAnother, gaps[0][1], true)).toEqual(ran("22012", [[alice], [bob]]));
   });
 
@@ -258,22 +260,18 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   );
 });
 
-// A healthy server sends nothing but the ReadyForQuery after an ErrorResponse,
-// and one ReadyForQuery for each Sync. With such a server, either half of the
-// fix gives each query its own rows. These two mocks do what a healthy server
-// does not, so that each half has a test that fails without it.
+// PostgreSQL sends nothing but the ReadyForQuery after an ErrorResponse, and one
+// ReadyForQuery for each Sync. With such a server, either of the two rules alone
+// gives each query its own rows. Each mock below sends what PostgreSQL does not,
+// so each rule has a test that fails without it.
 describe.concurrent("postgres mock", () => {
   type Reply = (Buffer | typeof pgHold)[] | undefined;
   /** Answers `select $1 as v` with the bound text as the row. `quirk` can replace the reply to a message. */
-  async function echoServer(quirk: (type: string, bound: string | undefined) => Reply) {
+  async function echoServer(quirk: (type: string, body: Buffer, bound: string | undefined) => Reply) {
     const bound = new WeakMap<object, string>();
     const binds: string[] = [];
     const mock = await pgMockServer((type, body, socket) => {
-      if (type === "B") {
-        bound.set(socket, pgBindParameters(body)[0]!.toString());
-        binds.push(bound.get(socket)!);
-      }
-      const reply = quirk(type, bound.get(socket));
+      const reply = quirk(type, body, bound.get(socket));
       if (reply) return reply;
       switch (type) {
         case "P":
@@ -281,6 +279,8 @@ describe.concurrent("postgres mock", () => {
         case "D":
           return [pgParameterDescription([25 /* text */]), pgRowDescription([{ name: "v", typeOid: 25 }])];
         case "B":
+          bound.set(socket, pgBindParameters(body)[0]!.toString());
+          binds.push(bound.get(socket)!);
           return pgBindComplete();
         case "E":
           return [pgDataRow([Buffer.from(bound.get(socket)!)]), pgCommandComplete("SELECT 1")];
@@ -297,10 +297,11 @@ describe.concurrent("postgres mock", () => {
       result.status === "fulfilled" ? [...result.value] : { code: result.reason.code, errno: result.reason.errno },
     );
 
-  // Without the hold: the enqueue of `fresh` drops the failed request from the
-  // head of the queue and writes a Parse. The held row then goes to `fresh`.
+  // The failed request keeps the head of the queue until its ReadyForQuery. If
+  // it left at the ErrorResponse, the enqueue of `fresh` would write a Parse at
+  // once, and the held row would go to `fresh`.
   test("frames that arrive after an ErrorResponse stay with the failed query when it failed behind another one", async () => {
-    const mock = await echoServer((type, bound) =>
+    const mock = await echoServer((type, _, bound) =>
       type === "E" && bound === "fail"
         ? [
             pgErrorResponse({ S: "ERROR", C: "22012", M: "division by zero" }),
@@ -335,20 +336,37 @@ describe.concurrent("postgres mock", () => {
     }
   });
 
-  // Without the stop: at the first ReadyForQuery advance() steps over `fresh`,
-  // whose statement is being parsed, and writes the Bind of `prepared` first.
-  test("a ReadyForQuery that answers no Sync lets nothing pass a statement that is being parsed", async () => {
-    const mock = await echoServer(type => (type === "P" ? [pgReadyForQuery(), pgParseComplete()] : undefined));
+  // These are the frames of pgdog 0.1.60 with its query parser on, for a
+  // statement that pgdog rejects itself: ErrorResponse and ReadyForQuery at the
+  // Flush, then one more ReadyForQuery at the Sync. The second one arrives when
+  // the Parse of `fresh` is on the wire. advance() must stop at `fresh`. If it
+  // stepped over it, the Bind of `prepared` would be written first.
+  test("a second ReadyForQuery for one Sync lets nothing pass a statement that is being parsed", async () => {
+    let rejecting = false;
+    const mock = await echoServer((type, body) => {
+      if (type === "P" && body.includes("rejected by the pooler")) rejecting = true;
+      if (!rejecting) return;
+      if (type === "H") return [pgErrorResponse({ S: "ERROR", C: "42601", M: "syntax error" }), pgReadyForQuery()];
+      if (type !== "S") return [];
+      rejecting = false;
+      return [pgReadyForQuery()];
+    });
     try {
       await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
       const echo = (text: string) => sql`select ${text} as v`;
       await echo("warm");
 
+      const rejected = sql`select 1 as v -- rejected by the pooler`.execute();
       const fresh = sql`select ${"fresh"} as v -- not prepared yet`.execute();
       const prepared = echo("prepared").execute();
 
-      expect({ results: await settle([fresh, prepared, echo("after")]), binds: mock.binds }).toEqual({
-        results: [[{ v: "fresh" }], [{ v: "prepared" }], [{ v: "after" }]],
+      expect({ results: await settle([rejected, fresh, prepared, echo("after")]), binds: mock.binds }).toEqual({
+        results: [
+          { code: "ERR_POSTGRES_SYNTAX_ERROR", errno: "42601" },
+          [{ v: "fresh" }],
+          [{ v: "prepared" }],
+          [{ v: "after" }],
+        ],
         binds: ["warm", "fresh", "prepared", "after"],
       });
     } finally {

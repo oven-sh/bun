@@ -2246,8 +2246,7 @@ impl PostgresSQLConnection {
                                     return;
                                 }
                                 StatementStatus::Parsing => {
-                                    // Nothing is written past a request between its Parse and
-                                    // its Bind: replies go to the requests in queue order.
+                                    // Replies go to the requests in queue order: write nothing past this one.
                                     self.note_request_pending();
                                     break;
                                 }
@@ -2991,8 +2990,6 @@ impl PostgresSQLConnection {
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.
 
-                // The `ReadyForQuery` of this request is still to come, so `finish_request`
-                // and the pop wait for it. A request that failed in its Parse stays `Pending`.
                 self.update_ref();
                 request.reject_in_flight(js_err, self.global());
             }

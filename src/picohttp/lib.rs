@@ -375,20 +375,18 @@ impl<'a> RequestCurlFormatter<'a> {
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let request = self.request;
+        // Not `redacted_npm_url`: a UUID in the URL is kept so that the command stays runnable.
+        let url = bun_core::fmt::redacted_url_credentials(request.path);
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
             write!(
                 f,
                 pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                bun_core::fmt::redacted_npm_url(request.path),
+                url,
             )?;
         } else {
-            write!(
-                f,
-                "curl --http1.1 \"{}\"",
-                bun_core::fmt::redacted_npm_url(request.path)
-            )?;
+            write!(f, "curl --http1.1 \"{}\"", url)?;
         }
 
         if request.method != b"GET" {

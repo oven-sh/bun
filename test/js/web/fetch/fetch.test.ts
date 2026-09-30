@@ -4206,7 +4206,10 @@ describe.concurrent("verbose fetch logging redacts credentials", () => {
     cookie: "cookie-sekret",
     sessionToken: "session-sekret",
     setCookie: "set-cookie-sekret",
+    npmToken: "npm_" + Buffer.alloc(36, "a").toString(),
   };
+  // An id, not a credential: the curl command has to keep it to stay usable.
+  const orderId = "550e8400-e29b-41d4-a716-446655440000";
 
   it.each(["1", "curl"])("BUN_CONFIG_VERBOSE_FETCH=%s", async mode => {
     using server = Bun.serve({
@@ -4220,6 +4223,8 @@ describe.concurrent("verbose fetch logging redacts credentials", () => {
     const url = new URL(server.url);
     url.username = "user";
     url.password = secrets.password;
+    url.pathname = `/orders/${orderId}`;
+    url.searchParams.set("registry_token", secrets.npmToken);
 
     await using proc = Bun.spawn({
       cmd: [
@@ -4263,7 +4268,10 @@ describe.concurrent("verbose fetch logging redacts credentials", () => {
 
     if (mode === "curl") {
       const curlLine = stderr.split(/\r?\n/).find(line => line.includes("curl --http1.1")) ?? "";
-      expect(curlLine).toContain(`curl --http1.1 "http://user:***`);
+      const maskedPassword = Buffer.alloc(secrets.password.length, "*").toString();
+      expect(curlLine).toContain(
+        `curl --http1.1 "http://user:${maskedPassword}@${url.host}/orders/${orderId}?registry_token=***"`,
+      );
       expect(curlLine).toContain(`-H "Authorization: Bearer [redacted]"`);
       expect(curlLine).toContain(`-H "Proxy-Authorization: Basic [redacted]"`);
       expect(curlLine).toContain(`-H "Cookie: [redacted]"`);

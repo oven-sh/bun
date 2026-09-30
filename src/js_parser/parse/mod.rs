@@ -785,13 +785,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
                 // "a ? (b) => (c) : d => e": after parameters that could be an expression, the body is before the ":" too
-                let body_flags = if Self::IS_TYPESCRIPT_ENABLED
+                let is_body_before_colon = Self::IS_TYPESCRIPT_ENABLED
                     && opts.is_after_question_and_before_colon
-                    && !items.is_empty()
-                    && spread_range.len == 0
-                    && type_colon_range.len == 0
-                    && errors.invalid_expr_after_question.is_none()
-                {
+                    && Self::arrow_parameters_could_be_expr(
+                        items,
+                        spread_range,
+                        type_colon_range,
+                        &errors,
+                    );
+                let body_flags = if is_body_before_colon {
                     EFlags::AfterQuestionAndBeforeColon
                 } else {
                     EFlags::None
@@ -855,6 +857,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Indicate that we expected an arrow function
         p.lexer.expected(T::TEqualsGreaterThan)?;
         Err(crate::Error::SyntaxError)
+    }
+
+    /// Whether isParenthesizedArrowFunctionExpression of the reference is not certain of the arrow function whose parameters `items` were.
+    #[cold]
+    #[inline(never)]
+    fn arrow_parameters_could_be_expr(
+        items: &[Expr],
+        spread_range: bun_ast::Range,
+        type_colon_range: bun_ast::Range,
+        errors: &DeferredErrors,
+    ) -> bool {
+        let Some(first) = items.first() else {
+            return false;
+        };
+        // "(...a)" is certain, as "()" is
+        if spread_range.len > 0 && items.len() == 1 {
+            return false;
+        }
+        // "({ a }: T)" and "([a]: T)" are not
+        if matches!(
+            first.data,
+            js_ast::expr::Data::EObject(_) | js_ast::expr::Data::EArray(_)
+        ) {
+            return true;
+        }
+        // "(a: T)" and "(a?)" are certain: a type or a "?" after a later parameter is taken as one after the first
+        type_colon_range.len == 0 && errors.invalid_expr_after_question.is_none()
     }
 
     pub(crate) fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {

@@ -1,5 +1,7 @@
-PR: https://github.com/oven-sh/bun/pull/44294
-issue: https://github.com/oven-sh/bun/issues/44292
-status comment id: 5907897851
-branch head at open: 9b8218c1f8 (rebased on 2722608f47)
-fail-before: 20 of 28 new tests fail on main (release build of a4f1429148), lint fails with 7 yarn.rs calls
+PR: https://github.com/oven-sh/bun/pull/44294 (head e3553793d7, 3 commits, base 2722608f47)
+issues filed: #44292 (decision: dropped alias with bun.lockb), #44298 (yarn.lock row slice), #44304 (populate_manifest_cache reads manager.lockfile), #44306 (update --latest + catalog: override)
+status comment id: 5907897851; lint reply comment 5911294922
+CI build 121841 (9b8218c1): 180/181, red = test/js/bun/spawn/spawn.test.ts x64-asan (reported as main break)
+review threads: all resolved after e3553793d7
+fail-before: 20 of 28 new tests fail on main; lint fails with 7 yarn.rs calls
+gate: no test proof (deferred to CI: platform-specific test files)

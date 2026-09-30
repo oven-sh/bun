@@ -1,0 +1,36 @@
+{"lockfile":"bun.lock","command":"install","build":"canary","exits":[0,0],"requests":[],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"install","build":"main","exits":[0,0],"requests":[],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"install","build":"pr","exits":[0,0],"requests":[],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update","build":"canary","exits":[0,0],"requests":["/parent","/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update","build":"main","exits":[0,0],"requests":["/parent","/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update","build":"pr","exits":[0,0],"requests":["/parent","/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update parent","build":"canary","exits":[0,0],"requests":["/parent"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update parent","build":"main","exits":[0,0],"requests":["/parent"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update parent","build":"pr","exits":[0,0],"requests":["/parent"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update some-other-package","build":"canary","exits":[0,0],"requests":["/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update some-other-package","build":"main","exits":[0,0],"requests":["/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update some-other-package","build":"pr","exits":[0,0],"requests":["/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update kept","build":"canary","exits":[0,0],"requests":["/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update kept","build":"main","exits":[0,0],"requests":["/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"update kept","build":"pr","exits":[0,0],"requests":["/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"add new-dependency","build":"canary","exits":[0,0],"requests":["/new-dependency","/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","new-dependency":"new-dependency@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"add new-dependency","build":"main","exits":[0,0],"requests":["/new-dependency","/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","new-dependency":"new-dependency@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lock","command":"add new-dependency","build":"pr","exits":[0,0],"requests":["/new-dependency","/some-other-package"],"errors":[],"rows":{"kept":"some-other-package@1.0.0","new-dependency":"new-dependency@1.0.0","parent":"parent@1.0.0"}}
+{"lockfile":"bun.lockb","command":"install","build":"canary","exits":[0,0],"requests":[],"errors":[]}
+{"lockfile":"bun.lockb","command":"install","build":"main","exits":[0,0],"requests":[],"errors":[]}
+{"lockfile":"bun.lockb","command":"install","build":"pr","exits":[0,0],"requests":[],"errors":[]}
+{"lockfile":"bun.lockb","command":"update","build":"canary","exits":[0,0],"requests":["/parent","/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update","build":"main","exits":[0,0],"requests":["/parent","/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update","build":"pr","exits":[0,0],"requests":["/parent","/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update parent","build":"canary","exits":[0,0],"requests":["/parent"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update parent","build":"main","exits":[0,0],"requests":["/parent"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update parent","build":"pr","exits":[0,0],"requests":["/parent"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update some-other-package","build":"canary","exits":[0,0],"requests":["/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update some-other-package","build":"main","exits":[0,0],"requests":["/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update some-other-package","build":"pr","exits":[0,0],"requests":["/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update kept","build":"canary","exits":[0,0],"requests":["/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update kept","build":"main","exits":[0,0],"requests":["/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"update kept","build":"pr","exits":[0,0],"requests":["/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"add new-dependency","build":"canary","exits":[0,0],"requests":["/new-dependency","/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"add new-dependency","build":"main","exits":[0,0],"requests":["/new-dependency","/some-other-package"],"errors":[]}
+{"lockfile":"bun.lockb","command":"add new-dependency","build":"pr","exits":[0,0],"requests":["/new-dependency","/some-other-package"],"errors":[]}

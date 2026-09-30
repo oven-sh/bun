@@ -1,0 +1,3 @@
+On the lint finding of the last review: e3553793d7 widens `lockfile-migration-alias-registry.test.ts`. It now also reports a clone of a dependency, of the overrides or of the catalogs (`clone_in`, `clone_with_different_buffers`, `.clone(` with arguments), and `record_npm_alias` and `known_npm_aliases`, in `yarn.rs` and `pnpm.rs`. A test in the file shows each pattern.
+
+I did not move these two migrations to `&PackageManager` here. The row phase of the pnpm-lock.yaml migration reads package.json files through `manager.workspace_package_json_cache`, so it needs the cache and the options as separate arguments first. That is a refactor with no behavior change, for a PR of its own.

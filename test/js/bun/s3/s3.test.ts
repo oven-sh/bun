@@ -2266,11 +2266,15 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
       },
     ],
     [
-      // close() reports no outcome of the upload, so it drops the failure.
+      // close() reports no outcome of the upload, so it drops the failure. A closed writer
+      // cannot report it later, whatever its end() does.
       "close() after a part upload failed",
       `${partUploadFailed}
-       const close = String(writer.close());`,
-      { close: "undefined", requests: ["create", "part"] },
+       const close = String(writer.close());
+       const reportedLater = await Promise.resolve()
+         .then(() => writer.end())
+         .then(() => false, e => e.code === "AccessDenied");`,
+      { close: "undefined", reportedLater: false, requests: ["create", "part"] },
     ],
     [
       "end() after CreateMultipartUpload was denied",

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildSync } from "esbuild";
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { supportedPlatforms } from "../../../packages/bun-release/src/platform";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -43,5 +43,9 @@ test("npm postinstall preserves the optional executable across repeated runs", a
     expect(readFileSync(source).toString("base64")).toBe(original.toString("base64"));
     expect(readFileSync(join(root, "bin/bun.exe")).toString("base64")).toBe(original.toString("base64"));
     expect(readFileSync(join(root, "bin/bunx.exe")).toString("base64")).toBe(original.toString("base64"));
+    if (!isWindows) {
+      expect(statSync(join(root, "bin/bun.exe")).mode & 0o777).toBe(0o755);
+      expect(statSync(join(root, "bin/bunx.exe")).mode & 0o777).toBe(0o755);
+    }
   }
 });

@@ -3094,6 +3094,9 @@ impl<'a> Parser<'a> {
             // every `ImportRecord` produced by this parse; the lifetime
             // is erased to 'static (see PORTING.md §Lifetimes).
             let url_static: &'static [u8] = unsafe { src_str(url) };
+            // The source span of the token, as for a JS import record. The
+            // unescaped `url` can be longer than its source (NUL -> U+FFFD).
+            let end_position = self.position();
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
@@ -3101,8 +3104,7 @@ impl<'a> Parser<'a> {
                     loc: bun_ast::Loc {
                         start: i32::try_from(start_position).expect("int cast"),
                     },
-                    // TODO: technically this is not correct because the url could be escaped
-                    len: i32::try_from(url.len()).expect("int cast"),
+                    len: i32::try_from(end_position - start_position).expect("int cast"),
                 },
                 tag: Default::default(),
                 loader: None,

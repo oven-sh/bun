@@ -4788,7 +4788,7 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    reader::for_each_entry(
+                    let truncated = reader::for_each_entry(
                         value,
                         global_this,
                         0,
@@ -4798,6 +4798,9 @@ pub mod formatter {
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
                     // Only the MapIterator case writes a trailing space.
                     if count > 0 && label == "MapIterator" {
@@ -4809,7 +4812,7 @@ pub mod formatter {
                         writer: writer_,
                         count: 0,
                     };
-                    reader::for_each_entry(
+                    let truncated = reader::for_each_entry(
                         value,
                         global_this,
                         0,
@@ -4822,6 +4825,9 @@ pub mod formatter {
                     }
                     if count > 0 {
                         let _ = writer_.write_all(b"\n");
+                    }
+                    if truncated {
+                        self.print_more_entries::<C>(writer_, count > 0);
                     }
                 }
             }
@@ -4931,7 +4937,10 @@ pub mod formatter {
                 let _ = writer_.write_all(jest);
                 return;
             }
-            self.print_comma::<C>(writer_).expect("unreachable");
+            if self.print_comma::<C>(writer_).is_err() {
+                self.failed = true;
+                return;
+            }
             if !self.single_line {
                 let _ = writer_.write_all(b"\n");
             }

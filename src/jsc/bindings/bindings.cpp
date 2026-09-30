@@ -7185,6 +7185,23 @@ extern "C" uint64_t Bun__JSObject__nextPresentIndex(
     return result;
 }
 
+// One past the largest own present index, or 0. One pass over the vector and one over the sparse map.
+extern "C" uint64_t Bun__JSObject__endOfPresentIndexes(JSC::EncodedJSValue encodedValue)
+{
+    uint64_t end = 0;
+    while (true) {
+        uint64_t present = Bun__JSObject__nextPresentVectorIndex(encodedValue, static_cast<uint32_t>(end));
+        if (present == noPresentIndex)
+            break;
+        end = present + 1;
+    }
+    if (JSC::SparseArrayValueMap* map = sparseMapOf(JSC::JSValue::decode(encodedValue).getObject())) {
+        for (const auto& entry : *map)
+            end = std::max<uint64_t>(end, static_cast<uint64_t>(entry.index()) + 1);
+    }
+    return end;
+}
+
 // Copies the indexes in `start..end` that the sparse map holds into `out`, ascending, and returns
 // how many there are. Nothing is sorted when they do not fit in `capacity`: ask again with room.
 extern "C" uint32_t Bun__JSObject__copySortedSparseIndexes(

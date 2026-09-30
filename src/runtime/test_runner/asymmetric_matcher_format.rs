@@ -187,14 +187,16 @@ pub(crate) fn print_asymmetric_matcher<const ENABLE_ANSI_COLORS: bool>(
         result?;
     } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
         let mut sink: &mut dyn bun_io::Write = &mut *writer;
-        let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
+        // It clears what the matcher throws, so only the sink can fail it.
+        let Ok(printed) = expect::ExpectCustomAsymmetricMatcher::custom_print(
             instance,
             value,
             formatter.global_this,
             &mut sink,
             true,
-        )
-        .expect("unreachable");
+        ) else {
+            return Ok(true);
+        };
         if printed {
             return Ok(true);
         }

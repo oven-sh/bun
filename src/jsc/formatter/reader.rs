@@ -203,8 +203,9 @@ pub(super) fn event_field(
 /// exception pending.
 ///
 /// A subclass, or a collection whose iterator was replaced, is listed by that
-/// iterator. It gets as many steps as `size`, from [`collection_size`].
-/// `Ok(true)` when it had more to give.
+/// iterator. Printing an entry can add another, so every listing ends after
+/// `size` entries, from [`collection_size`] (an iterator: after as many as
+/// its collection holds). `Ok(true)` when there were more.
 pub(crate) fn for_each_entry(
     value: JSValue,
     global: &JSGlobalObject,

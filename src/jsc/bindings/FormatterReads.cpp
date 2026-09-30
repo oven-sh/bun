@@ -62,7 +62,7 @@ extern "C" BunString Bun__FormatterReads__regExpSource(EncodedJSValue encodedVal
     return BunStringEmpty;
 }
 
-extern "C" uint64_t Bun__JSObject__nextPresentIndex(EncodedJSValue, uint32_t start);
+extern "C" uint64_t Bun__JSObject__endOfPresentIndexes(EncodedJSValue);
 
 // The length of an array, or the own `length` of an `arguments` object. When that is
 // gone, an accessor or not a number: one past the last index that is present.
@@ -86,14 +86,7 @@ extern "C" uint64_t Bun__FormatterReads__arrayLength(EncodedJSValue encodedValue
         }
     }
 
-    uint64_t end = 0;
-    while (end <= MAX_ARRAY_INDEX) {
-        uint64_t present = Bun__JSObject__nextPresentIndex(encodedValue, static_cast<uint32_t>(end));
-        if (present == std::numeric_limits<uint64_t>::max())
-            break;
-        end = present + 1;
-    }
-    return end;
+    return Bun__JSObject__endOfPresentIndexes(encodedValue);
 }
 
 // Whether listing it the way JS would cannot be told apart from reading its storage.
@@ -164,31 +157,38 @@ extern "C" EncodedJSValue Bun__FormatterReads__eventField(EncodedJSValue encoded
 
 using EntryCallback = void (*)(void* ctx, EncodedJSValue key, EncodedJSValue value);
 
+// Visits at most `limit` entries: printing one can run code that adds another, and the walk
+// follows the table as it grows. True when there were more.
 template<typename Table>
-static void forEachInStorage(VM& vm, JSCell* storage, typename Table::Helper::Entry entry, NOESCAPE const auto& visit)
+static bool forEachInStorage(VM& vm, JSCell* storage, typename Table::Helper::Entry entry, uint32_t limit, NOESCAPE const auto& visit)
 {
     if (!storage || storage == vm.orderedHashTableSentinel())
-        return;
+        return false;
     while (true) {
         auto next = Table::Helper::transitAndNext(vm, *uncheckedDowncast<typename Table::Storage>(storage), entry);
         if (!next.storage)
-            return;
+            return false;
+        if (!limit--)
+            return true;
         storage = next.storage;
         entry = next.entry + 1;
         if (!visit(next.key, next.value))
-            return;
+            return false;
     }
 }
 
 template<typename Table, typename Iterator>
-static void forEachLeftInIterator(VM& vm, JSGlobalObject* globalObject, Iterator* iterator, void* ctx, EntryCallback callback)
+static bool forEachLeftInIterator(VM& vm, JSGlobalObject* globalObject, Iterator* iterator, void* ctx, EntryCallback callback)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCell* storage = iterator->tryGetStorage();
+    if (storage == vm.orderedHashTableSentinel())
+        return false;
+    Table* iterated = iterator->iteratedObject();
     if (!storage)
-        storage = iterator->iteratedObject()->storage();
+        storage = iterated->storage();
     IterationKind kind = iterator->kind();
-    forEachInStorage<Table>(vm, storage, iterator->entry(), [&](JSValue key, JSValue value) -> bool {
+    return forEachInStorage<Table>(vm, storage, iterator->entry(), iterated->size(), [&](JSValue key, JSValue value) -> bool {
         // A Set holds its element as the key.
         if (!value)
             value = key;
@@ -205,7 +205,7 @@ static void forEachLeftInIterator(VM& vm, JSGlobalObject* globalObject, Iterator
 // Every entry of a Map (key, value) or a Set (element, empty), and what a Map or Set
 // iterator has left to give (item, empty). The iterator does not advance.
 //
-// A Map or a Set that does not list its storage is listed by its own iterator, which
+// A Map or a Set that does not list its storage is listed by its own iterator. Either way it
 // gets as many steps as `size`, the entry count the caller read. True when it had more.
 extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, JSGlobalObject* globalObject, int32_t size, void* ctx, EntryCallback callback)
 {
@@ -218,28 +218,22 @@ extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
         return !scope.exception();
     };
 
-    if (auto* mapIterator = dynamicDowncast<JSMapIterator>(value)) {
-        scope.release();
-        forEachLeftInIterator<JSMap>(vm, globalObject, mapIterator, ctx, callback);
-        return false;
-    }
-    if (auto* setIterator = dynamicDowncast<JSSetIterator>(value)) {
-        scope.release();
-        forEachLeftInIterator<JSSet>(vm, globalObject, setIterator, ctx, callback);
-        return false;
-    }
+    if (auto* mapIterator = dynamicDowncast<JSMapIterator>(value))
+        RELEASE_AND_RETURN(scope, forEachLeftInIterator<JSMap>(vm, globalObject, mapIterator, ctx, callback));
+    if (auto* setIterator = dynamicDowncast<JSSetIterator>(value))
+        RELEASE_AND_RETURN(scope, forEachLeftInIterator<JSSet>(vm, globalObject, setIterator, ctx, callback));
 
     auto* map = dynamicDowncast<JSMap>(value);
     auto* set = dynamicDowncast<JSSet>(value);
     if (!map && !set)
         return false;
     if (listsItsStorage(value)) {
-        scope.release();
-        if (map)
-            forEachInStorage<JSMap>(vm, map->storage(), 0, visit);
-        else
-            forEachInStorage<JSSet>(vm, set->storage(), 0, visit);
-        return false;
+        uint32_t limit = std::max(size, 0);
+        bool truncated = map
+            ? forEachInStorage<JSMap>(vm, map->storage(), 0, limit, visit)
+            : forEachInStorage<JSSet>(vm, set->storage(), 0, limit, visit);
+        RETURN_IF_EXCEPTION(scope, false);
+        return truncated;
     }
 
     IterationRecord iterationRecord = iteratorForIterable(globalObject, value);

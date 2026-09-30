@@ -428,7 +428,10 @@ impl DirEntry {
         };
 
         // The resolver joins `dir` and an entry name into a path buffer without a bounds check.
-        if strings::without_trailing_slash(self.dir).len() + 1 + name_slice.len() >= MAX_PATH_BYTES
+        let name_len = 1 + name_slice.len();
+        // `dir.len()` bounds its trimmed length, so an entry that fits costs one comparison.
+        if self.dir.len() + name_len >= MAX_PATH_BYTES
+            && strings::without_trailing_slash(self.dir).len() + name_len >= MAX_PATH_BYTES
         {
             return Ok(());
         }

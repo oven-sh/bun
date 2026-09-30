@@ -777,8 +777,6 @@ impl Source {
 
 /// Per-context configuration and callbacks for `NewSource<C>`.
 pub trait SourceContext: Sized {
-    /// `name_` — used to look up `jsc.Codegen.JS{NAME}InternalReadableStreamSource`.
-    const NAME: &'static str;
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
 
@@ -843,7 +841,7 @@ pub trait SourceContext: Sized {
 }
 
 // Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
-// type generic over `C`): codegen name is "JS{C::NAME}InternalReadableStreamSource".
+// type generic over `C`): codegen name is "JS{File,Bytes,Blob}InternalReadableStreamSource".
 // The toJS/fromJS/fromJSDirect aliases are wired
 // manually below; cached-property accessors (pendingPromiseSetCached,
 // closeAdapter{Get,Set}Cached) are emitted by the .classes.ts generator.

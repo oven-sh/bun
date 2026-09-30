@@ -1041,7 +1041,6 @@ impl Drop for SourcePin {
 bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
-    const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
     // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/

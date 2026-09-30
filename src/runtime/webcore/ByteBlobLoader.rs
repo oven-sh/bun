@@ -38,7 +38,6 @@ impl Default for ByteBlobLoader {
 pub(crate) type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
-    const NAME: &'static str = "Blob";
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BlobInternalReadableStreamSource);

@@ -127,6 +127,11 @@ int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, 
     return bsd_socket_buffer_size(us_poll_fd(&s->p), is_recv, size, out);
 }
 
+void us_udp_socket_set_recv_budget(struct us_udp_socket_t *s, int datagrams) {
+    /* 0 would read nothing from a level-triggered poll, and the loop would spin. */
+    s->recv_budget = (uint16_t) (datagrams < 1 ? 1 : datagrams > UINT16_MAX ? UINT16_MAX : datagrams);
+}
+
 LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s) {
     return us_poll_fd(&s->p);
 }
@@ -203,6 +208,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
 
     udp->closed = 0;
     udp->shared_fd = shared ? 1 : 0;
+    udp->recv_budget = LIBUS_UDP_MAX_RECV_PER_EVENT;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;
@@ -270,6 +276,7 @@ struct us_udp_socket_t *us_create_udp_socket(
 
     udp->closed = 0;
     udp->shared_fd = 0;
+    udp->recv_budget = LIBUS_UDP_MAX_RECV_PER_EVENT;
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;

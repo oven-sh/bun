@@ -57,8 +57,10 @@ struct bsd_addr_t {
 };
 
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
-/* The most datagrams that one readable event of a UDP socket hands over. It is
- * libuv's count, and like libuv's it counts datagrams, not receive calls:
+/* The most datagrams that one readable event of a UDP socket hands over,
+ * unless the socket's creator asks for another count with
+ * us_udp_socket_set_recv_budget(). It is libuv's count, and like libuv's it
+ * counts datagrams, not receive calls:
  * https://github.com/libuv/libuv/blob/895cd04bf7cadd2f8993c0d6fc7e55eaaec60bc9/src/unix/udp.c#L309-L312 */
 #define LIBUS_UDP_MAX_RECV_PER_EVENT 32
 

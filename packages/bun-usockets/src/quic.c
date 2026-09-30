@@ -950,6 +950,12 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
 void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx) { return ctx + 1; }
 struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx) { return ctx->loop; }
 
+/* on_data runs no JS here: it feeds lsquic, which ticks once per loop iteration
+ * and sends its ACKs from that tick. A readable event that stops inside a
+ * flight makes more ticks and more ACKs, so these sockets read past the count
+ * of a socket that calls JS for each datagram. A flood still stops here. */
+#define US_QUIC_UDP_RECV_BUDGET 1024
+
 /* RFC 9000 §14: QUIC packets must not be IP-fragmented. _PROBE (vs _DO) sets
  * DF but ignores the kernel's cached path-MTU, so lsquic's own DPLPMTUD owns
  * the probing. The device MTU still bounds the datagram: a probe above it
@@ -1019,6 +1025,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
         host, (unsigned short) port, flags, &err, ls);
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
+    us_udp_socket_set_recv_budget(ls->udp, US_QUIC_UDP_RECV_BUDGET);
 
     /* Record actual bound address — packet_in needs sa_local. */
     socklen_t sl = sizeof(ls->local);
@@ -1430,6 +1437,7 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
     }
     if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
+    us_udp_socket_set_recv_budget(ls->udp, US_QUIC_UDP_RECV_BUDGET);
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
     ls->next = ctx->listeners;

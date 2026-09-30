@@ -437,6 +437,8 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t shared_fd : 1;
+    /* The most datagrams one readable event hands to on_data. Never 0. */
+    uint16_t recv_budget;
     struct us_udp_socket_t *next;
 };
 

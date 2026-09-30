@@ -5,6 +5,7 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { connect, QuicEndpoint } from "node:quic";
 import { join } from "path";
+import { firstUsable, iterateUntil, iterationCounter } from "../../../_util/loop-iterations";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -2026,5 +2027,67 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       fetch: expectedOrder,
       route: expectedOrder,
     });
+  });
+});
+
+// The listener's socket feeds lsquic and runs no JS for a datagram, so one
+// readable event of it is not held to the 32 datagrams of a socket that calls
+// JS for each one: a stop inside a flight costs an engine tick and the ACKs
+// that tick sends. Each probe is a long-header packet of a QUIC version that
+// the server does not have. lsquic answers it with a Version Negotiation
+// packet from the tick that follows the read, so the answers that arrive in
+// one iteration are the probes that one readable event read.
+describe("Bun.serve HTTP/3 listener", () => {
+  test("one readable event hands lsquic more than 32 datagrams", async () => {
+    const PROBES = 48;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response("ok"),
+    });
+
+    let connectionId = 0;
+    function probe() {
+      const packet = Buffer.alloc(1200); // A server drops a smaller one (RFC 9000, 14.1).
+      packet[0] = 0xc0; // long header
+      packet.writeUInt32BE(0x1a2a3a4a, 1); // reserved to force a negotiation (RFC 9000, 15)
+      packet[5] = 8; // length of the destination connection ID, which follows
+      packet.writeUInt32BE(++connectionId, 6);
+      packet[14] = 8; // length of the source connection ID, which follows
+      packet.writeUInt32BE(connectionId, 15);
+      return packet;
+    }
+
+    // Queued with two sendmmsg calls before the loop polls. Two sockets, so
+    // that neither receives more answers than its own 32.
+    const run = await firstUsable(
+      async secondsLeft => {
+        const answers = iterationCounter();
+        const clients = await Promise.all(
+          [0, 1].map(() =>
+            Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data: () => answers.count(), error() {} } }),
+          ),
+        );
+        try {
+          for (const client of clients) {
+            const burst: (Buffer | number | string)[] = [];
+            for (let i = 0; i < PROBES / 2; i++) burst.push(probe(), server.port, "127.0.0.1");
+            expect(client.sendMany(burst)).toBe(PROBES / 2);
+          }
+          const finished = await iterateUntil(() => answers.total === PROBES, secondsLeft);
+          return { finished, ...answers.summary() };
+        } finally {
+          for (const client of clients) client.close();
+        }
+      },
+      run => run.finished && run.max > 32,
+      { seconds: 4 },
+    );
+
+    expect(run).toMatchObject({ finished: true, total: PROBES });
+    expect(run.max).toBeGreaterThan(32);
   });
 });

@@ -231,6 +231,11 @@ int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
  * failing setsockopt/getsockopt result (error in errno / WSAGetLastError). */
 int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, int *out);
 
+/* The most datagrams one readable event hands to data_cb. What is still queued
+ * is read on the next loop iteration. A socket starts with
+ * LIBUS_UDP_MAX_RECV_PER_EVENT. The count is kept within 1..65535. */
+void us_udp_socket_set_recv_budget(struct us_udp_socket_t *s, int datagrams);
+
 /* Underlying socket descriptor of a UDP socket. */
 LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 

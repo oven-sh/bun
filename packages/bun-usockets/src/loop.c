@@ -1030,7 +1030,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * timer, immediate or other poll runs until it stops. The poll is
              * level-triggered on every backend, so what is left raises the
              * next event. */
-            int recv_budget = LIBUS_UDP_MAX_RECV_PER_EVENT;
+            int recv_budget = u->recv_budget;
             if (run_recv && !u->closed) {
                 do {
                     struct udp_recvbuf recvbuf;

@@ -100,7 +100,7 @@ fn parent_dir(dir: &[u8]) -> &[u8] {
 
 struct Migrator<'a> {
     this: &'a mut Lockfile,
-    manager: &'a mut PackageManager,
+    manager: &'a PackageManager,
     entries: &'a [E::PropertyJSON],
     workspace_map: Option<&'a WorkspaceMap>,
     index: StringHashMap<u32>,
@@ -119,7 +119,7 @@ struct Migrator<'a> {
 
 pub(super) fn migrate_packages(
     this: &mut Lockfile,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     _log: &mut bun_ast::Log,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
@@ -599,7 +599,7 @@ impl<'a> Migrator<'a> {
                 DepTag::Github,
                 &sliced,
                 None,
-                Some(&mut *self.manager as &mut dyn dependency::NpmAliasRegistry),
+                None,
             )
             .map(|v| *v.github())
         } else {
@@ -677,15 +677,8 @@ impl<'a> Migrator<'a> {
                     let dep_name = sb.append_with_hash(name, name_hash)?;
                     let dep_version = sb.append(spec)?;
                     let sliced = dep_version.sliced(sb.bytes.as_slice());
-                    Dependency::parse(
-                        dep_name,
-                        Some(name_hash),
-                        sliced.slice,
-                        &sliced,
-                        None,
-                        Some(&mut *self.manager),
-                    )
-                    .map(|version| (dep_name, version))
+                    Dependency::parse(dep_name, Some(name_hash), sliced.slice, &sliced, None, None)
+                        .map(|version| (dep_name, version))
                 };
                 let Some((dep_name, version)) = version.filter(|(_, v)| v.tag != DepTag::Catalog)
                 else {

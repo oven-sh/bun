@@ -309,7 +309,6 @@ pub struct Context<'a> {
     // allocator dropped (global mimalloc)
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) buffer: &'a [u8],
-    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -638,9 +637,7 @@ impl VersionExt for Version {
             tag,
             &sliced,
             Some(ctx.log),
-            ctx.package_manager
-                .as_deref_mut()
-                .map(|m| m as &mut dyn NpmAliasRegistry),
+            None,
         )
         .unwrap_or_default()
     }

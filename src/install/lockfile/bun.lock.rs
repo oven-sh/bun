@@ -1844,7 +1844,7 @@ pub(crate) fn parse_into_binary_lockfile(
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    mut manager: Option<&mut PackageManager>,
+    manager: Option<&PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
@@ -2006,7 +2006,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         version_str,
                         &mut sbuf!(lockfile),
                         &mut *log,
-                        manager.as_deref_mut(),
                     )
                     .map_err(|_| ParseError::OutOfMemory)?;
                 if !ok {
@@ -2067,7 +2066,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         version_str,
                         &mut sbuf!(lockfile),
                         &mut *log,
-                        manager.as_deref_mut(),
                     )
                     .map_err(|_| ParseError::OutOfMemory)?;
                 if !ok {
@@ -2124,7 +2122,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     version_sliced.slice,
                     &version_sliced,
                     &mut *log,
-                    manager.as_deref_mut(),
+                    None,
                 ) {
                     Some(v) => v,
                     None => {
@@ -2222,7 +2220,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         version_sliced.slice,
                         &version_sliced,
                         &mut *log,
-                        manager.as_deref_mut(),
+                        None,
                     ) {
                         Some(v) => v,
                         None => {
@@ -2664,7 +2662,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 if registry_str.is_empty() {
                     // Use scope-specific registry if available, otherwise fall back to default
-                    let registry_url = if let Some(mgr) = manager.as_deref() {
+                    let registry_url = if let Some(mgr) = manager {
                         mgr.scope_for_package_name(name_str).url.href()
                     } else {
                         Npm::Registry::DEFAULT_URL.as_bytes()
@@ -2681,7 +2679,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                     res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 } else {
-                    let configured_registry = if let Some(mgr) = manager.as_deref() {
+                    let configured_registry = if let Some(mgr) = manager {
                         mgr.scope_for_package_name(name_str).url.href()
                     } else {
                         Npm::Registry::DEFAULT_URL.as_bytes()
@@ -3257,9 +3255,7 @@ pub(crate) fn parse_into_binary_lockfile(
         }
 
         lockfile.tag_workspace_links(
-            manager
-                .as_deref()
-                .is_none_or(|manager| manager.options.link_workspace_packages),
+            manager.is_none_or(|manager| manager.options.link_workspace_packages),
         );
 
         if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {

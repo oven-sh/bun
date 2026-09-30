@@ -156,8 +156,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * chunkedEncoding), in the head. The writer frames the body by it,
          * whatever the header bits and the request version say. At most one
          * of the two is set, and each new response clears them. */
-        HTTP_NODE_BODY_CHUNKED = 1 << 24,
-        HTTP_NODE_BODY_RAW = 1 << 25,
+        HTTP_NODE_BODY_CHUNKED = 1 << 23,
+        HTTP_NODE_BODY_RAW = 1 << 24,
         /* Close this connection the next time it is idle (no request being
          * received, no response in flight or queued). Set by
          * App::closeIdle(true) on connections that were busy during a graceful

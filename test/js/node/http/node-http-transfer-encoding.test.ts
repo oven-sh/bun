@@ -1,10 +1,11 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { createServer, request, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
-import type { Duplex } from "stream";
+import { Writable, type Duplex } from "stream";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
@@ -3492,6 +3493,194 @@ describe("the response body is framed by the value of Transfer-Encoding", () => 
         "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\nb",
       ),
     });
+  });
+
+  // A ServerResponse with no native handle writes through _storeHeader, which decides the framing and validates the
+  // Trailer header as in Node. Each expected value but the last is what node v26.3.0 writes to the socket.
+  describe("a ServerResponse that has no native handle", () => {
+    function standalone() {
+      const chunks: Buffer[] = [];
+      const socket = new Writable({
+        write(chunk, encoding, callback) {
+          chunks.push(Buffer.from(chunk));
+          callback();
+        },
+      });
+      const res: any = new ServerResponse({
+        method: "GET",
+        httpVersionMajor: 1,
+        httpVersionMinor: 1,
+        headers: {},
+      } as any);
+      res.assignSocket(socket);
+      return {
+        res,
+        written: () =>
+          Buffer.concat(chunks)
+            .toString("latin1")
+            .replace(/^Date: .*\r\n/m, ""),
+      };
+    }
+
+    test.concurrent("discards the trailers of addTrailers() on a body that is not chunk-framed", async () => {
+      const { res, written } = standalone();
+      res.addTrailers({ "X-T": "1" });
+      res.setHeader("Content-Length", "2");
+      res.end("ok");
+      await once(res, "finish");
+      expect(written()).toBe("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
+    });
+
+    test.concurrent("chunk-frames a body that has a Trailer header and an empty Transfer-Encoding array", async () => {
+      const { res, written } = standalone();
+      res.setHeader("Transfer-Encoding", []);
+      res.setHeader("Trailer", "X-T");
+      res.end("ok");
+      await once(res, "finish");
+      expect(written()).toBe(
+        "HTTP/1.1 200 OK\r\nTrailer: X-T\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n",
+      );
+    });
+
+    test.concurrent("has sent no headers after writeHead() throws ERR_HTTP_TRAILER_INVALID", async () => {
+      const { res, written } = standalone();
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.setHeader("Trailer", "X-T");
+      expect(() => res.writeHead(204)).toThrow(expect.objectContaining({ code: "ERR_HTTP_TRAILER_INVALID" }));
+      expect(res.headersSent).toBe(false);
+      res.removeHeader("Trailer");
+      res.writeHead(500).end();
+      await once(res, "finish");
+      expect(written()).toBe("HTTP/1.1 500 No Content\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+    });
+
+    // Node keeps a Trailer header that setHeader() stored, so its next end() throws again. Bun removes the header,
+    // as on a response with a native handle.
+    test.concurrent("removes the Trailer header when it throws, so the next end() answers", async () => {
+      const { res, written } = standalone();
+      res.setHeader("Trailer", "X-T");
+      res.setHeader("Content-Length", "2");
+      expect(() => res.writeHead(200)).toThrow(expect.objectContaining({ code: "ERR_HTTP_TRAILER_INVALID" }));
+      expect(res.getHeader("trailer")).toBeUndefined();
+      res.end("ok");
+      await once(res, "finish");
+      expect(written()).toBe("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok");
+    });
+  });
+
+  // With every send() short, write() gives the socket only the first bytes of a large chunk and the handle keeps the
+  // rest. The next write() or end() copies that tail out, and a 'drain' continues it. Both must use the framing of
+  // the body. The fault table is for the whole process, so these tests are not concurrent.
+  describe.skipIf(!fault.available() || isWindows)("when every send is short", () => {
+    // The handler runs after the client wrote its request, so the faults reach only the response.
+    function shortSends() {
+      fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 4096, repeat: -1 });
+    }
+
+    test.each([
+      [
+        "identity, write() + write() + end()",
+        GET,
+        (res: any) => {
+          res.setHeader("Transfer-Encoding", "identity");
+          shortSends();
+          res.write(big);
+          res.write(big);
+          res.end();
+        },
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\n<a x 140000>",
+      ],
+      [
+        "identity, write() + end(data)",
+        GET,
+        (res: any) => {
+          res.setHeader("Transfer-Encoding", "identity");
+          shortSends();
+          res.write(big);
+          res.end(big);
+        },
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\n<a x 140000>",
+      ],
+      [
+        "Content-Length + chunked, write() + write() + end()",
+        GET,
+        (res: any) => {
+          res.setHeader("Content-Length", "140000");
+          res.setHeader("Transfer-Encoding", "chunked");
+          shortSends();
+          res.write(big);
+          res.write(big);
+          res.end();
+        },
+        "HTTP/1.1 200 OK\r\nContent-Length: 140000\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n11170\r\n<a x 70000>\r\n11170\r\n<a x 70000>\r\n0\r\n\r\n",
+      ],
+      [
+        "Content-Length + chunked, write() + end(data)",
+        GET,
+        (res: any) => {
+          res.setHeader("Content-Length", "140000");
+          res.setHeader("Transfer-Encoding", "chunked");
+          shortSends();
+          res.write(big);
+          res.end(big);
+        },
+        "HTTP/1.1 200 OK\r\nContent-Length: 140000\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n11170\r\n<a x 70000>\r\n11170\r\n<a x 70000>\r\n0\r\n\r\n",
+      ],
+      [
+        "an HTTP/1.0 request, chunked, write() + write() + end()",
+        GET_1_0,
+        (res: any) => {
+          res.setHeader("Transfer-Encoding", "chunked");
+          shortSends();
+          res.write(big);
+          res.write(big);
+          res.end();
+        },
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n11170\r\n<a x 70000>\r\n11170\r\n<a x 70000>\r\n0\r\n\r\n",
+      ],
+      [
+        "identity, write(), 'drain', end()",
+        GET,
+        async (res: any) => {
+          res.setHeader("Transfer-Encoding", "identity");
+          shortSends();
+          res.write(big);
+          await once(res, "drain");
+          res.end();
+        },
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nDate: <D>\r\nConnection: close\r\n\r\n<a x 70000>",
+      ],
+      [
+        "Content-Length + chunked, write(), 'drain', end()",
+        GET,
+        async (res: any) => {
+          res.setHeader("Content-Length", "70000");
+          res.setHeader("Transfer-Encoding", "chunked");
+          shortSends();
+          res.write(big);
+          await once(res, "drain");
+          res.end();
+        },
+        "HTTP/1.1 200 OK\r\nContent-Length: 70000\r\nTransfer-Encoding: chunked\r\nDate: <D>\r\nConnection: close\r\n\r\n11170\r\n<a x 70000>\r\n0\r\n\r\n",
+      ],
+    ] as [string, string, (res: any) => void | Promise<void>, string][])(
+      "%s",
+      async (_, request, respond, expected) => {
+        const failed = Promise.withResolvers<string>();
+        try {
+          const sent = wire((req, res) => {
+            Promise.resolve(respond(res)).catch(error => {
+              failed.reject(error);
+              res.destroy();
+            });
+          }, request);
+          expect(await Promise.race([sent, failed.promise])).toBe(expected);
+        } finally {
+          fault.clear();
+        }
+      },
+    );
   });
 });
 

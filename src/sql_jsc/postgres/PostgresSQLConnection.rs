@@ -29,7 +29,7 @@ use crate::postgres::error_jsc::{
     create_postgres_error, postgres_error_to_js, postgres_error_to_js_with_hint,
 };
 use crate::postgres::postgres_request as PostgresRequest;
-use crate::postgres::postgres_request::MessageType;
+use crate::postgres::postgres_request::{EncodeRequest, MessageType};
 use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
@@ -466,14 +466,7 @@ impl PostgresSQLConnection {
                 .expect("secure SSL_CTX must be set before setupTLS")
                 .as_ptr()
         };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
+        let sni = self.tls_config.sni();
         // The ext slot is an 8-byte null-niche
         // optional pointer, `Option<NonNull<T>>`; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)
@@ -1843,6 +1836,24 @@ impl PostgresSQLConnection {
         }
     }
 
+    /// Reject `req`. A non-JS error also fails `new_statement`, first parsed in the failed write.
+    fn reject_failed_write(
+        &self,
+        req: &PostgresSQLQuery,
+        new_statement: Option<&mut PostgresSQLStatement>,
+        err: AnyPostgresError,
+    ) {
+        if let Some(err_) = self.global().try_take_exception() {
+            req.on_js_error(err_, self.global());
+            return;
+        }
+        if let Some(statement) = new_statement {
+            statement.status = StatementStatus::Failed;
+            statement.error_response = Some(StatementError::PostgresError(err));
+        }
+        req.on_write_fail(err, self.global(), self.get_queries_array());
+    }
+
     fn advance(&self) {
         let mut offset: usize = 0;
         debug!("advance");
@@ -1910,11 +1921,7 @@ impl PostgresSQLConnection {
                         if let Err(err) =
                             PostgresRequest::execute_query(query_str.slice(), self.writer())
                         {
-                            if let Some(err_) = self.global().try_take_exception() {
-                                req.on_js_error(err_, self.global());
-                            } else {
-                                req.on_write_fail(err, self.global(), self.get_queries_array());
-                            }
+                            self.reject_failed_write(&req, None, err);
                             if offset == 0 {
                                 self.discard_request(&req);
                             } else {
@@ -1991,26 +1998,17 @@ impl PostgresSQLConnection {
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
                                         let global = self.global_object;
-                                        if let Err(err) =
-                                            PostgresRequest::parse_and_bind_and_execute(
-                                                &global,
-                                                query_str.slice(),
+                                        if let Err(err) = self.encode_request(
+                                            &global,
+                                            EncodeRequest::ParseBindAndExecute {
+                                                query: query_str.slice(),
                                                 statement,
                                                 binding_value,
                                                 columns_value,
-                                                false,
-                                                self.writer(),
-                                            )
-                                        {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
+                                                include_describe: false,
+                                            },
+                                        ) {
+                                            self.reject_failed_write(&req, None, err);
                                             if offset == 0 {
                                                 self.discard_request(&req);
                                             } else {
@@ -2027,22 +2025,15 @@ impl PostgresSQLConnection {
                                     } else {
                                         debug!("binding and executing stmt");
                                         let global = self.global_object;
-                                        if let Err(err) = PostgresRequest::bind_and_execute(
+                                        if let Err(err) = self.encode_request(
                                             &global,
-                                            statement,
-                                            binding_value,
-                                            columns_value,
-                                            self.writer(),
+                                            EncodeRequest::BindAndExecute {
+                                                statement,
+                                                binding_value,
+                                                columns_value,
+                                            },
                                         ) {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
+                                            self.reject_failed_write(&req, None, err);
                                             if offset == 0 {
                                                 self.discard_request(&req);
                                             } else {
@@ -2113,27 +2104,19 @@ impl PostgresSQLConnection {
                                                 .unwrap_or_default();
                                         debug!("prepareAndQueryWithSignature");
                                         let global = self.global_object;
-                                        if let Err(err) =
-                                            PostgresRequest::prepare_and_query_with_signature(
-                                                &global,
-                                                query_str.slice(),
+                                        if let Err(err) = self.encode_request(
+                                            &global,
+                                            EncodeRequest::PrepareAndQuery {
+                                                query: query_str.slice(),
+                                                signature: &mut statement.signature,
                                                 binding_value,
-                                                self.writer(),
-                                                &mut statement.signature,
-                                            )
-                                        {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                statement.status = StatementStatus::Failed;
-                                                statement.error_response =
-                                                    Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
+                                            },
+                                        ) {
+                                            self.reject_failed_write(
+                                                &req,
+                                                Some(&mut *statement),
+                                                err,
+                                            );
                                             if offset == 0 {
                                                 self.discard_request(&req);
                                             } else {
@@ -2185,29 +2168,21 @@ impl PostgresSQLConnection {
                                                 .unwrap_or_default();
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         let global = self.global_object;
-                                        if let Err(err) =
-                                            PostgresRequest::parse_and_bind_and_execute(
-                                                &global,
-                                                query_str.slice(),
+                                        if let Err(err) = self.encode_request(
+                                            &global,
+                                            EncodeRequest::ParseBindAndExecute {
+                                                query: query_str.slice(),
                                                 statement,
                                                 binding_value,
                                                 columns_value,
-                                                true,
-                                                self.writer(),
-                                            )
-                                        {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                statement.status = StatementStatus::Failed;
-                                                statement.error_response =
-                                                    Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
+                                                include_describe: true,
+                                            },
+                                        ) {
+                                            self.reject_failed_write(
+                                                &req,
+                                                Some(&mut *statement),
+                                                err,
+                                            );
                                             debug_assert!(offset == 0);
                                             self.discard_request(&req);
                                             debug!(
@@ -2242,36 +2217,14 @@ impl PostgresSQLConnection {
                                         &statement.signature.fields,
                                         connection_writer,
                                     ) {
-                                        if let Some(err_) = self.global().try_take_exception() {
-                                            req.on_js_error(err_, self.global());
-                                        } else {
-                                            statement.error_response =
-                                                Some(StatementError::PostgresError(err));
-                                            statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(
-                                                err,
-                                                self.global(),
-                                                self.get_queries_array(),
-                                            );
-                                        }
+                                        self.reject_failed_write(&req, Some(&mut *statement), err);
                                         debug_assert!(offset == 0);
                                         self.discard_request(&req);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
                                     if let Err(err) = connection_writer.write(&protocol::SYNC) {
-                                        if let Some(err_) = self.global().try_take_exception() {
-                                            req.on_js_error(err_, self.global());
-                                        } else {
-                                            statement.error_response =
-                                                Some(StatementError::PostgresError(err));
-                                            statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(
-                                                err,
-                                                self.global(),
-                                                self.get_queries_array(),
-                                            );
-                                        }
+                                        self.reject_failed_write(&req, Some(&mut *statement), err);
                                         debug_assert!(offset == 0);
                                         self.discard_request(&req);
                                         debug!(

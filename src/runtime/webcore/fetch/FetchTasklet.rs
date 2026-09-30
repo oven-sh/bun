@@ -449,7 +449,6 @@ impl FetchTasklet {
     // Forwards `this` to ThreadSafeRefCount without dereferencing; signature must stay
     // `*mut` because the call may drop the last ref and free the allocation, so a `&mut`
     // here would be UB.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
@@ -459,7 +458,6 @@ impl FetchTasklet {
     /// Caller holds a ref; `this` must be a live heap allocation from `get()`.
     // Forwards `this` to ThreadSafeRefCount/dealloc without dereferencing; signature must
     // stay `*mut` because the call may drop the last ref and free the allocation.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn deref_from_thread(this: *mut FetchTasklet, ticket: &jsc::Ticket) {
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
@@ -476,7 +474,6 @@ impl FetchTasklet {
     /// HTTP thread, final callback: the fetch is back. Move the ticket out
     /// (nothing here touches the tasklet after the ref drop) and drop this
     /// thread's ref through it.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn hand_back(this: *mut FetchTasklet) {
         // SAFETY: caller contract; the field is HTTP-thread-only.
         let ticket = unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET);
@@ -1202,7 +1199,7 @@ impl FetchTasklet {
     }
 
     /// `Ok` when the callback approved the certificate; `Err(Some(error))`
-    /// with what it returned or threw; `Err(None)` when there was no
+    /// with the reason when it did not; `Err(None)` when there was no
     /// certificate to show it.
     fn run_check_server_identity(
         &mut self,
@@ -1246,15 +1243,30 @@ impl FetchTasklet {
             &[js_hostname, js_cert],
         ) {
             Ok(v) => v,
-            Err(e) => global_object.take_exception(e),
+            Err(e) => return Err(Some(global_object.take_exception(e))),
         };
 
         // > Returns <Error> object [...] on failure
-        if check_result.is_any_error() {
+        // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
+        if check_result.is_object() && check_result.as_any_promise().is_none() {
             return Err(Some(check_result));
         }
+        // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
+        if check_result.to_boolean() {
+            let received = JSGlobalObject::determine_specific_type(&global_object, check_result)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+            return Err(Some(
+                global_object
+                    .err(
+                        jsc::ErrorCode::INVALID_RETURN_VALUE,
+                        format_args!(
+                            "Expected undefined or an Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
+                        ),
+                    )
+                    .to_js(),
+            ));
+        }
         // > On success, returns <undefined>
-        // We treat any non-error value as a success.
         Ok(())
     }
 
@@ -2533,7 +2545,6 @@ impl FetchTasklet {
     /// thread's live `AsyncHTTP` for the duration of the call.
     // Signature is fixed by `HTTPClientResultCallback`; `task` may be freed by the
     // trailing `deref_from_thread`, so it cannot become `&mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,

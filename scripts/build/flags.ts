@@ -1428,12 +1428,11 @@ export const linkerFlags: Flag[] = [
   },
   {
     // The exe exports symbols (the .def above), so lld-link also writes an
-    // import library — by default `<output basename>.lib`, which is the very
-    // name of the object archive archive-link mode produces. Nothing consumes
-    // it; park it under obj/.
+    // import library — by default `<output basename>.lib` beside the exe.
+    // Nothing consumes it; park it under obj/.
     flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
     when: c => c.windows,
-    desc: "Keep the exe's import library from overwriting <exe>.lib (the object archive)",
+    desc: "Write the exe's import library under obj/",
   },
   {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],
@@ -1485,19 +1484,11 @@ export const linkerFlags: Flag[] = [
     desc: "FreeBSD linker tuning (same as Linux ELF; here -z stack-size also sizes the main thread's stack)",
   },
   {
-    // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for
-    // the lld they bundle as `rust-lld`, so this flag hard-fails there:
-    //   `rust-lld: error: --compress-debug-sections: LLVM was not built with
-    //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
-    // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
-    // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
-    // that case the link-time flag is dropped and llvm-objcopy compresses
-    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
-    // uncompressed bun-profile is ~2x larger and every `--compile` test
+    // An uncompressed bun-profile is ~2x larger and every `--compile` test
     // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (post-link via llvm-objcopy with rust-lld — built without zlib)",
+    when: c => c.linux || c.freebsd,
+    desc: "Compress ELF debug sections",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1524,7 +1515,7 @@ function linkRunsLto(c: Config): boolean {
  * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so those are stated
  * only here.
  */
-function linksWithLld(c: Config): boolean {
+export function linksWithLld(c: Config): boolean {
   return !c.darwin || c.crossTarget !== undefined;
 }
 

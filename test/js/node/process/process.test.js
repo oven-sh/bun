@@ -2574,6 +2574,56 @@ describe.concurrent("process.exit()", () => {
       exitCode: 42,
     });
   });
+
+  it("throws a TypeError with a message when process.reallyExit is not callable", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const results = [];
+         for (const value of ["str", undefined, {}]) {
+           process.reallyExit = value;
+           try {
+             process.exit(0);
+             results.push("did not throw");
+           } catch (e) {
+             results.push({ isTypeError: e instanceof TypeError, message: e.message });
+           }
+         }
+         console.log(JSON.stringify(results));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = { isTypeError: true, message: "process.reallyExit is not a function" };
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([expected, expected, expected]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("calls process.reallyExit as a method of process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const reallyExit = process.reallyExit;
+         process.reallyExit = function (code) {
+           require("node:fs").writeSync(1, "this is process: " + (this === process) + "\\n");
+           return reallyExit.call(process, code);
+         };
+         process.exit(3);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "this is process: true\n", stderr: "", exitCode: 3 });
+  });
 });
 
 it("process.memoryUsage.arrayBuffers", () => {

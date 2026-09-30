@@ -2421,7 +2421,6 @@ impl<'a> Parser<'a> {
         }
 
         // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        #[allow(deprecated)]
         if !p.response_ref.is_null()
             && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
         {

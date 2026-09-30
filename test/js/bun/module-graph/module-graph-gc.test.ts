@@ -704,3 +704,41 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// The period puts a collection in the middle of the signal's abort steps, whatever came before.
+test.concurrent.each([2, 3, 4])(
+  "ModuleGraph GC: aborting a signal whose fetch responses are garbage, collecting every %i slow allocations",
+  async period => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const graph = new Bun.ModuleGraph(), other = new Bun.ModuleGraph();
+        const controller = new AbortController();
+        const signal = AbortSignal.any([controller.signal]);
+        const held = { responses: [] };
+        await (async () => {
+          for (let i = 0; i < 1000; i += 50) {
+            const batch = await graph.run(() => Promise.all(Array.from({ length: 50 }, () => fetch(server.url, { signal }))));
+            for (const response of batch) await response.text();
+            held.responses.push(...batch);
+          }
+        })();
+        // Runs between the controller's signal's abort steps and the dependent signal's.
+        controller.signal.addEventListener("abort", () => { held.responses = undefined; });
+        other.run(() => controller.abort());
+        console.log("ok");
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: String(period) },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

@@ -2460,6 +2460,35 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(exitCode).toBe(0);
 });
 
+test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
+  const options = { lineOffset: 5, columnOffset: 10 };
+  const position = (error: unknown) =>
+    /:(\d+):(\d+)\)?$/m
+      .exec((error as Error).stack!)
+      ?.slice(1, 3)
+      .map(Number);
+  for (const [code, line] of [
+    ['throw new Error("first line")', 6],
+    ['1;\nthrow new Error("second line")', 7],
+  ] as const) {
+    let fromScript: number[] | undefined, fromModule: number[] | undefined;
+    try {
+      new Script(code, { filename: "offset.js", ...options }).runInThisContext();
+    } catch (e) {
+      fromScript = position(e);
+    }
+    const module = new SourceTextModule(code, { identifier: "offset.mjs", ...options });
+    await module.link(() => {});
+    try {
+      await module.evaluate();
+    } catch (e) {
+      fromModule = position(e);
+    }
+    expect(fromScript?.[0]).toBe(line);
+    expect(fromModule).toEqual(fromScript);
+  }
+});
+
 describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
   // Node's validator accepts any int32 here. JSC stores positions as ints,
   // converts the offset to one-based and counts the source's own lines on top
@@ -2641,3 +2670,76 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test.concurrent("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
+  const fixture = /* js */ `
+    import vm from "node:vm";
+    import { edenGC, fullGC } from "bun:jsc";
+
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    const liveContextCleanedUp = Promise.withResolvers();
+    let liveContext;
+    let deadContextCleanups = 0;
+
+    function setup() {
+      // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
+      // cancels the job too, so these contexts are past the first 8 and their registries are not.
+      const swept = Array.from({ length: 8 }, () => vm.createContext({}));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
+      contexts.push(liveContext);
+      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
+      edenGC(); // Old generation now: the next eden collection leaves them marked.
+      for (const context of contexts) for (let i = 0; i < 5; i++) context.registry.register({ i }, i);
+    }
+
+    await nextTurn().then(setup);
+    await nextTurn();
+    edenGC(); // The registered objects are dead: every registry posts its cleanup job.
+    fullGC(); // All contexts but one are dead, and their registries are destroyed.
+    await liveContextCleanedUp.promise;
+    await nextTurn(); // A job posted after the live context's has run by now too.
+    console.log({ deadContextCleanups });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "{\n  deadContextCleanups: 0,\n}\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context that died", async () => {
+  const fixture = /* js */ `
+    import vm from "node:vm";
+    import { fullGC } from "bun:jsc";
+
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    const shared = new Int32Array(new SharedArrayBuffer(4));
+    const liveContextWoke = Promise.withResolvers();
+    let liveContext;
+
+    function setup() {
+      // ~JSGlobalObject unregisters the waiter too. A collection sweeps the first 8 globals itself and leaves the rest for later.
+      const swept = Array.from({ length: 8 }, () => vm.createContext({}));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ shared, onWake() {} }));
+      liveContext = vm.createContext({ shared, onWake: liveContextWoke.resolve });
+      contexts.push(liveContext);
+      for (const context of contexts) vm.runInContext("Atomics.waitAsync(shared, 0, 0).value.then(onWake)", context);
+    }
+
+    await nextTurn().then(setup);
+    await nextTurn();
+    fullGC();
+    console.log("woken:", Atomics.notify(shared, 0));
+    console.log("the live context's wait resolved:", await liveContextWoke.promise);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "woken: 1\nthe live context's wait resolved: ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

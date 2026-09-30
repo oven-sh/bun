@@ -1631,13 +1631,13 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     }
 
     auto nameUtf8 = name.utf8();
-    return EVP_get_digestbyname(nameUtf8.data());
+    return EVP_get_digestbyname(nameUtf8.legacyCStringPointer());
 }
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
 {
     auto nameUtf8 = name.utf8();
-    return EVP_get_cipherbyname(nameUtf8.data());
+    return EVP_get_cipherbyname(nameUtf8.legacyCStringPointer());
 }
 
 bool checkHkdfLength(const Digest& md, size_t length)
@@ -2431,7 +2431,7 @@ const Cipher Cipher::FromName(WTF::StringView name)
     }
 
     auto nameUtf8 = name.utf8();
-    return Cipher(EVP_get_cipherbyname(nameUtf8.data()));
+    return Cipher(EVP_get_cipherbyname(nameUtf8.legacyCStringPointer()));
 }
 
 const Cipher Cipher::FromNid(int nid)

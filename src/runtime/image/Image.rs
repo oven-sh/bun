@@ -1648,31 +1648,16 @@ impl PipelineTask {
             exif::Orientation::Normal
         };
 
-        // Decode-time downscale hint. The IDCT picker constrains in *stored*
-        // axes, so any 90/270 rotate that runs before resize — explicit OR
-        // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
-        // can be over-shrunk and then upscaled, throwing away detail.
-        // (flip/flop are pure mirrors that never change w/h, so the hint
-        //  stays valid through them.)
-        let hint: Option<(u32, u32)> = if let Some(r) = self.pipeline.resize {
-            let mut tw = r.w;
-            // r.h==0 means "preserve aspect" — constrain on width only.
-            let mut th = if r.h != 0 { r.h } else { r.w };
-            let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
-            let swap_exif = matches!(orient.transform().rotate, 90 | 270);
-            if swap_explicit != swap_exif {
-                mem::swap(&mut tw, &mut th);
+        // Only a JPEG with a queued resize can decode below its header size, so it fixes its sizes first.
+        let mut sizing: Option<Sizing> = None;
+        let decoded = match self.pipeline.resize {
+            Some(r) if src_format == codecs::Format::Jpeg => {
+                codecs::jpeg::open(input, self.max_pixels).and_then(|jpeg| {
+                    sizing = self.sizing(r, jpeg.size(), orient);
+                    codecs::jpeg::decode(jpeg, sizing.map(|s| s.floor))
+                })
             }
-            Some((tw, th))
-        } else {
-            None
-        };
-
-        let decoded = if src_format == codecs::Format::Jpeg && hint.is_some() {
-            codecs::jpeg::open(input, self.max_pixels)
-                .and_then(|jpeg| codecs::jpeg::decode(jpeg, hint))
-        } else {
-            codecs::decode(src_format, input, self.max_pixels)
+            _ => codecs::decode(src_format, input, self.max_pixels),
         };
         let mut decoded = match decoded {
             Ok(d) => d,
@@ -1703,14 +1688,19 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
+            let size = match sizing {
+                Some(s) => s.target,
+                None => placeholder_box(decoded.width, decoded.height),
+            };
+            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height, size)
+            {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
             };
             return;
         }
 
-        if let Err(e) = self.apply_pipeline(&mut decoded) {
+        if let Err(e) = self.apply_pipeline(&mut decoded, sizing.map(|s| s.target)) {
             self.result = TaskResult::Err(e);
             return;
         }
@@ -1947,7 +1937,11 @@ impl PipelineTask {
     /// `icc_profile == None`, so overwriting `d.*` wholesale would drop the
     /// source's colour profile. Geometry doesn't change colour meaning, so
     /// the profile survives unchanged.
-    fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
+    fn apply_pipeline(
+        &self,
+        d: &mut codecs::Decoded,
+        target: Option<(u32, u32)>,
+    ) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
@@ -1966,7 +1960,8 @@ impl PipelineTask {
             d.rgba = next;
         }
         if let Some(r) = p.resize {
-            let t = resolve_resize(r, d.width, d.height);
+            // A JPEG frame can be IDCT-reduced, so `sizing` resolved its target from the header.
+            let t = target.unwrap_or_else(|| resolve_resize(r, d.width, d.height));
             // Guard the output canvas AND the H-then-V intermediate (always
             // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
             // source → resize(W,1) has tiny input AND output canvases yet a
@@ -1990,29 +1985,77 @@ impl PipelineTask {
         }
         Ok(())
     }
+
+    /// For a JPEG with the queued resize `r`. `stored`: the size in its header. `None`: decode it whole.
+    fn sizing(&self, r: Resize, stored: (u32, u32), orient: exif::Orientation) -> Option<Sizing> {
+        // The IDCT scales the stored axes. A 90/270 turn (EXIF or `.rotate()`) swaps them.
+        let turn = |(w, h): (u32, u32), quarter: bool| if quarter { (h, w) } else { (w, h) };
+        let by_exif = matches!(orient.transform().rotate, 90 | 270);
+        match self.kind {
+            Kind::Encode(_) => {
+                let quarter = by_exif != matches!(self.pipeline.rotate, 90 | 270);
+                let (w, h) = turn(stored, quarter);
+                let target = resolve_resize(r, w, h);
+                // r.h == 0 means "preserve aspect": the width stands in for the height.
+                let request = (r.w, if r.h != 0 { r.h } else { r.w });
+                // Cover the requested box too: the target alone gives a smaller scale, and so other pixels.
+                let floor = (target.0.max(request.0), target.1.max(request.1));
+                Some(Sizing {
+                    target,
+                    floor: turn(floor, quarter),
+                })
+            }
+            Kind::Placeholder => {
+                let (w, h) = turn(stored, by_exif);
+                let target = placeholder_box(w, h);
+                Some(Sizing {
+                    target,
+                    floor: turn(target, by_exif),
+                })
+            }
+            Kind::Metadata => None,
+        }
+    }
+}
+
+/// What the stage after a JPEG decode produces, and the smallest frame that can feed it.
+#[derive(Clone, Copy)]
+struct Sizing {
+    /// Upright axes: after auto-orient and, for a resize, after `.rotate()`.
+    target: (u32, u32),
+    /// Stored axes, for `jpeg::decode`.
+    floor: (u32, u32),
+}
+
+/// The size `.placeholder()` hashes: ThumbHash needs ≤100×100.
+fn placeholder_box(sw: u32, sh: u32) -> (u32, u32) {
+    const MAX_IN: u32 = 100;
+    if sw <= MAX_IN && sh <= MAX_IN {
+        return (sw, sh);
+    }
+    let r = (sw as f32) / (sh as f32);
+    if r > 1.0 {
+        (MAX_IN, 1u32.max(((MAX_IN as f32) / r).round() as u32))
+    } else {
+        (1u32.max(((MAX_IN as f32) * r).round() as u32), MAX_IN)
+    }
 }
 
 /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA
-/// at source size; output is a PNG of the ThumbHash render, ready for the
+/// and the source's `placeholder_box`; output is a PNG of the ThumbHash render, ready for the
 /// `.dataurl` deliver. ThumbHash needs ≤100×100, so first downscale with
 /// `box` (the only filter that's correct for "average everything in a
 /// cell" — Lanczos would ring into the DCT). The hash itself stays on
 /// the worker stack; only the rendered PNG crosses back.
-fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs::Error> {
-    const MAX_IN: u32 = 100;
-    let mut w = sw;
-    let mut h = sh;
+fn make_placeholder(
+    rgba: &[u8],
+    sw: u32,
+    sh: u32,
+    (w, h): (u32, u32),
+) -> Result<TaskResult, codecs::Error> {
     let mut owned: Option<Vec<u8>> = None;
     let mut pixels: &[u8] = rgba;
-    if w > MAX_IN || h > MAX_IN {
-        let r = (w as f32) / (h as f32);
-        if r > 1.0 {
-            w = MAX_IN;
-            h = 1u32.max(((MAX_IN as f32) / r).round() as u32);
-        } else {
-            h = MAX_IN;
-            w = 1u32.max(((MAX_IN as f32) * r).round() as u32);
-        }
+    if (w, h) != (sw, sh) {
         owned = Some(codecs::resize(rgba, sw, sh, w, h, codecs::Filter::Box)?);
         pixels = owned.as_deref().unwrap();
     }

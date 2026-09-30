@@ -99,6 +99,16 @@ const cmykIccJpeg = Buffer.from(
   "base64",
 );
 
+// JPEGs from another encoder (sharp 0.34.5, mozjpeg): 5×200 baseline 4:2:0 and 257×33 progressive 4:4:4.
+const sharpBaselineJpeg = Buffer.from(
+  "/9j/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wAARCADIAAUDASIAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAAAAQFBv/EABkQAAEFAAAAAAAAAAAAAAAAAAABAgUkgf/EABgBAQADAQAAAAAAAAAAAAAAAAMABQYH/8QAHhEAAQMFAQEAAAAAAAAAAAAAAwAFIwEhJEGh4XH/2gAMAwEAAhEDEQA/AOIgW0UwGrAtopgLUzHJWTnq6U2Hwx20pIFtFMBqwLaKYATsclZOeoWw+GO2lHAtopgNWBbRTAEZjkrJz1A2Hwx20pIFtFMBqwLaKYATMclZOeoGw+GO2lJAtopgNWBbRTAEdjkrJz1A2Hwx20o4FtFMBqwLaKYATMclZOeoGw+GO2lJAtopgNWBbRTAEZjkrJz1A2Hwx20o4FtFMBrQLaKYAjMclZOeoGw+GO2lHAtopgNWBbRTACZjkrJz1C2Hwx20pIFtFMBqwLaKYAjMclZOeoGw+GO2lHAtopgNaBbRTACZjkrJz1A2Hwx20o4FtFMBqwLaKYAjsclZOeoGw+GO2lJAtopgAMseslVGyuGP4v/Z",
+  "base64",
+);
+const sharpProgressiveJpeg = Buffer.from(
+  "/9j/2wBDAAoHBwgHBgoICAgLCgoLDhgQDg0NDh0VFhEYIx8lJCIfIiEmKzcvJik0KSEiMEExNDk7Pj4+JS5ESUM8SDc9Pjv/2wBDAQoLCw4NDhwQEBw7KCIoOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozv/wgARCAAhAQEDAREAAhEBAxEB/8QAFwABAQEBAAAAAAAAAAAAAAAABAMFBv/EABgBAQEBAQEAAAAAAAAAAAAAAAYDBAUH/9oADAMBAAIQAxAAAAHlKRSjnA3oSjlA3oSjnA3dKOcDd0o5wN3SjnA3oSjkc1oUkmc1dSSZzV0pJwNXSknA1oSklA1oSjnA3dKOcDd0o5wN3Sjmc3eC3zyBq6Uc4G7pRzgb0JRygb0JRzgbulHOBu6UczmtCkkjmtCkkjmtCUk4GrpSTgaulJOBrQlJKBrQlHKBvQlHOBu6Uc4G7oSSyOGISknA1dKOcDd0o5wN6Eo5QN6Eo5wN3SjnA3dKOZzV1JJnNaFJJHNaEpJwNXSknA1dKScDV0pJwNaEo5QN6Eo5wN3Sjmc3eC3zuBrQlHOBu6Uc4G7pRzgbulHOBvQlHKBvQlHOBu6UczmrqSTOaupJM5rQlJKBrQlJOBq6Uk4GrpSTgaulHOBvQlHKBvQlHLB5AxKOcDd0o5nN6FI5HN6Eo5wNXSknA1dKScDV0pJwNaEpJQNaEpJwNXSknA1dKOcDd0o5wN6Eo5HN6FI5nN3Ujmc3dKOcDd//xAAWEAEBAQAAAAAAAAAAAAAAAAASAFD/2gAIAQEAAQUCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhCEIQhDC//8QAFhEBAQEAAAAAAAAAAAAAAAAAEgBQ/9oACAEDAQE/AVOU5TlOU5TlOU5TlOU5TlOU5TlOU5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5znOc5zwv//EABYRAQEBAAAAAAAAAAAAAAAAABIAUP/aAAgBAgEBPwFSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUpSlKUsL//xAAUEAEAAAAAAAAAAAAAAAAAAABw/9oACAEBAAY/AiX/xAAUEAEAAAAAAAAAAAAAAAAAAABw/9oACAEBAAE/ISUAAAAAAAAAAAAAAAAAAAAAD//aAAwDAQACAAMAAAAQvHGKKLBw4891WOKLkvPDCKLxx0891XGKN8OPDCCK5x0889XGKl2OPLDCK551089PHCKLjm089VUQaLDiiuH/xAAWEQEBAQAAAAAAAAAAAAAAAAABABD/2gAIAQMBAT8QKQpCkKQpCkKQpCkKQpCkKQpCkKYkIQhCEIQhCEIQhCEIQhCEIQhCEMCEIQhCEIQhCEIQhCEIQhCEIQhCGBCEIQhCEIQhCEIQhCEIQhCEIQhDAiIiIiIiIiIiIiIiIiIiIjP/xAAUEQEAAAAAAAAAAAAAAAAAAABw/9oACAECAQE/ECUAAAAAAAAAAAAAAAAAAAAAD//EABgQAQEBAQEAAAAAAAAAAAAAAAABYXEQ/9oACAEBAAE/EJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMOEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmEwmHCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTCYTDhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhMJhwiIiIiIiIiIiIiIiIiIiIief//Z",
+  "base64",
+);
+
 function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
   const i = (y * w + x) * 4;
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
@@ -152,6 +162,27 @@ function decodePngRaw(png: Uint8Array): { w: number; h: number; data: Uint8Array
     }
   }
   return { w, h, data: out };
+}
+
+// Width and height from the IHDR of a PNG.
+function pngSize(png: Uint8Array): string {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  return `${dv.getUint32(16)}x${dv.getUint32(20)}`;
+}
+
+// `jpeg` with an APP1/EXIF segment after SOI that carries only the Orientation tag.
+function withExifOrientation(jpeg: Uint8Array, orientation: number): Buffer {
+  // prettier-ignore
+  const tiff = new Uint8Array([
+    0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // "MM\0*", IFD0 at offset 8
+    0x00, 0x01,                                     // 1 entry
+    0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+  ]);
+  const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+  const seglen = exif.length + 2;
+  const app1 = Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]);
+  return Buffer.concat([jpeg.subarray(0, 2), app1, exif, jpeg.subarray(2)]);
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -378,6 +409,384 @@ describe("Bun.Image", () => {
       const b = decodePngRaw(await new Bun.Image(wide).resize(4).png().bytes());
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
+    });
+
+    // libjpeg-turbo can decode a 120×166 JPEG at 7/8, which is 105×146.
+    // The target comes from the source: 100×138, as from the PNG.
+    test("shrink-on-load does not move the resize target", async () => {
+      const src = makePng(120, 166, (x, y) => [(x * 5) & 255, (y * 3) & 255, 0, 255]);
+      const jpeg = await new Bun.Image(src).jpeg().bytes();
+      const fromPng = decodePngRaw(await new Bun.Image(src).resize(100).png().bytes());
+      const fromJpeg = decodePngRaw(await new Bun.Image(jpeg).resize(100).png().bytes());
+      expect({ w: fromPng.w, h: fromPng.h }).toEqual({ w: 100, h: 138 });
+      expect({ w: fromJpeg.w, h: fromJpeg.h }).toEqual({ w: 100, h: 138 });
+    });
+
+    // The source is stored on its side. Rotate runs before resize, so the
+    // target is resolved against the turned size, 120×166.
+    test("rotate before resize resolves against the upright source", async () => {
+      const src = makePng(166, 120, (x, y) => [(x * 5) & 255, (y * 3) & 255, 0, 255]);
+      const jpeg = await new Bun.Image(src).jpeg().bytes();
+      const out = decodePngRaw(await new Bun.Image(jpeg).rotate(90).resize(100).png().bytes());
+      expect({ w: out.w, h: out.h }).toEqual({ w: 100, h: 138 });
+    });
+
+    describe("JPEG source", () => {
+      // 8-row bands, the height of a DCT block: a decode at a reduced IDCT scale changes them.
+      const bands = (_x: number, y: number): [number, number, number, number] => {
+        const v = (y >> 3) & 1 ? 230 : 25;
+        return [v, v, v, 255];
+      };
+      // The same pixels in three containers. Only the JPEG decoder can scale while it decodes.
+      async function containers(w: number, h: number) {
+        const png = makePng(w, h, bands);
+        const [jpeg, webp] = await Promise.all([
+          new Bun.Image(png).jpeg({ quality: 90 }).bytes(),
+          new Bun.Image(png).webp({ lossless: true }).bytes(),
+        ]);
+        return { jpeg, png, webp };
+      }
+      const sizeOf = async (img: Bun.Image) => pngSize(await img.png().bytes());
+      const pixels = async (img: Bun.Image) => decodePngRaw(await img.png().bytes());
+
+      // The literal sizes here are the same whether a derived side is truncated or rounded.
+      type ResizeArgs = Parameters<Bun.Image["resize"]>;
+      const rows: [number, number, ResizeArgs, string][] = [
+        [97, 1001, [17], "17x175"],
+        [211, 200, [100, 100, { fit: "inside" }], "100x95"],
+        [211, 200, [100, 100, { fit: "inside", withoutEnlargement: true }], "100x95"],
+        [9, 900, [2, 200, { fit: "inside" }], "2x200"],
+        [1, 100, [1], "1x100"],
+        [3, 500, [3, 0, { withoutEnlargement: true }], "3x500"],
+      ];
+      test.each(rows)("%dx%d resize(%j) is %s, as from a PNG and a WebP", async (w, h, args, expected) => {
+        const src = await containers(w, h);
+        expect(await new Bun.Image(src.jpeg).metadata()).toEqual({ width: w, height: h, format: "jpeg" });
+        expect({
+          jpeg: await sizeOf(new Bun.Image(src.jpeg).resize(...args)),
+          png: await sizeOf(new Bun.Image(src.png).resize(...args)),
+          webp: await sizeOf(new Bun.Image(src.webp).resize(...args)),
+        }).toEqual({ jpeg: expected, png: expected, webp: expected });
+      });
+
+      test("fit: 'inside' with a derived height gives the size a PNG gives", async () => {
+        const src = await containers(20, 21);
+        const resized = (input: Uint8Array) => sizeOf(new Bun.Image(input).resize(15, 0, { fit: "inside" }));
+        expect(await resized(src.jpeg)).toBe(await resized(src.png));
+      });
+
+      // Sizes only, on small sources. Every cell compares a JPEG with a PNG that has the same upright size.
+      test.each([
+        [1, 50],
+        [50, 1],
+        [3, 64],
+        [17, 63],
+        [33, 20],
+        [64, 9],
+      ])("%dx%d: every request gives the size that a PNG gives", async (w, h) => {
+        const jpeg = await new Bun.Image(makePng(w, h, bands)).jpeg({ quality: 90 }).bytes();
+        const png = { upright: makePng(w, h, bands), turned: makePng(h, w, bands) };
+        const sizeAfter = async (input: Uint8Array, autoOrient: boolean, rotate: number, args: ResizeArgs) => {
+          let img = new Bun.Image(input, { autoOrient });
+          if (rotate) img = img.rotate(rotate);
+          await img
+            .resize(...args)
+            .png()
+            .bytes();
+          return `${img.width}x${img.height}`;
+        };
+        const turns = [
+          [1, true],
+          [2, true],
+          [3, true],
+          [5, true],
+          [6, true],
+          [8, true],
+          [6, false],
+        ] as const;
+        const controls = new Map<string, string>();
+        const mismatches: string[] = [];
+        for (const [orientation, autoOrient] of turns) {
+          const source = orientation === 1 ? jpeg : withExifOrientation(jpeg, orientation);
+          const control = autoOrient && orientation >= 5 ? "turned" : "upright";
+          for (const rotate of [0, 90]) {
+            for (const width of [1, 5, 24]) {
+              const requests: ResizeArgs[] = [
+                [width],
+                [width, 0, { fit: "inside" }],
+                [width, width, { fit: "inside" }],
+                [width, 0, { withoutEnlargement: true }],
+              ];
+              for (const args of requests) {
+                const cell = `${control} rotate(${rotate}) resize(${JSON.stringify(args).slice(1, -1)})`;
+                if (!controls.has(cell)) controls.set(cell, await sizeAfter(png[control], true, rotate, args));
+                const got = await sizeAfter(source, autoOrient, rotate, args);
+                if (got !== controls.get(cell)) {
+                  mismatches.push(
+                    `EXIF ${orientation}, autoOrient: ${autoOrient}, ${cell}: ${got}, PNG ${controls.get(cell)}`,
+                  );
+                }
+              }
+            }
+          }
+        }
+        expect(mismatches).toEqual([]);
+      });
+
+      test.each([
+        [1, 100],
+        [3, 500],
+        [5, 500],
+      ])("%dx%d resized to its own width has the pixels of the plain decode", async (w, h) => {
+        const { jpeg } = await containers(w, h);
+        const plain = await new Bun.Image(jpeg).png().bytes();
+        expect(pngSize(plain)).toBe(`${w}x${h}`);
+        for (const options of [{}, { withoutEnlargement: true }]) {
+          const out = await new Bun.Image(jpeg).resize(w, 0, options).png().bytes();
+          expect(pngSize(out)).toBe(`${w}x${h}`);
+          expect(Buffer.compare(out, plain)).toBe(0);
+        }
+      });
+
+      test("portrait source: a derived height and the same height given in full give the same bytes", async () => {
+        const { jpeg } = await containers(9, 90);
+        const derived = await new Bun.Image(jpeg).resize(2).png().bytes();
+        expect(pngSize(derived)).toBe("2x20");
+        expect(Buffer.compare(derived, await new Bun.Image(jpeg).resize(2, 20).png().bytes())).toBe(0);
+      });
+
+      // Each pipeline is compared with the same resize of a PNG that holds the
+      // decode at the expected scale: resize(w, h) of a JPEG to the exact size
+      // of an IDCT scale returns that decode.
+      test("the IDCT scale covers the requested box and the target, in the axes the file stores", async () => {
+        {
+          // 64×32 in an 8×8 box is 8×4. The height of the box keeps the decode at 2/8, 16×8.
+          const { jpeg } = await containers(64, 32);
+          const decode = await new Bun.Image(jpeg).resize(16, 8).png().bytes();
+          const out = await pixels(new Bun.Image(jpeg).resize(8, 8, { fit: "inside" }));
+          expect({ w: out.w, h: out.h }).toEqual({ w: 8, h: 4 });
+          expect(Buffer.compare(out.data, (await pixels(new Bun.Image(decode).resize(8, 4))).data)).toBe(0);
+          // A width-only request counts as the same box.
+          const derived = await pixels(new Bun.Image(jpeg).resize(8));
+          expect(Buffer.compare(derived.data, out.data)).toBe(0);
+        }
+        {
+          // 32×64 in an 8×8 box is 4×8. The width of the box keeps the decode at 2/8, 8×16.
+          const { jpeg } = await containers(32, 64);
+          const decode = await new Bun.Image(jpeg).resize(8, 16).png().bytes();
+          const out = await pixels(new Bun.Image(jpeg).resize(8, 8, { fit: "inside" }));
+          expect({ w: out.w, h: out.h }).toEqual({ w: 4, h: 8 });
+          expect(Buffer.compare(out.data, (await pixels(new Bun.Image(decode).resize(4, 8))).data)).toBe(0);
+        }
+        {
+          // Stored 166×120 and turned, the target 100×138 is 138×100 in stored axes. 7/8, 146×105, covers it.
+          const { jpeg } = await containers(166, 120);
+          const decode = await new Bun.Image(jpeg).resize(146, 105).png().bytes();
+          const out = await pixels(new Bun.Image(jpeg).rotate(90).resize(100));
+          expect({ w: out.w, h: out.h }).toEqual({ w: 100, h: 138 });
+          const want = await pixels(new Bun.Image(decode).rotate(90).resize(100, 138));
+          expect(Buffer.compare(out.data, want.data)).toBe(0);
+        }
+      });
+
+      test("the target is in upright axes: rotate in both call orders, EXIF orientation, autoOrient: false", async () => {
+        // Stored on its side. Upright after a quarter turn it is 120×166.
+        const { jpeg } = await containers(166, 120);
+        const exif = (orientation: number, options?: { autoOrient: boolean }) =>
+          new Bun.Image(withExifOrientation(jpeg, orientation), options);
+        expect({
+          "rotate(90).resize(100)": await sizeOf(new Bun.Image(jpeg).rotate(90).resize(100)),
+          "resize(100).rotate(90)": await sizeOf(new Bun.Image(jpeg).resize(100).rotate(90)),
+          "rotate(270).resize(100)": await sizeOf(new Bun.Image(jpeg).rotate(270).resize(100)),
+          "rotate(180).resize(100)": await sizeOf(new Bun.Image(jpeg).rotate(180).resize(100)),
+          "EXIF 3": await sizeOf(exif(3).resize(100)),
+          "EXIF 5": await sizeOf(exif(5).resize(100)),
+          "EXIF 6": await sizeOf(exif(6).resize(100)),
+          "EXIF 7": await sizeOf(exif(7).resize(100)),
+          "EXIF 8": await sizeOf(exif(8).resize(100)),
+          "EXIF 6, rotate(90)": await sizeOf(exif(6).rotate(90).resize(100)),
+          "EXIF 6, autoOrient: false": await sizeOf(exif(6, { autoOrient: false }).resize(100)),
+          "EXIF 6, autoOrient: false, rotate(90)": await sizeOf(exif(6, { autoOrient: false }).rotate(90).resize(100)),
+        }).toEqual({
+          "rotate(90).resize(100)": "100x138",
+          "resize(100).rotate(90)": "100x138",
+          "rotate(270).resize(100)": "100x138",
+          "rotate(180).resize(100)": "100x72",
+          "EXIF 3": "100x72",
+          "EXIF 5": "100x138",
+          "EXIF 6": "100x138",
+          "EXIF 7": "100x138",
+          "EXIF 8": "100x138",
+          "EXIF 6, rotate(90)": "100x72",
+          "EXIF 6, autoOrient: false": "100x72",
+          "EXIF 6, autoOrient: false, rotate(90)": "100x138",
+        });
+      });
+
+      test("progressive JPEG, and JPEGs from another encoder", async () => {
+        const progressive = await new Bun.Image(makePng(120, 166, bands))
+          .jpeg({ quality: 90, progressive: true })
+          .bytes();
+        expect(await sizeOf(new Bun.Image(progressive).resize(100))).toBe("100x138");
+
+        expect(await new Bun.Image(sharpBaselineJpeg).metadata()).toEqual({ width: 5, height: 200, format: "jpeg" });
+        expect(await sizeOf(new Bun.Image(sharpBaselineJpeg).resize(2))).toBe("2x80");
+        const plain = await new Bun.Image(sharpBaselineJpeg).png().bytes();
+        expect(pngSize(plain)).toBe("5x200");
+        expect(Buffer.compare(await new Bun.Image(sharpBaselineJpeg).resize(5).png().bytes(), plain)).toBe(0);
+
+        expect(await new Bun.Image(sharpProgressiveJpeg).metadata()).toEqual({
+          width: 257,
+          height: 33,
+          format: "jpeg",
+        });
+        expect(await sizeOf(new Bun.Image(sharpProgressiveJpeg).rotate(90).resize(4))).toBe("4x31");
+        expect(await sizeOf(new Bun.Image(sharpProgressiveJpeg).rotate(270).resize(5, 40, { fit: "inside" }))).toBe(
+          "5x39",
+        );
+      });
+
+      test("every terminal, the Response and Request body, and every kind of input", async () => {
+        using dir = tempDir("image-jpeg-resize", {});
+        const { jpeg } = await containers(9, 90);
+        const pipeline = (input: ConstructorParameters<typeof Bun.Image>[0]) => new Bun.Image(input).resize(2).png();
+
+        const img = pipeline(jpeg);
+        const bytes = await img.bytes();
+        expect({ width: img.width, height: img.height }).toEqual({ width: 2, height: 20 });
+
+        const written = join(String(dir), "out.png");
+        await pipeline(jpeg).write(written);
+        const terminals = {
+          bytes,
+          buffer: await pipeline(jpeg).buffer(),
+          toBuffer: await pipeline(jpeg).toBuffer(),
+          blob: await (await pipeline(jpeg).blob()).bytes(),
+          toBase64: Buffer.from(await pipeline(jpeg).toBase64(), "base64"),
+          dataurl: Buffer.from((await pipeline(jpeg).dataurl()).slice("data:image/png;base64,".length), "base64"),
+          write: await Bun.file(written).bytes(),
+          response: await new Response(pipeline(jpeg)).bytes(),
+          request: await new Request("http://x/", { method: "POST", body: pipeline(jpeg) }).bytes(),
+        };
+        expect(Object.fromEntries(Object.entries(terminals).map(([name, out]) => [name, pngSize(out)]))).toEqual({
+          bytes: "2x20",
+          buffer: "2x20",
+          toBuffer: "2x20",
+          blob: "2x20",
+          toBase64: "2x20",
+          dataurl: "2x20",
+          write: "2x20",
+          response: "2x20",
+          request: "2x20",
+        });
+
+        const path = join(String(dir), "in.jpg");
+        await Bun.write(path, jpeg);
+        const inputs = {
+          typedArray: jpeg,
+          arrayBuffer: jpeg.buffer.slice(jpeg.byteOffset, jpeg.byteOffset + jpeg.byteLength),
+          path,
+          file: Bun.file(path),
+          blob: new Blob([jpeg]),
+          dataurl: `data:image/jpeg;base64,${Buffer.from(jpeg).toString("base64")}`,
+        };
+        const sizes: Record<string, string> = {};
+        for (const [name, input] of Object.entries(inputs)) sizes[name] = pngSize(await pipeline(input).bytes());
+        expect(sizes).toEqual({
+          typedArray: "2x20",
+          arrayBuffer: "2x20",
+          path: "2x20",
+          file: "2x20",
+          blob: "2x20",
+          dataurl: "2x20",
+        });
+      });
+
+      // 53×110 is over the 100-pixel box of the hash and has no IDCT scale that covers the box.
+      // 2/8 of 200×400 is the box.
+      test.each([
+        [53, 110, 8, "14x32", "32x14"],
+        [200, 400, 20, "18x32", "32x18"],
+      ])(
+        "%dx%d: .placeholder() has the size of the source, with a queued resize(%d) or rotate too",
+        async (w, h, queued, expected, expectedTurned) => {
+          const src = await containers(w, h);
+          const size = (url: string) => pngSize(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+          const turned = withExifOrientation(src.jpeg, 6);
+          expect({
+            png: size(await new Bun.Image(src.png).placeholder()),
+            jpeg: size(await new Bun.Image(src.jpeg).placeholder()),
+            resize: size(await new Bun.Image(src.jpeg).resize(queued).placeholder()),
+            rotateAndResize: size(await new Bun.Image(src.jpeg).rotate(90).resize(queued).placeholder()),
+            // EXIF orientation is a property of the source, so it applies.
+            exif6: size(await new Bun.Image(turned).placeholder()),
+            exif6AndResize: size(await new Bun.Image(turned).resize(queued).placeholder()),
+          }).toEqual({
+            png: expected,
+            jpeg: expected,
+            resize: expected,
+            rotateAndResize: expected,
+            exif6: expectedTurned,
+            exif6AndResize: expectedTurned,
+          });
+        },
+      );
+
+      // The oracle is the placeholder of a PNG: the JPEG frame at the size of an
+      // IDCT scale (resize(w, h) to that exact size returns it), then the box
+      // filter to the box of the source. The other scales are controls: each
+      // fixture gives them a different placeholder.
+      const columns = (x: number): [number, number, number, number] =>
+        (x >> 2) & 1 ? [230, 20, 20, 255] : [20, 230, 20, 255];
+      const gradient = (x: number, y: number): [number, number, number, number] => [
+        (x * 5) & 255,
+        (y * 3) & 255,
+        0,
+        255,
+      ];
+      type Scale = [number, number] | "full";
+      const placeholderAt = async (jpeg: Uint8Array, scale: Scale, box: [number, number]) => {
+        const frame = scale === "full" ? new Bun.Image(jpeg) : new Bun.Image(jpeg).resize(...scale);
+        const boxed = new Bun.Image(await frame.png().bytes()).resize(...box, { filter: "box" });
+        return new Bun.Image(await boxed.png().bytes()).placeholder();
+      };
+      const placeholderRows: [string, () => Promise<Uint8Array>, [number, number], Scale, Scale[]][] = [
+        [
+          "200x400, 2/8 is the box",
+          () => new Bun.Image(makePng(200, 400, columns)).jpeg({ quality: 12 }).bytes(),
+          [50, 100],
+          [50, 100],
+          ["full", [100, 200], [25, 50]],
+        ],
+        [
+          // The box of the 4/8 frame, 65×129, is 50×100. The box of the source is 51×100.
+          "130x257, 4/8 and the box filter",
+          () => new Bun.Image(makePng(130, 257, gradient)).jpeg({ quality: 90 }).bytes(),
+          [51, 100],
+          [65, 129],
+          ["full", [82, 161], [49, 97]],
+        ],
+        [
+          "160x480 turned by EXIF 6, 2/8 in the axes the file stores",
+          async () =>
+            withExifOrientation(await new Bun.Image(makePng(160, 480, gradient)).jpeg({ quality: 90 }).bytes(), 6),
+          [100, 33],
+          [120, 40],
+          ["full", [300, 100], [60, 20]],
+        ],
+      ];
+      test.each(placeholderRows)(
+        "%s: .resize(n).placeholder() decodes at the smallest IDCT scale that covers the box",
+        async (_name, source, box, scale, otherScales) => {
+          const jpeg = await source();
+          const queued = await new Bun.Image(jpeg).resize(20).placeholder();
+          expect(queued).toBe(await placeholderAt(jpeg, scale, box));
+          for (const other of otherScales) expect(await placeholderAt(jpeg, other, box)).not.toBe(queued);
+          expect(await new Bun.Image(jpeg).rotate(90).resize(20).placeholder()).toBe(queued);
+          // Without a queued resize the placeholder is made from the full frame.
+          expect(await new Bun.Image(jpeg).placeholder()).toBe(await placeholderAt(jpeg, "full", box));
+        },
+      );
     });
   });
 
@@ -1566,6 +1975,31 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
   test("GIF: local colour table overrides GCT", async () => {
     const g = makeGif(1, 1, [[9, 8, 7]], () => 0, { lct: true });
     expect([...(await gifPixels(g)).data.subarray(0, 3)]).toEqual([9, 8, 7]);
+  });
+
+  test("GIF: a first frame smaller than the logical screen is resized from its own size", async () => {
+    // Logical screen 4×4, first frame 2×1. The static decoder returns the frame.
+    const pal: [number, number, number][] = [
+      [0, 0, 0],
+      [255, 255, 255],
+    ];
+    const g = makeGif(2, 1, pal, x => x);
+    g.set([4, 0, 4, 0], 6);
+    Bun.Image.backend = "bun";
+    const sizeOf = async (img: Bun.Image) => pngSize(await img.png().bytes());
+    expect({
+      decoded: await sizeOf(new Bun.Image(g)),
+      "resize(8)": await sizeOf(new Bun.Image(g).resize(8)),
+      "resize(8, 8, { fit: 'inside' })": await sizeOf(new Bun.Image(g).resize(8, 8, { fit: "inside" })),
+      "resize(8, 0, { withoutEnlargement: true })": await sizeOf(
+        new Bun.Image(g).resize(8, 0, { withoutEnlargement: true }),
+      ),
+    }).toEqual({
+      decoded: "2x1",
+      "resize(8)": "8x4",
+      "resize(8, 8, { fit: 'inside' })": "8x4",
+      "resize(8, 0, { withoutEnlargement: true })": "2x1",
+    });
   });
 
   test("GIF: 255-byte extension sub-block (XMP-style) parses without overflow", async () => {

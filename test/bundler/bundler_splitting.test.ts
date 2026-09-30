@@ -1200,6 +1200,39 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "after\nindex app declared\nsettings app" },
   });
+  // styles.js prints nothing, so the files that index.js shares with route.js have no chunk that could repeat an import.
+  for (const [name, first, options, stdout] of [
+    ["NoImportThatRuns", "", {}, "index undefined\nroute"],
+    ["External", `import "ext-setup";`, extSetup, "index app\nroute"],
+    [
+      "CommonJSOfOtherEntry",
+      `import "./shared.cjs";`,
+      { files: { "/shared.cjs": `globalThis.APP = { name: "shared" };`, "/admin.js": `import "./shared.cjs";` } },
+      "index shared\nroute",
+    ],
+  ] as const) {
+    itBundled("splitting/SharedFilesThatPrintNothingRepeatNoImport/" + name, {
+      ...options,
+      files: {
+        "/index.js": /* js */ `
+          ${first}
+          import "./styles.js";
+          console.log("index", globalThis.APP?.name);
+          import("./route.js");
+        `,
+        "/styles.js": `import "./app.css";`,
+        "/app.css": `body { color: red; }`,
+        "/route.js": `import "./styles.js"; console.log("route");`,
+        ...("files" in options ? options.files : {}),
+      },
+      entryPoints: "files" in options ? ["/index.js", "/admin.js"] : ["/index.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle: noChunkImportsIndex,
+      run: { file: "/out/index.js", stdout },
+    });
+  }
 
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {

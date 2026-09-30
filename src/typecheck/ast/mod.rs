@@ -1,0 +1,55 @@
+// internal/ast: one module per upstream file and per part of the node table, re-exported as the package's namespace.
+pub mod ast;
+pub mod ast_generated;
+pub mod builder;
+pub mod checkflags;
+pub mod factory;
+pub mod file;
+pub mod flags;
+pub mod flow;
+pub mod functionflags;
+pub mod ids;
+pub mod kind_generated;
+pub mod layout;
+pub mod modifierflags;
+pub mod node_methods;
+pub mod nodeflags;
+pub mod open;
+pub mod precedence;
+pub mod publish;
+pub mod reader;
+pub mod stable;
+pub mod subtreefacts;
+pub mod symbol;
+pub mod symbolflags;
+pub mod tokenflags;
+pub mod utilities;
+pub mod visitor;
+
+#[cfg(test)]
+mod tests;
+
+pub use ast::*;
+pub use ast_generated::*;
+pub use builder::*;
+pub use checkflags::*;
+pub use factory::*;
+pub use file::*;
+pub use flow::*;
+pub use functionflags::*;
+pub use ids::*;
+pub use kind_generated::*;
+pub use layout::*;
+pub use modifierflags::*;
+pub use node_methods::*;
+pub use nodeflags::*;
+pub use open::*;
+pub use precedence::*;
+pub use publish::*;
+pub use reader::*;
+pub use subtreefacts::*;
+pub use symbol::*;
+pub use symbolflags::*;
+pub use tokenflags::*;
+pub use utilities::*;
+pub use visitor::*;

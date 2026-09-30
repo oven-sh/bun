@@ -1,0 +1,35 @@
+// Port of internal/ast/tokenflags.go.
+use crate::ast::flags::define_flags;
+
+define_flags!(TokenFlags: i32 {
+    PRECEDING_LINE_BREAK = 1 << 0,
+    PRECEDING_JSDOC_COMMENT = 1 << 1,
+    UNTERMINATED = 1 << 2,
+    EXTENDED_UNICODE_ESCAPE = 1 << 3, // e.g. `\u{10ffff}`
+    SCIENTIFIC = 1 << 4, // e.g. `10e2`
+    OCTAL = 1 << 5, // e.g. `0777`
+    HEX_SPECIFIER = 1 << 6, // e.g. `0x00000000`
+    BINARY_SPECIFIER = 1 << 7, // e.g. `0b0110010000000000`
+    OCTAL_SPECIFIER = 1 << 8, // e.g. `0o777`
+    CONTAINS_SEPARATOR = 1 << 9, // e.g. `0b1100_0101`
+    UNICODE_ESCAPE = 1 << 10, // e.g. `\u00a0`
+    CONTAINS_INVALID_ESCAPE = 1 << 11, // e.g. `\uhello`
+    HEX_ESCAPE = 1 << 12, // e.g. `\xa0`
+    CONTAINS_LEADING_ZERO = 1 << 13, // e.g. `0888`
+    CONTAINS_INVALID_SEPARATOR = 1 << 14, // e.g. `0_1`
+    PRECEDING_JSDOC_LEADING_ASTERISKS = 1 << 15,
+    SINGLE_QUOTE = 1 << 16, // e.g. `'abc'`
+    PRECEDING_JSDOC_WITH_DEPRECATED = 1 << 17, // Preceding JSDoc comment contains @deprecated
+    PRECEDING_JSDOC_WITH_SEE_OR_LINK = 1 << 18, // Preceding JSDoc comment contains @see or @link
+    BINARY_OR_OCTAL_SPECIFIER = Self::BINARY_SPECIFIER.0 | Self::OCTAL_SPECIFIER.0,
+    WITH_SPECIFIER = Self::HEX_SPECIFIER.0 | Self::BINARY_OR_OCTAL_SPECIFIER.0,
+    STRING_LITERAL_FLAGS = Self::UNTERMINATED.0 | Self::HEX_ESCAPE.0 | Self::UNICODE_ESCAPE.0
+        | Self::EXTENDED_UNICODE_ESCAPE.0 | Self::CONTAINS_INVALID_ESCAPE.0 | Self::SINGLE_QUOTE.0,
+    NUMERIC_LITERAL_FLAGS = Self::SCIENTIFIC.0 | Self::OCTAL.0 | Self::CONTAINS_LEADING_ZERO.0
+        | Self::WITH_SPECIFIER.0 | Self::CONTAINS_SEPARATOR.0 | Self::CONTAINS_INVALID_SEPARATOR.0,
+    TEMPLATE_LITERAL_LIKE_FLAGS = Self::UNTERMINATED.0 | Self::HEX_ESCAPE.0 | Self::UNICODE_ESCAPE.0
+        | Self::EXTENDED_UNICODE_ESCAPE.0 | Self::CONTAINS_INVALID_ESCAPE.0,
+    REGULAR_EXPRESSION_LITERAL_FLAGS = Self::UNTERMINATED.0,
+    IS_INVALID = Self::OCTAL.0 | Self::CONTAINS_LEADING_ZERO.0 | Self::CONTAINS_INVALID_SEPARATOR.0
+        | Self::CONTAINS_INVALID_ESCAPE.0,
+});

@@ -216,6 +216,9 @@ pub mod ssl_wrapper {
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
 
+    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c.
+    const FATAL_ERROR_REASON_MAX: usize = 256;
+
     /// What BoringSSL's callbacks read and write. The `SSL` points at it: see `us_ssl_set_wrapper`.
     struct CallbackState {
         inline_reject: Cell<bool>,
@@ -990,7 +993,9 @@ pub mod ssl_wrapper {
         }
 
         /// Mirrors `ssl_park_fatal_reason` in openssl.c.
-        fn peek_fatal_ssl_error(buf: &mut [u8; 256]) -> Option<us_bun_verify_error_t> {
+        fn peek_fatal_ssl_error(
+            buf: &mut [u8; FATAL_ERROR_REASON_MAX],
+        ) -> Option<us_bun_verify_error_t> {
             let packed = boring_sys::ERR_peek_error();
             if packed == 0 {
                 return None;
@@ -1079,8 +1084,9 @@ pub mod ssl_wrapper {
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
                 let is_fatal =
                     err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
-                let mut reason_buf = [0u8; 256];
+                let mut reason_buf;
                 let fatal_reason = if is_fatal {
+                    reason_buf = [0u8; FATAL_ERROR_REASON_MAX];
                     Self::peek_fatal_ssl_error(&mut reason_buf)
                 } else {
                     None

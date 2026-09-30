@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { once } from "events";
 import { writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
@@ -252,7 +252,7 @@ for (const { name, connect } of tests) {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const port = (server.address() as AddressInfo).port;
 
-      let checkServerIdentityCalled = false;
+      const identityCheck = jest.fn(tls.checkServerIdentity);
       const result = await new Promise<{ kind: string; code?: string; library?: string }>(resolve => {
         const socket = connect({
           host: "127.0.0.1",
@@ -260,10 +260,7 @@ for (const { name, connect } of tests) {
           servername: "localhost",
           ca: COMMON_CERT.cert,
           ALPNProtocols: ["xyz"],
-          checkServerIdentity(hostname, cert) {
-            checkServerIdentityCalled = true;
-            return tls.checkServerIdentity(hostname, cert);
-          },
+          checkServerIdentity: identityCheck,
         });
         socket.on("secureConnect", () => {
           resolve({ kind: "secureConnect" });
@@ -274,12 +271,12 @@ for (const { name, connect } of tests) {
         });
       });
 
-      expect({ ...result, checkServerIdentityCalled }).toEqual({
+      expect(result).toEqual({
         kind: "error",
         code: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL",
         library: "SSL routines",
-        checkServerIdentityCalled: false,
       });
+      expect(identityCheck).not.toHaveBeenCalled();
     });
 
     it("emits error (not secureConnect) on a handshake_failure alert with rejectUnauthorized: false", async () => {
@@ -912,6 +909,25 @@ it("a client and a server TLSSocket connected through a synchronous in-memory du
   expect({ secure, exchange }).toEqual({
     secure: { client: true, server: true },
     exchange: ["server got one", "client got pong one", "server got two", "client got pong two"],
+  });
+});
+
+it("a server TLSSocket over a duplex reports a first record that is not TLS as ERR_SSL_WRONG_VERSION_NUMBER", async () => {
+  const transport = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const server = new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+  const failed = once(server, "error");
+  transport.push("not a TLS record\r\n\r\n");
+
+  const [err] = await failed;
+  transport.destroy();
+  expect({ code: err.code, library: err.library }).toEqual({
+    code: "ERR_SSL_WRONG_VERSION_NUMBER",
+    library: "SSL routines",
   });
 });
 

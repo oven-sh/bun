@@ -2016,6 +2016,219 @@ describe("EventEmitter.prototype as native code creates it", () => {
       keys: ["_events", "_eventsCount"],
     });
   });
+
+  // A development build evaluates the arguments of $debug() on every call, and `constructor` is the property of the
+  // prototype whose read evaluates node:events.
+  test("emit does not read `constructor`", () => {
+    let reads = 0;
+    const counted = {
+      constructor: {
+        get() {
+          reads++;
+        },
+      },
+    };
+    const emitter = Object.create(Object.create(nodeEventEmitterPrototype(true), counted));
+    emitter.on("x", () => {});
+    // An emitter that captures rejections has another `emit`, as a property of its own.
+    const capturing = Object.defineProperties(new EventEmitter({ captureRejections: true }), counted);
+    capturing.on("x", () => {});
+    const emitted = [
+      emitter.emit("x"),
+      emitter.emit("x", 1, 2, 3, 4),
+      capturing.emit("x"),
+      capturing.emit("x", 1, 2, 3, 4),
+    ];
+    expect({ emitted, ownEmit: Object.hasOwn(capturing, "emit"), reads }).toEqual({
+      emitted: [true, true, true, true],
+      ownEmit: true,
+      reads: 0,
+    });
+  });
+});
+
+// Each case runs in its own process, in which nothing evaluates node:events before the case does: loading
+// bun:internal-for-testing does not, and console.log() does not either (process.stdout would).
+describe("EventEmitter.prototype before node:events is evaluated", () => {
+  const tableKeys = [methodKeys[0], "constructor", ...methodKeys.slice(1)] as string[];
+  const keys = [...tableKeys, "_eventsCount", "Symbol(kCapture)"];
+  // node:events, when it is evaluated, defines every method on the prototype and adds _eventsCount to it.
+  const untouched = { lazy: true, _eventsCount: false };
+  const evaluated = { lazy: false, _eventsCount: true };
+
+  const prelude = `
+    const { hasNonReifiedStatic, nodeEventEmitterPrototype } = require("bun:internal-for-testing");
+    const proto = nodeEventEmitterPrototype();
+    const methodKeys = ${JSON.stringify(methodKeys)};
+    const keys = object => Reflect.ownKeys(object).map(String);
+    const state = () => ({ lazy: hasNonReifiedStatic(proto), _eventsCount: Object.hasOwn(proto, "_eventsCount") });
+    const print = value => console.log(JSON.stringify(value, null, 2));
+  `;
+
+  const cases: [name: string, source: string, expected: unknown][] = [
+    [
+      "the native getter and the 15 methods do not evaluate node:events",
+      `
+        const created = state();
+        const emitter = Object.create(proto);
+        const received = [];
+        function first(...args) {
+          received.push(["first", ...args]);
+        }
+        function second(...args) {
+          received.push(["second", ...args]);
+        }
+        function third(...args) {
+          received.push(["third", ...args]);
+        }
+        const label = value =>
+          typeof value !== "function" ? value : value.listener ? "once " + value.listener.name : value.name;
+        const called = new Set();
+        // The first method whose call left node:events evaluated.
+        let evaluatedBy = null;
+        const call = (key, ...args) => {
+          const returned = emitter[key](...args);
+          called.add(key);
+          if (evaluatedBy === null && !hasNonReifiedStatic(proto)) evaluatedBy = key;
+          return [key, returned === emitter ? "this" : Array.isArray(returned) ? returned.map(label) : returned];
+        };
+        const returned = [
+          call("setMaxListeners", 5),
+          call("getMaxListeners"),
+          call("on", "x", first),
+          call("addListener", "x", second),
+          call("prependListener", "x", third),
+          call("once", "y", first),
+          call("prependOnceListener", "y", second),
+          call("listeners", "y"),
+          call("rawListeners", "y"),
+          call("listenerCount", "x"),
+          call("eventNames"),
+          call("emit", "x", 1),
+          call("emit", "y", 2, 3),
+          call("emit", "y"),
+          call("removeListener", "x", third),
+          call("off", "x", first),
+          call("rawListeners", "x"),
+          call("removeAllListeners"),
+          call("eventNames"),
+        ];
+        print({
+          created,
+          returned,
+          received,
+          notCalled: methodKeys.filter(key => !called.has(key)),
+          evaluatedBy,
+          after: state(),
+          keys: keys(proto),
+        });
+      `,
+      {
+        created: untouched,
+        returned: [
+          ["setMaxListeners", "this"],
+          ["getMaxListeners", 5],
+          ["on", "this"],
+          ["addListener", "this"],
+          ["prependListener", "this"],
+          ["once", "this"],
+          ["prependOnceListener", "this"],
+          ["listeners", ["second", "first"]],
+          ["rawListeners", ["once second", "once first"]],
+          ["listenerCount", 3],
+          ["eventNames", ["x", "y"]],
+          ["emit", true],
+          ["emit", true],
+          ["emit", false],
+          ["removeListener", "this"],
+          ["off", "this"],
+          ["rawListeners", ["second"]],
+          ["removeAllListeners", "this"],
+          ["eventNames", []],
+        ],
+        received: [
+          ["third", 1],
+          ["first", 1],
+          ["second", 1],
+          ["second", 2, 3],
+          ["first", 2, 3],
+        ],
+        notCalled: [],
+        evaluatedBy: null,
+        after: untouched,
+        keys: tableKeys,
+      },
+    ],
+    [
+      "node:events adopts the prototype that the methods were read from, and gives it its own key order",
+      `
+        // Last to first, so that no method is defined in the place that it has among the keys.
+        const read = [...methodKeys].reverse().map(key => proto[key]).reverse();
+        function replacement() {}
+        proto.listeners = replacement;
+        const emitter = Object.create(proto).on("x", replacement);
+        const before = state();
+        const EventEmitter = require("node:events");
+        print({
+          before,
+          isPrototype: EventEmitter.prototype === proto,
+          after: state(),
+          keys: keys(proto),
+          // A method is still the function that was read, and the name that was assigned keeps its value.
+          changed: methodKeys.filter((key, i) => proto[key] !== read[i]),
+          listeners: proto.listeners === replacement,
+          constructor: proto.constructor === EventEmitter,
+          emitter: [emitter instanceof EventEmitter, emitter.listenerCount("x"), emitter.emit("x")],
+        });
+      `,
+      {
+        before: untouched,
+        isPrototype: true,
+        after: evaluated,
+        keys,
+        changed: ["listeners"],
+        listeners: true,
+        constructor: true,
+        emitter: [true, 1, true],
+      },
+    ],
+    [
+      "reading `constructor` evaluates node:events",
+      `
+        const before = state();
+        const EventEmitter = proto.constructor;
+        print({
+          before,
+          constructor: [typeof EventEmitter, EventEmitter.name, EventEmitter === require("node:events")],
+          isPrototype: EventEmitter.prototype === proto,
+          after: state(),
+          keys: keys(proto),
+        });
+      `,
+      {
+        before: untouched,
+        constructor: ["function", "EventEmitter", true],
+        isPrototype: true,
+        after: evaluated,
+        keys,
+      },
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, source, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(expected, null, 2).split("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // Each case runs in its own process: what it checks depends on nothing having read or written the properties of

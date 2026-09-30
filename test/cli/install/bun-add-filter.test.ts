@@ -2073,6 +2073,24 @@ test.concurrent(
   },
 );
 
+// Windows is left out: its path buffer holds more than any path the OS accepts.
+test.concurrent.skipIf(isWindows)(
+  "a local path longer than the path buffer is rejected before anything is written",
+  async () => {
+    const dir = await makeMonorepo();
+    const before = await allPackageJsonTexts(dir);
+
+    const path = "./" + Buffer.alloc(4200, "a").toString();
+    const { stderr, exitCode } = await run(["add", path, "--filter", "api"], dir);
+    expect(stderr).toContain(`error: Dependency "${path}" has an unsafe folder path`);
+    expect(exitCode).toBe(1);
+
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+    expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+    expect(await exists(join(dir, "node_modules"))).toBeFalse();
+  },
+);
+
 test.concurrent("an absolute local path is written verbatim into every target", async () => {
   const dir = await makeMonorepo();
   await addVendorFoo(dir);

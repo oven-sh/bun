@@ -406,24 +406,55 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
 
-  test("non-existent --cafile (relative path longer than PATH_MAX)", async () => {
-    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
-    const cafile = Buffer.alloc(4090, "a").toString();
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--cafile", cafile],
-      cwd: packageDir,
-      stderr: "pipe",
-      stdout: "pipe",
-      env,
+  // A relative `cafile` is joined onto the cwd into a path buffer of MAX_PATH_BYTES (4096 bytes on
+  // Linux, 1024 on macOS). A joined path that fits reaches the HTTP thread, which reports it in
+  // full. One that does not fit is reported under the name the user gave. Windows is left out: its
+  // buffer holds more than any path the OS accepts.
+  describe.skipIf(isWindows)("relative cafile near the path buffer length", () => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+
+    // A file name that brings `<packageDir>/<name>` to `maxPathBytes + delta` bytes.
+    const nameFor = (delta: number) =>
+      Buffer.alloc(maxPathBytes + delta - Buffer.byteLength(packageDir + "/"), "a").toString();
+
+    async function install(args: string[]) {
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env,
+      });
+      const out = await stdout.text();
+      expect(out).not.toContain("no-deps");
+      const err = await stderr.text();
+      expect(await exited).toBe(1);
+      return err;
+    }
+
+    test.each([
+      ["fits the buffer exactly", 0, (cafile: string) => join(packageDir, cafile)],
+      ["is one byte past the buffer", 1, (cafile: string) => cafile],
+      ["is far past the buffer", 4090, (cafile: string) => cafile],
+    ])("non-existent --cafile that %s", async (_, delta, expectedPath) => {
+      const cafile = nameFor(delta);
+      const err = await install(["--cafile", cafile]);
+      expect(err).toContain(`HTTPThread: could not find CA file: '${expectedPath(cafile)}'`);
     });
-    const out = await stdout.text();
-    expect(out).not.toContain("no-deps");
-    const err = await stderr.text();
-    // The Windows path buffer is ~98 KB, so the join succeeds there and the
-    // HTTP thread reports the joined absolute path instead.
-    const expectedPath = isWindows ? join(packageDir, cafile) : cafile;
-    expect(err).toContain(`HTTPThread: could not find CA file: '${expectedPath}'`);
-    expect(await exited).toBe(1);
+
+    test("non-existent cafile from bunfig that is one byte past the buffer", async () => {
+      const cafile = nameFor(1);
+      await write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: `http://localhost:${port}/`, cafile } }),
+      );
+      const err = await install([]);
+      expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+    });
   });
 
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {

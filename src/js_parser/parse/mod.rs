@@ -305,6 +305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !standard_decorators
             && !class_opts.is_type_script_declare
             && !SCAN_ONLY
+            && p.starts_for_parse_only.is_none()
         {
             p.log().add_error(
                 Some(p.source),

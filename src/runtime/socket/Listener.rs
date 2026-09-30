@@ -630,11 +630,11 @@ impl Listener {
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
+            write_errno: Cell::new(0),
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
             flags: Cell::new(listener.accepted_socket_flags()),
-            write_errno: Cell::new(0),
             owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),

@@ -1,7 +1,17 @@
-import type { MySQLAdapter } from "internal/sql/mysql";
-import type { PostgresAdapter } from "internal/sql/postgres";
-import type { BaseQueryHandle, Query } from "internal/sql/query";
-import type { SQLHelper } from "internal/sql/shared";
+import type { BaseQueryHandle } from "internal/sql/query";
+import type { BasePooledConnection, DatabaseAdapter } from "internal/sql/shared";
+
+type Query<T, Handle extends BaseQueryHandle<any>> = import("internal/sql/query").Query<T, Handle>;
+type SQLHelper<T> = import("internal/sql/shared").SQLHelper<T>;
+type Adapter = DatabaseAdapter<any, any, any>;
+type ListenableAdapter = Adapter & Pick<InstanceType<typeof PostgresAdapter>, "listen">;
+
+interface PooledConnection {
+  bindQuery?: BasePooledConnection["bindQuery"];
+  onClose?: BasePooledConnection["onClose"];
+  flush?: BasePooledConnection["flush"];
+  close(): void;
+}
 
 const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
@@ -16,7 +26,9 @@ const AsyncContextFrame = require("internal/async_context_frame");
 
 const defineProperties = Object.defineProperties;
 
-type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
+type TransactionCallback = (
+  sql: (strings: string, ...values: any[]) => Query<any, any> | SQLHelper<any> | Promise<never>,
+) => Promise<any>;
 
 enum ReservedConnectionState {
   acceptQueries = 1 << 0,
@@ -51,7 +63,7 @@ function settleReservedTransaction(
   settle(value);
 }
 
-function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
+function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Adapter | ListenableAdapter {
   switch (options.adapter) {
     case "postgres":
       return new PostgresAdapter(options);
@@ -65,11 +77,14 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   }
 }
 
-const SQL: typeof Bun.SQL = function SQL(
+const SQL = function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
-): Bun.SQL {
-  const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
+) {
+  const connectionInfo: Bun.SQL.__internal.DefinedOptions & { bigint?: boolean } = parseOptions(
+    stringOrUrlOrOptions,
+    definitelyOptionsButMaybeEmpty,
+  );
   const pool = adapterFromOptions(connectionInfo);
 
   function onQueryDisconnected(this: Query<any, any>, err: Error) {
@@ -86,12 +101,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onQueryConnected(
-    this: Query<any, any>,
-    handle: BaseQueryHandle<any>,
-    err,
-    connectionHandle: ConnectionHandle,
-  ) {
+  function onQueryConnected(this: Query<any, any>, handle: BaseQueryHandle<any>, err, connectionHandle) {
     const query = this;
     if (err) {
       // fail to aquire a connection from the pool
@@ -115,7 +125,7 @@ const SQL: typeof Bun.SQL = function SQL(
         result.catch(err => query.reject(err));
       }
     } catch (err) {
-      query.reject(err);
+      query.reject(err as Error);
     }
   }
   function queryFromPoolHandler(query, handle, err) {
@@ -199,7 +209,7 @@ const SQL: typeof Bun.SQL = function SQL(
   function queryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
-    pooledConnection: PooledPostgresConnection,
+    pooledConnection: PooledConnection,
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
@@ -223,7 +233,7 @@ const SQL: typeof Bun.SQL = function SQL(
   function unsafeQueryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
-    pooledConnection: PooledPostgresConnection,
+    pooledConnection: PooledConnection,
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
@@ -288,13 +298,17 @@ const SQL: typeof Bun.SQL = function SQL(
     return listenable ? listenable.listen(channel, onnotify, onlisten) : listenUnsupported();
   };
   // .execute(): queries are lazy, and notify() must send even when not awaited.
-  function makeNotify(target: { unsafe: Bun.SQL["unsafe"] }): Bun.SQL["notify"] {
+  function makeNotify(target: {
+    unsafe(string: string, values?: any[]): Query<any, any> | Promise<never>;
+  }): Bun.SQL["notify"] {
     return (channel, payload) => {
       validateChannel(channel);
       if (payload === undefined) payload = "";
       else if (typeof payload !== "string") throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
       if (!listenable) return listenUnsupported();
-      return target.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute() as unknown as Promise<void>;
+      return (
+        target.unsafe("SELECT pg_notify($1, $2)", [channel, payload]) as Query<any, any>
+      ).execute() as unknown as Promise<void>;
     };
   }
 
@@ -323,7 +337,7 @@ const SQL: typeof Bun.SQL = function SQL(
     return promise;
   }
 
-  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
+  function onReserveConnected(this: ReserveAbortState["promiseWithResolvers"], err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
     if (err) {

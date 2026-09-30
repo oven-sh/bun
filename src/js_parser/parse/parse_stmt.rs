@@ -1471,6 +1471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "export import foo = bar"
         if (opts.is_export || (opts.scope.is_namespace() && !opts.is_typescript_declare))
             && p.lexer.token != T::TIdentifier
+            && (opts.is_export || !matches!(p.lexer.token, T::TOpenParen | T::TDot))
         {
             p.lexer.expected(T::TIdentifier)?;
         }
@@ -1844,6 +1845,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         let is_identifier = p.lexer.token == T::TIdentifier;
         let name = p.lexer.identifier;
+        if Self::IS_TYPESCRIPT_ENABLED
+            && is_identifier
+            && let Some(keyword) = js_lexer::TypescriptStmtKeyword::from_bytes(name)
+            && let Some(stmt) = Self::parse_stmt_named_like_cast(p, opts, loc, keyword)?
+        {
+            return Ok(stmt);
+        }
         // Parse either an async function, an async expression, or a normal expression.
         // Every branch below either assigns `expr` or `return`s.
         let mut expr: Expr;
@@ -1906,6 +1914,203 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         ))
+    }
+
+    /// At "type", "interface", "namespace" or "module" before "as" or "satisfies" on its line: the declaration of that name, or `None` where an expression starts.
+    #[cold]
+    #[inline(never)]
+    fn parse_stmt_named_like_cast(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+        keyword: js_lexer::TypescriptStmtKeyword,
+    ) -> Result<Option<Stmt>> {
+        match keyword {
+            js_lexer::TypescriptStmtKeyword::TsStmtType
+            | js_lexer::TypescriptStmtKeyword::TsStmtInterface => {}
+            js_lexer::TypescriptStmtKeyword::TsStmtNamespace
+            | js_lexer::TypescriptStmtKeyword::TsStmtModule => {
+                // Inside a function or a block, no namespace is read after the keyword either.
+                if opts.scope == StatementScope::Nested {
+                    return Ok(None);
+                }
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtAbstract
+            | js_lexer::TypescriptStmtKeyword::TsStmtGlobal
+            | js_lexer::TypescriptStmtKeyword::TsStmtDeclare => return Ok(None),
+        }
+        let is_named_like_cast = p.next_token_matches(|p| {
+            !p.lexer.has_newline_before
+                && (p.lexer.is_contextual_keyword(b"as")
+                    || p.lexer.is_contextual_keyword(b"satisfies"))
+        });
+        if !is_named_like_cast {
+            return Ok(None);
+        }
+        // isStartOfDeclaration: for a lint parse, an identifier on the line of the keyword starts the declaration.
+        if !p.is_lint_parse()
+            && !Self::is_declaration_named_like_cast(p, keyword, opts.is_typescript_declare)
+        {
+            return Ok(None);
+        }
+        p.lexer.next()?;
+        if let Some(stmt) = Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, keyword)? {
+            return Ok(Some(stmt));
+        }
+        p.lexer.unexpected()?;
+        Err(crate::Error::SyntaxError)
+    }
+
+    /// Whether a parse without lint reads that declaration too: it keeps the cast of the keyword where the declaration, or what follows it, is none for the reference.
+    fn is_declaration_named_like_cast(
+        p: &mut Self,
+        keyword: js_lexer::TypescriptStmtKeyword,
+        is_ambient: bool,
+    ) -> bool {
+        let old_lexer = p.lexer.snapshot();
+        let log = p.log();
+        let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+        p.lexer.is_log_disabled = true;
+        let is_declaration =
+            Self::read_declaration_named_like_cast(p, keyword, is_ambient).unwrap_or(false);
+        p.lexer.restore(&old_lexer);
+        // What the attempt logged without asking the lexer goes with it.
+        let log = p.log();
+        log.msgs.truncate(old_msgs_len);
+        log.errors = old_errors;
+        log.warnings = old_warnings;
+        is_declaration
+    }
+
+    /// Reads ahead from the keyword. The caller puts the lexer and the log back.
+    fn read_declaration_named_like_cast(
+        p: &mut Self,
+        keyword: js_lexer::TypescriptStmtKeyword,
+        is_ambient: bool,
+    ) -> Result<bool> {
+        p.lexer.next()?;
+        let at_name = p.lexer.snapshot();
+        p.lexer.next()?;
+        let after_name = p.lexer.snapshot();
+        // Its scope is not the one of the file, so that no name is kept of what is read twice.
+        let mut stmt_opts = ParseStatementOptions::default();
+        match keyword {
+            js_lexer::TypescriptStmtKeyword::TsStmtType => {
+                // "type as = 1", "type as<T> = T": no type starts where the "=" is.
+                p.lexer.restore(&at_name);
+                p.skip_type_script_type_stmt(&mut stmt_opts)?;
+                Ok(true)
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
+                p.lexer.restore(&at_name);
+                if p.skip_type_script_interface_stmt(&mut stmt_opts).is_ok() {
+                    // "interface as<T> {}", "interface as extends B {}": no type starts so.
+                    return Ok(after_name.token != T::TOpenBrace
+                        || Self::is_declaration_before_what_follows_braces(p, false, true));
+                }
+                // Braces that hold no type are members that only the interface is read with, or reported for.
+                p.lexer.restore(&after_name);
+                Ok(after_name.token == T::TOpenBrace
+                    && p.skip_type_script_type(Level::Lowest).is_err())
+            }
+            js_lexer::TypescriptStmtKeyword::TsStmtNamespace
+            | js_lexer::TypescriptStmtKeyword::TsStmtModule => match after_name.token {
+                // "namespace as.b {}"
+                T::TDot => Ok(true),
+                T::TOpenBrace => {
+                    p.lexer.next()?;
+                    let is_empty = p.lexer.token == T::TCloseBrace;
+                    p.lexer.restore(&after_name);
+                    // What is no type is the body of a namespace.
+                    if p.skip_type_script_type(Level::Lowest).is_err() {
+                        return Ok(true);
+                    }
+                    p.lexer.restore(&at_name);
+                    // A mapped type is no body, so the members of an interface are read.
+                    p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                    // Members can be statements that are none: only "{}" and what "declare" takes is sure to be a body.
+                    let is_body_at_end = is_empty || is_ambient;
+                    Ok(Self::is_declaration_before_what_follows_braces(
+                        p,
+                        true,
+                        is_body_at_end,
+                    ))
+                }
+                _ => Ok(false),
+            },
+            js_lexer::TypescriptStmtKeyword::TsStmtAbstract
+            | js_lexer::TypescriptStmtKeyword::TsStmtGlobal
+            | js_lexer::TypescriptStmtKeyword::TsStmtDeclare => Ok(false),
+        }
+    }
+
+    /// After braces that end an object type as well as that declaration. `is_declaration_at_end`: what is read where the statement ends with them.
+    fn is_declaration_before_what_follows_braces(
+        p: &mut Self,
+        is_namespace: bool,
+        is_declaration_at_end: bool,
+    ) -> bool {
+        // These go on with the type, or with the expression that the cast is, and start no statement.
+        let goes_on = matches!(
+            p.lexer.token,
+            T::TBar
+                | T::TAmpersand
+                | T::TExtends
+                | T::TDot
+                | T::TQuestionDot
+                | T::TQuestion
+                | T::TComma
+                | T::TColon
+                | T::TAsterisk
+                | T::TPercent
+                | T::TAsteriskAsterisk
+                | T::TEqualsEquals
+                | T::TExclamationEquals
+                | T::TEqualsEqualsEquals
+                | T::TExclamationEqualsEquals
+                | T::TGreaterThan
+                | T::TGreaterThanEquals
+                | T::TLessThanEquals
+                | T::TLessThanLessThan
+                | T::TGreaterThanGreaterThan
+                | T::TGreaterThanGreaterThanGreaterThan
+                | T::TAmpersandAmpersand
+                | T::TBarBar
+                | T::TQuestionQuestion
+                | T::TCaret
+                | T::TIn
+                | T::TInstanceof
+        ) || p.lexer.token.is_assign();
+        if goes_on {
+            return false;
+        }
+        if p.lexer.has_newline_before
+            || matches!(
+                p.lexer.token,
+                T::TSemicolon | T::TCloseBrace | T::TEndOfFile
+            )
+        {
+            return is_declaration_at_end;
+        }
+        match p.lexer.token {
+            // On the line of the braces these go on with the expression as well as they start a statement.
+            T::TPlus | T::TMinus | T::TOpenBracket | T::TLessThan | T::TSlash | T::TExclamation => {
+                false
+            }
+            // "interface as {} Foo {}": the keyword takes the name after the expression, "Foo" here.
+            T::TIdentifier => {
+                !p.lexer.is_contextual_keyword(b"as")
+                    && !p.lexer.is_contextual_keyword(b"satisfies")
+                    && !p.next_token_matches(|p| match p.lexer.token {
+                        T::TOpenBrace => true,
+                        T::TDot => is_namespace,
+                        T::TLessThan | T::TExtends => !is_namespace,
+                        T::TIdentifier => !is_namespace && p.lexer.raw() == b"implements",
+                        _ => false,
+                    })
+            }
+            _ => true,
+        }
     }
 
     /// Cold TS-only statement keywords reached from `parse_stmt_fallthrough` once the
@@ -1999,6 +2204,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
+                // "abstract declare class Foo {}"
+                if !p.lexer.has_newline_before
+                    && p.lexer.is_contextual_keyword(b"declare")
+                    && p.next_token_matches(|p| {
+                        p.lexer.token == T::TClass && !p.lexer.has_newline_before
+                    })
+                {
+                    p.lexer.next()?;
+                    opts.lexical_decl = LexicalDecl::AllowAll;
+                    opts.is_typescript_declare = true;
+                    let scope_index = p.scopes_in_order.len();
+                    let stmt = p.parse_class_stmt(loc, opts)?;
+                    if let Some(decs) = &opts.ts_decorators {
+                        p.discard_scopes_up_to(decs.scope_index);
+                    } else {
+                        p.discard_scopes_up_to(scope_index);
+                    }
+                    if let Some(starts) = &mut p.starts_for_parse_only {
+                        starts.erased.declared(
+                            erased::Cursor::at(&p.lexer),
+                            loc,
+                            opts.ts_decorators
+                                .as_ref()
+                                .and_then(|decorators| decorators.values.first())
+                                .map(|decorator| decorator.loc),
+                            opts.is_export,
+                            stmt,
+                        );
+                    }
+                    return Ok(Some(stmt));
+                }
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
@@ -2233,6 +2469,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::t_open_brace(self, opts, loc),
 
             _ => Self::parse_stmt_fallthrough(self, opts, loc),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::defines::Define;
+    use crate::parse::parse_entry::{Options, Parser};
+    use bun_alloc::Arena;
+
+    /// How many statements the lint parse of `text` keeps, and how many it records as left out. `None`: it fails.
+    fn lint_parse(text: &'static [u8]) -> Option<(usize, usize)> {
+        let arena = Arena::new();
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        let source = bun_ast::Source::init_path_string(&b"/a.ts"[..], text);
+        let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
+        options.features.no_macros = true;
+        options.features.dont_bundle_twice = true;
+        let define = Define::default();
+        let mut log = bun_ast::Log::init();
+        let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+        parser
+            .parse_for_lint(|parsed| (parsed.stmts.len(), parsed.sidecar.erased.statements.len()))
+            .ok()
+    }
+
+    #[test]
+    fn a_lint_parse_reads_the_declaration_that_as_or_satisfies_names() {
+        let cases: [(&'static [u8], usize, usize); 6] = [
+            (b"type as = 1", 0, 1),
+            (b"type satisfies<T> = T", 0, 1),
+            (b"interface as {}\nfoo()", 1, 1),
+            (b"interface satisfies<T> extends B<T> { a: T }", 0, 1),
+            (b"namespace as {}", 0, 1),
+            (b"namespace as { export const a = 1 }", 1, 0),
+        ];
+        for (text, kept, left_out) in cases {
+            assert_eq!(
+                lint_parse(text),
+                Some((kept, left_out)),
+                "{}",
+                bstr::BStr::new(text)
+            );
+        }
+    }
+
+    #[test]
+    fn a_lint_parse_reads_no_cast_where_the_reference_reads_a_declaration() {
+        let cases: [&'static [u8]; 6] = [
+            b"type as any",
+            b"type as <T>(x: T) => void",
+            b"interface as any\nfoo()",
+            b"interface as {} | X\nfoo()",
+            b"namespace as any",
+            b"namespace as { foo(): void }",
+        ];
+        for text in cases {
+            assert_eq!(lint_parse(text), None, "{}", bstr::BStr::new(text));
         }
     }
 }

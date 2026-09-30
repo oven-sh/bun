@@ -627,6 +627,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    /// At "[" where the name of an enum member starts: whether a string, or a template without substitutions, and "]" follow.
+    fn is_enum_member_name_in_brackets(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let is_name = self.lexer.next().is_ok()
+            && matches!(
+                self.lexer.token,
+                T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
+            )
+            && self.lexer.next().is_ok()
+            && self.lexer.token == T::TCloseBracket;
+        self.lexer.restore(&old_lexer);
+        is_name
+    }
+
     pub(crate) fn parse_typescript_enum_stmt(
         &mut self,
         loc: bun_ast::Loc,
@@ -684,8 +699,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
+            // "['a']" and "[`a`]": a string in brackets names the member as the string alone does.
+            let is_in_brackets =
+                p.lexer.token == T::TOpenBracket && p.is_enum_member_name_in_brackets();
+            if is_in_brackets {
+                p.lexer.next()?;
+            }
             // Parse the name
-            let needs_symbol: bool = if p.lexer.token == T::TStringLiteral {
+            let needs_symbol: bool = if p.lexer.token == T::TStringLiteral || is_in_brackets {
                 // `slice8()` is currently duplicated in E.rs (two impl blocks);
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
@@ -701,6 +722,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             };
             p.lexer.next()?;
+            if is_in_brackets {
+                p.lexer.expect(T::TCloseBracket)?;
+            }
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {

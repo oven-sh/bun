@@ -1987,7 +1987,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
         }
 
-        if !p.lexer.has_newline_before
+        // tryParseImportAttributes: "with" starts the attributes on the next line too. Without lint only before "{", so that "with (" stays a statement.
+        let is_with_on_next_line = p.lexer.has_newline_before
+            && p.lexer.token == T::TWith
+            && (p.is_lint_parse() || p.next_token_matches(|p| p.lexer.token == T::TOpenBrace));
+        let has_newline_before = p.lexer.has_newline_before && !is_with_on_next_line;
+
+        if !has_newline_before
             && (
                 // Import Assertions are deprecated.
                 // Import Attributes are the new way to do this.

@@ -615,17 +615,23 @@ describe("web worker", () => {
         const sab = new SharedArrayBuffer(16);
         const f64 = new Float64Array(sab);
         const w = new Worker(url);
+        let closed = false;
+        w.addEventListener("close", () => (closed = true), { once: true });
         const spinning = once(w, "message");
         w.postMessage(sab);
         await spinning;
         // Enough iterations for the loop to run in DFG/FTL code.
-        while (f64[1] < 4000) await Bun.sleep(1);
-        const terminatedAt = performance.timeOrigin + performance.now();
+        while (f64[1] < 4000 && !closed) await Bun.sleep(1);
+        expect(closed).toBeFalse();
         w.terminate();
+        // Stamped after terminate() returns: a stall of this thread before the
+        // request is published does not count as worker lag.
+        const terminatedAt = performance.timeOrigin + performance.now();
         await once(w, "close");
         // The worker's last stamp, relative to the terminate() call.
         lagMs.push(f64[0] - terminatedAt);
       }
+      URL.revokeObjectURL(url);
       expect(lagMs.filter(lag => lag >= 10)).toEqual([]);
     });
 

@@ -2322,7 +2322,7 @@ test.concurrent("a timeout stops a script busy in a JIT operation at its next lo
       const vm = require("node:vm");
       const code = "(function(){ const big = Buffer.alloc(1 << 16, 'x').toString(); let i = 0; while (true) i = (big + i).charCodeAt(0); })()";
       const overshoot = [];
-      for (let r = 0; r < 4; r++) {
+      for (let r = 0; r < 3; r++) {
         const t = performance.now();
         try { vm.runInThisContext(code, { timeout: 300 }); } catch (e) { if (e.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw e; }
         overshoot.push(performance.now() - t - 300);

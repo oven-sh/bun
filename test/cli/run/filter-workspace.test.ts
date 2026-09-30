@@ -1210,7 +1210,9 @@ describe("output timing", () => {
           [
             `packages/${name}/out.js`,
             `
-        require("fs").writeFileSync(process.argv[2] + ".pids", process.pid + " " + process.ppid);
+        // Under its name only once it is written: whoever waits for it reads it as soon as it is there.
+        require("fs").writeFileSync(process.argv[2] + ".tmp", process.pid + " " + process.ppid);
+        require("fs").renameSync(process.argv[2] + ".tmp", process.argv[2] + ".pids");
         // The first write is what a read that was waiting for it brings; the rest stays in the pipe.
         process.stdout.write("first of " + process.argv[2] + "\\n");
         let out = "";

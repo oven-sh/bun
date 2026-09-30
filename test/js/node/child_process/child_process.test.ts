@@ -1045,6 +1045,39 @@ it.skipIf(!isWindows)("'close' comes after everything the child wrote to a pipe 
   expect(await closed).toBe(Buffer.alloc(50, "0123456789").toString());
 });
 
+// https://nodejs.org/api/child_process.html#subprocesskillsignal: "On Windows [...] the signal argument will be ignored
+// except for 'SIGKILL', 'SIGTERM', 'SIGINT' and 'SIGQUIT', and the process will always be killed forcefully".
+describe.skipIf(!isWindows).concurrent.each(["SIGHUP", "SIGBREAK", "SIGWINCH", "SIGABRT"] as const)(
+  "%s, which Windows cannot send, kills the child",
+  signal => {
+    const idle = ["-e", "setInterval(() => {}, 1e6)"];
+    const options = { env: bunEnv, stdio: "ignore" } as const;
+
+    it("from kill()", async () => {
+      const child = spawn(bunExe(), idle, options);
+      const exited = once(child, "exit");
+      expect(child.kill(signal)).toBe(true);
+      expect(await exited).toEqual([null, "SIGKILL"]);
+    });
+
+    it("as the killSignal of a timeout", async () => {
+      const child = spawn(bunExe(), idle, { ...options, timeout: 1, killSignal: signal });
+      expect(await once(child, "exit")).toEqual([null, "SIGKILL"]);
+    });
+
+    it("as the killSignal of an abort", async () => {
+      const controller = new AbortController();
+      const child = spawn(bunExe(), idle, { ...options, signal: controller.signal, killSignal: signal });
+      // Not once(): that rejects with the 'error' an abort is reported by.
+      const exited = new Promise(resolve => child.on("exit", (...args) => resolve(args)));
+      const failed = new Promise<any>(resolve => child.on("error", resolve));
+      controller.abort();
+      expect((await failed).code).toBe("ABORT_ERR");
+      expect(await exited).toEqual([null, "SIGKILL"]);
+    });
+  },
+);
+
 // As in node, which lets what is left in every pipe go when the child has exited.
 it.each([
   ["is left alone", () => {}],

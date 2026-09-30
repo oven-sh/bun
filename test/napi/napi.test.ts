@@ -1247,6 +1247,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
     });
+    it("declares a global that warm sites see, for a script of the form `var x = <JSON>;`", async () => {
+      // main.js evaluates its argument list. This one warms a read before the native call. The second
+      // statement of the script calls a setter, which reads through the same site. The globals are
+      // added before the site gets warm: a property added after it would give the global object
+      // another structure, and the site would read again on its own.
+      const args = `(() => {
+        globalThis.readDeclaredLater = function () { return globalThis.declaredLater; };
+        globalThis.reporter = {
+          set report(value) { console.log("read after the declaration:", readDeclaredLater(), globalThis.declaredLater); },
+        };
+        for (let i = 0; i < 2000; ++i) readDeclaredLater();
+        return ["var declaredLater = 33; reporter.report = 0;"];
+      })()`;
+      // Without compiler threads the site reaches the JIT tiers at a fixed call.
+      const output = await checkSameOutput("test_napi_run_script", args, { BUN_JSC_useConcurrentJIT: "0" });
+      expect(output).toBe("read after the declaration: 33 33");
+    });
 
     // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
     async function runScriptWith(executable: string, flag: string) {

@@ -15,6 +15,32 @@ import {
 
 function capture(_: any, _1?: any) {}
 
+// The engine runs a script of the form `var x = <JSON>;` without bytecode. These tests check that
+// sites that were warm before such a script ran see the global it declares. Each fixture runs in a
+// process of its own: its sites must be warm first, and its globals must not reach other tests.
+async function runDeclarationFixture(type: "cjs" | "mjs", body: string) {
+  const prelude = type === "cjs" ? `const vm = require("node:vm");` : `import vm from "node:vm";`;
+  using dir = tempDir("vm-jsonp-var", { [`fixture.${type}`]: prelude + "\n" + body });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), `fixture.${type}`],
+    cwd: String(dir),
+    // Without compiler threads each site reaches the JIT tiers at a fixed call.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+function readOfAnAbsentName(declare: string) {
+  return `
+    function read() { return globalThis.declaredLater; }
+    for (let i = 0; i < 2000; ++i) read();
+    ${declare}
+    console.log(read(), globalThis.declaredLater);
+  `;
+}
+
 describe("vm", () => {
   describe("runInContext()", () => {
     testRunInContext({ fn: runInContext, isIsolated: true });
@@ -106,6 +132,81 @@ describe("vm", () => {
         importModuleDynamically: undefined,
       });
       expect(result).toBe(2);
+    });
+
+    describe("a script of the form `var x = <JSON>;` declares a global that warm sites see", () => {
+      test.concurrent("read, call and write sites", async () => {
+        const fixture = `
+          let setterCalls = 0;
+          Object.defineProperty(Object.prototype, "declaredSetter", { get() { return "getter"; }, set(value) { ++setterCalls; }, configurable: true });
+
+          function read() { return globalThis.declaredLater; }
+          function readWithKey(key) { return globalThis[key]; }
+          function readSecond() { return globalThis.declaredSecond; }
+          function call() { try { return typeof globalThis.valueOf(); } catch (error) { return error.name; } }
+          function write(value) { globalThis.declaredSetter = value; }
+          for (let i = 0; i < 2000; ++i) { read(); readWithKey("declaredWithKey"); readSecond(); call(); write(i); }
+
+          vm.runInThisContext('var declaredLater = 1; var declaredWithKey = 2; var declaredSecond = { "a": [3] }; var valueOf = 4; var declaredSetter = 5;');
+
+          write(6);
+          console.log(JSON.stringify({
+            read: read(),
+            readWithKey: readWithKey("declaredWithKey"),
+            readSecond: readSecond()?.a[0],
+            call: call(),
+            setterCallsAfterTheScript: setterCalls - 2000,
+            written: globalThis.declaredSetter,
+          }));
+        `;
+        const { stdout, stderr, exitCode } = await runDeclarationFixture("cjs", fixture);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          read: 1,
+          readWithKey: 2,
+          readSecond: 3,
+          call: "TypeError",
+          setterCallsAfterTheScript: 0,
+          written: 6,
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("read of an absent name in an ES module", async () => {
+        const fixture = readOfAnAbsentName(`vm.runInThisContext("var declaredLater = 33;");`);
+        expect(await runDeclarationFixture("mjs", fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent("a site that gets warm between two statements of the script", async () => {
+        const fixture = `
+          function read() { return globalThis.declaredSecond; }
+          globalThis.holder = { set warm(value) { for (let i = 0; i < 2000; ++i) read(); } };
+          vm.runInThisContext("var declaredFirst = 1; holder.warm = 1; var declaredSecond = 2;");
+          console.log(read());
+        `;
+        expect(await runDeclarationFixture("cjs", fixture)).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent("a reader that is on the stack when the script runs", async () => {
+        const fixture = `
+          function read() { return globalThis.declaredLater; }
+          function loop(count) {
+            const seen = [];
+            for (let i = 0; i < count; ++i) {
+              if (i === count - 2) vm.runInThisContext("var declaredLater = 33;");
+              const value = read();
+              if (i >= count - 3) seen.push(String(value));
+            }
+            return seen.join();
+          }
+          console.log(loop(5000));
+        `;
+        expect(await runDeclarationFixture("cjs", fixture)).toEqual({
+          stdout: "undefined,33,33\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 
@@ -319,6 +420,32 @@ describe("Script", () => {
         const script = new Script(code, options);
         return script.runInThisContext();
       },
+    });
+
+    describe("a script of the form `var x = <JSON>;` declares a global that warm sites see", () => {
+      test.concurrent("the same Script run twice", async () => {
+        const fixture = `
+          function read() { return globalThis.declaredLater; }
+          for (let i = 0; i < 2000; ++i) read();
+          const script = new vm.Script('var declaredLater = { "run": 1 };');
+          script.runInThisContext();
+          const first = read();
+          script.runInThisContext();
+          const second = read();
+          const descriptor = JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, "declaredLater"));
+          console.log(first?.run, second?.run, first === second, descriptor);
+        `;
+        expect(await runDeclarationFixture("cjs", fixture)).toEqual({
+          stdout: `1 1 false {"value":{"run":1},"writable":true,"enumerable":true,"configurable":false}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test.concurrent("read of an absent name in an ES module", async () => {
+        const fixture = readOfAnAbsentName(`new vm.Script("var declaredLater = 33;").runInThisContext();`);
+        expect(await runDeclarationFixture("mjs", fixture)).toEqual({ stdout: "33 33\n", stderr: "", exitCode: 0 });
+      });
     });
   });
   test("can throw without new", () => {

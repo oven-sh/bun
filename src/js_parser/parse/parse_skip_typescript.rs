@@ -4,7 +4,7 @@ use crate::lexer::LexerSnapshot;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parse::type_sink::{
-    DecoratorMetadata, Discard, Operand, TypeKeyword, TypeLiteral, TypeSink,
+    ConstDefault, DecoratorMetadata, Discard, KK, Operand, TypeKeyword, TypeLiteral, TypeSink, b,
 };
 use crate::parser::{
     FnOrArrowDataParse, ParseStatementOptions, SkipTypeParameterResult, TypeParameterFlag,
@@ -13,6 +13,7 @@ use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
+use bun_ast::ts;
 use bun_ast::ts::Metadata;
 
 // Re-export so the parser-side type alias used in this file matches the
@@ -641,34 +642,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::StackOverflow);
         }
 
+        let mut start: KK<S, u32> = ConstDefault::DEFAULT;
+        let mut lead: KK<S, b::Lead> = ConstDefault::DEFAULT;
+        let mut set: KK<S, b::Set> = ConstDefault::DEFAULT;
+
         loop {
             match self.lexer.token {
                 T::TNumericLiteral => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
                     S::literal(out, TypeLiteral::Number);
                 }
                 T::TBigIntegerLiteral => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
                     S::literal(out, TypeLiteral::Bigint);
                 }
                 T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
                     S::literal(out, TypeLiteral::String);
                 }
                 T::TTrue | T::TFalse => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
                     S::literal(out, TypeLiteral::Boolean);
                 }
                 T::TNull => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
                     S::keyword(out, TypeKeyword::Null);
                 }
                 T::TVoid => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
                     S::keyword(out, TypeKeyword::Void);
                 }
                 T::TConst => {
                     let r = self.lexer.range();
+                    if S::BUILDS {
+                        S::b_reference(&self.lexer, out);
+                    }
                     self.lexer.next()?;
 
                     // ["const: number]"
@@ -681,12 +707,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 T::TThis => {
+                    if S::BUILDS {
+                        S::b_token(&mut self.lexer, out)?;
+                    }
                     self.lexer.next()?;
 
                     // "function check(): this is boolean"
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
-                        self.skip_type_script_type(Level::Lowest)?;
+                        let mut type_node = <S::Sub as TypeSink>::NONE;
+                        self.skip_type_script_type_with_opts::<S::Sub>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                            &mut type_node,
+                        )?;
+                        if S::BUILDS {
+                            S::b_predicate(&mut self.lexer, out, ConstDefault::DEFAULT, type_node)?;
+                        }
                         return Ok(());
                     }
 
@@ -695,7 +732,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TMinus => {
                     // "-123"
                     // "-123n"
+                    if S::BUILDS {
+                        start = S::b_start(&self.lexer);
+                    }
                     self.lexer.next()?;
+                    if S::BUILDS {
+                        S::b_negative(&mut self.lexer, out, &start)?;
+                    }
 
                     if self.lexer.token == T::TBigIntegerLiteral {
                         self.lexer.next()?;
@@ -707,8 +750,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TAmpersand | T::TBar => {
                     // Support things like "type Foo = | A | B" and "type Foo = & A & B"
+                    if S::BUILDS {
+                        S::b_leading(&self.lexer, &mut lead);
+                    }
                     self.lexer.next()?;
                     continue;
+                }
+                T::TImport if S::BUILDS => {
+                    let node = self.build_type_script_import_type()?;
+                    S::b_node(out, node);
+                }
+                T::TNew | T::TLessThan if S::BUILDS => {
+                    let node = self.build_type_script_fn_type()?;
+                    S::b_node(out, node);
+                }
+                T::TOpenParen if S::BUILDS => {
+                    let node = self.build_type_script_paren_or_fn_type()?;
+                    S::b_node(out, node);
+                }
+                T::TOpenBracket if S::BUILDS => {
+                    let node = self.build_type_script_tuple_type()?;
+                    S::b_node(out, node);
+                }
+                T::TOpenBrace if S::BUILDS => {
+                    let node = self.build_type_script_object_type()?;
+                    S::b_node(out, node);
                 }
                 T::TImport => {
                     // "import('fs')"
@@ -773,7 +839,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let kind =
                         kind_for_identifier(self.lexer.identifier).unwrap_or(TsIdentKind::Normal);
 
+                    // "abstract new () => T"
+                    if S::BUILDS
+                        && kind == TsIdentKind::Abstract
+                        && self.build_next_token_is(T::TNew)
+                    {
+                        let node = self.build_type_script_fn_type()?;
+                        S::b_node(out, node);
+                        break;
+                    }
+
                     let mut check_type_parameters = true;
+                    let mut operand = <S::Sub as TypeSink>::NONE;
+                    if S::BUILDS {
+                        start = S::b_start(&self.lexer);
+                    }
 
                     match kind {
                         TsIdentKind::PrefixKeyof => {
@@ -794,10 +874,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
-                                self.skip_type_script_type(Level::Prefix)?;
+                                self.skip_type_script_type_with_opts::<S::Sub>(
+                                    Level::Prefix,
+                                    SkipTypeOptionsBitset::empty(),
+                                    &mut operand,
+                                )?;
                             }
 
                             S::keyof_type(out);
+                            if S::BUILDS {
+                                S::b_operator(
+                                    &self.lexer,
+                                    out,
+                                    &start,
+                                    ts::TypeOperatorKind::KeyOf,
+                                    operand,
+                                );
+                            }
 
                             break;
                         }
@@ -810,15 +903,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
-                                self.skip_type_script_type(Level::Prefix)?;
+                                self.skip_type_script_type_with_opts::<S::Sub>(
+                                    Level::Prefix,
+                                    SkipTypeOptionsBitset::empty(),
+                                    &mut operand,
+                                )?;
                             }
 
                             S::readonly_type(out);
+                            if S::BUILDS {
+                                S::b_operator(
+                                    &self.lexer,
+                                    out,
+                                    &start,
+                                    ts::TypeOperatorKind::Readonly,
+                                    operand,
+                                );
+                            }
 
                             break;
                         }
                         TsIdentKind::Infer => {
                             self.lexer.next()?;
+                            let mut name: KK<S, Option<ts::Name>> = ConstDefault::DEFAULT;
 
                             // "type Foo = Bar extends [infer T] ? T : null"
                             // "type Foo = Bar extends [infer T extends string] ? T : null"
@@ -831,27 +938,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
+                                if S::BUILDS {
+                                    name = S::b_ident(&self.lexer);
+                                }
                                 self.lexer.expect(T::TIdentifier)?;
                                 if self.lexer.token == T::TExtends {
-                                    let _ = self
-                                        .try_skip_type_script_constraint_of_infer_type_with_backtracking(
+                                    let (_, constraint) = self
+                                        .try_skip_type_script_constraint_of_infer_type_with_backtracking::<S::Sub>(
                                             opts,
                                         );
+                                    operand = constraint;
                                 }
+                            }
+                            if S::BUILDS {
+                                S::b_infer(&self.lexer, out, &start, name, operand);
                             }
 
                             break;
                         }
                         TsIdentKind::Unique => {
+                            if S::BUILDS {
+                                S::b_reference(&self.lexer, out);
+                            }
                             self.lexer.next()?;
 
                             // "let foo: unique symbol"
                             if self.lexer.is_contextual_keyword(b"symbol") {
+                                if S::BUILDS {
+                                    <S::Sub as TypeSink>::b_token(&mut self.lexer, &mut operand)?;
+                                    S::b_operator(
+                                        &self.lexer,
+                                        out,
+                                        &start,
+                                        ts::TypeOperatorKind::Unique,
+                                        operand,
+                                    );
+                                }
                                 self.lexer.next()?;
                                 break;
                             }
                         }
                         TsIdentKind::Abstract => {
+                            if S::BUILDS {
+                                S::b_reference(&self.lexer, out);
+                            }
                             self.lexer.next()?;
 
                             // "let foo: abstract new () => {}" added in TypeScript 4.2
@@ -860,6 +990,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                         TsIdentKind::Asserts => {
+                            let mut asserts: KK<S, Option<ts::Token>> = ConstDefault::DEFAULT;
+                            if S::BUILDS {
+                                S::b_reference(&self.lexer, out);
+                                asserts = S::b_tok(&self.lexer, ts::TokenKind::Asserts);
+                            }
                             self.lexer.next()?;
 
                             // "function assert(x: boolean): asserts x"
@@ -869,7 +1004,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && (self.lexer.token == T::TIdentifier
                                     || self.lexer.token == T::TThis)
                             {
+                                if S::BUILDS {
+                                    if self.lexer.token == T::TThis {
+                                        S::b_token(&mut self.lexer, out)?;
+                                    } else {
+                                        S::b_reference(&self.lexer, out);
+                                    }
+                                    let subject_only = <S::Sub as TypeSink>::NONE;
+                                    S::b_predicate(&mut self.lexer, out, asserts, subject_only)?;
+                                }
                                 self.lexer.next()?;
+
+                                // "asserts x is boolean", where "is" may stand on the next line
+                                if S::BUILDS && self.lexer.is_contextual_keyword(b"is") {
+                                    self.lexer.next()?;
+                                    self.skip_type_script_type_with_opts::<S::Sub>(
+                                        Level::Lowest,
+                                        SkipTypeOptionsBitset::empty(),
+                                        &mut operand,
+                                    )?;
+                                    S::b_predicate(
+                                        &mut self.lexer,
+                                        out,
+                                        ConstDefault::DEFAULT,
+                                        operand,
+                                    )?;
+                                    return Ok(());
+                                }
 
                                 // "asserts x \n is boolean"
                                 if self.lexer.has_newline_before
@@ -881,51 +1042,81 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                         TsIdentKind::PrimitiveAny => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Any);
                         }
                         TsIdentKind::PrimitiveNever => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Never);
                         }
                         TsIdentKind::PrimitiveUnknown => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Unknown);
                         }
                         TsIdentKind::PrimitiveUndefined => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Undefined);
                         }
                         TsIdentKind::PrimitiveObject => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Object);
                         }
                         TsIdentKind::PrimitiveNumber => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Number);
                         }
                         TsIdentKind::PrimitiveString => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::String);
                         }
                         TsIdentKind::PrimitiveBoolean => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Boolean);
                         }
                         TsIdentKind::PrimitiveBigint => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Bigint);
                         }
                         TsIdentKind::PrimitiveSymbol => {
+                            if S::BUILDS {
+                                S::b_token(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                             check_type_parameters = false;
                             S::keyword(out, TypeKeyword::Symbol);
@@ -935,6 +1126,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.find_symbol(bun_ast::Loc::EMPTY, name)
                                     .map(|found| found.r#ref)
                             })?;
+                            if S::BUILDS {
+                                S::b_reference(&self.lexer, out);
+                            }
 
                             self.lexer.next()?;
                         }
@@ -943,16 +1137,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "function assert(x: any): x is boolean"
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
                         self.lexer.next()?;
-                        self.skip_type_script_type(Level::Lowest)?;
+                        self.skip_type_script_type_with_opts::<S::Sub>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                            &mut operand,
+                        )?;
+                        if S::BUILDS {
+                            S::b_predicate(&mut self.lexer, out, ConstDefault::DEFAULT, operand)?;
+                        }
                         return Ok(());
                     }
 
                     // "let foo: any \n <number>foo" must not become a single type
                     if check_type_parameters && !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        let (_, arguments) =
+                            self.skip_type_script_type_arguments_in::<S::Sub, false, false>()?;
+                        if S::BUILDS {
+                            S::b_type_arguments(&mut self.lexer, out, arguments)?;
+                        }
                     }
                 }
                 T::TTypeof => {
+                    // "typeof import('fs')"
+                    if S::BUILDS && self.build_next_token_is(T::TImport) {
+                        let node = self.build_type_script_import_type()?;
+                        S::b_node(out, node);
+                        break;
+                    }
+                    if S::BUILDS {
+                        start = S::b_start(&self.lexer);
+                    }
                     self.lexer.next()?;
 
                     // "[typeof: number]"
@@ -973,6 +1187,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !self.lexer.is_identifier_or_keyword() {
                             self.lexer.expected(T::TIdentifier)?;
                         }
+                        if S::BUILDS {
+                            S::b_reference(&self.lexer, out);
+                        }
                         self.lexer.next()?;
 
                         // "typeof x.#y"
@@ -985,11 +1202,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 self.lexer.expected(T::TIdentifier)?;
                             }
+                            if S::BUILDS {
+                                S::b_member(&mut self.lexer, out)?;
+                            }
                             self.lexer.next()?;
                         }
 
                         if !self.lexer.has_newline_before {
-                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                            let (_, arguments) =
+                                self.skip_type_script_type_arguments_in::<S::Sub, false, false>()?;
+                            if S::BUILDS {
+                                S::b_type_arguments(&mut self.lexer, out, arguments)?;
+                            }
+                        }
+                        if S::BUILDS {
+                            S::b_query(&self.lexer, out, &start);
                         }
                     }
                 }
@@ -1029,15 +1256,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TTemplateHead => {
                     // "`${'a' | 'b'}-${'c' | 'd'}`"
+                    let mut head: KK<S, Option<ts::TemplatePiece>> = ConstDefault::DEFAULT;
+                    let mut spans: KK<S, b::List<ts::TemplateLiteralTypeSpan>> =
+                        ConstDefault::DEFAULT;
+                    if S::BUILDS {
+                        head = S::b_template_piece(&mut self.lexer)?;
+                    }
                     loop {
                         self.lexer.next()?;
-                        self.skip_type_script_type(Level::Lowest)?;
+                        let mut type_node = <S::Sub as TypeSink>::NONE;
+                        self.skip_type_script_type_with_opts::<S::Sub>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                            &mut type_node,
+                        )?;
                         self.lexer.rescan_close_brace_as_template_token()?;
+                        if S::BUILDS {
+                            let literal = S::b_template_piece(&mut self.lexer)?;
+                            S::b_template_span(&mut spans, type_node, literal);
+                        }
 
                         if self.lexer.token == T::TTemplateTail {
                             self.lexer.next()?;
                             break;
                         }
+                    }
+                    if S::BUILDS {
+                        S::b_template(&self.lexer, out, head, spans);
                     }
                     S::template_literal_type(out);
                 }
@@ -1060,6 +1305,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.unexpected()?;
+                    if S::STRICT {
+                        return Err(Error::SyntaxError);
+                    }
                 }
             }
             break;
@@ -1069,6 +1317,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match self.lexer.token {
                 T::TBar => {
                     if level.gte(Level::BitwiseOr) {
+                        if S::BUILDS {
+                            S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                        }
                         return Ok(());
                     }
 
@@ -1081,13 +1332,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             &mut (),
                         )?,
                         Operand::Open(left) => {
+                            if S::BUILDS {
+                                S::b_operand(&self.lexer, out, &mut set, &mut lead, true);
+                            }
                             self.skip_type_script_type_with_opts::<S>(Level::BitwiseOr, opts, out)?;
+                            if S::BUILDS {
+                                S::b_operand_end(out, &mut set);
+                            }
                             S::union_right(out, left);
                         }
                     }
                 }
                 T::TAmpersand => {
                     if level.gte(Level::BitwiseAnd) {
+                        if S::BUILDS {
+                            S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                        }
                         return Ok(());
                     }
 
@@ -1100,11 +1360,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             &mut (),
                         )?,
                         Operand::Open(left) => {
+                            if S::BUILDS {
+                                S::b_operand(&self.lexer, out, &mut set, &mut lead, false);
+                            }
                             self.skip_type_script_type_with_opts::<S>(
                                 Level::BitwiseAnd,
                                 opts,
                                 out,
                             )?;
+                            if S::BUILDS {
+                                S::b_operand_end(out, &mut set);
+                            }
                             S::intersection_right(out, left);
                         }
                     }
@@ -1116,9 +1382,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // compiler. It turns out parsing this is important for correctness for
                     // "as" casts because the "!" token must still be consumed.
                     if self.lexer.has_newline_before {
+                        if S::BUILDS {
+                            S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                        }
                         return Ok(());
                     }
 
+                    if S::BUILDS {
+                        S::b_non_null(&self.lexer, out);
+                    }
                     self.lexer.next()?;
                 }
                 T::TDot => {
@@ -1132,24 +1404,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.find_symbol(bun_ast::Loc::EMPTY, name)
                             .map(|found| found.r#ref)
                     })?;
+                    if S::BUILDS {
+                        S::b_member(&mut self.lexer, out)?;
+                    }
 
                     self.lexer.next()?;
 
                     // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
                     if !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        let (_, arguments) =
+                            self.skip_type_script_type_arguments_in::<S::Sub, false, false>()?;
+                        if S::BUILDS {
+                            S::b_type_arguments(&mut self.lexer, out, arguments)?;
+                        }
                     }
                 }
                 T::TOpenBracket => {
                     // "{ ['x']: string \n ['y']: string }" must not become a single type
                     if self.lexer.has_newline_before {
+                        if S::BUILDS {
+                            S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                        }
                         return Ok(());
                     }
                     self.lexer.next()?;
                     let mut skipped = false;
+                    let mut index = <S::Sub as TypeSink>::NONE;
                     if self.lexer.token != T::TCloseBracket {
                         skipped = true;
-                        self.skip_type_script_type(Level::Lowest)?;
+                        self.skip_type_script_type_with_opts::<S::Sub>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                            &mut index,
+                        )?;
+                    }
+                    if S::BUILDS {
+                        S::b_index(&self.lexer, out, index);
                     }
                     self.lexer.expect(T::TCloseBracket)?;
 
@@ -1160,10 +1450,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.has_newline_before
                         || opts.contains(SkipTypeOptions::DisallowConditionalTypes)
                     {
+                        if S::BUILDS {
+                            S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                        }
                         return Ok(());
                     }
 
                     self.lexer.next()?;
+                    let mut check_type = <S::Sub as TypeSink>::NONE;
+                    let mut extends_type = <S::Sub as TypeSink>::NONE;
+                    let mut true_type = <S::Sub as TypeSink>::NONE;
+                    if S::BUILDS {
+                        S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                        check_type = S::b_take(out);
+                    }
 
                     // The type following "extends" is not permitted to be another conditional type
                     {
@@ -1173,6 +1473,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
                             &mut extends_out,
                         )?;
+                        if S::BUILDS {
+                            extends_type = S::node(&extends_out);
+                        }
                     }
 
                     self.lexer.expect(T::TQuestion)?;
@@ -1183,6 +1486,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         SkipTypeOptionsBitset::empty(),
                         &mut when_true,
                     )?;
+                    if S::BUILDS {
+                        true_type = S::node(&when_true);
+                    }
                     self.lexer.expect(T::TColon)?;
                     match S::conditional_true(out, when_true, |r| self.load_name_from_ref(r)) {
                         Operand::Decided => self.skip_type_script_type(Level::Lowest)?,
@@ -1193,10 +1499,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 out,
                             )?;
                             S::conditional_false(out, left);
+                            if S::BUILDS {
+                                S::b_conditional(
+                                    &self.lexer,
+                                    out,
+                                    check_type,
+                                    extends_type,
+                                    true_type,
+                                );
+                            }
                         }
                     }
                 }
                 _ => {
+                    if S::BUILDS {
+                        S::b_finish(&self.lexer, out, &mut set, &mut lead);
+                    }
                     return Ok(());
                 }
             }
@@ -2388,29 +2706,69 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    #[inline]
     pub(crate) fn skip_type_script_type_arguments<
         const IS_INSIDE_JSX_ELEMENT: bool,
         const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
     >(
         &mut self,
     ) -> Result<bool, Error> {
+        let (has_type_arguments, ()) = self.skip_type_script_type_arguments_in::<
+            Discard,
+            IS_INSIDE_JSX_ELEMENT,
+            IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION,
+        >()?;
+        Ok(has_type_arguments)
+    }
+
+    /// Type arguments, if "<" starts them here, and the list that `N` keeps of them.
+    pub(crate) fn skip_type_script_type_arguments_in<
+        N: TypeSink,
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+    >(
+        &mut self,
+    ) -> Result<(bool, KK<N, Option<b::Closed>>), Error> {
         self.mark_type_script_only();
         // "x as A <= b": only "<" opens the list, alone or as the first half of "<<"
         match self.lexer.token {
             T::TLessThan | T::TLessThanLessThan => {}
             _ => {
-                return Ok(false);
+                return Ok((false, ConstDefault::DEFAULT));
             }
         }
 
+        let mut list: KK<N, b::List<ts::Type>> = ConstDefault::DEFAULT;
+        let mut arguments: KK<N, Option<b::Closed>> = ConstDefault::DEFAULT;
+        if N::BUILDS {
+            list = N::b_list(&self.lexer);
+        }
         self.lexer.expect_less_than::<false>()?;
 
         loop {
-            self.skip_type_script_type(Level::Lowest)?;
+            let mut argument = N::NONE;
+            self.skip_type_script_type_with_opts::<N>(
+                Level::Lowest,
+                SkipTypeOptionsBitset::empty(),
+                &mut argument,
+            )?;
+            if N::BUILDS {
+                N::b_push_type(&mut list, N::node(&argument));
+            }
             if self.lexer.token != T::TComma {
                 break;
             }
+            if N::BUILDS {
+                N::b_separator(&self.lexer, &mut list);
+            }
             self.lexer.next()?;
+            // "A<B, >"
+            if N::BUILDS && self.build_is_greater_than() {
+                break;
+            }
+        }
+        if N::BUILDS {
+            arguments = N::b_close(&self.lexer, list);
         }
 
         // This type argument list must end with a ">"
@@ -2432,7 +2790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.expect(T::TGreaterThan)?;
             }
         }
-        Ok(true)
+        Ok((true, arguments))
     }
 
     // ───────────────────────── Backtracking ─────────────────────────
@@ -2507,6 +2865,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
+    /// As `lexer_backtracker_bool`, and what `func` returned where nothing went back.
+    #[inline]
+    fn lexer_backtracker_kept<F, R>(&mut self, func: F) -> Option<R>
+    where
+        F: FnOnce(&mut Self) -> Result<R, Error>,
+    {
+        self.mark_type_script_only();
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        self.lexer.is_log_disabled = true;
+        let kept = func(self).ok();
+        if kept.is_none() {
+            self.lexer.restore(&old_lexer);
+        }
+        self.lexer.is_log_disabled = old_log_disabled;
+        kept
+    }
+
     pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> Result<SkipTypeParameterResult, Error> {
@@ -2519,15 +2895,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking(
+    pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking<N: TypeSink>(
         &mut self,
         flags: SkipTypeOptionsBitset,
-    ) -> Result<bool, Error> {
+    ) -> Result<N::Out, Error> {
         self.lexer.expect(T::TExtends)?;
-        self.skip_type_script_type_with_opts::<Discard>(
+        let mut constraint = N::NONE;
+        self.skip_type_script_type_with_opts::<N>(
             Level::Prefix,
             SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
-            &mut (),
+            &mut constraint,
         )?;
 
         if !flags.contains(SkipTypeOptions::DisallowConditionalTypes)
@@ -2536,7 +2913,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::Backtrack);
         }
 
-        Ok(true)
+        Ok(constraint)
     }
 
     pub(crate) fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
@@ -2664,10 +3041,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_args_with_backtracking)
     }
 
-    pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
+    pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking<N: TypeSink>(
         &mut self,
         flags: SkipTypeOptionsBitset,
-    ) -> bool {
+    ) -> (bool, N::Out) {
         // The outcome of this attempt depends only on the position of the `extends`
         // token and on whether conditional types are allowed, so an attempt that
         // already backtracked here can be skipped. Each backtracked constraint gets
@@ -2686,12 +3063,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .binary_search(&memo_key)
             .is_ok()
         {
-            return false;
+            return (false, N::NONE);
         }
 
-        let skipped = self.lexer_backtracker_bool(|p| {
-            p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
+        let constraint = self.lexer_backtracker_kept(|p| {
+            p.skip_type_script_constraint_of_infer_type_with_backtracking::<N>(flags)
         });
+        let skipped = constraint.is_some();
         if !skipped {
             // Re-search for the insertion point: attempts nested inside the one that
             // just failed may have added entries of their own.
@@ -2700,6 +3078,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .insert(insert_at, memo_key);
             }
         }
-        skipped
+        (skipped, constraint.unwrap_or(N::NONE))
     }
 }

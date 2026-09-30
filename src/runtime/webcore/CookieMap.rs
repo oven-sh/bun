@@ -26,7 +26,7 @@ unsafe extern "C" {
 }
 
 impl CookieMap {
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         global_this: &JSGlobalObject,
         kind: ResponseKind,
@@ -56,7 +56,7 @@ impl CookieMap {
 /// without a fresh `ref()` — is deliberately omitted until a caller needs it;
 /// every construction site in the tree goes through `new_ref`.)
 #[repr(transparent)]
-pub struct CookieMapRef(NonNull<CookieMap>);
+pub(crate) struct CookieMapRef(NonNull<CookieMap>);
 
 impl CookieMapRef {
     /// Bump the refcount of a borrowed `CookieMap` and wrap it (the caller

@@ -48,6 +48,12 @@ const copyProps = (src, dest) => {
 };
 
 const SymbolIterator = Symbol.iterator;
+/**
+ * @template T
+ * @param {Function} unsafe
+ * @param {T} safe
+ * @returns {T}
+ */
 const makeSafe = (unsafe, safe) => {
   const unsafePrototype = unsafe.prototype;
   const safePrototype = safe.prototype;

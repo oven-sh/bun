@@ -322,6 +322,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// True while the owner of this socket's group closes every socket of it (`SocketGroup::close_all`).
+    pub fn is_group_closing_all(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).group().closing_all != 0,
+            _ => false,
+        }
+    }
+
     /// Raw `getaddrinfo(3)` return code for a pending connect whose name
     /// lookup failed; 0 otherwise (a connect failure past name resolution, or
     /// any non-connecting handle). A different namespace from

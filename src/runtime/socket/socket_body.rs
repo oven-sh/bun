@@ -81,18 +81,34 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+fn write_error_to_js(errno: i32, global: &JSGlobalObject) -> JSValue {
+    <sys::Error as jsc::SysErrorJsc>::to_js(
+        &sys::Error::from_code_int(errno, sys::Tag::write),
+        global,
+    )
+}
+
 /// What the `close` handler gets: a read error for a `close_code` above 2, else the errno of a failed write.
 fn close_error_to_js(close_code: c_int, write_errno: u16, global: &JSGlobalObject) -> JSValue {
     if close_code > 2 {
         <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(close_code), global)
     } else if write_errno != 0 {
-        <sys::Error as jsc::SysErrorJsc>::to_js(
-            &sys::Error::from_code_int(i32::from(write_errno), sys::Tag::write),
-            global,
-        )
+        write_error_to_js(i32::from(write_errno), global)
     } else {
         JSValue::UNDEFINED
     }
+}
+
+/// The one rule for a write error: the `error` handler gets it. False when none is registered
+/// (`call_error_handler` raises an uncaught exception then): the caller gives the error to
+/// the `close` handler. The caller holds a `Handlers::enter` scope.
+fn report_write_error(handlers: &Handlers, this_value: JSValue, errno: i32) -> JsResult<bool> {
+    if handlers.on_error().is_empty() {
+        return Ok(false);
+    }
+    let err_value = write_error_to_js(errno, &handlers.global_object);
+    handlers.call_error_handler(this_value, &[this_value, err_value])?;
+    Ok(true)
 }
 
 /// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
@@ -946,17 +962,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             socket: this,
             scope: Some(handlers.enter()),
         };
-        if handlers.on_error().is_empty() {
+        let this_value = this.get_this_value(&handlers.global_object);
+        if !report_write_error(handlers, this_value, errno)? {
             this.write_errno
                 .set(u16::try_from(errno).unwrap_or(u16::MAX));
-        } else {
-            let global = handlers.global_object;
-            let this_value = this.get_this_value(&global);
-            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(errno, sys::Tag::write),
-                &global,
-            );
-            handlers.call_error_handler(this_value, &[this_value, err_value])?;
         }
         // Closed without detaching: `on_close` runs, so JS observes `close`.
         if !this.socket.get().is_detached() {
@@ -2218,6 +2227,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
+    /// True when this close loses data that `end()` accepted. A close that the application
+    /// starts gets here without a tail (`close_and_detach`, `detach_for_reconnect`), with
+    /// another code (`close()`), or with its group marked (`SocketGroup::close_all`).
+    fn loses_end_tail(&self, socket: SocketHandler<SSL>, code: c_int) -> bool {
+        let flags = self.flags.get();
+        code == uws::CloseCode::Normal as c_int
+            // A named pipe and an upgraded duplex close with code 0 for every origin.
+            && self.is_usockets_backed()
+            // node:net fails the pending write of a `$write` queue itself.
+            && flags.contains(Flags::END_AFTER_FLUSH)
+            // The `handshake` handler reports a failed handshake.
+            && !flags.contains(Flags::REJECTED)
+            && self.buffered_data_for_node_net.get().len() > 0
+            && !socket.is_group_closing_all()
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub(crate) fn on_close(
         this: bun_ptr::ThisPtr<Self>,
@@ -2227,7 +2252,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
-        let write_errno = this.write_errno.replace(0);
+        // An errno that a send returned wins over the one for a tail that no send reported.
+        let write_errno = match this.write_errno.replace(0) {
+            0 if this.loses_end_tail(socket, err) => sys::SystemErrno::EPIPE as u16,
+            errno => errno,
+        };
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2281,9 +2310,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
-        let callback = handlers.on_close();
-
-        if callback.is_empty() {
+        // The `error` handler gets a write error without a `close` handler too.
+        if handlers.on_close().is_empty() && (write_errno == 0 || handlers.on_error().is_empty()) {
             return Ok(());
         }
 
@@ -2313,8 +2341,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         // values >2 are real read errors and 0/1/2 are self-initiated closes
         // that must not surface as a JS read error (matching Node's
         // onStreamRead, which only sees errors that came from uv_read_cb).
-        let js_error = close_error_to_js(err, write_errno, &global);
+        // A write error goes to the `error` handler when there is one: `close` then gets none.
+        let reported = err <= 2
+            && write_errno != 0
+            && report_write_error(&handlers, this_value, i32::from(write_errno))?;
+        let js_error = close_error_to_js(err, if reported { 0 } else { write_errno }, &global);
 
+        // Read after the `error` handler ran: it can `reload()` the handlers.
+        let callback = handlers.on_close();
+        if callback.is_empty() {
+            return Ok(());
+        }
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;
         }

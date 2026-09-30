@@ -6,6 +6,10 @@ use bun_collections::array_hash_map::StringContext;
 use crate::base::Ref;
 use crate::e::String as EString;
 
+#[path = "ts_nodes.rs"]
+mod type_nodes;
+pub use type_nodes::*;
+
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
 /// block are merged into a single namespace while the non-exported code is

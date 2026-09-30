@@ -829,9 +829,10 @@ impl PackageManager {
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
         // never alias overlapping bytes. The bun.lock and bun.lockb loaders only
-        // read `manager`. A migration also writes to it (the package.json cache,
-        // the manifest cache). Both raw pointers below are derived from `self`,
-        // so the caller's borrow stays on the Stacked-Borrows stack.
+        // read `manager`. A migration also writes to it, for example to the
+        // package.json cache and the manifest cache. Both raw pointers below are
+        // derived from `self`, so the caller's borrow stays on the
+        // Stacked-Borrows stack.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;

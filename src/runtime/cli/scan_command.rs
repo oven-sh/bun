@@ -33,8 +33,9 @@ impl ScanCommand {
 
         // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
         // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
-        // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
-        // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
+        // Project disjoint raw pointers from the singleton first. The bun.lock and bun.lockb
+        // loaders only read `manager`. A migration also writes to it, for example to the
+        // package.json cache and the manifest cache.
         {
             let log_level = manager.options.log_level;
             let pm_ptr: *mut PackageManager = manager;

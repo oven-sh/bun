@@ -1281,6 +1281,175 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
   });
 });
 
+// An `npm:` alias that bun knows sends a plain dependency with the name of the alias to the alias
+// target. The loader of bun.lock registers no alias: bun can discard the lockfile after the
+// loader read the row, and package.json can drop the entry that bun.lock still has.
+describe.concurrent("npm: alias in a row of bun.lock", () => {
+  const overrides = aliasRows("override");
+  // An override with rules for its own dependencies is an object in bun.lock. "." has its own value.
+  const groupedOverrides = aliasRows("grouped-override");
+  const catalog = aliasRows("catalog");
+  const namedCatalog = aliasRows("named-catalog");
+  const rows = {
+    overrides: {
+      ...overrides,
+      ...Object.fromEntries(
+        Object.entries(groupedOverrides).map(([name, alias]) => [name, { ".": alias, child: "1.0.0" }]),
+      ),
+    },
+    catalog,
+    catalogs: { group: namedCatalog },
+  };
+  const aliases = { ...overrides, ...groupedOverrides, ...catalog, ...namedCatalog };
+
+  // Resolves `dependencies` next to `lockfile`, with a manifest cache of its own, so the requests
+  // show what bun resolved.
+  async function resolve(
+    registry: { url: string; requests: string[] },
+    dependencies: Record<string, string>,
+    lockfile: object,
+  ) {
+    using dir = tempDir("bun-lock-npm-alias-", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url } }),
+      "bun.lock": JSON.stringify({ lockfileVersion: 2, configVersion: 1, ...lockfile }),
+    });
+    const cwd = String(dir);
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { err, packages: await lockedPackages(cwd), requests: registry.requests.toSorted(), exitCode };
+  }
+
+  const root = (dependencies: Record<string, string>) => ({ "": { name: "app", dependencies } });
+  const everyNameIsItsOwnPackage = {
+    packages: ownPackages(aliases),
+    requests: manifestsOf(...Object.keys(aliases)),
+    exitCode: 0,
+  };
+
+  it("bun.lock fails to load after the rows", async () => {
+    using registry = await aliasRegistry(aliases);
+    const { err, ...result } = await resolve(registry, plainDependencies(aliases), {
+      workspaces: root(plainDependencies(aliases)),
+      ...rows,
+      // lockfileVersion 2 does not take a row without an integrity hash.
+      packages: { "override-of-short": ["override-of-short@1.0.0", "", {}] },
+    });
+    expect(err).toContain("error: Missing integrity");
+    expect(err).toContain("warn: Ignoring lockfile");
+    expect(result).toEqual(everyNameIsItsOwnPackage);
+  });
+
+  it.each([
+    ["has a root with no dependencies", { workspaces: { "": { name: "app" } }, packages: {} }],
+    ["has no packages object", { workspaces: root(plainDependencies(aliases)) }],
+  ])("bun install discards a bun.lock that %s", async (_, lockfile) => {
+    using registry = await aliasRegistry(aliases);
+    const { err, ...result } = await resolve(registry, plainDependencies(aliases), { ...lockfile, ...rows });
+    expect(err).not.toContain("error:");
+    expect(result).toEqual(everyNameIsItsOwnPackage);
+  });
+
+  it("package.json no longer has the rows", async () => {
+    using registry = await aliasRegistry(aliases, [{ name: "unrelated", version: "1.0.0" }]);
+    const { err, ...result } = await resolve(
+      registry,
+      { unrelated: "1.0.0", ...plainDependencies(aliases) },
+      {
+        workspaces: root({ unrelated: "1.0.0" }),
+        ...rows,
+        packages: lockfileRows(registry, { unrelated: "unrelated@1.0.0" }),
+      },
+    );
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("Ignoring lockfile");
+    expect(result).toEqual({
+      ...everyNameIsItsOwnPackage,
+      packages: { ...ownPackages(aliases), unrelated: "unrelated@1.0.0" },
+    });
+  });
+
+  // The install after the edit takes the registry package, as it does when an override that is
+  // not an alias goes away.
+  it("package.json drops an override that is installed", async () => {
+    using registry = await aliasRegistry(overrides);
+    using dir = tempDir("bun-lock-npm-alias-installed-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: plainDependencies(overrides), overrides }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url } }),
+    });
+    const cwd = String(dir);
+    const installEnv = { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
+
+    await runBunInstall(installEnv, cwd);
+    expect(await installedNames(cwd, Object.keys(overrides))).toEqual(targetNames(overrides));
+
+    await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: plainDependencies(overrides) }));
+    await runBunInstall(installEnv, cwd);
+    expect({
+      installed: await installedNames(cwd, Object.keys(overrides)),
+      packages: await lockedPackages(cwd),
+    }).toEqual({ installed: ownNames(overrides), packages: ownPackages(overrides) });
+  });
+
+  // These two pass with and without the registration in the loader.
+  describe("a new dependency", () => {
+    const dependency = aliasRows("dependency");
+    const newDependency = { name: "new-dependency", version: "1.0.0", dependencies: plainDependencies(dependency) };
+
+    it("does not follow the alias that only a package of the registry declares", async () => {
+      using registry = await aliasRegistry(dependency, [
+        newDependency,
+        { name: "has-aliases", version: "1.0.0", dependencies: dependency },
+      ]);
+      const { err, ...result } = await resolve(
+        registry,
+        { "has-aliases": "1.0.0", "new-dependency": "1.0.0" },
+        {
+          workspaces: root({ "has-aliases": "1.0.0" }),
+          packages: {
+            "has-aliases": ["has-aliases@1.0.0", "", { dependencies: dependency }, registry.integrity("has-aliases")],
+            ...lockfileRows(registry, aliasedPackages(dependency)),
+          },
+        },
+      );
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Ignoring lockfile");
+      expect(result).toEqual({
+        packages: {
+          ...aliasedPackages(dependency),
+          "has-aliases": "has-aliases@1.0.0",
+          "new-dependency": "new-dependency@1.0.0",
+          ...nestedIn("new-dependency", ownPackages(dependency)),
+        },
+        requests: manifestsOf("new-dependency", ...Object.keys(dependency)),
+        exitCode: 0,
+      });
+    });
+
+    it("follows the alias that package.json declares", async () => {
+      using registry = await aliasRegistry(dependency, [newDependency]);
+      const { err, ...result } = await resolve(
+        registry,
+        { ...dependency, "new-dependency": "1.0.0" },
+        { workspaces: root(dependency), packages: lockfileRows(registry, aliasedPackages(dependency)) },
+      );
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Ignoring lockfile");
+      expect(result).toEqual({
+        packages: { ...aliasedPackages(dependency), "new-dependency": "new-dependency@1.0.0" },
+        requests: manifestsOf("new-dependency", "short", "some-other-package"),
+        exitCode: 0,
+      });
+    });
+  });
+});
+
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {
   await using proc = spawn({
     cmd: [bunExe(), ...args],
@@ -1838,174 +2007,5 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     ({ err } = await install(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
-  });
-});
-
-// An `npm:` alias that bun knows sends a plain dependency with the name of the alias to the alias
-// target. The loader of bun.lock registers no alias: bun can discard the lockfile after the
-// loader read the row, and package.json can drop the entry that bun.lock still has.
-describe("npm: alias in a row of bun.lock", () => {
-  const overrides = aliasRows("override");
-  // An override with rules for its own dependencies is an object in bun.lock. "." has its own value.
-  const groupedOverrides = aliasRows("grouped-override");
-  const catalog = aliasRows("catalog");
-  const namedCatalog = aliasRows("named-catalog");
-  const rows = {
-    overrides: {
-      ...overrides,
-      ...Object.fromEntries(
-        Object.entries(groupedOverrides).map(([name, alias]) => [name, { ".": alias, child: "1.0.0" }]),
-      ),
-    },
-    catalog,
-    catalogs: { group: namedCatalog },
-  };
-  const aliases = { ...overrides, ...groupedOverrides, ...catalog, ...namedCatalog };
-
-  // Resolves `dependencies` next to `lockfile`, with a manifest cache of its own, so the requests
-  // show what bun resolved.
-  async function resolve(
-    registry: { url: string; requests: string[] },
-    dependencies: Record<string, string>,
-    lockfile: object,
-  ) {
-    using dir = tempDir("bun-lock-npm-alias-", {
-      "package.json": JSON.stringify({ name: "app", dependencies }),
-      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url } }),
-      "bun.lock": JSON.stringify({ lockfileVersion: 2, configVersion: 1, ...lockfile }),
-    });
-    const cwd = String(dir);
-    await using proc = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd,
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { err, packages: await lockedPackages(cwd), requests: registry.requests.toSorted(), exitCode };
-  }
-
-  const root = (dependencies: Record<string, string>) => ({ "": { name: "app", dependencies } });
-  const everyNameIsItsOwnPackage = {
-    packages: ownPackages(aliases),
-    requests: manifestsOf(...Object.keys(aliases)),
-    exitCode: 0,
-  };
-
-  it("bun.lock fails to load after the rows", async () => {
-    using registry = await aliasRegistry(aliases);
-    const { err, ...result } = await resolve(registry, plainDependencies(aliases), {
-      workspaces: root(plainDependencies(aliases)),
-      ...rows,
-      // lockfileVersion 2 does not take a row without an integrity hash.
-      packages: { "override-of-short": ["override-of-short@1.0.0", "", {}] },
-    });
-    expect(err).toContain("error: Missing integrity");
-    expect(err).toContain("warn: Ignoring lockfile");
-    expect(result).toEqual(everyNameIsItsOwnPackage);
-  });
-
-  it.each([
-    ["has a root with no dependencies", { workspaces: { "": { name: "app" } }, packages: {} }],
-    ["has no packages object", { workspaces: root(plainDependencies(aliases)) }],
-  ])("bun install discards a bun.lock that %s", async (_, lockfile) => {
-    using registry = await aliasRegistry(aliases);
-    const { err, ...result } = await resolve(registry, plainDependencies(aliases), { ...lockfile, ...rows });
-    expect(err).not.toContain("error:");
-    expect(result).toEqual(everyNameIsItsOwnPackage);
-  });
-
-  it("package.json no longer has the rows", async () => {
-    using registry = await aliasRegistry(aliases, [{ name: "unrelated", version: "1.0.0" }]);
-    const { err, ...result } = await resolve(
-      registry,
-      { unrelated: "1.0.0", ...plainDependencies(aliases) },
-      {
-        workspaces: root({ unrelated: "1.0.0" }),
-        ...rows,
-        packages: lockfileRows(registry, { unrelated: "unrelated@1.0.0" }),
-      },
-    );
-    expect(err).not.toContain("error:");
-    expect(err).not.toContain("Ignoring lockfile");
-    expect(result).toEqual({
-      ...everyNameIsItsOwnPackage,
-      packages: { ...ownPackages(aliases), unrelated: "unrelated@1.0.0" },
-    });
-  });
-
-  // The install after the edit takes the registry package, as it does when an override that is
-  // not an alias goes away.
-  it("package.json drops an override that is installed", async () => {
-    using registry = await aliasRegistry(overrides);
-    using dir = tempDir("bun-lock-npm-alias-installed-", {
-      "package.json": JSON.stringify({ name: "app", dependencies: plainDependencies(overrides), overrides }),
-      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url } }),
-    });
-    const cwd = String(dir);
-    const installEnv = { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") };
-
-    await runBunInstall(installEnv, cwd);
-    expect(await installedNames(cwd, Object.keys(overrides))).toEqual(targetNames(overrides));
-
-    await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: plainDependencies(overrides) }));
-    await runBunInstall(installEnv, cwd);
-    expect({
-      installed: await installedNames(cwd, Object.keys(overrides)),
-      packages: await lockedPackages(cwd),
-    }).toEqual({ installed: ownNames(overrides), packages: ownPackages(overrides) });
-  });
-
-  // These two pass with and without the registration in the loader.
-  describe("a new dependency", () => {
-    const dependency = aliasRows("dependency");
-    const newDependency = { name: "new-dependency", version: "1.0.0", dependencies: plainDependencies(dependency) };
-
-    it("does not follow the alias that only a package of the registry declares", async () => {
-      using registry = await aliasRegistry(dependency, [
-        newDependency,
-        { name: "has-aliases", version: "1.0.0", dependencies: dependency },
-      ]);
-      const { err, ...result } = await resolve(
-        registry,
-        { "has-aliases": "1.0.0", "new-dependency": "1.0.0" },
-        {
-          workspaces: root({ "has-aliases": "1.0.0" }),
-          packages: {
-            "has-aliases": ["has-aliases@1.0.0", "", { dependencies: dependency }, registry.integrity("has-aliases")],
-            ...lockfileRows(registry, aliasedPackages(dependency)),
-          },
-        },
-      );
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("Ignoring lockfile");
-      expect(result).toEqual({
-        packages: {
-          ...aliasedPackages(dependency),
-          "has-aliases": "has-aliases@1.0.0",
-          "new-dependency": "new-dependency@1.0.0",
-          ...nestedIn("new-dependency", ownPackages(dependency)),
-        },
-        requests: manifestsOf("new-dependency", ...Object.keys(dependency)),
-        exitCode: 0,
-      });
-    });
-
-    it("follows the alias that package.json declares", async () => {
-      using registry = await aliasRegistry(dependency, [newDependency]);
-      const { err, ...result } = await resolve(
-        registry,
-        { ...dependency, "new-dependency": "1.0.0" },
-        { workspaces: root(dependency), packages: lockfileRows(registry, aliasedPackages(dependency)) },
-      );
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("Ignoring lockfile");
-      expect(result).toEqual({
-        packages: { ...aliasedPackages(dependency), "new-dependency": "new-dependency@1.0.0" },
-        requests: manifestsOf("new-dependency", "short", "some-other-package"),
-        exitCode: 0,
-      });
-    });
   });
 });

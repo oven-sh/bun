@@ -539,7 +539,7 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
 // An `npm:` alias that bun knows sends a plain dependency with the name of the alias to the alias
 // target. The loader of bun.lockb registers no alias. bun registers the dependency rows of a
 // bun.lockb when it keeps that lockfile.
-describe("npm: alias in a row of bun.lockb", () => {
+describe.concurrent("npm: alias in a row of bun.lockb", () => {
   const aliases = aliasRows("dependency");
   const newDependency = { name: "new-dependency", version: "1.0.0", dependencies: plainDependencies(aliases) };
 
@@ -556,17 +556,19 @@ describe("npm: alias in a row of bun.lockb", () => {
     return { err, exitCode };
   }
 
-  async function createProject(registry: { url: string }, packageJson: object, files: Record<string, string> = {}) {
-    const dir = tempDir("bun-lockb-npm-alias-", {
+  function createProject(registry: { url: string }, packageJson: object, files: Record<string, string> = {}) {
+    return tempDir("bun-lockb-npm-alias-", {
       ...files,
       "package.json": JSON.stringify({ name: "app", ...packageJson }),
       "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, saveTextLockfile: false } }),
     });
-    const { err, exitCode } = await resolve(String(dir), ".bun-cache-of-lockfile", "install");
+  }
+
+  async function saveLockb(cwd: string) {
+    const { err, exitCode } = await resolve(cwd, ".bun-cache-of-lockfile", "install");
     expect(err).not.toContain("error:");
-    expect(await exists(join(String(dir), "bun.lockb"))).toBeTrue();
+    expect(await exists(join(cwd, "bun.lockb"))).toBeTrue();
     expect(exitCode).toBe(0);
-    return dir;
   }
 
   // Resolves again and saves bun.lock, to read the rows.
@@ -578,8 +580,9 @@ describe("npm: alias in a row of bun.lockb", () => {
 
   it("bun.lockb fails to load after the rows", async () => {
     using registry = await aliasRegistry(aliases);
-    using dir = await createProject(registry, { dependencies: aliases });
+    using dir = createProject(registry, { dependencies: aliases });
     const cwd = String(dir);
+    await saveLockb(cwd);
 
     const lockb = Buffer.from(await file(join(cwd, "bun.lockb")).arrayBuffer());
     await write(join(cwd, "bun.lockb"), failAfterDependencyRows(lockb));
@@ -598,12 +601,13 @@ describe("npm: alias in a row of bun.lockb", () => {
   it("package.json no longer has the override and catalog rows", async () => {
     const rows = { ...aliasRows("override"), ...aliasRows("catalog"), ...aliasRows("named-catalog") };
     using registry = await aliasRegistry(rows, [{ name: "unrelated", version: "1.0.0" }]);
-    using dir = await createProject(registry, {
+    using dir = createProject(registry, {
       workspaces: { packages: [], catalog: aliasRows("catalog"), catalogs: { group: aliasRows("named-catalog") } },
       dependencies: { unrelated: "1.0.0" },
       overrides: aliasRows("override"),
     });
     const cwd = String(dir);
+    await saveLockb(cwd);
     await write(
       join(cwd, "package.json"),
       JSON.stringify({ name: "app", dependencies: { unrelated: "1.0.0", ...plainDependencies(rows) } }),
@@ -655,7 +659,8 @@ describe("npm: alias in a row of bun.lockb", () => {
         newDependency,
         { name: "parent", version: "1.0.0", dependencies: plainDependencies(aliases) },
       ]);
-      using dir = await createProject(registry, { dependencies: { parent: "1.0.0" }, overrides });
+      using dir = createProject(registry, { dependencies: { parent: "1.0.0" }, overrides });
+      await saveLockb(String(dir));
 
       const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
       expect(err).not.toContain("error:");
@@ -680,11 +685,12 @@ describe("npm: alias in a row of bun.lockb", () => {
         { name: "has-alias", version: "1.0.0", dependencies: alias },
         { name: "new-dependency", version: "1.0.0", dependencies: plainDependencies(alias) },
       ]);
-      using dir = await createProject(
+      using dir = createProject(
         registry,
         { workspaces: ["packages/*"], dependencies: { "has-alias": "1.0.0" } },
         { "packages/in-workspace/package.json": JSON.stringify({ name: "in-workspace", version: "1.0.0" }) },
       );
+      await saveLockb(String(dir));
 
       const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
       expect(err).not.toContain("error:");
@@ -708,7 +714,8 @@ describe("npm: alias in a row of bun.lockb", () => {
         newDependency,
         { name: "has-aliases", version: "1.0.0", dependencies: aliases },
       ]);
-      using dir = await createProject(registry, { dependencies: { "has-aliases": "1.0.0" } });
+      using dir = createProject(registry, { dependencies: { "has-aliases": "1.0.0" } });
+      await saveLockb(String(dir));
 
       const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
       expect(err).not.toContain("error:");
@@ -726,7 +733,8 @@ describe("npm: alias in a row of bun.lockb", () => {
 
     it("follows the alias that package.json declares", async () => {
       using registry = await aliasRegistry(aliases, [newDependency]);
-      using dir = await createProject(registry, { dependencies: aliases });
+      using dir = createProject(registry, { dependencies: aliases });
+      await saveLockb(String(dir));
 
       const { err, ...result } = await resolveAgain(String(dir), registry, "add", "new-dependency");
       expect(err).not.toContain("error:");

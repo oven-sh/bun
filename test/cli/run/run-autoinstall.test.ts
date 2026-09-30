@@ -135,7 +135,7 @@ test("--install=fallback to install missing packages", async () => {
 // target. At run time bun reads no overrides and no catalogs from package.json, and it reads the
 // root package.json before the package manager exists, which registers nothing. The aliases come
 // from the lockfile that bun keeps. bun loads one only when the project has a bun.lockb.
-describe("auto-install with npm: aliases in the lockfile", () => {
+describe.concurrent("auto-install with npm: aliases in the lockfile", () => {
   const catalog = aliasRows("catalog");
   const namedCatalog = aliasRows("named-catalog");
   const packageJson = {

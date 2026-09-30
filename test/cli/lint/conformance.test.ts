@@ -14,6 +14,7 @@ import type {
   Instance,
 } from "./conformance/runner";
 import * as runner from "./conformance/runner";
+import { emptyCheck, replayCheck, runInstance, runInstances } from "./conformance/runner";
 import { createSpawnCheck, probe } from "./conformance/runner/check_bun_lint";
 import { tsgoRules } from "./conformance/runner/diagnosticwriter";
 import { getErrorBaseline } from "./conformance/runner/error_baseline";
@@ -36,6 +37,7 @@ import {
   getConfigNameFromFileName,
   parseTestFilesAndSymlinksWithOptions,
 } from "./conformance/runner/test_case_parser";
+import { parsePlainDiagnostics, writePlainDiagnostics } from "./conformance/runner/tsc_plain_format";
 import { optionsDeclarations } from "./conformance/runner/tsoptions";
 import { decodeBytes } from "./conformance/runner/vfs";
 
@@ -181,7 +183,7 @@ async function failuresOf(batch: readonly { name: string; list: "E" | "C" }[], c
       instances.push(instance);
     }
   }
-  const results = await runner.runInstances(instances, check, {
+  const results = await runInstances(instances, check, {
     ...corpusRun,
     directory,
     concurrency: Math.min(8, availableParallelism()),
@@ -573,7 +575,6 @@ describe("error baselines", () => {
 });
 
 describe("run", () => {
-  const { emptyCheck, replayCheck, runInstance, runInstances } = runner;
   const unit: InputFile = { unitName: "/.src/a.ts", content: 'const x: number = "s";\n' };
   const known: Diagnostic = {
     category: "error",
@@ -750,8 +751,6 @@ describe("expectations", () => {
 });
 
 describe("plain format", () => {
-  const { parsePlainDiagnostics, writePlainDiagnostics } = runner;
-
   test("one located diagnostic", () => {
     expect(
       parsePlainDiagnostics("a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n"),
@@ -916,7 +915,6 @@ describe("plain format", () => {
 });
 
 describe("default check", () => {
-  const { runInstance } = runner;
   // Commands that stand for a linter: the fixture reads its operands and does what their lines "//~ " say.
   const command = (fixture: string) => [bunExe(), join(fixtures, fixture)];
   const linter = lazy(() => createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv }));
@@ -1026,9 +1024,11 @@ describe("default check", () => {
         env: bunEnv,
         probeDirectory: join(String(dir), "probe"),
       });
-      const result = await ending(C, runs, `require("node:fs").writeFileSync(${JSON.stringify(mark)}, "");\n`);
-      expect(result.outcome).toBe("unavailable");
-      expect(result.reason).toContain("the command ran the file that it was to check");
+      const content = `require("node:fs").writeFileSync(${JSON.stringify(mark)}, "");\n`;
+      expect(await ending(C, runs, content)).toEqual({
+        outcome: "unavailable",
+        reason: "the command is no linter: the command ran the file that it was to check",
+      });
       expect(readdirSync(String(dir))).toEqual(["probe"]);
     },
     spawnTimeout,
@@ -1098,7 +1098,6 @@ describe("default check", () => {
 });
 
 describe("listed instances", () => {
-  const { emptyCheck, replayCheck } = runner;
   const E = [
     "ArrowFunctionExpression1.ts",
     "ClassDeclaration10.ts",
@@ -1131,7 +1130,7 @@ describe("listed instances", () => {
 });
 
 describe("expectations.json", () => {
-  const { createSpawnCheck, formatExpectations, parseExpectations, sampleListed } = runner;
+  const { formatExpectations, parseExpectations, sampleListed } = runner;
   const text = readFileSync(join(home, "expectations.json"), "utf8");
   const lists: Expectations = parseExpectations(text);
   // A debug or sanitizer build starts a process in about a second: it runs a sample of the lists, a release build runs them all.

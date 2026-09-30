@@ -706,6 +706,14 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
+// Runs a script of add / remove / route / steps / sort / reset lines against a uWS::HttpRouter and returns one line of
+// output per route, remove and steps line. The script format is documented at the function in InternalForTesting.cpp.
+export const httpRouterScript: (script: string) => string = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_httpRouterScript",
+  1,
+);
+
 // True when the installed watcher registered a real OS source (a PSI trigger
 // on Linux). The watcher installs silently without one when the kernel
 // refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.

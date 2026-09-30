@@ -52,6 +52,14 @@ private:
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
 
+    /* Counts loop iterations for tests. Only a user data type that has a
+     * routerSteps member is counted, so a server pays nothing. */
+    void step(uint64_t count = 1) {
+        if constexpr (requires(UserDataType &data) { data.routerSteps += count; }) {
+            userData.routerSteps += count;
+        }
+    }
+
     /* The matching tree */
     struct Node {
         std::string name = {};
@@ -79,6 +87,7 @@ private:
     /* Advance from parent to child, adding child if necessary */
     Node *getNode(Node *parent, std::string_view child, bool isHighPriority) {
         for (const std::unique_ptr<Node> &node : parent->children) {
+            step();
             if (node->name == child && node->isHighPriority == isHighPriority) {
                 return node.get();
             }
@@ -171,6 +180,7 @@ private:
         if (isStop) {
             /* We have reached accross the entire URL with no stoppage, execute */
             for (uint32_t handler : parent->handlers) {
+                step();
                 if (handlers[handler & HANDLER_MASK](this)) {
                     return true;
                 }
@@ -180,9 +190,11 @@ private:
         }
 
         for (auto &p : parent->children) {
+            step();
             if (p->name.starts_with('*')) {
                 /* Wildcard match (can be seen as a shortcut) */
                 for (uint32_t handler : p->handlers) {
+                    step();
                     if (handlers[handler & HANDLER_MASK](this)) {
                         return true;
                     }
@@ -207,6 +219,7 @@ private:
     /* Scans for one matching handler, returning the handler and its priority or UINT32_MAX for not found */
     uint32_t findHandler(std::string_view method, std::string_view pattern, uint32_t priority) {
         for (const std::unique_ptr<Node> &node : root.children) {
+            step();
             if (method == node->name) {
                 setUrl(pattern);
                 Node *n = node.get();
@@ -215,6 +228,7 @@ private:
                     std::string segment(getUrlSegment(i).first);
                     Node *next = nullptr;
                     for (const std::unique_ptr<Node> &child : n->children) {
+                        step();
                         if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
                             next = child.get();
                             break;
@@ -259,6 +273,7 @@ public:
 
         /* Begin by finding the method node */
         for (auto &p : root.children) {
+            step();
             if (p->name == method) {
                 /* Then route the url */
                 if (executeHandlers(p.get(), 0, userData)) {
@@ -319,6 +334,7 @@ public:
     }
 
     bool cullNode(Node *parent, Node *node, uint32_t handler) {
+        step();
         /* For all children */
         for (unsigned int i = 0; i < node->children.size(); ) {
             /* Optimization todo: only enter those with same isHighPrioirty */
@@ -372,6 +388,7 @@ public:
         cullNode(nullptr, &root, handler);
 
         /* Now remove the actual handler */
+        step(handlers.size() - (handler & HANDLER_MASK));
         handlers.erase(handlers.begin() + (handler & HANDLER_MASK));
 
         return true;

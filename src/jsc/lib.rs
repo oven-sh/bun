@@ -499,10 +499,7 @@ pub fn initialize(options: InitializeOptions) {
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; both callbacks are `extern "C"` and only read the (ptr,len) they are
-    // handed, and `on_jsc_incoherent_options` reads `environ` again without
-    // changing it. JSCInitialize is called exactly once at startup.
+    // SAFETY: runs once at startup; `env` borrows `environ` for the call; callbacks only read it.
     unsafe {
         JSCInitialize(
             env.as_ptr(),

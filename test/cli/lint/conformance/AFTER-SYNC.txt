@@ -1,19 +1,20 @@
 What is written again in this directory when sync.sh moves UPSTREAM to other commits, in this order.
 
 H is this directory, test/cli/lint/conformance. GO and TS are the clones that sync.sh reads, OLD and NEW the commits
-of typescript-go before and after. No step uses the network. Every script prints what it changes, and its --help
-says the rest.
+of typescript-go before and after, OLDTS and NEWTS those of TypeScript. No step uses the network. Every script
+prints what it changes, and its --help says the rest.
 
 1. The corpus
      bash H/sync.sh GO TS NEW
    writes corpus/, the licence texts and the commits of UPSTREAM.
 
 2. The ports
-   runner/*.ts holds ports of the reference's harness, and a port is right for the commit that it was made from
-   (runner/UPSTREAM_PORTED). With both commits in the clone,
+   runner/*.ts holds ports of the harness of both projects, and a port is right for the commit that it was made
+   from (runner/UPSTREAM_PORTED). With the commits before and after in the clones,
      git -C GO diff --stat OLD NEW -- internal/testrunner internal/testutil internal/diagnosticwriter \
        internal/tsoptions internal/tspath internal/vfs internal/stringutil internal/scanner/scanner.go internal/core
-   names what moved below them. The hunks are ported by hand, as for src/react_compiler
+     git -C TS diff --stat OLDTS NEWTS -- src/harness/harnessIO.ts src/compiler/program.ts src/compiler/watch.ts
+   name what moved below them. The hunks are ported by hand, as for src/react_compiler
    (scripts/sync-react-compiler.sh), and the commits of runner/UPSTREAM_PORTED move with them. A port that stayed
    behind shows in step 5, where the runner is held against the answers of the reference.
 

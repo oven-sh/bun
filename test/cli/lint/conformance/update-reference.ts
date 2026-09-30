@@ -341,7 +341,13 @@ async function rowsOfEnumerator(): Promise<Row[]> {
   const { enumerateInstances } = await import("./runner/compiler_runner");
   const rows: Row[] = [];
   const invalid: string[] = [];
-  for (const i of enumerateInstances(paths.cases)) {
+  let instances: ReturnType<typeof enumerateInstances>;
+  try {
+    instances = enumerateInstances(paths.cases);
+  } catch (e) {
+    return stop(1, `the enumerator stops where the reference's run does not: ${(e as Error).message}`);
+  }
+  for (const i of instances) {
     if (i.status === "invalid") {
       invalid.push(`${i.name} (${i.invalidReason})`);
       continue;
@@ -794,7 +800,15 @@ function printChanges(title: string, old: ReadonlyMap<string, string> | undefine
 
 async function main(): Promise<number> {
   const o = parseArguments(process.argv.slice(2));
-  for (const path of [join(home, "UPSTREAM"), paths.root, inputsPath, driverPath]) {
+  const corpusParts = [
+    paths.cases,
+    paths.typescriptBaselines,
+    ...suites.map(suite => paths.typescriptGoBaselines[suite]),
+    paths.noErrors,
+    paths.submoduleAccepted,
+    paths.submoduleTriaged,
+  ];
+  for (const path of [join(home, "UPSTREAM"), ...corpusParts, inputsPath, driverPath]) {
     if (!existsSync(path)) stop(2, `missing ${path}`);
   }
   const pins = readPins(readFileSync(join(home, "UPSTREAM"), "utf8"));
@@ -804,7 +818,12 @@ async function main(): Promise<number> {
     stop(2, `commit ${commit} is not in ${o.clone}: fetch it yourself, this script uses no network`);
   }
   const countsBefore = existsSync(countsPath) ? readFileSync(countsPath, "utf8") : undefined;
-  const before = countsBefore === undefined ? undefined : JSON.parse(countsBefore);
+  let before: any;
+  try {
+    before = countsBefore === undefined ? undefined : JSON.parse(countsBefore);
+  } catch (e) {
+    return stop(2, `reference_counts.json is no JSON: ${(e as Error).message}`);
+  }
   const listBefore = existsSync(listPath) ? readFileSync(listPath, "utf8") : undefined;
   const pinned = before?.upstream?.["typescript-go"] === commit && before?.upstream?.TypeScript === pins.TypeScript;
   console.log(`typescript-go ${commit}`);
@@ -831,6 +850,8 @@ async function main(): Promise<number> {
   rows.sort((a, b) => byBytes(a.name, b.name));
   const twice = rows.filter((r, k) => k > 0 && rows[k - 1].name === r.name).map(r => r.name);
   if (twice.length > 0) stop(1, `instances that the list names twice: ${some(twice)}`);
+  const noCase = rows.filter(r => caseOf(cases, r.name)?.suite !== r.suite).map(r => r.name);
+  if (noCase.length > 0) stop(1, `instances of no case of their suite in the corpus: ${some(noCase)}`);
   const odd = rows.filter(r => /[\t\r\n]/.test(r.name + r.reason) || (r.status === "skipped" && r.reason === ""));
   if (odd.length > 0) {
     stop(1, `names or reasons with a tab or a line break, or skips without a reason: ${some(odd.map(r => r.name))}`);

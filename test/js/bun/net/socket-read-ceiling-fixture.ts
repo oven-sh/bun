@@ -13,8 +13,8 @@
 // leave the buffers alone and give receive autotuning a while to grow them.
 //
 // Prints one JSON line:
-//   reason         "capped": two events took exactly CEILING full reads.
-//                  "exceeded": one event took more.
+//   reason         "capped": two events took exactly CEILING reads, all of them full.
+//                  "exceeded": one event took more full reads than CEILING.
 //                  "gave-up": no attempt got that far.
 //   longestRun     the most full reads one event took, over all attempts.
 //   intact         every byte written arrived, in every attempt.
@@ -26,8 +26,6 @@ const CEILING = 32;
 const FULL_READ = 512 * 1024 - 24 * 1024;
 const MiB = 1024 * 1024;
 const chunk = Buffer.alloc(MiB, "a");
-// The run of full reads is only confirmed on Linux, so only there is another try worth it.
-const attemptsAllowed = process.platform === "linux" ? 3 : 1;
 
 type Reason = "capped" | "exceeded" | "gave-up";
 
@@ -38,11 +36,10 @@ async function attempt(pinBuffers: boolean) {
   let flooding = true;
   let reason: Reason = "gave-up";
   let iteration = -1;
-  let run = 0;
+  let reads = 0;
+  let fullReads = 0;
   let longestRun = 0;
   let cappedEvents = 0;
-  // With a granted buffer the first read is full. Autotuning needs a few MiB to get there.
-  const patience = (pinBuffers ? 4 : 32) * MiB;
   const receiverClosed = Promise.withResolvers<void>();
   const senderClosed = Promise.withResolvers<void>();
 
@@ -73,16 +70,19 @@ async function attempt(pinBuffers: boolean) {
         // One loop iteration dispatches one readable event for this socket.
         const now = getEventLoopStats().iteration;
         if (now !== iteration) {
-          if (run === CEILING) cappedEvents++;
+          if (reads === CEILING && fullReads === CEILING) cappedEvents++;
           iteration = now;
-          run = 0;
+          reads = 0;
+          fullReads = 0;
           if (cappedEvents === 2) return stop("capped");
         }
+        reads++;
         if (data.length >= FULL_READ) {
-          if (++run > longestRun) longestRun = run;
-          if (run > CEILING) return stop("exceeded");
+          if (++fullReads > longestRun) longestRun = fullReads;
+          if (fullReads > CEILING) return stop("exceeded");
         }
-        if (received >= (longestRun === 0 ? patience : 128 * MiB)) return stop("gave-up");
+        // A granted buffer makes the first read full. A clamped one never does.
+        if (received >= (pinBuffers && longestRun === 0 ? 4 : 64) * MiB) return stop("gave-up");
         fill();
       },
       close() {
@@ -113,10 +113,11 @@ async function attempt(pinBuffers: boolean) {
 }
 
 // setsockopt() fails for a size over the limit on macOS. Linux clamps it.
-const first = await attempt(process.platform === "linux");
-const bufferGranted = process.platform === "linux" && first.longestRun > 0;
+const isLinux = process.platform === "linux";
+const first = await attempt(isLinux);
+const bufferGranted = isLinux && first.longestRun > 0;
 let { reason, longestRun, intact } = first;
-for (let attempts = 1; reason === "gave-up" && attempts < attemptsAllowed; attempts++) {
+for (let unpinned = 0; reason === "gave-up" && unpinned < (isLinux ? 2 : 0); unpinned++) {
   const next = await attempt(false);
   reason = next.reason;
   longestRun = Math.max(longestRun, next.longestRun);

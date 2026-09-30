@@ -109,6 +109,21 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
+// Counts the calls of then(), catch() and finally() on one query. The client must learn that a query
+// settled without them: a program can replace them, and finally() of a query is far more work than
+// one reaction.
+function countReactionCalls(query: any) {
+  const calls = { then: 0, catch: 0, finally: 0 };
+  for (const name of ["then", "catch", "finally"] as const) {
+    const original = query[name];
+    query[name] = function (this: unknown, ...args: unknown[]) {
+      calls[name]++;
+      return original.apply(this, args);
+    };
+  }
+  return calls;
+}
+
 const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
   { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN" },
   { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
@@ -439,4 +454,90 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       await new Promise<void>(r => server.close(() => r()));
     }
   });
+
+  test("the client does not call then(), catch() or finally() of a query that it runs", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const onPool = sql.unsafe("SELECT 'pool'");
+      const pool = countReactionCalls(onPool);
+      await onPool;
+
+      // The pool has one connection, so reserve() and begin() show that the connection went back.
+      const reserved = await sql.reserve();
+      const onReservation = reserved.unsafe("SELECT 'reservation'");
+      const reservation = countReactionCalls(onReservation);
+      await onReservation;
+      reserved.release();
+
+      let transaction: ReturnType<typeof countReactionCalls> | undefined;
+      await sql.begin(async tx => {
+        const inTransaction = tx.unsafe("SELECT 'transaction'");
+        transaction = countReactionCalls(inTransaction);
+        await inTransaction;
+      });
+
+      // The one call is the `await` of this test.
+      expect({ pool, reservation, transaction }).toEqual({
+        pool: { then: 1, catch: 0, finally: 0 },
+        reservation: { then: 1, catch: 0, finally: 0 },
+        transaction: { then: 1, catch: 0, finally: 0 },
+      });
+      expect(received.map(({ sql }) => sql)).toEqual([
+        "SELECT 'pool'",
+        "SELECT 'reservation'",
+        beginCommand,
+        "SELECT 'transaction'",
+        "COMMIT",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("a query that the client rejects before it sends it gives its connection back", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const values: unknown[] = [1];
+      Object.defineProperty(values, 0, {
+        enumerable: true,
+        get() {
+          throw new Error("thrown by a parameter");
+        },
+      });
+      const error = await sql.unsafe("SELECT 'never sent'", values).then(
+        () => null,
+        e => e,
+      );
+      expect(error?.message).toBe("thrown by a parameter");
+
+      // begin() needs the one connection of the pool with no query on it.
+      const transaction = await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'transaction'");
+        return "committed";
+      });
+      expect(transaction).toBe("committed");
+      expect(received.map(({ sql }) => sql)).toEqual(["SELECT 'warm'", beginCommand, "SELECT 'transaction'", "COMMIT"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+});
+
+test("sqlite: the client does not call then(), catch() or finally() of a query of a transaction", async () => {
+  await using sql = new SQL(":memory:");
+  let calls: ReturnType<typeof countReactionCalls> | undefined;
+  await sql.begin(async tx => {
+    const query = tx`SELECT 1`;
+    calls = countReactionCalls(query);
+    await query;
+  });
+  // The one call is the `await` of this test.
+  expect(calls).toEqual({ then: 1, catch: 0, finally: 0 });
 });

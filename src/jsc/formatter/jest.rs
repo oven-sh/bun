@@ -7,6 +7,10 @@
 
 use super::*;
 
+/// A hole prints as a line of `undefined`. An array can claim 2^32 - 1 of them
+/// and hold nothing.
+const MAX_HOLES_PRINTED_ONE_BY_ONE: u32 = 1000;
+
 impl<'a> Formatter<'a> {
     #[inline(always)]
     pub(super) fn dispatch_jest(
@@ -250,7 +254,7 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
-        let len = reader::array_length(self.global_this, value) as u32;
+        let len = reader::array_length(self.global_this, value).min(u64::from(u32::MAX)) as u32;
         if len == 0 {
             self.put(writer_, b"[]");
             self.add_for_new_line(2);
@@ -278,6 +282,14 @@ impl<'a> Formatter<'a> {
                 self.put(writer_, b"\n");
                 self.put_jest_indent(writer_);
                 let element = value.get_index(self.global_this, i)?;
+                if element.is_undefined() {
+                    let holes = value.next_present_index(i).map_or(len, |next| next.min(len)) - i;
+                    if holes > MAX_HOLES_PRINTED_ONE_BY_ONE {
+                        self.print_jest_holes(writer_, holes)?;
+                        i += holes;
+                        continue;
+                    }
+                }
                 let tag = self.tag_of(element)?;
                 self.format::<false>(tag, writer_, element, self.global_this)?;
                 self.put_jest_comma(writer_);
@@ -294,6 +306,18 @@ impl<'a> Formatter<'a> {
         }
         self.reset_line();
         self.add_for_new_line(1);
+        Ok(())
+    }
+
+    #[cold]
+    fn print_jest_holes(&mut self, writer_: &mut dyn bun_io::Write, holes: u32) -> JsResult<()> {
+        if self.is_exact() {
+            return Err(self.global_this.throw(format_args!(
+                "Snapshot value is too large to serialize: an array has {holes} empty items in a row. Snapshot a smaller part of the value."
+            )));
+        }
+        self.putf(writer_, format_args!("{holes} x empty items"));
+        self.put_jest_comma(writer_);
         Ok(())
     }
 

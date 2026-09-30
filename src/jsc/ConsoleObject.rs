@@ -946,7 +946,13 @@ impl<'a> TablePrinter<'a> {
                     ctx.idx += 1;
                 }
                 use formatter::reader;
-                if matches!(jstype, jsc::JSType::Map | jsc::JSType::Set) {
+                if matches!(
+                    jstype,
+                    jsc::JSType::Map
+                        | jsc::JSType::Set
+                        | jsc::JSType::MapIterator
+                        | jsc::JSType::SetIterator
+                ) {
                     // A size that is no count says nothing about where the rows end.
                     let size = match reader::collection_size(global_object, tabular_data)? {
                         size if size > 0 => size,

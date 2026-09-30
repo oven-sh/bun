@@ -357,13 +357,19 @@ impl<'a> Formatter<'a> {
         Some(print(self, &entered, adapter.interface()))
     }
 
+    /// Whether the output is stored and compared, so that it is complete or it
+    /// is an error.
+    pub(super) fn is_exact(&self) -> bool {
+        self.shared_reference_budget.past == PastBudget::Throw
+    }
+
     #[cold]
     fn past_budget<const C: bool>(
         &mut self,
         format: Tag,
         writer_: &mut dyn bun_io::Write,
     ) -> JsResult<()> {
-        if self.shared_reference_budget.past == PastBudget::Throw {
+        if self.is_exact() {
             return Err(self.global_this.throw(format_args!(
                 "Snapshot value is too large to serialize: the objects that it references more than once print more than {} MiB. Snapshot a smaller part of the value.",
                 self.shared_reference_budget.bytes / (1024 * 1024)

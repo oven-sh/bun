@@ -2359,3 +2359,271 @@ describe.concurrent("inspect survives an iterator that never ends", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// One formatter prints for every sink below, so a value that is safe in one is
+// safe in all of them. A new kind of hostile value goes in `values`, a new way
+// to print a value goes in `sinks`, and the product is checked.
+describe("hostile values in every sink", () => {
+  const values = `
+    // Counts the hooks that a printer has no business running.
+    globalThis.ran = 0;
+    const hook = () => { ran++; throw new Error("a hook ran"); };
+    const el = (type, props) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props });
+    const nest = (n, seed, wrap) => { let v = seed; for (let i = 0; i < n; i++) v = wrap(v); return v; };
+    const tie = (v, close) => (close(v), v);
+    function args() { return arguments; }
+
+    globalThis.values = {
+      // Deeper than the native stack.
+      "deep object": () => nest(1e5, {}, v => ({ v })),
+      "deep array": () => nest(1e5, [], v => [v]),
+      "deep Map": () => nest(1e5, new Map(), v => new Map([[1, v]])),
+      "deep Set": () => nest(1e5, new Set(), v => new Set([v])),
+      "deep JSX": () => nest(1e5, "leaf", v => el("div", { children: v })),
+      "deep Proxy": () => nest(1e5, { ok: 1 }, v => new Proxy(v, {})),
+      "deep cause": () => nest(1e4, new Error("e"), v => new Error("e", { cause: v })),
+      "deep errors": () => nest(1e4, new Error("e"), v => new AggregateError([v], "a")),
+      "deep boxed": () => nest(1e5, 1, v => Object.assign(new Number(1), { v })),
+
+      // Reaches itself.
+      "cyclic object": () => tie({}, v => (v.v = v)),
+      "cyclic array": () => tie([], v => v.push(v)),
+      "cyclic Map": () => tie(new Map(), v => v.set(v, v)),
+      "cyclic Set": () => tie(new Set(), v => v.add(v)),
+      "cyclic JSX": () => tie(el("div", {}), v => (v.props.children = v)),
+      "cyclic cause": () => tie(new Error("e"), v => (v.cause = v)),
+      "cyclic errors": () => tie(new AggregateError([], "a"), v => ((v.errors = [v]), (v.cause = v))),
+      "cyclic boxed": () => tie(new Number(1), v => (v.v = v)),
+      "cyclic through a Proxy": () => tie({}, v => (v.v = new Proxy(v, {}))),
+
+      // 2^40 paths to one leaf.
+      "shared objects": () => nest(40, "leaf", v => ({ a: v, b: v })),
+      "shared arrays": () => nest(40, "leaf", v => [v, v]),
+      "shared Maps": () => nest(40, "leaf", v => new Map([[1, v], [2, v]])),
+      "shared JSX": () => nest(40, "leaf", v => el("div", { children: [v, v] })),
+      "shared causes": () => nest(40, new Error("e"), v => Object.assign(new Error("e"), { cause: v, other: v })),
+
+      // Claims more than it holds.
+      "sparse array": () => tie([], v => (v.length = 2 ** 32 - 1)),
+      "arguments with a huge length": () => tie(args(1, 2), v => (v.length = 2 ** 53)),
+      "arguments without a length": () => tie(args(1, 2), v => delete v.length),
+      "WeakMap with a size": () => Object.assign(new WeakMap(), { size: 2 }),
+      "WeakSet with a size": () => Object.assign(new WeakSet(), { size: 2 }),
+      "endless Map": () => new (class extends Map { get size() { return 2; } *[Symbol.iterator]() { for (;;) yield [1, 1]; } })(),
+      "endless Set": () => new (class extends Set { get size() { return 2; } *[Symbol.iterator]() { for (;;) yield 1; } })(),
+      "endless errors": () => Object.assign(new AggregateError([], "a"), { errors: { *[Symbol.iterator]() { for (;;) yield 1; } } }),
+      "endless generator": () => (function* () { for (;;) yield { a: 1 }; })(),
+
+      // Hooks a printer has no business running.
+      "$$typeof getter": () => ({ get $$typeof() { hook(); } }),
+      "JSX getters": () => ({ $$typeof: Symbol.for("react.element"), get type() { hook(); }, get key() { hook(); }, get props() { hook(); } }),
+      "JSX prop getters": () => el("div", { get a() { hook(); }, get children() { hook(); } }),
+      "JSX props Proxy": () => el("div", new Proxy({ a: 1 }, { get: hook, ownKeys: hook, getOwnPropertyDescriptor: hook })),
+      "boxed Number": () => Object.assign(new Number(1), { toString: hook, valueOf: hook, [Symbol.toPrimitive]: hook }),
+      "boxed String": () => Object.assign(new String("s"), { toString: hook, valueOf: hook, [Symbol.toPrimitive]: hook }),
+      "boxed Boolean": () => Object.assign(new Boolean(true), { toString: hook, valueOf: hook, [Symbol.toPrimitive]: hook }),
+      "RegExp": () => Object.defineProperties(Object.assign(/a/g, { toString: hook }), { source: { get: hook }, flags: { get: hook } }),
+      "Event": () => new (class extends Event { get type() { hook(); } })("t"),
+      "MessageEvent": () => new (class extends MessageEvent { get type() { hook(); } get data() { hook(); } })("message", { data: 1 }),
+      "ErrorEvent": () => new (class extends ErrorEvent { get type() { hook(); } get message() { hook(); } get error() { hook(); } })("error", { message: "m", error: 1 }),
+      "arguments with a length getter": () => Object.defineProperty(args(1, 2), "length", { get: hook }),
+      "accessor": () => ({ get a() { hook(); }, set a(v) { hook(); } }),
+      "revoked Proxy": () => tie(Proxy.revocable({}, {}), v => v.revoke()).proxy,
+      "Proxy of a revoked Proxy": () => { const { proxy, revoke } = Proxy.revocable({}, {}); const outer = new Proxy(proxy, {}); revoke(); return outer; },
+    };
+
+    // What the value is left with: an iterator that was printed still has its entries.
+    globalThis.leaves = {
+      "Map iterator": [() => new Map([[1, 2]]).entries(), it => it.next().done],
+      "Set iterator": [() => new Set([1]).values(), it => it.next().done],
+    };
+
+    const { writeFileSync } = require("node:fs");
+    // \`runsUserCode\`: the sink reads properties like a program would, so all that is left to
+    // check is that it ends, stays small and leaves the value alone.
+    globalThis.check = (sinks, limit, runsUserCode = false) => {
+      const results = {};
+      // Printing changes nothing, and a debug build takes seconds to build a deep value.
+      const made = {};
+      for (const [sink, print] of Object.entries(sinks)) {
+        for (const [name, make] of Object.entries(values)) {
+          // Names the culprit if the process dies here.
+          writeFileSync(process.env.PROGRESS, sink + " / " + name);
+          const value = (made[name] ??= make());
+          ran = 0;
+          let outcome = "ok";
+          try {
+            const size = print(value);
+            if (size > limit) outcome = "printed " + size + " bytes";
+          } catch (e) {
+            if (!runsUserCode) outcome = "threw " + (e?.name ?? e) + ": " + String(e?.message).slice(0, 60);
+          }
+          if (ran && !runsUserCode) outcome += ", ran " + ran + " hooks";
+          if (outcome !== "ok") (results[sink] ??= {})[name] = outcome;
+        }
+        for (const [name, [make, done]] of Object.entries(leaves)) {
+          const it = make();
+          try { print(it); } catch {}
+          if (done(it)) (results[sink] ??= {})[name] = "was used up";
+        }
+      }
+      writeFileSync(process.env.RESULTS, JSON.stringify(results));
+    };
+  `;
+
+  async function run(files, cmd) {
+    using dir = tempDir("hostile-values", { "values.js": values, ...files });
+    const progress = join(String(dir), "progress.txt");
+    const results = join(String(dir), "results.json");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, PROGRESS: progress, RESULTS: results },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    return {
+      signalCode: proc.signalCode,
+      results: await Bun.file(results)
+        .json()
+        .catch(async () => "died at: " + (await Bun.file(progress).text())),
+    };
+  }
+
+  const tooDeep = "threw RangeError: Maximum call stack size exceeded.";
+
+  it.concurrent(
+    "Bun.inspect, console and the error printer",
+    async () => {
+      const seen = await run(
+        {
+          "sinks.js": `
+          require("./values.js");
+          check({
+            "Bun.inspect": v => Bun.inspect(v).length,
+            "Bun.inspect sorted": v => Bun.inspect(v, { sorted: true }).length,
+            "Bun.inspect compact": v => Bun.inspect(v, { compact: true, colors: true }).length,
+            "Bun.inspect nested": v => Bun.inspect({ a: [v] }).length,
+            "console.log": v => console.log(v, v),
+            "console.error": v => console.error(v),
+            "console.dir": v => console.dir(v, { depth: 4 }),
+            "console.log %": v => console.log("%o %O %j %s %d", v, v, {}, "", 1),
+            "reportError": v => reportError(v),
+          }, 4 * 1024 * 1024);
+        `,
+        },
+        ["sinks.js"],
+      );
+      // The depth option does not apply to JSX, and these sinks report a stack overflow to their caller.
+      const jsx = { "deep JSX": tooDeep };
+      expect(seen).toEqual({
+        signalCode: null,
+        results: {
+          "Bun.inspect": jsx,
+          "Bun.inspect sorted": jsx,
+          "Bun.inspect nested": jsx,
+          "console.log": jsx,
+          "console.error": jsx,
+          "console.dir": jsx,
+          "console.log %": jsx,
+          // The error printer reads `message` off whatever it is given, and ignores what that throws.
+          "reportError": { "ErrorEvent": "ok, ran 1 hooks" },
+        },
+      });
+    },
+    120_000,
+  );
+
+  // A row is what `Object.keys` lists and a cell is what reading the property gives, as in Node.
+  it.concurrent(
+    "console.table",
+    async () => {
+      const seen = await run(
+        {
+          "sinks.js": `
+          require("./values.js");
+          check({
+            "Bun.inspect.table": v => Bun.inspect.table(v).length,
+            "Bun.inspect.table rows": v => Bun.inspect.table([v, { v }]).length,
+            "console.table": v => console.table(v),
+          }, 4 * 1024 * 1024, true);
+        `,
+        },
+        ["sinks.js"],
+      );
+      expect(seen).toEqual({ signalCode: null, results: {} });
+    },
+    120_000,
+  );
+
+  it.concurrent(
+    "bun:test diffs and messages",
+    async () => {
+      const seen = await run(
+        {
+          "sinks.test.js": `
+          import { test, expect, mock } from "bun:test";
+          require("./values.js");
+          // A failing matcher fails with its own message, whatever the value.
+          const fails = f => {
+            try { f(); } catch (e) {
+              if (!String(e.message).startsWith("expect(")) throw e;
+              return e.message.length;
+            }
+            throw new Error("did not throw");
+          };
+          // A primitive, so that the comparison is over before it reads anything off the value.
+          const other = 1;
+          test("sinks", () => check({
+            "toEqual received": v => fails(() => expect(v).toEqual(other)),
+            "toEqual expected": v => fails(() => expect(other).toEqual(v)),
+            "toStrictEqual nested": v => fails(() => expect({ a: [v] }).toStrictEqual(other)),
+            "toBe": v => fails(() => expect(v).toBe(other)),
+            "toBeNull": v => fails(() => expect(v).toBeNull()),
+            "toContain": v => fails(() => expect([other]).toContain(v)),
+            "toHaveBeenCalledWith": v => fails(() => { const f = mock(); f(v); expect(f).toHaveBeenCalledWith(other); }),
+            "objectContaining": v => fails(() => expect(other).toEqual(expect.objectContaining({ v }))),
+            "arrayContaining": v => fails(() => expect(other).toEqual(expect.arrayContaining([v]))),
+          }, 8 * 1024 * 1024), 120_000);
+        `,
+        },
+        ["test", "sinks.test.js"],
+      );
+      expect(seen).toEqual({ signalCode: null, results: {} });
+    },
+    120_000,
+  );
+
+  // A snapshot is stored, so it is exact or it is an error: never cut short.
+  it.concurrent(
+    "bun:test snapshots",
+    async () => {
+      const seen = await run(
+        {
+          "sinks.test.js": `
+          import { test, expect } from "bun:test";
+          require("./values.js");
+          for (const name of Object.keys(values)) if (name.startsWith("shared ")) delete values[name];
+          test("sinks", () => check({
+            "toMatchSnapshot": v => void expect(v).toMatchSnapshot(),
+            "toMatchSnapshot nested": v => void expect({ a: [v] }).toMatchSnapshot(),
+          }, Infinity), 120_000);
+        `,
+        },
+        ["test", "--update-snapshots", "sinks.test.js"],
+      );
+      const tooSparse = "threw Error: Snapshot value is too large to serialize: an array has 42949";
+      const errors = {
+        ...Object.fromEntries(["object", "array", "Map", "Set", "JSX", "boxed"].map(kind => ["deep " + kind, tooDeep])),
+        "sparse array": tooSparse,
+        "arguments with a huge length": tooSparse,
+      };
+      expect(seen).toEqual({
+        signalCode: null,
+        results: { "toMatchSnapshot": errors, "toMatchSnapshot nested": errors },
+      });
+    },
+    120_000,
+  );
+});

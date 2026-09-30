@@ -281,8 +281,6 @@ pub(crate) struct GetOrPutFileResult {
 }
 
 pub(crate) struct File {
-    // Read through `items_source()`, the column accessor `multi_array_columns!` generates.
-    #[allow(dead_code)]
     pub source: bun_ast::Source,
 }
 

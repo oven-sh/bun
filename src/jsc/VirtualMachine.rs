@@ -1437,7 +1437,6 @@ impl VirtualMachine {
     /// `runtime-hostfn-safe` branch; both names funnel into the single audited
     /// `unsafe` deref above.
     #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
     pub fn event_loop_ref(&self) -> &mut EventLoop {
         self.event_loop_mut()
     }
@@ -1581,7 +1580,6 @@ impl VirtualMachine {
     /// contract as [`Self::as_mut`]; keep the borrow short and do not hold
     /// across reentrant JS calls.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn debugger_mut(&self) -> Option<&mut crate::debugger::Debugger> {
         self.as_mut().debugger.as_deref_mut()
     }
@@ -1988,7 +1986,6 @@ impl VirtualMachine {
             // routes through `printErrorlikeObject`
             // (which formats name/message/stack); the closest we can do here
             // without the high tier is the value's own `toString`.
-            let _ = exception_list;
             let writer = bun_core::Output::error_writer();
             let global = self.global();
             let display = result
@@ -2722,6 +2719,9 @@ pub struct WorkerExecArgvFlags {
     pub allow_addons: bool,
     /// `!--no-ffi-cc`
     pub allow_ffi_cc: bool,
+    /// Where a flag is that is the process's, which a Worker cannot be given
+    /// (`ERR_WORKER_INVALID_EXEC_ARGV`): `--disallow-code-generation-from-strings`.
+    pub invalid: Option<usize>,
 }
 
 pub struct RuntimeHooks {
@@ -4085,14 +4085,12 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 // ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
 // through it is interior to the cell.
 crate::jsc_abi_extern! {
-    #[allow(improper_ctypes)]
     safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
 }
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
 // (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
-#[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
     safe fn Bun__promises__emitUnhandledRejectionWarning(
@@ -4134,6 +4132,13 @@ impl VirtualMachine {
             .transform_options
             .allow_addons
             .unwrap_or(true)
+    }
+
+    /// `--disallow-code-generation-from-strings`, as a `bun_core::CodeGenerationFromStrings`.
+    /// The process's, so it takes no `VirtualMachine`.
+    #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
+    pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
+        bun_core::code_generation_from_strings() as u8
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -4290,6 +4295,7 @@ impl VirtualMachine {
             // Reuse this flag for other things to avoid unnecessary hashtable
             // lookups on start for obscure flags which we do not want others to
             // depend on.
+            #[cfg(unix)]
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
                 bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
             }

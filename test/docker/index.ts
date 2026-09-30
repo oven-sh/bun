@@ -16,7 +16,6 @@ export type ServiceName =
   | "mariadb_plain"
   | "redis_plain"
   | "redis_unified"
-  | "minio"
   | "autobahn"
   | "squid";
 
@@ -74,7 +73,6 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
       writeonly: "writeonly",
     },
   },
-  minio: { ports: [9000, 9001] },
   autobahn: { ports: [9002] },
   squid: { ports: [3128] },
 };
@@ -436,15 +434,6 @@ class DockerComposeHelper {
         }
         break;
 
-      case "minio":
-        env.S3_ENDPOINT = `http://${info.host}:${info.ports[9000]}`;
-        env.S3_ACCESS_KEY_ID = "minioadmin";
-        env.S3_SECRET_ACCESS_KEY = "minioadmin";
-        env.AWS_ACCESS_KEY_ID = "minioadmin";
-        env.AWS_SECRET_ACCESS_KEY = "minioadmin";
-        env.AWS_ENDPOINT_URL_S3 = `http://${info.host}:${info.ports[9000]}`;
-        break;
-
       case "autobahn":
         env.AUTOBAHN_URL = `ws://${info.host}:${info.ports[9002]}`;
         break;
@@ -626,23 +615,6 @@ export async function withRedis(
 
   try {
     await fn({ ...info, url, tlsUrl });
-  } finally {
-    // Services persist - no teardown
-  }
-}
-
-export async function withMinio(
-  fn: (info: ServiceInfo & { endpoint: string; accessKeyId: string; secretAccessKey: string }) => Promise<void>,
-): Promise<void> {
-  const info = await ensure("minio");
-
-  try {
-    await fn({
-      ...info,
-      endpoint: `http://${info.host}:${info.ports[9000]}`,
-      accessKeyId: "minioadmin",
-      secretAccessKey: "minioadmin",
-    });
   } finally {
     // Services persist - no teardown
   }

@@ -2,7 +2,7 @@
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
 // lints would create a dependency cycle. `output`/`Progress`/`Global` here ARE
@@ -240,9 +240,13 @@ pub mod os {
     }
 }
 
+pub mod code_generation;
 pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
+pub use code_generation::{
+    CodeGenerationFromStrings, code_generation_from_strings, disallow_code_generation_from_strings,
+};
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
@@ -2326,14 +2330,6 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub(crate) mod debug_allocator_data {
-    /// Only referenced from `debug_assert!` — dead in release builds.
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn deinit_ok() -> bool {
-        true
-    }
-}
 
 pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,

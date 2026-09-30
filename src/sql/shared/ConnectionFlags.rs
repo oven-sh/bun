@@ -11,7 +11,7 @@ bitflags! {
         /// `ref()` was called; `on_data` must not unref the idle connection.
         const KEEP_ALIVE_REQUESTED            = 1 << 5;
         /// maxLifetime expired mid-query; retire at the next drain boundary (#30646).
-        const LIFETIME_EXCEEDED               = 1 << 6;
+        const LIFETIME_EXCEEDED               = 1 << 7;
     }
 }
 

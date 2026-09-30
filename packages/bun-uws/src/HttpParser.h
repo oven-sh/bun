@@ -40,13 +40,13 @@
 #include "BloomFilter.h"
 #include "QueryParser.h"
 #include "HttpErrors.h"
+#include "HttpMethod.h"
 
 #if defined(_WIN32)
 #define strncasecmp _strnicmp
 #endif
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
-extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS
 {
@@ -809,20 +809,6 @@ struct HttpResponseData;
             return p;
         }
 
-        static bool isValidMethod(std::string_view str, bool useStrictMethodValidation) {
-            if (str.empty()) return false;
-
-            if (useStrictMethodValidation) {
-                return Bun__HTTPMethod__from(str.data(), str.length()) != -1;
-            }
-
-            for (char c : str) {
-                if (!isValidMethodChar(c))
-                    return false;
-            }
-            return true;
-        }
-
         static inline bool isValidMethodChar(char c) {
             return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) || c == '-';
         }
@@ -935,7 +921,8 @@ struct HttpResponseData;
             if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
-                if(!isValidMethod(header.key, useStrictMethodValidation)) {
+                /* The loop above checked each byte of the method. Strict mode also requires one of HTTP_METHOD_NAMES. */
+                if (useStrictMethodValidation && methodIdFromWire(header.key) == HTTP_METHOD_NONE) {
                     return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */

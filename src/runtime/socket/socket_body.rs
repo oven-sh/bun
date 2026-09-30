@@ -1344,6 +1344,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
+    /// Whether `socket` is a `us_socket_t` whose connect is in flight; if so, detaches this wrapper from it.
+    fn disown_connect_in_flight(socket: SocketHandler<SSL>) -> bool {
+        let in_flight = socket.socket.get().is_some() && !socket.is_established();
+        if in_flight {
+            socket.take_ext_owner::<Self>();
+        }
+        in_flight
+    }
+
     /// Discard a still-live native socket so this wrapper can be reused for a
     /// fresh connect. `node:net` permits `socket.connect()` on an
     /// already-connected socket; without this the previous `us_socket_t`'s
@@ -3202,12 +3211,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         // Capture the in-flight-connect state before close_and_detach() sets
         // DETACHED. Resetting a SEMI_SOCKET (Connected arm, handshake not yet
-        // established) dispatches no terminal callback in us_socket_close, so
+        // established) that this wrapper is detached from runs no terminal callback, so
         // on_close/mark_inactive never runs — balance connect_finish's ref_(),
         // downgrade the Strong this_value, and release the event-loop ref here,
         // exactly as close() does. Without it those refs leak (LSan-caught).
-        let socket = this.socket.get();
-        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
+        let is_semi_connect = Self::disown_connect_in_flight(this.socket.get());
         this.close_and_detach(uws::CloseCode::Failure);
         if is_semi_connect {
             this.poll_ref.with_mut(|p| {
@@ -3249,9 +3257,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         let socket = this.socket.get();
         // An in-flight `connect()` whose `on_open` has not fired yet is a
-        // SEMI_SOCKET — `us_socket_close` skips dispatch for those (firing
-        // `on_close` without a prior `on_open` is wrong, and the natural
-        // failure path delivers `on_connect_error` from the loop instead).
+        // SEMI_SOCKET — detached here, or `us_socket_close` would report this close as `connectError`.
         // Closing one here therefore runs *no* terminal callback, stranding
         // the +1 `connect_finish` took on `this` (whose matching `deref()`
         // lives in `on_close`/`handle_connect_error`) and the Strong
@@ -3262,7 +3268,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `Connected(us_socket_t)` arm — the `Connecting` arm fires
         // `on_connecting_error` synchronously inside `close()` and so does
         // its own `deref()`; double-releasing it would underflow.
-        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
+        let is_semi_connect = Self::disown_connect_in_flight(socket);
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
         // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
         // the end() path), so `.fast_shutdown` raw-closes synchronously: a bare FIN.
@@ -3357,6 +3363,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.this_value.with_mut(|r| r.finalize());
         if !self.socket.get().is_closed() {
             self.socket.get().prepare_for_finalize();
+            Self::disown_connect_in_flight(self.socket.get());
             self.close_and_detach(uws::CloseCode::Failure);
         } else {
             self.detach_native_callback();

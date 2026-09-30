@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 import { createHash } from "node:crypto";
+import { unansweredPort } from "../../sql/wire-frames";
 
 // harness's isIPv6() looks for IPv6 interface addresses and is hardcoded false
 // on BuildKite Linux; all the IPv6 test below needs is a loopback bind.
@@ -43,6 +44,43 @@ describe("WebSocket upgrade", () => {
       expect(stderr).toBe("");
       expect(JSON.parse(stdout.trim())).toEqual(["error", "close:1006"]);
       expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // Here nothing answers the connect, so the handshake timeout closes the
+  // socket while the connect is still in flight. The upgrade client waits for
+  // the socket event of that close to let go of the event loop: without the
+  // event the script never exits. The close arrives after 4 to 8 s as above,
+  // and the script has 20 s to exit before it is killed.
+  test.concurrent.skipIf(!isLinux || isMusl)(
+    "exits after the handshake times out on a host that never answers the connect",
+    async () => {
+      using host = await unansweredPort();
+      const script = `
+      const ws = new WebSocket(process.env.WS_URL);
+      const events = [];
+      ws.onopen = () => events.push("open");
+      ws.onerror = () => events.push("error");
+      ws.onclose = (e) => {
+        events.push("close:" + e.code);
+        console.log(JSON.stringify(events));
+      };
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1", WS_URL: `ws://127.0.0.1:${host.port}/` },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: '["error","close:1006"]\n',
+        exitCode: 0,
+        signalCode: null,
+      });
     },
     30_000,
   );

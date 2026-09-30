@@ -624,16 +624,13 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
-        // The close event is what releases the keep-alive ref `connect()`
-        // took, so detect a SEMI_SOCKET before closing and run the close
-        // event by hand afterwards.
+        // A connect in flight on a `us_socket_t` (`POLL_TYPE_SEMI_SOCKET`) ends with the close event run by hand below.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
+        if is_semi_socket {
+            // Detached, so that usockets does not report this close as a connect error and run the close event too.
+            socket.take_ext_owner::<JSValkeyClient>();
+        }
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
         // Still open means usockets parked the fast shutdown behind its

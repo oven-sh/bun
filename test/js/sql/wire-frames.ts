@@ -4,6 +4,7 @@
 // Fault-injection tests import from this module instead of inlining
 // Buffer.alloc / writeInt32BE sequences.
 
+import { dlopen, ptr } from "bun:ffi";
 import net from "node:net";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,62 @@ export async function neverAnsweringServer(): Promise<{ port: number; server: ne
   });
   server.unref();
   return { port, server, accepted: first.promise };
+}
+
+/**
+ * A port on 127.0.0.1 that never answers a SYN, like a firewalled host: a
+ * listener nobody accepts from, whose backlog of 0 one filler connection
+ * fills, so the kernel drops every later SYN and a connect to `port` stays in
+ * flight. Bun's own listeners do not expose the backlog, so the listener is a
+ * raw libc socket. Linux with glibc only: other kernels count the backlog in
+ * another way, and musl has another name for libc.
+ */
+export async function unansweredPort(): Promise<{ port: number } & Disposable> {
+  const libc = dlopen("libc.so.6", {
+    socket: { args: ["int", "int", "int"], returns: "int" },
+    bind: { args: ["int", "ptr", "int"], returns: "int" },
+    listen: { args: ["int", "int"], returns: "int" },
+    getsockname: { args: ["int", "ptr", "ptr"], returns: "int" },
+    close: { args: ["int"], returns: "int" },
+  });
+  const AF_INET = 2;
+  const SOCK_STREAM = 1;
+  // A sockaddr_in for 127.0.0.1 with port 0. getsockname() fills in the port.
+  const addr = new Uint8Array(16);
+  new DataView(addr.buffer).setUint16(0, AF_INET, true);
+  addr.set([127, 0, 0, 1], 4);
+  const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) throw new Error("socket() failed");
+  const close = () => {
+    libc.symbols.close(fd);
+    libc.close();
+  };
+  const addrLength = new Uint32Array([addr.length]);
+  if (
+    libc.symbols.bind(fd, ptr(addr), addr.length) !== 0 ||
+    libc.symbols.listen(fd, 0) !== 0 ||
+    libc.symbols.getsockname(fd, ptr(addr), ptr(addrLength)) !== 0
+  ) {
+    close();
+    throw new Error("could not listen on 127.0.0.1");
+  }
+  const port = (addr[2] << 8) | addr[3];
+  const filler = net.connect(port, "127.0.0.1");
+  try {
+    await new Promise<void>((resolve, reject) => filler.once("connect", resolve).once("error", reject));
+  } catch (err) {
+    close();
+    throw err;
+  }
+  // Nobody reads from the filler, so an error on it later is not the test's.
+  filler.on("error", () => {});
+  return {
+    port,
+    [Symbol.dispose]() {
+      filler.destroy();
+      close();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

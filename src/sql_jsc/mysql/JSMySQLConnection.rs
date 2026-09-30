@@ -584,7 +584,7 @@ impl JSMySQLConnection {
         use my_sql_connection::Status as S;
         match this.connection.get().status {
             // A close while the connect/handshake is still in flight gets no
-            // socket event (uws skips the on_close dispatch for sockets whose
+            // on_close event (uws reports a connect error for sockets whose
             // connect never completed), so the socket-close -> on_close ->
             // fail chain never runs: fail directly so the JS onclose callback
             // fires and the status goes terminal instead of staying

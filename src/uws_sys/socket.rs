@@ -629,6 +629,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// [`connect_group`](Self::connect_group), returning whether it still held
     /// the owner. Used when the owner tears the socket down itself and must
     /// reclaim the ref the slot represented.
+    /// No event reaches the owner afterwards, so closing a connect in flight reports no connect error to it.
     pub fn take_ext_owner<Owner>(&self) -> bool {
         match self.socket {
             InternalSocket::Connected(s) => {
@@ -942,6 +943,15 @@ impl AnySocket {
         match self {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
+        }
+    }
+
+    /// See [`NewSocketHandler::take_ext_owner`].
+    #[inline]
+    pub fn take_ext_owner<Owner>(&self) -> bool {
+        match self {
+            AnySocket::SocketTcp(s) => s.take_ext_owner::<Owner>(),
+            AnySocket::SocketTls(s) => s.take_ext_owner::<Owner>(),
         }
     }
 

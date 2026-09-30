@@ -83,6 +83,7 @@ pub trait Handler: 'static {
     fn on_end(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
+    /// usockets has closed `_s` by the time it reports the failure.
     fn on_connect_error(_ext: &mut Self::Ext, _s: *mut us_socket_t, _code: i32) {
         unreachable!()
     }

@@ -206,12 +206,4 @@ impl<T> ExtSlot<T> {
             None => None,
         }
     }
-
-    /// Snapshot the raw pointer word without forming a borrow. Used by
-    /// `on_connect_error` paths that must read the owner *before* closing the
-    /// socket (which may invalidate the ext storage `self` points into).
-    #[inline(always)]
-    pub fn get(&self) -> Option<NonNull<T>> {
-        self.0
-    }
 }

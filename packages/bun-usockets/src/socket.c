@@ -269,8 +269,11 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * so a client-initiated close sends close_notify and (with code==0) waits for
  * the peer's, instead of slamming the fd shut and racing the peer's
  * handshake/secureConnection event. openssl.c re-enters here once that
- * graceful path is done. */
-struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+ * graceful path is done.
+ *
+ * `report_unopened`: tell the owner of a connect in flight that the close
+ * ended it. */
+static inline __attribute__((always_inline)) struct us_socket_t *close_raw(struct us_socket_t *s, int code, void *reason, int report_unopened) {
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Closing now frees the SSL and
@@ -328,11 +331,14 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
                          : us_dispatch_close(s, code, reason);
+        } else if (report_unopened && !s->connect_state) {
+            /* SEMI_SOCKET: a connect that never opened gets no on_close. Its
+             * owner waits for the connect to end, so it gets the error that
+             * us_connecting_socket_close reports. A candidate of a
+             * us_connecting_socket_t (connect_state) only holds a copy of the
+             * owner's ext: the connecting socket reports for it. */
+            us_dispatch_connect_error(s, ECONNABORTED);
         }
-        /* SEMI_SOCKET: never-opened connect — owner is notified via
-         * on_connect_error from the connect path (after_open / close_all),
-         * not here. Dispatching here would double-fire on the natural path
-         * (after_open → handler.close → close_raw). */
 
         us_internal_ssl_detach(s);
 
@@ -345,6 +351,25 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
     }
 
     return s;
+}
+
+/* An owner that wants no report when it closes its own connect in flight
+ * clears itself from the ext first. */
+struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+    return close_raw(s, code, reason, 1);
+}
+
+struct us_socket_t *us_internal_socket_close_raw_unreported(struct us_socket_t *s, int code, void *reason) {
+    return close_raw(s, code, reason, 0);
+}
+
+/* Close first, then report: the owner may start its next attempt from inside
+ * on_connect_error (node:net's autoSelectFamily does), and on Windows a poll
+ * started while this one is still active never delivers its events once this
+ * one is closed after it. */
+void us_internal_socket_fail_connect(struct us_socket_t *s, int error) {
+    us_internal_socket_close_raw_unreported(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, NULL);
+    us_dispatch_connect_error(s, error);
 }
 
 __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_socket_t *s, int code, void *reason) {

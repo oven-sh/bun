@@ -695,6 +695,8 @@ int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
  * plain-TCP sockets and for TLS sockets with nothing spilled. */
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
+/* The owner hears of the close through on_close, or, for a socket whose
+ * connect has not completed, through on_connect_error(ECONNABORTED). */
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 
 int us_socket_local_port(us_socket_r s) nonnull_fn_decl;

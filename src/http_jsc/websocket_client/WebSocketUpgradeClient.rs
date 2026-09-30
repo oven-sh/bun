@@ -528,11 +528,7 @@ where
 
         // Copy `tcp` out so no borrow of `*this` spans the close.
         let tcp = this.tcp.get();
-        // Clear the socket's ext slot before closing. `us_socket_close` on a
-        // SEMI_SOCKET (TCP connect still in flight — the common case when
-        // `ws.close()` is called synchronously after `new WebSocket()`) skips
-        // dispatch entirely, so we cannot rely on `handle_close` /
-        // `handle_connect_error` to release the socket-userdata ref taken in
+        // Clear the socket's ext slot before closing, so that no callback runs to release the socket-userdata ref taken in
         // `connect()`. Take it back here and deref it ourselves; any callback
         // that does fire sees `ext == None` and no-ops via the
         // `RawPtrHandler` guard.

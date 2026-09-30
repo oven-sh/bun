@@ -101,17 +101,11 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
         if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
-            /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
-             * (on_close without on_open is wrong), so the Zig wrapper's
-             * `socket = .connected` would never detach and finalize() UAFs
-             * after drainClosedSockets(). Deliver the same on_connect_error
-             * the natural failure path would have, which detaches the
-             * wrapper. The handler then closes; if it doesn't, the
-             * force-drain below catches it. */
-            us_dispatch_connect_error(s, ECONNABORTED);
-            if (!us_socket_is_closed(s)) {
-                us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-            }
+            /* In-flight connect: on_close without on_open is wrong. Deliver
+             * the same on_connect_error the natural failure path would have,
+             * which detaches the owner's stored socket before the closed
+             * sockets are freed. */
+            us_internal_socket_fail_connect(s, ECONNABORTED);
         } else {
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
@@ -123,9 +117,11 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
      * open in head_sockets waiting for the peer's reply. Callers of close_all
      * (e.g. Listener.deinit) free the embedding storage immediately after, so
      * any survivor's s->group becomes a dangling pointer. The graceful walk
-     * already flushed close_notify; force-drain the rest synchronously now. */
+     * already flushed close_notify; force-drain the rest synchronously now.
+     * A connect that a handler opened behind the walk goes unreported: the
+     * handler it would reach can open the next one, and the drain would not end. */
     while (group->head_sockets) {
-        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+        us_internal_socket_close_raw_unreported(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
     }
 
     /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets
@@ -827,8 +823,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
         } else {
-            us_dispatch_connect_error(s, error);
-            // It's expected that close is called by the caller
+            us_internal_socket_fail_connect(s, error);
         }
     } else {
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);

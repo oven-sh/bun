@@ -24,6 +24,7 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl } from "harness";
 import type net from "node:net";
 import {
   closedPort,
@@ -35,6 +36,7 @@ import {
   pgAuthenticationOk,
   pgErrorResponse,
   pgReadyForQuery,
+  unansweredPort,
 } from "./wire-frames";
 
 // connectionTimeout (seconds, fractional allowed) bounds the connect-retry
@@ -414,3 +416,70 @@ test("mysql: connectionTimeout: 0 disables connect retries", async () => {
     server.close();
   }
 });
+
+// Nothing answers the connect here, so connectionTimeout closes the socket
+// while the connect is still in flight. A connect to an IP literal is a socket
+// from the start, and the connection waits for the socket event of that close
+// to let go of the event loop: without the event the script never exits.
+//
+// A debug or sanitizer build takes seconds to start the script, so the script
+// gets that long to exit before it is killed.
+const exitDeadline = isDebug || isASAN ? 20_000 : 5_000;
+const rejection = `.then(() => "resolved", e => e.code)`;
+for (const [title, url, max, body, stdout] of [
+  [
+    "postgres: a query, then close()",
+    "postgres://postgres@",
+    1,
+    `console.log(await sql\`SELECT 1\`${rejection}); await sql.close();`,
+    "ERR_POSTGRES_CONNECTION_TIMEOUT\n",
+  ],
+  [
+    "postgres: a query on each of three pool connections, no close()",
+    "postgres://postgres@",
+    3,
+    `console.log((await Promise.all([1, 2, 3].map(() => sql\`SELECT 1\`${rejection}))).join(" "));`,
+    "ERR_POSTGRES_CONNECTION_TIMEOUT ERR_POSTGRES_CONNECTION_TIMEOUT ERR_POSTGRES_CONNECTION_TIMEOUT\n",
+  ],
+  [
+    "postgres: listen()",
+    "postgres://postgres@",
+    1,
+    `console.log(await sql.listen("channel", () => {})${rejection});`,
+    "ERR_POSTGRES_CONNECTION_TIMEOUT\n",
+  ],
+  [
+    "mysql: a query, then close()",
+    "mysql://root@",
+    1,
+    `console.log(await sql\`SELECT 1\`${rejection}); await sql.close();`,
+    "ERR_MYSQL_CONNECTION_TIMEOUT\n",
+  ],
+] as const) {
+  test.concurrent.skipIf(!isLinux || isMusl)(
+    `${title}: the script exits after connectionTimeout to a host that never answers the connect`,
+    async () => {
+      using host = await unansweredPort();
+      const script = `
+        const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: ${max}, connectionTimeout: 0.25 });
+        ${body}
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, DATABASE_URL: `${url}127.0.0.1:${host.port}/db` },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: exitDeadline,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr is here so that a failure shows it. A sanitizer build can write to it.
+      expect({ stdout: out, stderr: err, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout,
+        stderr: expect.any(String),
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    exitDeadline + 10_000,
+  );
+}

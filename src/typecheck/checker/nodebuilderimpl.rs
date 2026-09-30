@@ -5,10 +5,10 @@ use crate::ast::{
     NodeListId, SymbolFlags, SymbolId, TokenFlags, can_have_modifiers,
     create_modifiers_from_modifier_flags, escape_internal_symbol_name, find_ancestor,
     get_declaration_of_kind, get_first_identifier, get_name_of_declaration,
-    get_source_file_of_module, get_source_file_of_node, has_inferred_type, is_accessor,
-    is_ambient_module, is_ambient_module_symbol_name, is_arrow_function, is_binary_expression,
-    is_binding_element, is_class_declaration, is_class_expression, is_class_like,
-    is_computed_property_name, is_element_access_expression, is_entity_name,
+    get_source_file_of_module, get_source_file_of_node, get_symbol_id, has_inferred_type,
+    is_accessor, is_ambient_module, is_ambient_module_symbol_name, is_arrow_function,
+    is_binary_expression, is_binding_element, is_class_declaration, is_class_expression,
+    is_class_like, is_computed_property_name, is_element_access_expression, is_entity_name,
     is_entity_name_expression, is_expression_with_type_arguments, is_function_expression,
     is_function_expression_or_arrow_function, is_identifier, is_import_type_node,
     is_indexed_access_type_node, is_js_type_alias_declaration, is_literal_import_type_node,
@@ -55,7 +55,7 @@ use crate::stringutil::{strip_quotes, unquote_string};
 use crate::tspath::path_is_relative;
 use bun_collections::HashMap;
 
-// Upstream keys these records by ast.GetSymbolId and ast.GetNodeId: the ids of this port are the identities.
+// Upstream keys these records by ast.GetSymbolId and ast.GetNodeId: the ids of this port are the identities, and get_symbol_id is still called where upstream calls it, as the first call assigns the number.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub struct CompositeSymbolIdentity {
     pub is_constructor_node: bool,
@@ -1454,6 +1454,7 @@ impl NodeBuilderImpl {
     ) -> Vec<u8> {
         let a = c.ast;
         let mut symbol = symbol;
+        get_symbol_id(a, symbol);
         if let Some(result) = self.ctx(c).remapped_symbol_references.get(&symbol).copied() {
             symbol = result;
         }
@@ -1570,6 +1571,7 @@ impl NodeBuilderImpl {
             c.assert(false, "chain != nil && 0 <= index && index < len(chain)");
             return NodeListId::NIL;
         };
+        get_symbol_id(c.ast, symbol);
         if self.ctx(c).type_parameter_symbol_list.has(&symbol) {
             return NodeListId::NIL;
         }
@@ -3060,6 +3062,7 @@ impl NodeBuilderImpl {
         let mut return_type;
         if !declaration.is_nil() && !node_is_synthesized(a, declaration) {
             let symbol = c.get_symbol_of_declaration(declaration);
+            get_symbol_id(a, symbol);
             return_type = self
                 .ctx(c)
                 .enclosing_symbol_types
@@ -3319,6 +3322,7 @@ impl NodeBuilderImpl {
                     t = c.error_type;
                 }
             } else {
+                get_symbol_id(a, symbol);
                 t = self
                     .ctx(c)
                     .enclosing_symbol_types
@@ -5007,6 +5011,7 @@ impl NodeBuilderImpl {
                 node_id: c.conditional_roots[root].node,
             })
         } else if !t_symbol.is_nil() {
+            get_symbol_id(a, t_symbol);
             Some(CompositeSymbolIdentity {
                 is_constructor_node: is_constructor_object,
                 symbol_id: t_symbol,
@@ -5757,6 +5762,7 @@ impl NodeBuilderImpl {
             let Some(&symbol) = usize::try_from(index).ok().and_then(|i| chain.get(i)) else {
                 return NodeListId::NIL;
             };
+            get_symbol_id(c.ast, symbol);
             if self.ctx(c).type_parameter_symbol_list.has(&symbol) {
                 return NodeListId::NIL;
             }

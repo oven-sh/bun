@@ -1,6 +1,7 @@
 // checker/nodebuilderscopes.go: the scopes that the node builder enters for a signature or a mapped type. Upstream returns a function that undoes a scope: here each enter returns the state that its exit takes.
 use crate::ast::{
-    Kind, NodeId, SymbolId, SymbolTableId, is_binding_pattern, is_block, is_parameter_declaration,
+    Kind, NodeId, SymbolId, SymbolTableId, get_symbol_id, is_binding_pattern, is_block,
+    is_parameter_declaration,
 };
 use crate::checker::nodebuilderimpl::{NodeBuilderContext, NodeBuilderImpl};
 use crate::checker::{Checker, SignatureId, TypeId, TypeMapperId};
@@ -77,6 +78,8 @@ impl NodeBuilderImpl {
         symbol: SymbolId,
         t: TypeId,
     ) -> SymbolTypeRestore {
+        // Upstream keys the map by ast.GetSymbolId: the first call assigns the number of the symbol.
+        get_symbol_id(c.ast, symbol);
         let old_type = self.ctx_mut(c).enclosing_symbol_types.insert(symbol, t);
         SymbolTypeRestore {
             id: symbol,

@@ -4856,7 +4856,6 @@ impl NodeBuilderImpl {
                 return tuple_type_node;
             }
             self.ctx_mut(c).encountered_error = true;
-            // TODO: GH#18217
             return NodeId::NIL;
         }
         let t_symbol = c.types[t].symbol;
@@ -5038,7 +5037,6 @@ impl NodeBuilderImpl {
                 .and_then(|links| links.serialized_types.get(&key))
                 .cloned();
             if let Some(cached_result) = cached_result {
-                // TODO:: check if we instead store late painted statements associated with this?
                 for arg in &cached_result.tracked_symbols {
                     self.track_symbol(c, arg.symbol, arg.enclosing_declaration, arg.meaning);
                 }
@@ -5520,7 +5518,6 @@ impl NodeBuilderImpl {
             {
                 ctx.encountered_error = true;
             }
-            // TODO: GH#18217
             return NodeId::NIL;
         }
         if object_flags.intersects(ObjectFlags::ANONYMOUS | ObjectFlags::MAPPED) {

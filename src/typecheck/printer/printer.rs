@@ -277,8 +277,6 @@ impl<'p> Printer<'p> {
             }
         }
 
-        // !!! Printer option to control whether to terminate unterminated literals
-        // !!! If necessary, printer option to control whether to preserve numeric separators
         if self
             .emit_context
             .emit_flags(node)

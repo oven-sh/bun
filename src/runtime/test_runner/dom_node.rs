@@ -1,6 +1,4 @@
-//! DOM nodes (jsdom, happy-dom) as markup in `bun test` output, after
-//! pretty-format's `DOMElement` plugin. Both test-runner formatters call
-//! [`as_node`] with the class name they already computed, then [`print_node`].
+//! DOM nodes (jsdom, happy-dom) as markup in `bun test`, after pretty-format's `DOMElement` plugin.
 
 use bun_core::{Utf8Bytes, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
@@ -13,8 +11,7 @@ enum NodeKind {
     Fragment,
 }
 
-/// A DOM node with the string its markup starts from. [`as_node`] reads that
-/// string once and [`print_node`] does not read it again.
+/// A DOM node with the string its markup starts from, read once by [`as_node`].
 #[derive(Copy, Clone)]
 pub(crate) enum Node {
     /// With its `tagName`.

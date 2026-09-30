@@ -5396,10 +5396,7 @@ pub mod formatter {
             self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
         }
 
-        /// `print_object` under `print_dom_nodes_as_markup`. A DOM node prints
-        /// as markup. For any other value, the class name that detection read
-        /// prints the `Name ` prefix here, so the shared path never carries it.
-        /// Without ANSI colors, like every formatter that sets the flag.
+        /// `print_object` for the test runner: DOM markup, or the `Name ` prefix written up front.
         #[cold]
         #[inline(never)]
         fn print_object_for_test_runner(
@@ -5415,9 +5412,7 @@ pub mod formatter {
                 }
             }
 
-            // A class or a callable prints a prefix only if it has a visible
-            // property, so the property pass decides that one. `js_type` is a
-            // literal at some call sites: read the type from the value.
+            // Class or callable: the property pass decides the prefix. `js_type` may be a literal.
             let mut parent = value;
             if !self.depth_exceeded()
                 && (value.js_type() == jsc::JSType::FinalObject
@@ -5441,8 +5436,7 @@ pub mod formatter {
             self.print_object_tail::<false>(writer_, value, js_type, iter_i, iter_always_newline)
         }
 
-        /// The depth check and the property pass of `print_object`. Returns
-        /// what `print_object_tail` needs, or `None` when nothing is left to print.
+        /// The property pass of `print_object`. `None` when nothing is left to print.
         #[inline(always)]
         fn print_object_properties<const C: bool>(
             &mut self,

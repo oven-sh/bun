@@ -2835,9 +2835,7 @@ pub struct RuntimeHooks {
         value: JSValue,
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
-    /// `print_object` arm for `Formatter::print_dom_nodes_as_markup`.
-    /// Returns `Ok(true)` when `value` is a DOM node and was printed as markup.
-    /// Prints without ANSI colors: every formatter that sets the flag does.
+    /// For `Formatter::print_dom_nodes_as_markup`: `Ok(true)` when `value` printed as DOM markup.
     pub console_print_dom_node: for<'a, 'f> fn(
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,

@@ -258,6 +258,7 @@ export function createSpawnCheck(options: SpawnCheckOptions): Check {
     if (input.root === undefined) return unavailable("the run wrote no file for the command to read");
     const root = resolve(input.root);
     const currentDirectory = getNormalizedAbsolutePath(input.currentDirectory, "/");
+    // The operands and the current directory are all that the command takes: the options of the instance do not reach it.
     const operands = input.rootFiles.map(name => toRealPath(root, getNormalizedAbsolutePath(name, currentDirectory)));
     if (operands.length === 0) return unavailable("the instance has no file of a program to be an operand");
     const cwd = toRealPath(root, currentDirectory);

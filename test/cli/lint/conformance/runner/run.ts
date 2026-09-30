@@ -9,7 +9,13 @@ import {
   tsgoRules,
   writeFormatDiagnostics,
 } from "./diagnosticwriter";
-import { diagnosticsLocationPrefixGo, formatOpts, getErrorBaseline, removeTestPathPrefixes } from "./error_baseline";
+import {
+  comparePathsOf,
+  diagnosticsLocationPrefixGo,
+  formatOpts,
+  getErrorBaseline,
+  removeTestPathPrefixes,
+} from "./error_baseline";
 import { readErrorBaseline } from "./reader";
 import { type Diagnostic, type InputFile, toErrorBaseline, toWriterInput } from "./shape";
 
@@ -90,8 +96,9 @@ export interface RunResult {
 
 export interface RunOptions {
   // The files of a run instance as newCompilerTest and CompileFilesEx lay them out; with a root, also written below it.
+  // An instance that cannot be laid out is refused with a reason and is unsupported; what is thrown is a crash.
   input(instance: Instance, root: string | undefined): InputResult;
-  // The bytes of the oracle of an instance of class E.
+  // The bytes of the oracle of an instance of class E. What is thrown is a crash.
   oracle(instance: Instance): Uint8Array;
   // Checks in flight at one time. Absent: 1.
   concurrency?: number;
@@ -112,6 +119,7 @@ const defaultTimeoutMs = 30_000;
 // The longest delay that a timer takes.
 const longestTimeoutMs = 2 ** 31 - 1;
 const decoder = new TextDecoder();
+const caseInsensitive = { useCaseSensitiveFileNames: false, currentDirectory: "" };
 let directories = 0;
 
 // harnessutil.go getOptionValue: a boolean option is set when its value in lower case is "true".
@@ -169,14 +177,29 @@ function difference(what: string, expected: Uint8Array, actual: Uint8Array): { r
   return { reason: `${what} differs from the oracle at byte ${byte}, line ${line + 1}`, diff: diff.join("\n") };
 }
 
+// error_baseline.go:166: the section of a unit takes the diagnostics whose file name compares equal to the name of the unit, both without the test prefixes and without case. toWriterInput takes the text of a file by the same rule, so a diagnostic is in a unit whose name is not its file name to the letter.
+function sectionTest(units: readonly InputFile[]): (file: string) => boolean {
+  const unitNames = units.map(u => removeTestPathPrefixes(rules, model.fromString(u.unitName)));
+  const known = new Map<string, boolean>();
+  return file => {
+    let inSection = known.get(file);
+    if (inSection === undefined) {
+      const name = removeTestPathPrefixes(rules, model.fromString(file));
+      inSection = unitNames.some(unitName => comparePathsOf(rules, name, unitName, caseInsensitive) === 0);
+      known.set(file, inSection);
+    }
+    return inSection;
+  };
+}
+
 // True: nothing that a baseline shows of the diagnostic is absent. The plain form shows no length of a related place.
-function isComplete(d: Diagnostic, pretty: boolean, units: ReadonlySet<string>): boolean {
-  const inUnit = d.location !== undefined && units.has(d.location.file);
+function isComplete(d: Diagnostic, pretty: boolean, inSection: (file: string) => boolean): boolean {
+  const inUnit = d.location !== undefined && inSection(d.location.file);
   if (inUnit && d.location?.length === undefined) return false;
   // The plain form prints related information in the section of a unit and below a diagnostic without a file.
   if (d.relatedInformation === undefined) return !pretty && d.location !== undefined && !inUnit;
   return d.relatedInformation.every(
-    r => !pretty || r.location === undefined || r.location.length !== undefined || !units.has(r.location.file),
+    r => !pretty || r.location === undefined || r.location.length !== undefined || !inSection(r.location.file),
   );
 }
 
@@ -216,12 +239,12 @@ function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOption
   try {
     expected = oracle(input.instance);
   } catch (error) {
-    return { outcome: "unsupported", reason: `the oracle cannot be read: ${textOf(error)}` };
+    return { outcome: "crash", reason: `the oracle cannot be read: ${textOf(error)}` };
   }
   const pretty = isPretty(input.options);
   try {
-    const names = new Set(input.units.map(u => u.unitName));
-    const whole = diagnostics.every(d => isComplete(d, pretty, names));
+    const inSection = sectionTest(input.units);
+    const whole = diagnostics.every(d => isComplete(d, pretty, inSection));
     const written = toWriterInput(rules, input.units, diagnostics);
     if (!whole) {
       const needs = "a baseline needs the lengths and the related information";
@@ -253,6 +276,7 @@ function compare(input: CheckInput, diagnostics: Diagnostic[], oracle: RunOption
 
 type Ended = { how: "returned"; value: unknown } | { how: "threw"; error: unknown } | { how: "timeout" };
 
+// No timer comes while the call of the check holds the thread, so the call is timed by itself. Nothing is measured after the check has ended: other instances in flight hold the thread then, and that time is not the check's.
 function callWithLimit(check: Check, input: CheckInput, timeoutMs: number): Promise<Ended> {
   return new Promise(resolve => {
     const controller = new AbortController();
@@ -264,14 +288,22 @@ function callWithLimit(check: Check, input: CheckInput, timeoutMs: number): Prom
       clearTimeout(timer);
       resolve(ended);
     };
+    const called = performance.now();
+    let result: Promise<unknown>;
     try {
-      Promise.resolve(check(input, controller.signal)).then(
-        value => settle({ how: "returned", value }),
-        error => settle({ how: "threw", error }),
-      );
+      result = Promise.resolve(check(input, controller.signal));
     } catch (error) {
-      settle({ how: "threw", error });
+      result = Promise.reject(error);
     }
+    if (performance.now() - called >= timeoutMs) {
+      settle({ how: "timeout" });
+      controller.abort();
+    }
+    // After a timeout too: what the check throws then is not left without a handler.
+    result.then(
+      value => settle({ how: "returned", value }),
+      error => settle({ how: "threw", error }),
+    );
   });
 }
 
@@ -283,17 +315,15 @@ async function attempt(instance: Instance, check: Check, options: RunOptions): P
     try {
       built = options.input(instance, root);
     } catch (error) {
-      return { outcome: "unsupported", reason: `the input of the check cannot be built: ${textOf(error)}` };
+      return { outcome: "crash", reason: `the input of the check cannot be built: ${textOf(error)}` };
     }
     if (!built.ok) return { outcome: "unsupported", reason: built.reason };
     const input: CheckInput = { instance, root, ...built.input };
     const wanted = options.timeoutMs;
     const timeoutMs =
       wanted !== undefined && wanted > 0 ? Math.min(Math.ceil(wanted), longestTimeoutMs) : defaultTimeoutMs;
-    const started = performance.now();
     const ended = await callWithLimit(check, input, timeoutMs);
-    // A check that blocks the thread, or whose process is ended at the limit, ends after the limit.
-    if (ended.how === "timeout" || performance.now() - started >= timeoutMs) {
+    if (ended.how === "timeout") {
       return { outcome: "timeout", reason: `the check did not end within ${timeoutMs} ms` };
     }
     if (ended.how === "threw") return { outcome: "crash", reason: `the check threw: ${textOf(ended.error)}` };

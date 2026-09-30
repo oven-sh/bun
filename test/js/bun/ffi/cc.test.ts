@@ -139,6 +139,37 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
+// cc() wraps a symbol that returns a cstring in a closure, not in script made from a string.
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {
+  for (const flag of ["--disallow-code-generation-from-strings", "--disallow-code-generation-from-strings=strict"]) {
+    it(`is called with ${flag}`, async () => {
+      using dir = tempDir("bun-ffi-cc-cstring", {
+        "hello.c": /* c */ `const char* hello(int n) { return n ? "hello from c" : 0; }`,
+        "index.js": /* js */ `
+          const { cc } = require("bun:ffi");
+          const { symbols, close } = cc({
+            source: require("path").join(__dirname, "hello.c"),
+            symbols: { hello: { args: ["int"], returns: "cstring" } },
+          });
+          console.log(JSON.stringify([String(symbols.hello(1)), symbols.hello(0), typeof symbols.hello.native]));
+          close();
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual(["hello from c", null, "function"]);
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 describe.skip("given a ping(cstr) function", () => {
   const library = makeValidCase(
     "ping",
@@ -1186,6 +1217,81 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(readdirSync(fixedDir).sort()).toEqual(["stdbool.h"]);
     expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
     expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// TinyCC keeps its parser and code generator in process globals, and bun builds
+// it without its own locks. The lock cc() holds around every TinyCC call is the
+// only thing that stops Workers that compile at the same time from corrupting
+// that state.
+describe("cc() called by several Workers at once", () => {
+  const workers = 8;
+  const files: Record<string, string> = {
+    "fixture.mjs": /* js */ `
+      import { cc } from "bun:ffi";
+      import { join } from "node:path";
+      import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+      const workers = ${workers};
+      if (isMainThread) {
+        // gate[0]: set when every Worker is up. gate[1]: Workers that woke up.
+        const gate = new Int32Array(new SharedArrayBuffer(8));
+        const results = [];
+        let ready = 0;
+        let exited = 0;
+        for (let index = 0; index < workers; index++) {
+          const worker = new Worker(import.meta.filename, { workerData: { gate, index } });
+          worker.on("message", message => {
+            if (message !== "ready") results[index] = message;
+            else if (++ready === workers) {
+              Atomics.store(gate, 0, 1);
+              Atomics.notify(gate, 0);
+            }
+          });
+          worker.on("exit", () => {
+            if (++exited === workers) console.log(JSON.stringify(results));
+          });
+        }
+      } else {
+        const { gate, index } = workerData;
+        const name = "add" + index;
+        const options = {
+          source: join(import.meta.dirname, name + ".c"),
+          symbols: { [name]: { args: ["int", "int"], returns: "int" } },
+        };
+        parentPort.postMessage("ready");
+        Atomics.wait(gate, 0, 0);
+        // The wake-ups arrive microseconds apart. Spin until the last one, so
+        // that every Worker starts to compile together.
+        Atomics.add(gate, 1, 1);
+        while (Atomics.load(gate, 1) < workers);
+        const sums = [];
+        for (let i = 0; i < 2; i++) {
+          const lib = cc(options);
+          sums.push(lib.symbols[name](i, 100));
+          lib.close();
+        }
+        parentPort.postMessage(sums);
+      }
+    `,
+  };
+  for (let index = 0; index < workers; index++) {
+    files[`add${index}.c`] = `int add${index}(int a, int b) { return a + b + ${index}; }\n`;
+  }
+  const expected = JSON.stringify(Array.from({ length: workers }, (_, index) => [100 + index, 101 + index]));
+
+  it("compiles every source correctly", async () => {
+    using dir = tempDir("bun-ffi-cc-workers", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
   });
 });

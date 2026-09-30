@@ -1793,7 +1793,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             && success == 0
             && ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH;
 
-        if SSL && (authorized || rejected_in_handshake) && !this.acts_as_tls_server() {
+        // node:tls sockets defer the hostname verdict: their JS layer applies
+        // `checkServerIdentity` (default or user override) itself.
+        let flags = this.flags.get();
+        if SSL
+            && (authorized || rejected_in_handshake)
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+            && !this.acts_as_tls_server()
+        {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
                 let hostname = this.server_identity_hostname();
                 if rejected_in_handshake
@@ -1830,9 +1837,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             })
         });
 
-        // node:tls sockets defer the hostname verdict: their JS layer applies
-        // `checkServerIdentity` (default or user override) itself.
-        let flags = this.flags.get();
         // node:tls closes its own sockets, and nothing marks the ones its servers accept.
         let failed_native_client = SSL
             && success == 0
@@ -1845,9 +1849,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // handshake never has a usable transport, so fail closed on every
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
-            && (verify_failed
-                || failed_native_client
-                || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
+            && (verify_failed || failed_native_client || hostname_mismatch);
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
         // usable transport either — node destroys the underlying socket before
@@ -1925,8 +1927,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             // call handhsake callback with authorized and authorization error if has one
             let authorization_error: JSValue = if ssl_error.error_no == 0 || rejected_in_handshake {
-                // node:tls (DEFERS) builds its own identity error in JS.
-                if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
+                if hostname_mismatch {
                     this.stored_verify_error_to_js(&global)
                         .unwrap_or(JSValue::NULL)
                 } else {
@@ -1936,17 +1937,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 super::uws_jsc::verify_error_to_js(&ssl_error, &global)
             };
 
-            // node:tls (DEFERS) applies the name check in JS: its handler gets the result of the handshake itself.
-            let reported = if flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
-                success == 1
-            } else {
-                authorized
-            };
-
             result = match callback.call(
                 &global,
                 this_value,
-                &[this_value, JSValue::from(reported), authorization_error],
+                &[this_value, JSValue::from(authorized), authorization_error],
             ) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),

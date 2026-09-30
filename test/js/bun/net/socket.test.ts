@@ -6482,18 +6482,22 @@ describe.concurrent("end(data) whose queued tail is lost with the connection", (
     afterEnd = (_socket: Socket<unknown>, _subject: Subject) => {},
   ) {
     const subject: Subject = answering({ ...options, afterEnd: socket => afterEnd(socket, subject) });
-    using listener = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      tls: { key: tls.key, cert: tls.cert },
-      socket: subject.handlers,
-    });
+    // AF_UNIX where it runs: its kernel buffers are small and do not grow, so the tail is still queued when the
+    // record arrives. Over TCP on macOS the kernel took the whole tail first in some runs.
+    using dir = isWindows ? undefined : tempDir("lost-tail", {});
+    using cleanup = new DisposableStack();
+    const accepting = { tls: { key: tls.key, cert: tls.cert }, socket: subject.handlers };
     // The peer is the TLS half of an upgraded socket. It reads nothing. Its raw half writes past the TLS layer.
-    const tcp = await Bun.connect({
-      hostname: "127.0.0.1",
-      port: listener.port,
-      socket: { data() {}, close() {}, error() {} },
-    });
+    const plain = { socket: { data() {}, close() {}, error() {} } };
+    let tcp: Socket<unknown>;
+    if (dir) {
+      const unix = join(String(dir), "s.sock");
+      cleanup.use(Bun.listen({ unix, ...accepting }));
+      tcp = await Bun.connect({ unix, ...plain });
+    } else {
+      const listener = cleanup.use(Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting }));
+      tcp = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, ...plain });
+    }
     const [raw, secure] = tcp.upgradeTLS({
       tls: { ca: tls.cert },
       socket: {

@@ -1632,6 +1632,7 @@ impl BlobExt for Blob {
                     path,
                     &global_this.js_thread(context),
                     credentials_with_options.options,
+                    credentials_with_options.acl,
                     self.content_type_or_mime_type(),
                     content_disposition_str.as_ref().map(|s| s.slice()),
                     content_encoding_str.as_ref().map(|s| s.slice()),
@@ -1645,10 +1646,11 @@ impl BlobExt for Blob {
                 path,
                 &global_this.js_thread(context),
                 s3.options,
+                s3.acl,
                 self.content_type_or_mime_type(),
                 None,
                 None,
-                None,
+                s3.storage_class,
                 s3.request_payer,
             );
         }
@@ -4473,7 +4475,7 @@ pub(crate) fn write_file_with_source_destination(
                         ReadableStream::from_blob_copy_ref(
                             cx,
                             source_blob,
-                            s3.options.part_size as crate::webcore::blob::SizeType,
+                            aws_options.options.part_size as crate::webcore::blob::SizeType,
                         )?,
                         cx.global(),
                     )? {
@@ -4572,7 +4574,7 @@ pub(crate) fn write_file_with_source_destination(
                     ReadableStream::from_blob_copy_ref(
                         cx,
                         source_blob,
-                        s3.options.part_size as crate::webcore::blob::SizeType,
+                        aws_options.options.part_size as crate::webcore::blob::SizeType,
                     )?,
                     cx.global(),
                 )? {
@@ -4585,7 +4587,7 @@ pub(crate) fn write_file_with_source_destination(
                         s3.path(),
                         stream,
                         cx,
-                        s3.options,
+                        aws_options.options,
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),

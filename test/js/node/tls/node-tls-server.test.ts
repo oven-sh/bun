@@ -2995,12 +2995,13 @@ describe("deferred spill-close", () => {
   });
 });
 
+const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+
 describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
   // The peer sends data while the accepted socket is paused, then resets the
   // connection (RST) instead of ending it. Node reports that as a read
   // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
   // after an 'end', so a reset misreported as an orderly end strands it.
-  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
   async function acceptPausedSocketAndFill() {
     const accepted = Promise.withResolvers<net.Socket>();
     const onConnection = (socket: net.Socket) => {
@@ -3138,8 +3139,6 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
   });
 });
 
-const tick = () => new Promise<void>(resolve => setImmediate(resolve));
-
 function watchSocket(socket: TLSSocket) {
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
@@ -3150,6 +3149,19 @@ function watchSocket(socket: TLSSocket) {
     closed.resolve();
   });
   return { events, closed: closed.promise };
+}
+
+// Resolves with the code and the syscall of the first write that fails. The loopback of macOS can
+// deliver a reset a moment after the peer's close, and a write before that succeeds.
+function writeUntilItFails(socket: net.Socket, data: string) {
+  const failed = Promise.withResolvers<string>();
+  (function write() {
+    socket.write(data, (error?: NodeJS.ErrnoException | null) => {
+      if (error) failed.resolve(`${error.code} ${error.syscall}`);
+      else setImmediate(write);
+    });
+  })();
+  return failed.promise;
 }
 
 // A TLS socket built over a connected net.Socket shares its fd with it. The libuv backend reports
@@ -3219,22 +3231,14 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
   // A write to the net.Socket under the TLS socket goes out raw. It fails like any other write and
   // closes the connection. On Linux the failed send takes the socket error: the TLS socket keeps
   // what it holds unread and ends once that is read. On macOS the socket error stays, the poll
-  // reports it, and the TLS socket fails with it. The write repeats because the loopback of macOS
-  // can deliver the reset a moment after the peer's close.
+  // reports it, and the TLS socket fails with it.
   it("tls.connect({ socket }) fails a write to its net.Socket after the reset", async () => {
     using t = await pausedClientOverNetSocket();
     await fillThenReset(t.socket, t.peer, t.peerClosed);
     expect(t.events).toEqual([]);
     const connClosed = Promise.withResolvers<boolean>();
     t.conn.on("close", connClosed.resolve);
-    const failed = Promise.withResolvers<string>();
-    (function writeUntilItFails() {
-      t.conn.write("x", (error?: NodeJS.ErrnoException | null) => {
-        if (error) failed.resolve(`${error.code} ${error.syscall}`);
-        else setImmediate(writeUntilItFails);
-      });
-    })();
-    expect(await failed.promise).toBe(`${isLinux ? "ECONNRESET" : "EPIPE"} write`);
+    expect(await writeUntilItFails(t.conn, "x")).toBe(`${isLinux ? "ECONNRESET" : "EPIPE"} write`);
     expect(await connClosed.promise).toBe(true);
     let received = 0;
     t.socket.on("data", data => (received += data.length));
@@ -3283,16 +3287,7 @@ describe.skipIf(isWindows)("TLS socket over a net.Socket whose peer resets behin
         await peerReady.promise;
         await fillThenReset(socket, peer, peerClosed.promise, endFirst);
         expect(events).toEqual([]);
-        // The loopback of macOS can deliver the reset a moment after the peer's close, and a
-        // write before that succeeds, so write until one fails.
-        const failed = Promise.withResolvers<string>();
-        (function writeUntilItFails() {
-          socket.write("late", (error?: NodeJS.ErrnoException | null) => {
-            if (error) failed.resolve(`${error.code} ${error.syscall}`);
-            else setImmediate(writeUntilItFails);
-          });
-        })();
-        expect(await failed.promise).toBe(`${code} write`);
+        expect(await writeUntilItFails(socket, "late")).toBe(`${code} write`);
         await closed;
         expect(events).toEqual([`error ${code}`, "close hadError=true"]);
       } finally {

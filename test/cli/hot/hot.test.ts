@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,48 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// The hot reloader posts one reload task per 8 changed files. The event loop runs
+// such a task and returns early, and one tick takes at most 9 of them. On Windows
+// the loop then went to sleep with the rest still queued, and the microtasks of the
+// reload that the first task started never ran until the next file event.
+it(
+  "--hot reloads after hundreds of imported files change at once",
+  async () => {
+    const count = 600;
+    const files: Record<string, string> = {};
+    let imports = "";
+    for (let i = 0; i < count; i++) {
+      files[`mods/m${i}.js`] = `export const v = 0;\n`;
+      imports += `import { v as v${i} } from "./mods/m${i}.js";\n`;
+    }
+    files["index.js"] = imports + `console.log("RUN", v0 + v${count - 1});\n`;
+    using dir = tempDir("hot-batch", files);
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const reader = runner.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    const waitFor = async (needle: string) => {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`--hot exited, output so far: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    };
+    await waitFor("RUN 0\n");
+    for (let i = 0; i < count; i++) {
+      writeFileSync(join(String(dir), "mods", `m${i}.js`), `export const v = 1;\n`);
+    }
+    await waitFor("RUN 2\n");
+  },
+  isDebug ? 60_000 : 10_000,
 );

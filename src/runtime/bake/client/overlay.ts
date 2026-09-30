@@ -365,7 +365,7 @@ function expandHighlight(line: string, col: number) {
  * Call this for each error, then call `updateErrorOverlay` to commit the
  * changes to the UI in one smooth motion.
  */
-export function decodeAndAppendServerError(r: DataViewReader) {
+export function decodeAndAppendServerError(r: DataViewReader): FailureOwner {
   const owner = r.u32();
   const file = r.string32() || null;
   const messageCount = r.u32();
@@ -378,6 +378,7 @@ export function decodeAndAppendServerError(r: DataViewReader) {
 
   activeErrorIndex = -1;
   needUpdateNavbar = true;
+  return owner;
 }
 
 /**

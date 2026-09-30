@@ -206,7 +206,7 @@ describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
         .join("");
     }
     for (const id of cpufreq || []) {
-      files[`sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`] ??= `${(id + 1) * 1000}\n`;
+      files[`sys/devices/system/cpu/cpu${id}/cpufreq/scaling_max_freq`] ??= `${(id + 1) * 1000}\n`;
     }
     return files;
   }
@@ -219,7 +219,7 @@ describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
   const range = (from, to) => Array.from({ length: to - from }, (_, i) => from + i);
   const cpuinfoFile = blocks =>
     blocks.map(([id, model]) => `processor\t: ${id}\nvendor_id\t: AuthenticAMD\nmodel name\t: ${model}\n\n`).join("");
-  const cpufreqFile = id => `sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`;
+  const cpufreqFile = id => `sys/devices/system/cpu/cpu${id}/cpufreq/scaling_max_freq`;
 
   async function cpusOn(layouts, { oneFreeFd = false } = {}) {
     using root = tempDir("os-cpus", layouts);
@@ -366,6 +366,21 @@ describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
       trailingSpace: [cpu(0, { model: "A" })],
       unreadable: [cpu(0, { model: "unknown", speed: 0 }), cpu(1, { model: "unknown" })],
     });
+  });
+
+  // https://github.com/libuv/libuv/pull/5200
+  it.concurrent("reads the speed from scaling_max_freq and never from scaling_cur_freq", async () => {
+    const curFreqFile = id => `sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`;
+    const seen = await cpusOn({
+      // cpu0 has both files. cpu1 has only scaling_cur_freq, and there is no fallback to it.
+      both: layout({
+        stat: [0, 1],
+        cpufreq: [0],
+        [curFreqFile(0)]: "800000\n",
+        [curFreqFile(1)]: "800000\n",
+      }),
+    });
+    expect(seen).toEqual({ both: [cpu(0), cpu(1, { speed: 0 })] });
   });
 
   it.concurrent("throws when /proc/stat lists no CPU", async () => {

@@ -1,7 +1,7 @@
-import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { spawn, type Subprocess } from "bun";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, forEachLine, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -776,3 +776,94 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+// An error nothing handled must not wind the process down in watcher mode: the
+// watcher keeps the process alive, so what it is running has to keep running.
+// Before the fix the first such error stopped the run loop from draining the
+// timer heap (sockets were still serviced, timers never fired again) and armed
+// the hard exit taken by the next uncaught exception, which then ended the
+// process. Kept sequential on purpose: when this regresses the fixture hangs
+// instead of exiting, and bun test only kills a timed-out test's leftover
+// processes for sequential tests.
+describe.each(["--hot", "--watch"])("%s after an unhandled error", flag => {
+  function startFixture(mode: "entry-rejects" | "runtime-errors" | "idle") {
+    return spawn({
+      cmd: [bunExe(), flag, "hot-error-server-fixture.js"],
+      env: { ...bunEnv, HOT_ERROR_FIXTURE: mode },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+  }
+
+  async function nextLine(lines: AsyncGenerator<string>) {
+    const { value, done } = await lines.next();
+    if (done) throw new Error("the fixture exited before printing the expected line");
+    return value;
+  }
+
+  async function ready(proc: Subprocess<"ignore", "pipe", "pipe">) {
+    const stderr = proc.stderr.text();
+    const stdoutLines = forEachLine(proc.stdout);
+    const port = await nextLine(stdoutLines);
+    return {
+      stdoutLines,
+      async get(path: string) {
+        const response = await fetch(`http://127.0.0.1:${port}${path}`);
+        return response.text();
+      },
+      // Kills the fixture and returns the errors it reported. Each message also
+      // appears in the source excerpt bun prints above the report, so only the
+      // report lines are collected.
+      async reportedErrors() {
+        proc.kill();
+        await proc.exited;
+        return (await stderr).match(/^error: [^\r\n]*/gm);
+      },
+    };
+  }
+
+  it("still fires timers after the entry point's promise rejected", async () => {
+    await using proc = startFixture("entry-rejects");
+    const { get, reportedErrors } = await ready(proc);
+
+    expect(await get("/timer")).toBe("timer fired");
+    expect(await get("/throw")).toBe("alive");
+    expect(await get("/")).toBe("alive");
+    expect(await get("/timer")).toBe("timer fired");
+
+    expect(await reportedErrors()).toEqual([
+      "error: rejected by the entry point",
+      "error: uncaught exception from /throw",
+    ]);
+  });
+
+  it("keeps running, timers included, through an uncaught exception and an unhandled rejection", async () => {
+    await using proc = startFixture("runtime-errors");
+    const { get, reportedErrors } = await ready(proc);
+
+    expect(await get("/throw")).toBe("alive");
+    expect(await get("/reject")).toBe("alive");
+    expect(await get("/throw")).toBe("alive");
+    expect(await get("/")).toBe("alive");
+    expect(await get("/timer")).toBe("timer fired");
+
+    expect(await reportedErrors()).toEqual([
+      "error: uncaught exception from /throw",
+      "error: unhandled rejection from /reject",
+      "error: uncaught exception from /throw",
+    ]);
+  });
+
+  it("survives an uncaught exception raised after beforeExit was dispatched", async () => {
+    await using proc = startFixture("idle");
+    const { stdoutLines, get, reportedErrors } = await ready(proc);
+    expect(await nextLine(stdoutLines)).toBe("beforeExit");
+
+    expect(await get("/throw")).toBe("alive");
+    expect(await get("/")).toBe("alive");
+    expect(await get("/timer")).toBe("timer fired");
+
+    expect(await reportedErrors()).toEqual(["error: uncaught exception from /throw"]);
+  });
+});

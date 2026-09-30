@@ -870,6 +870,9 @@ describe("bunx cache", () => {
     "no-bin-file": {
       "1.0.0": { manifest: { bin: { "no-bin-file": "cli.js" } }, files: { "index.js": "" } },
     },
+    "no-bin": {
+      "1.0.0": { manifest: {}, files: { "index.js": "" } },
+    },
     "dep": {
       "1.0.0": { manifest: { main: "index.js" }, files: { "index.js": `module.exports = "dep 1.0.0";\n` } },
     },
@@ -1042,6 +1045,20 @@ describe("bunx cache", () => {
     expect(second.stderr).toContain("error: could not determine executable to run for package no-bin-file");
     expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin-file", "no-bin-file"] });
     expect(markers()).toEqual([false]);
+  });
+
+  it.concurrent("a package that declares no bin fails after one install", async () => {
+    using bunx = fixture();
+    const first = await bunx.run("no-bin@latest");
+    expect(first.stderr).toContain("error: could not determine executable to run for package no-bin");
+    expect(first.exitCode).toBe(1);
+
+    const markers = await plantMarkers(bunx.tree("no-bin@latest"), "no-bin");
+
+    const second = await bunx.run("no-bin@latest");
+    expect(second.stderr).toContain("error: could not determine executable to run for package no-bin");
+    expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin"] });
+    expect(markers()).toEqual([true]);
   });
 });
 

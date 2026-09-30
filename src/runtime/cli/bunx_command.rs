@@ -1531,63 +1531,68 @@ impl BunxCommand {
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             // BUT: Skip this if --package was used, as the user explicitly specified the binary name
             if opts.binary_name.is_none() {
-                if let Ok(package_name_for_bin) = Self::get_bin_name_from_temp_directory(
+                match Self::get_bin_name_from_temp_directory(
                     this_transpiler,
                     bunx_cache_dir,
                     result_package_name,
                     false,
                 ) {
-                    if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
-                        absolute_in_cache_dir = {
-                            let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
-                            write!(
-                                cursor,
-                                "{}/node_modules/.bin/{}{}",
-                                BStr::new(bunx_cache_dir),
-                                BStr::new(&package_name_for_bin),
-                                EXE_SUFFIX,
-                            )
-                            .expect("unreachable");
-                            let written = buf_total - cursor.len();
-                            // SAFETY: `written` bytes initialized above
-                            unsafe {
-                                core::slice::from_raw_parts(
-                                    absolute_in_cache_dir_buf.as_ptr(),
-                                    written,
+                    // The package declares no bin. A forced install cannot add one.
+                    Err(crate::Error::NoBinFound) => break,
+                    Err(_) => {}
+                    Ok(package_name_for_bin) => {
+                        if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
+                            absolute_in_cache_dir = {
+                                let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
+                                write!(
+                                    cursor,
+                                    "{}/node_modules/.bin/{}{}",
+                                    BStr::new(bunx_cache_dir),
+                                    BStr::new(&package_name_for_bin),
+                                    EXE_SUFFIX,
                                 )
-                            }
-                        };
+                                .expect("unreachable");
+                                let written = buf_total - cursor.len();
+                                // SAFETY: `written` bytes initialized above
+                                unsafe {
+                                    core::slice::from_raw_parts(
+                                        absolute_in_cache_dir_buf.as_ptr(),
+                                        written,
+                                    )
+                                }
+                            };
 
-                        if let Some(destination) = bun_which::which(
-                            &mut path_buf,
-                            bunx_cache_dir,
-                            if !ignore_cwd.is_empty() {
-                                b"".as_slice()
-                            } else {
-                                top_level_dir
-                            },
-                            absolute_in_cache_dir,
-                        ) {
-                            let out: &[u8] = destination.as_bytes();
-                            // Same TOCTOU hardening as the post-install probe above.
-                            if Self::is_trusted_cached_binary(destination, uid) {
-                                let stored = fs.dirname_store.append_slice(out)?;
-                                Run::run_binary(
-                                    ctx,
-                                    stored,
-                                    destination,
-                                    top_level_dir,
-                                    env_loader,
-                                    passthrough,
-                                    None,
-                                )?;
-                                // run_binary is noreturn
-                            } else {
-                                bun_output::scoped_log!(
-                                    bunx,
-                                    "refusing untrusted cached binary: {}",
-                                    BStr::new(out)
-                                );
+                            if let Some(destination) = bun_which::which(
+                                &mut path_buf,
+                                bunx_cache_dir,
+                                if !ignore_cwd.is_empty() {
+                                    b"".as_slice()
+                                } else {
+                                    top_level_dir
+                                },
+                                absolute_in_cache_dir,
+                            ) {
+                                let out: &[u8] = destination.as_bytes();
+                                // Same TOCTOU hardening as the post-install probe above.
+                                if Self::is_trusted_cached_binary(destination, uid) {
+                                    let stored = fs.dirname_store.append_slice(out)?;
+                                    Run::run_binary(
+                                        ctx,
+                                        stored,
+                                        destination,
+                                        top_level_dir,
+                                        env_loader,
+                                        passthrough,
+                                        None,
+                                    )?;
+                                    // run_binary is noreturn
+                                } else {
+                                    bun_output::scoped_log!(
+                                        bunx,
+                                        "refusing untrusted cached binary: {}",
+                                        BStr::new(out)
+                                    );
+                                }
                             }
                         }
                     }

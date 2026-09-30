@@ -1247,22 +1247,20 @@ describe.concurrent("bun-install", () => {
       ],
     ];
 
-    for (const [name, opts] of basicAuthForms) {
-      it(`sends user:pass@ from the URL as Basic auth (${name})`, async () => {
-        const { requests, stdout, stderr, exitCode } = await installWith(opts);
-        const manifestPath = opts.dependency === "@myorg/pkg" ? "/@myorg%2fpkg" : "/no-deps";
-        const tarballPath = `/${opts.dependency ?? "no-deps"}/-/pkg-1.0.0.tgz`;
-        expect({ requests, stderr }).toEqual({
-          requests: [
-            { path: manifestPath, authorization: basic },
-            { path: tarballPath, authorization: basic },
-          ],
-          stderr: expect.not.stringContaining("s3cret"),
-        });
-        expect(stdout).toContain("1 package installed");
-        expect(exitCode).toBe(0);
+    it.each(basicAuthForms)("sends user:pass@ from the URL as Basic auth (%s)", async (_name, opts) => {
+      const { requests, stdout, stderr, exitCode } = await installWith(opts);
+      const manifestPath = opts.dependency === "@myorg/pkg" ? "/@myorg%2fpkg" : "/no-deps";
+      const tarballPath = `/${opts.dependency ?? "no-deps"}/-/pkg-1.0.0.tgz`;
+      expect({ requests, stderr }).toEqual({
+        requests: [
+          { path: manifestPath, authorization: basic },
+          { path: tarballPath, authorization: basic },
+        ],
+        stderr: expect.not.stringContaining("s3cret"),
       });
-    }
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    });
 
     it("sends :token@ from the URL as a Bearer token", async () => {
       const { requests, stdout, stderr, exitCode } = await installWith({
@@ -1312,8 +1310,9 @@ describe.concurrent("bun-install", () => {
       ],
     ];
 
-    for (const [name, bunfig, urlUserinfo, expected] of explicitWins) {
-      it(`credentials configured explicitly override the ones inside the URL (${name})`, async () => {
+    it.each(explicitWins)(
+      "credentials configured explicitly override the ones inside the URL (%s)",
+      async (_name, bunfig, urlUserinfo, expected) => {
         const { requests, stderr, exitCode } = await installWith({
           bunfig: () => bunfig,
           env: origin => ({ MY_REG: `http://${urlUserinfo}@${origin}/` }),
@@ -1325,8 +1324,8 @@ describe.concurrent("bun-install", () => {
         });
         expect(stderr).not.toContain("s3cret");
         expect(exitCode).toBe(1);
-      });
-    }
+      },
+    );
   });
 
   it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {

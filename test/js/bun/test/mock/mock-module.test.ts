@@ -498,7 +498,7 @@ test.concurrent(
   },
 );
 
-test("mock.module() of a module whose import() is still loading its dependencies", async () => {
+test.concurrent("mock.module() of a module whose import() is still loading its dependencies", async () => {
   using dir = tempDir("mock-module-import-in-flight", {
     "a.ts": `import "./dependency"; export const a = "real-a";`,
     "dependency.ts": `export {};`,

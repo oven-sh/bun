@@ -1065,11 +1065,12 @@ it("object loader: an error thrown by a getter on the exports object rejects the
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });
 
-it("build.module() of a module whose import() is still loading its dependencies", async () => {
+it.concurrent("build.module() of a module whose import() is still loading its dependencies", async () => {
   using dir = tempDir("plugin-module-import-in-flight", {
     "a.ts": `import "./dependency"; export const from = "file";`,
     "dependency.ts": `export {};`,
     "entry.ts": `
+      import { join } from "node:path";
       const dependencyRequested = Promise.withResolvers<void>();
       const dependencyMayLoad = Promise.withResolvers<void>();
       Bun.plugin({
@@ -1083,7 +1084,7 @@ it("build.module() of a module whose import() is still loading its dependencies"
         },
       });
 
-      const a = import.meta.dir + "/a.ts";
+      const a = join(import.meta.dir, "a.ts");
       const inFlight = import(a);
       await dependencyRequested.promise;
       Bun.plugin({

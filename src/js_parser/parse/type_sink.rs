@@ -2007,6 +2007,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut items = Vec::new();
         let mut end = start;
         while self.lexer.token != T::TCloseBrace && self.lexer.token != T::TEndOfFile {
+            // isListElement of PCTypeMembers: a token that starts no member is an error of the list
+            if !self.is_start_of_type_member() {
+                return Err(self.property_or_signature_expected());
+            }
             let member = self.build_type_member()?;
             end = member.end;
             items.push(member);

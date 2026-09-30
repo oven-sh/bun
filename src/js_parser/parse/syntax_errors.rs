@@ -47,6 +47,9 @@ const TYPE_EXPECTED: Message = Message::new(1110, b"Type expected.");
 /// `Declaration_or_statement_expected`
 const DECLARATION_OR_STATEMENT_EXPECTED: Message =
     Message::new(1128, b"Declaration or statement expected.");
+/// `Property_or_signature_expected`
+const PROPERTY_OR_SIGNATURE_EXPECTED: Message =
+    Message::new(1131, b"Property or signature expected.");
 /// `Unterminated_template_literal`
 const UNTERMINATED_TEMPLATE_LITERAL: Message =
     Message::new(1160, b"Unterminated template literal.");
@@ -438,6 +441,92 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             format_args!("Unexpected {}", bstr::BStr::new(found)),
         );
         self.lexer.prev_error_loc = range.loc;
+    }
+
+    /// isListElement of PCTypeMembers: whether a member of an object type starts at the token the lexer is on.
+    pub(crate) fn is_start_of_type_member(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let is_start = self.scan_type_member_start().unwrap_or(false);
+        self.lexer.restore(&old_lexer);
+        is_start
+    }
+
+    /// scanTypeMemberStart
+    fn scan_type_member_start(&mut self) -> Result<bool, Error> {
+        if matches!(self.lexer.token, T::TOpenParen | T::TLessThan)
+            || self.lexer.is_contextual_keyword(b"get")
+            || self.lexer.is_contextual_keyword(b"set")
+        {
+            return Ok(true);
+        }
+        let mut is_id_token = false;
+        // Every modifier is passed: the last one may be the name of the member.
+        while self.is_token_of_modifier() {
+            is_id_token = true;
+            self.lexer.next()?;
+        }
+        if self.lexer.token == T::TOpenBracket {
+            return Ok(true);
+        }
+        // isLiteralPropertyName, which takes a private name
+        if self.lexer.is_identifier_or_keyword()
+            || matches!(
+                self.lexer.token,
+                T::TPrivateIdentifier
+                    | T::TStringLiteral
+                    | T::TNumericLiteral
+                    | T::TBigIntegerLiteral
+            )
+        {
+            is_id_token = true;
+            self.lexer.next()?;
+        }
+        // canParseSemicolon: ";", "}", the end of the file or a line break
+        Ok(is_id_token
+            && (self.lexer.has_newline_before
+                || matches!(
+                    self.lexer.token,
+                    T::TOpenParen
+                        | T::TLessThan
+                        | T::TQuestion
+                        | T::TColon
+                        | T::TComma
+                        | T::TSemicolon
+                        | T::TCloseBrace
+                        | T::TEndOfFile
+                )))
+    }
+
+    /// IsModifierKind for the token the lexer is on.
+    fn is_token_of_modifier(&self) -> bool {
+        match self.lexer.token {
+            T::TConst | T::TDefault | T::TExport | T::TIn => true,
+            T::TIdentifier => matches!(
+                self.lexer.raw(),
+                b"abstract"
+                    | b"accessor"
+                    | b"async"
+                    | b"declare"
+                    | b"out"
+                    | b"override"
+                    | b"private"
+                    | b"protected"
+                    | b"public"
+                    | b"readonly"
+                    | b"static"
+            ),
+            _ => false,
+        }
+    }
+
+    /// parsingContextErrors of PCTypeMembers: the token the lexer is on starts no member of an object type.
+    #[cold]
+    pub(crate) fn property_or_signature_expected(&mut self) -> Error {
+        match self.unexpected_as(PROPERTY_OR_SIGNATURE_EXPECTED) {
+            Ok(()) => Error::SyntaxError,
+            Err(err) => err,
+        }
     }
 
     /// The expression that starts the statement at `loc` failed. Where its first token starts none, the reference asks for a statement.

@@ -345,6 +345,42 @@ test.each([
 });
 ```
 
+### Tagged Template Tables
+
+You can write the table as a tagged template literal. The first line has the column names, separated by `|`. Each line after it has one `${value}` for each column. Bun passes each row to your test function as one object, with the column names as its keys.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test.each`
+  a    | b    | expected
+  ${1} | ${2} | ${3}
+  ${4} | ${5} | ${9}
+`("add($a, $b) = $expected", ({ a, b, expected }) => {
+  expect(a + b).toBe(expected);
+});
+```
+
+`describe.each` accepts the same form. In the title, `$a` prints the value of column `a`, the same as for a table of objects.
+
+Put the column names on their own line after the opening backtick. A column name has no spaces in it. Bun reads the `|` separators on that line only, and takes the values in the order they appear.
+
+In TypeScript, pass the type of a row as the type argument:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test.each<{ input: string; length: number }>`
+  input      | length
+  ${"bun"}   | ${3}
+  ${"bagel"} | ${5}
+`("$input has $length characters", ({ input, length }) => {
+  expect(input.length).toBe(length);
+});
+```
+
+Bun builds the row objects once, when `.each` runs. The call that passes the title throws an error if the table is malformed:
+
+- the template has no `${value}`
+- the number of values is not a multiple of the number of columns
+- the first line is not a row of column names
+
 ### Format Specifiers
 
 Use these specifiers to format the test title:

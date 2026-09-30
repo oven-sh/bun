@@ -391,6 +391,49 @@ test.each(mylist)("test.each", (a, done) => {
   expectType<(err?: unknown) => void>(done);
 });
 
+// tagged template table: one row object per test
+test.each`
+  a    | b    | expected
+  ${1} | ${2} | ${3}
+`("test.each", (row, done) => {
+  expectType(row).is<Record<string, any>>();
+  expectType(done).is<(err?: unknown) => void>();
+});
+test.each<{ a: number; b: string }>`
+  a    | b
+  ${1} | ${"x"}
+`("test.each", ({ a, b }) => {
+  expectType(a).is<number>();
+  expectType(b).is<string>();
+});
+describe.each<{ a: number }>`
+  a
+  ${1}
+`("describe.each", row => {
+  expectType(row).is<{ a: number }>();
+});
+test.skip.each`
+  a
+  ${1}
+`.todo("test.each", row => {
+  expectType(row).is<Record<string, any>>();
+});
+describe.each`
+  a
+  ${1}
+`("describe.each", row => {
+  expectType(row).is<Record<string, any>>();
+});
+// a table needs at least one ${value}
+// @ts-expect-error
+test.each`
+  a | b
+`("test.each", () => {});
+// @ts-expect-error
+describe.each`
+  a | b
+`("describe.each", () => {});
+
 // Advanced use case tests for #18511:
 
 // 1. => When assignable to, we should pass (e.g. new Set() is assignable to Set<string>).

@@ -113,3 +113,117 @@ test("test.each/describe.each table array is a GC root", async () => {
   expect(stdout + stderr).not.toContain("Expected array");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+async function runFixture(fixture: string, env: Record<string, string | undefined>) {
+  using dir = tempDir("jest-each-gc-template", {
+    "each-gc.test.ts": fixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "each-gc.test.ts"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+// .each builds the rows of a template table. After it returns, the ScopeFunctions is
+// the only owner of the rows, and the rows are the only owners of the values.
+const templateFixture = `
+import { test, describe, expect } from "bun:test";
+
+const seen: unknown[][] = [];
+
+const templateEach = (() => (() =>
+  test.each\`
+    name       | payload
+    \${"alpha"} | \${{ list: [1, 2] }}
+    \${"beta"}  | \${{ list: [3, 4] }}
+  \`
+)())();
+
+const chainedTemplateEach = (() => (() =>
+  describe.each\`
+    name       | payload
+    \${"gamma"} | \${{ list: [5, 6] }}
+  \`.skipIf(false)
+)())();
+
+Bun.gc(true);
+
+templateEach("template.each $name", ({ name, payload }) => {
+  seen.push([name, ...payload.list]);
+});
+
+Bun.gc(true);
+
+chainedTemplateEach("chained template.each $name", ({ name, payload }) => {
+  test("inner", () => {
+    seen.push([name, ...payload.list]);
+  });
+});
+
+test("all rows survived GC", () => {
+  expect(seen).toEqual([
+    ["alpha", 1, 2],
+    ["beta", 3, 4],
+    ["gamma", 5, 6],
+  ]);
+});
+`;
+
+test("the rows of a test.each/describe.each template table are a GC root", async () => {
+  const gcEnv: Record<string, string> = { BUN_JSC_useZombieMode: "1" };
+  if (!isWindows) gcEnv.BUN_JSC_collectContinuously = "1";
+
+  const { stderr, exitCode } = await runFixture(templateFixture, gcEnv);
+
+  expect(stderr).toContain(" 4 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+}, 60_000);
+
+// A collection runs while .each builds the rows, and while it makes the function that keeps
+// them: the row array and its rows have no other owner then. slowPathAllocsBetweenGCs
+// collects at every Nth slow allocation, so a table of 800 rows gets collections in both.
+const buildFixture = `
+import { test, describe, expect } from "bun:test";
+
+const ROWS = 800;
+const strings = Object.assign(["\\n  index | payload\\n", ...Array(ROWS * 2).fill(" ")], { raw: [] });
+const rows = (() => (() => {
+  const values = [];
+  for (let i = 0; i < ROWS; i++) values.push(i, { list: [i, i + 1] });
+  return describe.each(strings, ...values);
+})())();
+
+Bun.gc(true);
+
+let sum = 0;
+rows("row $index", ({ index, payload }) => {
+  if (payload.list[0] === index && payload.list[1] === index + 1) sum += index;
+});
+
+test("every row survived", () => {
+  expect(sum).toBe((ROWS * (ROWS - 1)) / 2);
+});
+`;
+
+test.concurrent.each([3, 4])(
+  "a template table survives a GC while .each builds its rows (every %i slow allocations)",
+  async period => {
+    const { stderr, exitCode } = await runFixture(buildFixture, {
+      BUN_JSC_useZombieMode: "1",
+      BUN_JSC_slowPathAllocsBetweenGCs: String(period),
+    });
+
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

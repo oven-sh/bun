@@ -315,6 +315,7 @@ pub struct WindowsLoop {
     pub is_default: c_int,
     pub pre: *mut uv::uv_prepare_t,
     pub check: *mut uv::uv_check_t,
+    pub idle_sweep_timer: *mut crate::Timer,
 }
 
 #[cfg(windows)]
@@ -483,7 +484,6 @@ pub type Loop = PosixLoop;
 
 type LoopCb = unsafe extern "C" fn(*mut Loop);
 
-#[allow(non_snake_case)]
 mod c {
     use super::*;
 

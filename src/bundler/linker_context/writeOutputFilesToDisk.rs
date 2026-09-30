@@ -386,14 +386,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let bytecode_output_file: Option<OutputFile> = 'brk: {
             if c.options.generate_bytecode_cache {
-                let loader: Loader = if chunk.entry_point.is_entry_point() {
-                    parse_graph.input_files.items_loader()
-                        [chunk.entry_point.source_index() as usize]
-                } else {
-                    Loader::Js
-                };
-
-                if loader.is_javascript_like() {
+                if c.chunk_gets_bytecode(chunk) {
                     let mut fdpath = bun_paths::path_buffer_pool::get();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
@@ -535,6 +528,7 @@ pub(crate) fn write_output_files_to_disk(
 
         let output_kind = c.chunk_output_kind(chunk);
 
+        chunk.final_output_size = code_result.buffer.len();
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
             input_path,

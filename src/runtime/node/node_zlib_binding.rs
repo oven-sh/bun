@@ -429,10 +429,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         // The pool thread reads the input after this call returns, so read a
         // copy of storage the pin does not keep mapped.
-        if let (Some(chunk), Some(buf)) = (in_, in_buf.as_ref())
-            && buf.pin_cannot_hold()
-        {
-            let Some(copied) = Self::copy_input(this, chunk) else {
+        if let Some(buf) = in_buf.as_ref().filter(|b| b.pin_cannot_hold()) {
+            let Some(copied) =
+                Self::borrow_input_copy(this, buf.byte_slice(), in_off as usize, in_len as usize)
+            else {
                 buf.unpin();
                 out_buf.unpin();
                 return Err(global_this.throw_out_of_memory());
@@ -509,23 +509,41 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         ticket.post(ConcurrentTask::create(Task::init(this)));
     }
 
-    /// Copies an input chunk into the stream's own buffer. `None` if the copy
-    /// cannot be allocated.
-    fn copy_input<'a>(this: &'a T, chunk: &[u8]) -> Option<&'a [u8]> {
+    /// `view[in_off..in_off + in_len]` out of the stream's own copy of `view`.
+    ///
+    /// One JS write becomes several native writes: when the output buffer fills,
+    /// `processCallback` re-sends the same input with `in_off` advanced. So the
+    /// copy holds the whole view and a continuation reads it instead of copying
+    /// the remainder again, which would be quadratic. `in_off == 0` starts a
+    /// fresh input. `None` if the copy cannot be allocated.
+    fn borrow_input_copy<'a>(
+        this: &'a T,
+        view: &[u8],
+        in_off: usize,
+        in_len: usize,
+    ) -> Option<&'a [u8]> {
         this.input_copy().with_mut(|copy| {
-            copy.clear();
-            if copy.try_reserve_exact(chunk.len()).is_err() {
+            if in_off == 0 || copy.len() < in_off + in_len {
+                copy.clear();
+                if copy.try_reserve_exact(view.len()).is_err() {
+                    return None;
+                }
+                copy.extend_from_slice(view);
+            }
+            if copy.len() < in_off + in_len {
                 return None;
             }
-            copy.extend_from_slice(chunk);
-            // SAFETY: the bytes live in `this.input_copy`. Only `write()` and the
-            // completion touch it, and a second `write()` is refused while this
-            // one is in progress, so they outlive the job that reads them.
-            Some(unsafe { core::slice::from_raw_parts(copy.as_ptr(), copy.len()) })
+            // SAFETY: in bounds by the check above. The bytes live in
+            // `this.input_copy`, which only `write()` and `close()` touch, and
+            // both are refused while a write is in progress, so they outlive
+            // the job that reads them.
+            Some(unsafe { core::slice::from_raw_parts(copy.as_ptr().add(in_off), in_len) })
         })
     }
 
-    /// Releases the pins `write()` took and the input copy it made; the cached slots keep rooting the values either way.
+    /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
+    /// The input copy outlives the write, because the next native write may be a
+    /// continuation that reads it; `close()` releases it.
     fn unpin_pending_buffers(this: &T, this_value: JSValue) {
         let pinned = this.pinned_buffers().replace(0);
         if pinned & 1 != 0 {
@@ -538,7 +556,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 value.unpin_array_buffer();
             }
         }
-        this.input_copy().set(Vec::new());
     }
 
     /// VM teardown, JS thread, heap alive: a completion that was queued but
@@ -786,6 +803,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         if err.is_error() {
             Self::emit_error(this, global_this, this_value, err);
         }
+        this.input_copy().set(Vec::new());
     }
 
     pub(crate) fn close(
@@ -806,6 +824,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.closed().set(true);
         this.this_value().with_mut(|v| v.deinit());
         this.stream().with_mut(|s| s.close());
+        this.input_copy().set(Vec::new());
     }
 
     pub(crate) fn set_on_error(

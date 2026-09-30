@@ -94,11 +94,9 @@ test("scrypt copies a password over a WebAssembly.Memory that grows after the ca
       "-e",
       /* js */ `
       import { scrypt, scryptSync } from "node:crypto";
-      const PAGES = 128; // 8 MB
+      const PAGES = 4; // 256 KB
       const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 
-      // Use up the fast-memory slots so that \`mem\` is bounds-checked.
-      const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
       const mem = newMemory();
       const password = new Uint8Array(mem.buffer).fill(7);
       const options = { N: 1024, r: 1, p: 1 };
@@ -117,10 +115,12 @@ test("scrypt copies a password over a WebAssembly.Memory that grows after the ca
       console.log(JSON.stringify({ detachedAfterGrow: password.byteLength === 0, keyMatches: (await promise) === expected }));
     `,
     ],
+    // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()`
+    // moves the block on every platform instead of committing pages in place.
     // `Malloc=1` makes WebKit use system malloc, so the freed block is
     // unmapped instead of kept in bmalloc's cache: the unfixed build faults
     // instead of reading stale bytes.
-    env: { ...bunEnv, Malloc: "1" },
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -129,7 +129,7 @@ test("scrypt copies a password over a WebAssembly.Memory that grows after the ca
   expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, keyMatches: true }));
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-}, 30_000); // An 8 MB password through a debug build under system malloc: the default 5 s is not enough.
+});
 
 test("scryptSync reads its buffers only after every argument has been coerced", () => {
   const passwordBytes = new Uint8Array(64).fill(97);

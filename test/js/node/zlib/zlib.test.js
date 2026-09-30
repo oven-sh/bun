@@ -902,11 +902,9 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
         /* js */ `
         import { zstdCompress, zstdDecompressSync, constants } from "node:zlib";
         import { randomFillSync } from "node:crypto";
-        const PAGES = 128; // 8 MB
+        const PAGES = 16; // 1 MB
         const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 
-        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
-        const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
         const mem = newMemory();
         const input = new Uint8Array(mem.buffer);
         // Incompressible input at a high level: the job is still reading when the block is freed.
@@ -929,10 +927,11 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
         console.log(JSON.stringify({ detachedAfterGrow: input.byteLength === 0, roundTripMatches: await promise }));
       `,
       ],
-      // `Malloc=1` makes WebKit use system malloc, so the freed block is
-      // unmapped instead of kept in bmalloc's cache: the unfixed build faults
-      // instead of reading stale bytes.
-      env: { ...bunEnv, Malloc: "1" },
+      // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()`
+      // moves the block on every platform. `Malloc=1` makes WebKit use system
+      // malloc, so the freed block is unmapped instead of kept in bmalloc's
+      // cache: the unfixed build faults instead of reading stale bytes.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -941,8 +940,7 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
     expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    // An 8 MB input through a debug build under system malloc: the default 5 s is not enough.
-  }, 30_000);
+  });
 
   // The stream APIs reach the same native write as the one-shots above.
   it("createZstdCompress().write() compresses the bytes the caller passed", async () => {
@@ -953,11 +951,9 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
         /* js */ `
         import { createZstdCompress, zstdDecompressSync, constants } from "node:zlib";
         import { randomFillSync } from "node:crypto";
-        const PAGES = 128; // 8 MB
+        const PAGES = 16; // 1 MB
         const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 
-        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
-        const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
         const mem = newMemory();
         const input = new Uint8Array(mem.buffer);
         // Incompressible input at a high level: the job is still reading when the block is freed.
@@ -990,10 +986,11 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
         }));
       `,
       ],
-      // `Malloc=1` makes WebKit use system malloc, so the freed block is
-      // unmapped instead of kept in bmalloc's cache: the unfixed build faults
-      // instead of reading stale bytes.
-      env: { ...bunEnv, Malloc: "1" },
+      // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()`
+      // moves the block on every platform. `Malloc=1` makes WebKit use system
+      // malloc, so the freed block is unmapped instead of kept in bmalloc's
+      // cache: the unfixed build faults instead of reading stale bytes.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1002,8 +999,7 @@ describe("input over a WebAssembly.Memory that grows after the call", () => {
     expect(stdout.trim()).toBe(JSON.stringify({ detachedAfterGrow: true, roundTripMatches: true }));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    // An 8 MB input through a debug build under system malloc: the default 5 s is not enough.
-  }, 30_000);
+  });
 });
 
 describe("crc32", () => {

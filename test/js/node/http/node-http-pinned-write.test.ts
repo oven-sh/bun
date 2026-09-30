@@ -413,8 +413,6 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const PAGES = ${WASM_PAGES}; // 32 MB
     const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 4 });
 
-    // Use up the fast-memory slots so that \`mem\` is bounds-checked.
-    const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
     const mem = newMemory();
     const payload = new Uint8Array(mem.buffer).fill(7);
     const CHUNK_SIZE = payload.byteLength;
@@ -472,10 +470,11 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       // Run in a child so a fault on the spill is observed as exit != 0.
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", wasmMemoryChild],
-        // `Malloc=1` makes WebKit use system malloc, so the freed block is
-        // unmapped instead of kept in bmalloc's cache: the unfixed build
-        // faults instead of reading stale bytes.
-        env: { ...bunEnv, Malloc: "1" },
+        // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()`
+        // moves the block on every platform. `Malloc=1` makes WebKit use system
+        // malloc, so the freed block is unmapped instead of kept in bmalloc's
+        // cache: the unfixed build faults instead of reading stale bytes.
+        env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -487,7 +486,8 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       });
       expect(exitCode).toBe(0);
     },
-    // A 32 MB body through a debug build: the default 5 s is not enough.
+    // The body has to outrun the loopback send and receive buffers to leave a
+    // tail, and 32 MB of it through a debug build does not fit the default 5 s.
     30_000,
   );
 

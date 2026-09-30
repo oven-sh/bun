@@ -6837,8 +6837,6 @@ it("Bun.file keeps a path over a WebAssembly.Memory that grows after the call", 
       bunExe(),
       "-e",
       `
-        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
-        const fast = Array.from({ length: 12 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
         const mem = new WebAssembly.Memory({ initial: 1, maximum: 16 });
         const encoded = new TextEncoder().encode(process.cwd() + "/hello.txt");
         new Uint8Array(mem.buffer).set(encoded);
@@ -6855,9 +6853,10 @@ it("Bun.file keeps a path over a WebAssembly.Memory that grows after the call", 
         console.log(JSON.stringify({ text: await file.text(), exists: await file.exists() }));
       `,
     ],
-    // `Malloc=1` makes WebKit use system malloc, so the freed block is unmapped instead of kept in
-    // bmalloc's cache: the unfixed build faults instead of reading stale bytes.
-    env: { ...bunEnv, Malloc: "1" },
+    // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()` moves the block on every
+    // platform. `Malloc=1` makes WebKit use system malloc, so the freed block is unmapped instead of
+    // kept in bmalloc's cache: the unfixed build faults instead of reading stale bytes.
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -6884,12 +6883,10 @@ it.skipIf(isWindows)(
         "-e",
         `
         import fs from "node:fs";
-        const PAGES = 128;
+        const PAGES = 16; // 1 MB, which is 16 pipe buffers
         const TOTAL = PAGES * 65536;
         const newMemory = () => new WebAssembly.Memory({ initial: PAGES, maximum: PAGES + 8 });
 
-        // Use up the fast-memory slots so that \`mem\` is bounds-checked.
-        const fast = Array.from({ length: 10 }, () => new WebAssembly.Memory({ initial: 1, maximum: 2 }));
         const mem = newMemory();
         const view = new Uint8Array(mem.buffer).fill(0x41);
 
@@ -6926,18 +6923,18 @@ it.skipIf(isWindows)(
         process.exit(0);
       `,
       ],
-      env: { ...bunEnv, FIFO_PATH: fifoPath },
+      // `useWasmFastMemory=0` makes every memory bounds-checked, so `grow()` moves the block on
+      // every platform instead of committing pages in place.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", FIFO_PATH: fifoPath },
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify({ drained: 8388608, foreignChunks: 0, written: 8388608 }));
+    expect(stdout.trim()).toBe(JSON.stringify({ drained: 1048576, foreignChunks: 0, written: 1048576 }));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    // 8 MB through a 64 KB pipe on a debug build: the default 5 s is not enough.
   },
-  30_000,
 );
 
 // A sync call reads the path after the option getters ran. It reads the bytes captured at call time

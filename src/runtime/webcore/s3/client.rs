@@ -412,6 +412,7 @@ pub(crate) fn writable_stream(
     path: &[u8],
     cx: &bun_jsc::JsThread<'_>,
     options: MultiPartUploadOptions,
+    acl: Option<ACL>,
     content_type: Option<&[u8]>,
     content_disposition: Option<&[u8]>,
     content_encoding: Option<&[u8]>,
@@ -500,7 +501,7 @@ pub(crate) fn writable_stream(
         ref_count: Cell::new(2), // +1 for the stream
         ended: Cell::new(false),
         options: Cell::new(options),
-        acl: None,
+        acl,
         storage_class,
         request_payer,
         credentials,

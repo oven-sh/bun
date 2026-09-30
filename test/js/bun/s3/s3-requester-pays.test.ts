@@ -1,6 +1,6 @@
 import { S3Client, type NetworkSink, type S3File, type S3Options } from "bun";
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_CREDENTIALS, S3Server } from "s3-server";
+import { DEFAULT_CREDENTIALS, S3Server, serve, type RequestRecord } from "s3-server";
 
 describe("s3 - Requester Pays", () => {
   const s3Options: S3Options = {
@@ -297,10 +297,31 @@ describe("s3 - writer() options", () => {
       "client.file(key, options).writer({})",
     ].includes(name),
   );
+  // The options of the file without an object for writer(), and the options of the call.
+  const aclCases = cases.filter(([name]) =>
+    ["client.file(key, options).writer()", "client.file(key).writer(options)"].includes(name),
+  );
 
-  /** Writes `bytes` bytes with a writer, and gives what the server got. With `fail`, the server answers 500. */
-  async function upload(make: MakeFile, open: OpenWriter, options: S3Options, bytes: number, { fail = false } = {}) {
+  const headers = (request: RequestRecord) => ({
+    "x-amz-acl": request.headers.get("x-amz-acl"),
+    "x-amz-storage-class": request.headers.get("x-amz-storage-class"),
+    "x-amz-request-payer": request.headers.get("x-amz-request-payer"),
+  });
+
+  /**
+   * Writes `bytes` bytes with a writer, and gives what the server got. With `fail`, the server answers 500.
+   * With `aclsDisabled`, the bucket refuses an ACL that gives access to another account.
+   */
+  async function upload(
+    make: MakeFile,
+    open: OpenWriter,
+    options: S3Options,
+    bytes: number,
+    { fail = false, aclsDisabled = false } = {},
+  ) {
     const s3 = new S3Server({ buckets: ["bucket"] });
+    const bucket = s3.buckets.get("bucket")!;
+    if (aclsDisabled) bucket.ownership = "BucketOwnerEnforced";
     let requests = 0;
     let inFlight = 0;
     let mostInFlight = 0;
@@ -321,16 +342,22 @@ describe("s3 - writer() options", () => {
     const writer = open(make(connection, options), options);
     writer.write(new Uint8Array(bytes));
     const end = await Promise.resolve(writer.end()).catch(error => error.code);
+    const sent = (operation: string) => s3.requests.filter(request => request.operation === operation);
     return {
       end,
       requests,
       mostInFlight,
       // The sizes of the parts, in the order in which the server answered them.
-      parts: s3.requests
-        .filter(request => request.operation === "UploadPart")
-        .map(request => Number(request.headers.get("content-length"))),
+      parts: sent("UploadPart").map(request => Number(request.headers.get("content-length"))),
+      put: sent("PutObject").map(headers),
+      create: sent("CreateMultipartUpload").map(headers),
+      stored: bucket.latest("key") !== undefined,
     };
   }
+
+  const options = { acl: "public-read", storageClass: "STANDARD_IA", requestPayer: true } as const;
+  const all = { "x-amz-acl": "public-read", "x-amz-storage-class": "STANDARD_IA", "x-amz-request-payer": "requester" };
+  const none = { "x-amz-acl": null, "x-amz-storage-class": null, "x-amz-request-payer": null };
 
   it.concurrent.each(cases)("retry: %s", async (_, make, open) => {
     // Without `retry: 0` the upload sends four requests.
@@ -339,6 +366,9 @@ describe("s3 - writer() options", () => {
       requests: 1,
       mostInFlight: 1,
       parts: [],
+      put: [],
+      create: [],
+      stored: false,
     });
   });
 
@@ -350,6 +380,9 @@ describe("s3 - writer() options", () => {
       mostInFlight: 1,
       // With `queueSize: 1` the second part starts after the answer to the first part.
       parts: [6 * MiB, 1],
+      put: [],
+      create: [none],
+      stored: true,
     });
   });
 
@@ -360,6 +393,112 @@ describe("s3 - writer() options", () => {
       end: 5 * MiB + 1,
       requests: 4,
       parts: [5 * MiB, 1],
+    });
+  });
+
+  it.concurrent.each(cases)("acl, storageClass and requestPayer: %s", async (_, make, open) => {
+    expect(await upload(make, open, options, 1)).toEqual({
+      end: 1,
+      requests: 1,
+      mostInFlight: 1,
+      parts: [],
+      put: [all],
+      create: [],
+      stored: true,
+    });
+  });
+
+  it.concurrent.each(aclCases)("acl and storageClass in a multipart upload: %s", async (_, make, open) => {
+    // Two parts can be in flight, and their order is not fixed.
+    const { parts, mostInFlight, ...result } = await upload(make, open, options, 5 * MiB + 1);
+    expect({ ...result, parts: parts.sort((a, b) => b - a) }).toEqual({
+      end: 5 * MiB + 1,
+      requests: 4,
+      parts: [5 * MiB, 1],
+      put: [],
+      create: [all],
+      stored: true,
+    });
+  });
+
+  it.concurrent("an option of the call replaces that of the file, which replaces that of the client", async () => {
+    const make: MakeFile = connection =>
+      new S3Client({ ...connection, storageClass: "STANDARD", acl: "private" }).file("key", {
+        storageClass: "STANDARD_IA",
+      });
+    expect((await upload(make, file => file.writer(), {}, 1)).put).toEqual([
+      { ...none, "x-amz-acl": "private", "x-amz-storage-class": "STANDARD_IA" },
+    ]);
+    expect((await upload(make, file => file.writer({ storageClass: "GLACIER" }), {}, 1)).put).toEqual([
+      { ...none, "x-amz-acl": "private", "x-amz-storage-class": "GLACIER" },
+    ]);
+  });
+
+  it.concurrent.each(forms)("%s sends no option when there is none", async (_, open) => {
+    const [, make] = sources[1];
+    expect(await upload(make, open, {}, 1)).toEqual({
+      end: 1,
+      requests: 1,
+      mostInFlight: 1,
+      parts: [],
+      put: [none],
+      create: [],
+      stored: true,
+    });
+  });
+
+  describe("a bucket that has ACLs disabled", () => {
+    const refused = { acl: "public-read", retry: 0 } as const;
+
+    it.concurrent.each(aclCases)("refuses one PutObject: %s", async (_, make, open) => {
+      expect(await upload(make, open, refused, 1, { aclsDisabled: true })).toEqual({
+        end: "AccessControlListNotSupported",
+        requests: 1,
+        mostInFlight: 1,
+        parts: [],
+        put: [{ ...none, "x-amz-acl": "public-read" }],
+        create: [],
+        stored: false,
+      });
+    });
+
+    it.concurrent.each(aclCases)("refuses CreateMultipartUpload: %s", async (_, make, open) => {
+      expect(await upload(make, open, refused, 5 * MiB + 1, { aclsDisabled: true })).toEqual({
+        end: "AccessControlListNotSupported",
+        requests: 1,
+        mostInFlight: 1,
+        parts: [],
+        put: [],
+        create: [{ ...none, "x-amz-acl": "public-read" }],
+        stored: false,
+      });
+    });
+
+    it.concurrent("refuses CreateMultipartUpload, and flush() rejects", async () => {
+      await using server = serve({ buckets: ["bucket"] });
+      const bucket = server.buckets.get("bucket")!;
+      bucket.ownership = "BucketOwnerEnforced";
+      const writer = new S3Client(server.clientOptions("bucket")).file("key", refused).writer();
+      writer.write(new Uint8Array(5 * MiB + 1));
+      const flushed = await Promise.resolve(writer.flush()).catch(error => error.code);
+      // end() holds the writer. A writer that is collected before end() fails its upload with `UnknownError`.
+      await writer.end();
+      expect(flushed).toBe("AccessControlListNotSupported");
+      expect(server.requests.map(request => request.operation)).toEqual(["CreateMultipartUpload"]);
+      expect(bucket.latest("key")).toBeUndefined();
+    });
+
+    it.concurrent.each(["private", "bucket-owner-full-control"] as const)("accepts the ACL %s", async acl => {
+      const [, make, open] = aclCases[0];
+      expect(await upload(make, open, { acl }, 1, { aclsDisabled: true })).toEqual({
+        end: 1,
+        requests: 1,
+        mostInFlight: 1,
+        parts: [],
+        put: [{ ...none, "x-amz-acl": acl }],
+        create: [],
+        stored: true,
+      });
     });
   });
 });

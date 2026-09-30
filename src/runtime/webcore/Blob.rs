@@ -1632,6 +1632,7 @@ impl BlobExt for Blob {
                     path,
                     &global_this.js_thread(context),
                     credentials_with_options.options,
+                    credentials_with_options.acl,
                     self.content_type_or_mime_type(),
                     content_disposition_str.as_ref().map(|s| s.slice()),
                     content_encoding_str.as_ref().map(|s| s.slice()),
@@ -1645,10 +1646,11 @@ impl BlobExt for Blob {
                 path,
                 &global_this.js_thread(context),
                 s3.options,
+                s3.acl,
                 self.content_type_or_mime_type(),
                 None,
                 None,
-                None,
+                s3.storage_class,
                 s3.request_payer,
             );
         }

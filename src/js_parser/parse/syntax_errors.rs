@@ -866,6 +866,71 @@ mod tests {
     }
 
     #[test]
+    fn a_type_that_is_built_is_read_as_the_reference_reads_it() {
+        let cases: [(&'static [u8], u32, u32, u32, &str); 7] = [
+            (
+                b"x as A | () => void;",
+                1385,
+                8,
+                19,
+                "Function type notation must be parenthesized when used in a union type.",
+            ),
+            (
+                b"x as | () => void;",
+                1385,
+                6,
+                17,
+                "Function type notation must be parenthesized when used in a union type.",
+            ),
+            (
+                b"x as A & new () => B;",
+                1388,
+                8,
+                20,
+                "Constructor type notation must be parenthesized when used in an intersection type.",
+            ),
+            (b"x as A & | B;", 1110, 9, 10, "Type expected."),
+            (b"x as { a: };", 1110, 10, 11, "Type expected."),
+            (
+                b"x as { a A };",
+                1131,
+                7,
+                8,
+                "Property or signature expected.",
+            ),
+            (
+                b"x as { a: string b: number };",
+                1005,
+                17,
+                18,
+                "';' expected.",
+            ),
+        ];
+        for (text, code, start, end, message) in cases {
+            assert_eq!(
+                first_error(b"/a.ts", text, Loader::Ts),
+                Some((code, start, end, message.as_bytes().to_vec())),
+                "{}",
+                bstr::BStr::new(text)
+            );
+        }
+        let parsed: [&'static [u8]; 4] = [
+            b"x as A<>;",
+            b"x as A<B,>;",
+            b"x as A | (() => void);",
+            b"x as { readonly a: string; b?(): void; [k: string]: unknown; new (): A; get c(): number };",
+        ];
+        for text in parsed {
+            assert_eq!(
+                first_error(b"/a.ts", text, Loader::Ts),
+                None,
+                "{}",
+                bstr::BStr::new(text)
+            );
+        }
+    }
+
+    #[test]
     fn a_lint_parse_takes_what_the_reference_parses() {
         let cases: [&'static [u8]; 6] = [
             b"f<>()",

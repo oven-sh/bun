@@ -369,13 +369,17 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
-/// monomorphizations share one copy.
+/// monomorphizations share one copy. Returns what [`Body::Value::discard`] does.
 #[inline(never)]
-fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+#[must_use]
+fn release_body_stream(
+    response: &mut Response,
+    global_this: &JSGlobalObject,
+) -> WebCore::streams::SourceHandle {
     if let Body::Value::Locked(locked) = response.get_body_value()
         && locked.has_consumer()
     {
-        return;
+        return WebCore::streams::SourceHandle::None;
     }
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
@@ -385,8 +389,9 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     // Read after the stream calls: the check observes the post-detach state.
     let body_value = response.get_body_value();
     if matches!(body_value, Body::Value::Locked(_)) {
-        body_value.discard().cancel(JSValue::UNDEFINED);
+        return body_value.discard();
     }
+    WebCore::streams::SourceHandle::None
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -1603,7 +1608,7 @@ where
         // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
         // runs: release the body's hold on the stream here.
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(resp, global_this).cancel(JSValue::UNDEFINED);
         }
 
         self.response_root.clear();
@@ -2904,9 +2909,10 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            let mut producer = release_body_stream(resp, global_this);
             // Unlike the reject path: used whatever it held, not only when `Locked`.
             *resp.get_body_value() = Body::Value::Used;
+            producer.cancel(JSValue::UNDEFINED);
         }
 
         if self.is_aborted_or_ended() {
@@ -2994,7 +3000,7 @@ where
         }
 
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(resp, global_this).cancel(JSValue::UNDEFINED);
         }
 
         // aborted so call finalizeForAbort

@@ -257,7 +257,6 @@ int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
-/* us_socket_write_check_error for a TLS socket: a send of this write's records that can never succeed is a fatal write error. */
 int us_internal_ssl_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int count);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
@@ -271,8 +270,10 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
-/* us_socket_raw_write that stores the errno of a send that can never succeed (the peer is gone) in *peer_gone_errno. */
-int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *peer_gone_errno);
+/* us_socket_raw_write that also classifies a failed send(). When the kernel
+ * rejected the send outright, *fatal_send_error (may be NULL) receives the
+ * platform error code. The return value is the same either way. */
+int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *fatal_send_error);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 

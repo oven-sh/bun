@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -6590,4 +6590,200 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
   } finally {
     server.close();
   }
+});
+
+// A connected https session whose peer resets the connection while the client's event loop is
+// blocked, so a write of the client is the first operation that observes the reset, and its send()
+// fails. Over TLS the frame parser is not told about that failed send (it keeps it as
+// backpressure): its reaction to a fatal write is to close the transport, which drops what the
+// peer sent before the reset and gives the session EBADF. So the reset reaches JS through the read
+// side. How it looks there differs by kernel, in Node as well: on Linux the failed send() consumes
+// the socket's pending error, the read side sees a plain EOF, and the request ends clean
+// (rstCode 8). On Windows the reset stays readable and both the stream and the session get
+// ECONNRESET.
+describe("a session over TLS whose peer reset is first seen by a write", () => {
+  const BODY = 10000;
+  const fixture = `
+    const http2 = require("node:http2");
+    const fs = require("node:fs");
+    const state = { requested: false, sawResponse: false, dataBytes: 0, streamClosed: false, sessionClosed: false, errors: [] };
+    let reported = false;
+    function report() {
+      if (reported) return;
+      reported = true;
+      fs.writeSync(1, JSON.stringify(state) + "\\n");
+      process.exit(0);
+    }
+    function closed() {
+      if (state.streamClosed && state.sessionClosed) report();
+    }
+    // Block the loop until the parent has reset the connection. Nothing is
+    // polled in between, so the next write meets the reset first.
+    function blockUntilReset() {
+      fs.writeSync(1, "busy\\n");
+      const cell = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 30000;
+      while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
+        Atomics.wait(cell, 0, 0, 5);
+      }
+    }
+    function request() {
+      const req = session.request({ ":path": "/" });
+      state.requested = true;
+      req.on("response", () => (state.sawResponse = true));
+      req.on("data", chunk => (state.dataBytes += chunk.length));
+      req.on("error", err => state.errors.push(err.code));
+      req.on("close", () => {
+        state.streamClosed = true;
+        closed();
+      });
+      req.end();
+    }
+    const session = http2.connect("https://127.0.0.1:" + process.env.H2_PEER_PORT, { rejectUnauthorized: false });
+    session.on("error", err => state.errors.push(err.code));
+    session.on("close", () => {
+      state.sessionClosed = true;
+      closed();
+    });
+    if (process.env.H2_PEER_ANSWERS === "1") {
+      // The peer sends a PING once it has the request. It answers the request
+      // while this loop is blocked, then resets. The PING below meets the reset.
+      session.on("remoteSettings", request);
+      session.on("ping", () => {
+        blockUntilReset();
+        session.ping(() => {});
+      });
+    } else {
+      // The HEADERS of the request meet the reset.
+      session.on("remoteSettings", () => {
+        blockUntilReset();
+        request();
+      });
+    }
+    // Report whatever happened if the teardown never completes.
+    setTimeout(report, 20000);
+  `;
+  const frame = (type, flags, streamId = 0, payload = Buffer.alloc(0)) => {
+    const head = Buffer.alloc(9);
+    head.writeUIntBE(payload.length, 0, 3);
+    head[3] = type;
+    head[4] = flags;
+    head.writeUInt32BE(streamId, 5);
+    return Buffer.concat([head, payload]);
+  };
+
+  // Runs the fixture against a raw-frame TLS peer. With peerAnswers the peer sends the whole
+  // response to the blocked client before it resets. Resolves with what the fixture reported.
+  async function run(peerAnswers) {
+    using dir = tempDir("h2-tls-write-sees-reset", {});
+    const resetDoneFile = path.join(String(dir), "reset-done");
+    // The raw TCP socket under the server's TLSSocket: resetting it sends the RST with no TLS
+    // alert in front of it.
+    let raw = null;
+    const requested = Promise.withResolvers();
+    const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+      socket.on("error", () => {});
+      socket.write(frame(4, 0)); // empty SETTINGS
+      let acked = false;
+      let received = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (!acked) {
+          acked = true;
+          socket.write(frame(4, 1)); // ACK the client's SETTINGS
+        }
+        if (!peerAnswers) return;
+        // After the 24-byte client preface, look for HEADERS (type 1) on stream 1.
+        received = Buffer.concat([received, chunk]);
+        for (let offset = 24; received.length - offset >= 9; ) {
+          const length = received.readUIntBE(offset, 3);
+          if (received.length - offset < 9 + length) break;
+          if (received[offset + 3] === 1 && (received.readUInt32BE(offset + 5) & 0x7fffffff) === 1) {
+            socket.write(frame(6, 0, 0, Buffer.alloc(8))); // PING
+            requested.resolve(socket);
+          }
+          offset += 9 + length;
+        }
+      });
+    });
+    server.on("connection", socket => {
+      raw = socket;
+      socket.on("error", () => {});
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...bunEnv,
+          H2_PEER_PORT: String(server.address().port),
+          H2_PEER_ANSWERS: peerAnswers ? "1" : "0",
+          RESET_DONE_FILE: resetDoneFile,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderrText = proc.stderr.text();
+      let stdout = "";
+      let reset = false;
+      for await (const chunk of proc.stdout) {
+        stdout += Buffer.from(chunk).toString();
+        if (!reset && stdout.includes("busy\n")) {
+          reset = true;
+          if (peerAnswers) {
+            // HEADERS with ":status: 200" (the indexed field 0x88) and END_HEADERS, then DATA with
+            // END_STREAM. TCP delivers them to the blocked client ahead of the reset.
+            const socket = await requested.promise;
+            const response = [frame(1, 4, 1, Buffer.from([0x88])), frame(0, 1, 1, Buffer.alloc(BODY, "x"))];
+            await new Promise(resolve => socket.write(Buffer.concat(response), resolve));
+          }
+          const rawClosed = new Promise(resolve => raw.once("close", resolve));
+          raw.resetAndDestroy();
+          await rawClosed;
+          fs.writeFileSync(resetDoneFile, "");
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+      const lines = stdout.trim().split("\n");
+      const state = JSON.parse(lines[lines.length - 1]);
+      // Debug builds may write benign diagnostics to stderr, so it is only shown when the fixture
+      // failed.
+      return {
+        reset,
+        ...state,
+        errors: state.errors.filter(code => code !== "ECONNRESET" && code !== "EPIPE"),
+        failureDetail: exitCode === 0 ? "" : stderr,
+      };
+    } finally {
+      server.close();
+    }
+  }
+
+  // This holds on every kernel: the stream and the session both close, no response appears, and
+  // any error is the reset.
+  it("ends without a hang when the request is that write", async () => {
+    expect(await run(false)).toEqual({
+      reset: true,
+      requested: true,
+      sawResponse: false,
+      dataBytes: 0,
+      streamClosed: true,
+      sessionClosed: true,
+      errors: [],
+      failureDetail: "",
+    });
+  });
+
+  // Windows discards the receive queue on a reset, so there the response is gone.
+  it.skipIf(isWindows)("delivers the response that arrived before the reset", async () => {
+    expect(await run(true)).toEqual({
+      reset: true,
+      requested: true,
+      sawResponse: true,
+      dataBytes: BODY,
+      streamClosed: true,
+      sessionClosed: true,
+      errors: [],
+      failureDetail: "",
+    });
+  });
 });

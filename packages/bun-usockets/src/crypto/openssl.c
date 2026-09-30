@@ -118,9 +118,14 @@ struct loop_ssl_data {
   unsigned int ssl_spill_len;
   unsigned int ssl_spill_off;
 
-  /* The last socket whose ciphertext send failed because the peer is gone, and that errno (us_internal_ssl_write_check_error). */
-  struct us_socket_t *ssl_send_errno_owner;
-  int ssl_send_errno;
+  /* Set only while us_internal_ssl_write_check_error runs: the socket it
+   * writes to, and the platform error code of a raw send to that socket that
+   * the kernel rejected outright (the peer is gone). The raw sends of a TLS
+   * write run inside the write BIO and the batch/spill flushes, whose return
+   * values mean "bytes taken, 0 = the wire blocked" to BoringSSL and to the
+   * spill bookkeeping, so the code cannot travel up through them. */
+  struct us_socket_t *ssl_send_error_owner;
+  int ssl_send_error;
 
   /* us_socket_sni_resolve's answer; us_select_cert_cb takes it in the same re-drive. */
   SSL_CTX *ssl_sni_resolved_ctx;
@@ -460,16 +465,12 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
 
-/* Sends ciphertext. Keeps the errno of a send that found the peer gone, for us_internal_ssl_write_check_error. */
-static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, int length, int *peer_gone) {
-  int peer_gone_errno = 0;
-  int written = us_internal_socket_raw_write(s, data, length, &peer_gone_errno);
-  if (peer_gone) *peer_gone = peer_gone_errno != 0;
-  if (peer_gone_errno) {
-    loop_ssl_data->ssl_send_errno_owner = s;
-    loop_ssl_data->ssl_send_errno = peer_gone_errno;
-  }
-  return written;
+/* Send ciphertext for `s`. A send the kernel rejected outright still returns 0
+ * like a blocked wire. Its error code goes to the write that is in progress
+ * for `s`, if there is one (see ssl_send_error_owner). */
+static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, int length) {
+  return us_internal_socket_raw_write(s, data, length,
+                                      loop_ssl_data->ssl_send_error_owner == s ? &loop_ssl_data->ssl_send_error : NULL);
 }
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
@@ -598,7 +599,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     BIO_clear_retry_flags(bio);
     return length;
   }
-  int written = ssl_raw_write(loop_ssl_data, loop_ssl_data->ssl_socket, data, length, NULL);
+  int written = ssl_raw_write(loop_ssl_data, loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -624,7 +625,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   }
   loop_ssl_data->ssl_write_batch_len = 0;
   loop_ssl_data->ssl_write_batch_owner = NULL;
-  int written = ssl_raw_write(loop_ssl_data, s, loop_ssl_data->ssl_write_batch, (int)len, NULL);
+  int written = ssl_raw_write(loop_ssl_data, s, loop_ssl_data->ssl_write_batch, (int)len);
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
@@ -665,13 +666,11 @@ static void ssl_release_batch(struct us_loop_t *loop, struct us_socket_t *s) {
 }
 
 /* Try to drain the spill slot for `s`. Returns 1 when clear (or not ours),
- * 0 while ciphertext is still pending for this socket. *peer_gone (optional):
- * the send found the peer gone, so this spill can never drain. */
-static int ssl_drain_spill_to(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, int *peer_gone) {
-  if (peer_gone) *peer_gone = 0;
+ * 0 while ciphertext is still pending for this socket. */
+static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   if (loop_ssl_data->ssl_spill_owner != s) return 1;
   unsigned int pending = loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
-  int written = ssl_raw_write(loop_ssl_data, s, loop_ssl_data->ssl_spill + loop_ssl_data->ssl_spill_off, (int)pending, peer_gone);
+  int written = ssl_raw_write(loop_ssl_data, s, loop_ssl_data->ssl_spill + loop_ssl_data->ssl_spill_off, (int)pending);
   if (written < 0) written = 0;
   loop_ssl_data->ssl_spill_off += (unsigned int)written;
   if (loop_ssl_data->ssl_spill_off == loop_ssl_data->ssl_spill_len) {
@@ -685,25 +684,26 @@ static int ssl_drain_spill_to(struct loop_ssl_data *loop_ssl_data, struct us_soc
   return 0;
 }
 
-static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
-  return ssl_drain_spill_to(loop_ssl_data, s, NULL);
+/* Free the spill slot if `s` owns it, without another attempt to send it. */
+static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
+  if (loop_ssl_data->ssl_spill_owner != s) return;
+  us_free(loop_ssl_data->ssl_spill);
+  loop_ssl_data->ssl_spill = NULL;
+  loop_ssl_data->ssl_spill_len = 0;
+  loop_ssl_data->ssl_spill_off = 0;
+  loop_ssl_data->ssl_spill_owner = NULL;
 }
 
 /* Release the spill slot when its owner dies (close path). */
 static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
+  if (!loop_ssl_data) return;
+  if (loop_ssl_data->ssl_spill_owner == s) {
     /* Hard close with ciphertext still spilled: give the kernel one last
      * chance to take it (it usually can - the spill is bounded small). */
     ssl_drain_spill(loop_ssl_data, s);
   }
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
-    us_free(loop_ssl_data->ssl_spill);
-    loop_ssl_data->ssl_spill = NULL;
-    loop_ssl_data->ssl_spill_len = 0;
-    loop_ssl_data->ssl_spill_off = 0;
-    loop_ssl_data->ssl_spill_owner = NULL;
-  }
+  ssl_discard_spill(loop_ssl_data, s);
 }
 
 void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t *old_s,
@@ -718,6 +718,9 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
   }
   if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
     loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
+  }
+  if (loop_ssl_data->ssl_send_error_owner == old_s) {
+    loop_ssl_data->ssl_send_error_owner = new_s;
   }
 }
 
@@ -2085,9 +2088,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
       && !reason
       && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    int peer_gone = 0;
-    /* A spill whose send finds the peer gone never drains: waiting for it would leave the fd open for good. */
-    if (loop_ssl_data && !ssl_drain_spill_to(loop_ssl_data, s, &peer_gone) && !peer_gone) {
+    if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
       s->ssl_close_after_spill = 1;
       /* Resume with the SAME code: a graceful close must not come back as a
        * forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
@@ -2829,17 +2830,42 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
   return 0;
 }
 
+/* us_internal_ssl_write for a caller that wants to know when the kernel
+ * rejected one of the write's raw sends outright (us_socket_write_check_error).
+ * That send is the only report of the failure. SSL_write has already taken the
+ * plaintext, and on Linux the failed send() consumes the socket's pending
+ * error, so the read side sees a plain EOF afterwards. Without the report the
+ * caller counts the bytes as written and the connection ends as a clean close. */
 int us_internal_ssl_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
-  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-  if (!loop_ssl_data || !fatal_write_error) {
-    return us_internal_ssl_write(s, data, length);
-  }
-  loop_ssl_data->ssl_send_errno_owner = NULL;
+  struct us_loop_t *loop = s->group->loop;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  /* JS that runs from inside SSL_write (a keylog callback while the write
+   * drives the handshake) can write to another TLS socket on this loop. Keep
+   * the outer write's record across that nested call. */
+  struct us_socket_t *outer_owner = loop_ssl_data->ssl_send_error_owner;
+  int outer_send_error = loop_ssl_data->ssl_send_error;
+  loop_ssl_data->ssl_send_error_owner = s;
+  loop_ssl_data->ssl_send_error = 0;
+
   int written = us_internal_ssl_write(s, data, length);
-  if (loop_ssl_data->ssl_send_errno_owner == s) {
-    /* SSL counts the sealed records as written, but they can never reach the peer. */
-    *fatal_write_error = loop_ssl_data->ssl_send_errno;
-    return 0;
+
+  int send_error = loop_ssl_data->ssl_send_error;
+  loop_ssl_data->ssl_send_error_owner = outer_owner;
+  loop_ssl_data->ssl_send_error = outer_send_error;
+  s = us_internal_socket_follow_adopted(s);
+  /* Before the handshake has been reported, the handshake dispatch carries
+   * the failure and its reason. */
+  if (send_error && fatal_write_error && us_internal_ssl_handshake_callback_has_fired(s)) {
+    /* The writer is told that this write failed, so the records SSL_write
+     * sealed for it must not reach the peer later: a writer that retries
+     * (node:net keeps the chunk, the h2 parser keeps its frames) would put
+     * the same plaintext on the stream twice if the wire came back. Without
+     * them the stream has a gap, which the peer rejects: that fails the
+     * connection instead of corrupting it. A close that follows also has
+     * nothing undeliverable to wait for. */
+    ssl_release_batch(loop, s);
+    ssl_discard_spill(loop_ssl_data, s);
+    *fatal_write_error = send_error;
   }
   return written;
 }

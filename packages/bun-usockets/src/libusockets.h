@@ -652,12 +652,12 @@ int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count)
 int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
-/* us_socket_raw_write that reports a send that found the peer gone through *fatal_write_error (not on Windows). */
+/* us_socket_raw_write that reports a fatal send error through *fatal_write_error, like us_socket_write_check_error. */
 int us_socket_raw_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the
- * write instead of retrying forever. A TLS socket reports the send of its
- * records that found the peer gone (not on Windows). */
+ * write instead of retrying forever. For a TLS socket that is a raw send of
+ * the write's ciphertext, once the handshake has been reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;

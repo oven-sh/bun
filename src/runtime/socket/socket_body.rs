@@ -2469,7 +2469,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                // A fatal send's errno (< -1) is for node:net only. This API documents -1.
+                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
     }
@@ -2624,6 +2625,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
+        self.write_maybe_corked_impl::<true>(buffer)
+    }
+
+    /// Like `write_maybe_corked`, but a send the kernel rejected stays backpressure (no errno).
+    pub(crate) fn write_maybe_corked_without_fatal_report(&self, buffer: &[u8]) -> i32 {
+        self.write_maybe_corked_impl::<false>(buffer)
+    }
+
+    fn write_maybe_corked_impl<const REPORT_FATAL_SEND: bool>(&self, buffer: &[u8]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
@@ -2636,7 +2646,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         let CheckedWrite {
             written: res,
             fatal_errno,
-        } = self.write_check_error(buffer);
+        } = if REPORT_FATAL_SEND {
+            self.write_check_error(buffer)
+        } else {
+            CheckedWrite {
+                written: socket.write(buffer),
+                fatal_errno: 0,
+            }
+        };
         if fatal_errno != 0 {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
@@ -3303,7 +3320,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
                 }
-                JSValue::js_number(wrote as f64)
+                JSValue::js_number(f64::from(wrote.max(-1)))
             }
         };
         Ok(result)

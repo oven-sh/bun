@@ -60,7 +60,7 @@ async function serve(packages: Pkg[]) {
 }
 
 const targets = ["short", "some-other-package"];
-const sources = ["root", "workspace", "transitive", "scoped-override"] as const;
+const sources = ["root", "workspace", "transitive", "scoped-override", "ranged-override"] as const;
 const lockfiles = ["bun.lock", "bun.lockb", "package-lock.json", "yarn.lock"] as const;
 const actions: Record<string, string[]> = {
   "install (in sync)": ["install"],
@@ -102,6 +102,15 @@ function projectFiles(source: (typeof sources)[number], target: string): Record<
           version: "1.0.0",
           dependencies: { parent: "1.0.0" },
           overrides: { parent: { kept: alias } },
+        }),
+      };
+    case "ranged-override":
+      return {
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { parent: "1.0.0" },
+          overrides: { "kept@2": alias },
         }),
       };
   }
@@ -252,7 +261,7 @@ async function cell(which: string, lockfile: (typeof lockfiles)[number], source:
 const table: any[] = [];
 for (const lockfile of lockfiles) {
   for (const source of sources) {
-    if (source === "scoped-override" && (lockfile === "package-lock.json" || lockfile === "yarn.lock")) continue;
+    if (source.endsWith("-override") && (lockfile === "package-lock.json" || lockfile === "yarn.lock")) continue;
     for (const action of Object.keys(actions)) {
       for (const target of targets) {
         const base = await cell("base", lockfile, source, action, target);

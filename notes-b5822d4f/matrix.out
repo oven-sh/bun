@@ -1,4 +1,4 @@
-cells: 112, changed: 6
+cells: 128, changed: 10
 same    | bun.lock | root | install (in sync) | short
 same    | bun.lock | root | install (in sync) | some-other-package
 same    | bun.lock | root | add kept@^1.0.0 | short
@@ -31,6 +31,14 @@ same    | bun.lock | scoped-override | add extra | short
 same    | bun.lock | scoped-override | add extra | some-other-package
 same    | bun.lock | scoped-override | update | short
 same    | bun.lock | scoped-override | update | some-other-package
+same    | bun.lock | ranged-override | install (in sync) | short
+same    | bun.lock | ranged-override | install (in sync) | some-other-package
+same    | bun.lock | ranged-override | add kept@^1.0.0 | short
+same    | bun.lock | ranged-override | add kept@^1.0.0 | some-other-package
+same    | bun.lock | ranged-override | add extra | short
+same    | bun.lock | ranged-override | add extra | some-other-package
+same    | bun.lock | ranged-override | update | short
+same    | bun.lock | ranged-override | update | some-other-package
 same    | bun.lockb | root | install (in sync) | short
 same    | bun.lockb | root | install (in sync) | some-other-package
 same    | bun.lockb | root | add kept@^1.0.0 | short
@@ -71,6 +79,22 @@ CHANGED | bun.lockb | scoped-override | add extra | some-other-package
    pr:   {"exit":0,"requests":["/extra","/kept"],"rows":{"extra":"extra@1.0.0","kept":"kept@1.0.0","parent":"parent@1.0.0","parent/kept":"some-other-package@1.0.0"},"errors":[]}
 same    | bun.lockb | scoped-override | update | short
 same    | bun.lockb | scoped-override | update | some-other-package
+same    | bun.lockb | ranged-override | install (in sync) | short
+same    | bun.lockb | ranged-override | install (in sync) | some-other-package
+CHANGED | bun.lockb | ranged-override | add kept@^1.0.0 | short
+   base: {"exit":0,"requests":["/short"],"rows":{"kept":"short@1.0.0","parent":"parent@1.0.0","parent/kept":"kept@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/kept"],"rows":{"kept":"kept@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+CHANGED | bun.lockb | ranged-override | add kept@^1.0.0 | some-other-package
+   base: {"exit":0,"requests":["/some-other-package"],"rows":{"kept":"some-other-package@1.0.0","parent":"parent@1.0.0","parent/kept":"kept@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/kept"],"rows":{"kept":"kept@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+CHANGED | bun.lockb | ranged-override | add extra | short
+   base: {"exit":0,"requests":["/extra","/short"],"rows":{"extra":"extra@1.0.0","kept":"short@1.0.0","parent":"parent@1.0.0","parent/kept":"kept@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/extra","/kept"],"rows":{"extra":"extra@1.0.0","kept":"kept@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+CHANGED | bun.lockb | ranged-override | add extra | some-other-package
+   base: {"exit":0,"requests":["/extra","/some-other-package"],"rows":{"extra":"extra@1.0.0","kept":"some-other-package@1.0.0","parent":"parent@1.0.0","parent/kept":"kept@1.0.0"},"errors":[]}
+   pr:   {"exit":0,"requests":["/extra","/kept"],"rows":{"extra":"extra@1.0.0","kept":"kept@1.0.0","parent":"parent@1.0.0"},"errors":[]}
+same    | bun.lockb | ranged-override | update | short
+same    | bun.lockb | ranged-override | update | some-other-package
 same    | package-lock.json | root | install (in sync) | short
 same    | package-lock.json | root | install (in sync) | some-other-package
 same    | package-lock.json | root | add kept@^1.0.0 | short

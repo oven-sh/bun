@@ -2395,18 +2395,20 @@ describe("hostile values in every sink", () => {
     const nest = (n, seed, wrap) => { let v = seed; for (let i = 0; i < n; i++) v = wrap(v); return v; };
     const tie = (v, close) => (close(v), v);
     function args() { return arguments; }
+    // A debug build has larger frames, and takes seconds to build 100,000 Maps.
+    const deep = ${isDebug || isASAN ? 1e4 : 1e5};
 
     globalThis.values = {
       // Deeper than the native stack.
-      "deep object": () => nest(1e5, {}, v => ({ v })),
-      "deep array": () => nest(1e5, [], v => [v]),
-      "deep Map": () => nest(1e5, new Map(), v => new Map([[1, v]])),
-      "deep Set": () => nest(1e5, new Set(), v => new Set([v])),
-      "deep JSX": () => nest(1e5, "leaf", v => el("div", { children: v })),
-      "deep Proxy": () => nest(1e5, { ok: 1 }, v => new Proxy(v, {})),
-      "deep cause": () => nest(1e4, new Error("e"), v => new Error("e", { cause: v })),
-      "deep errors": () => nest(1e4, new Error("e"), v => new AggregateError([v], "a")),
-      "deep boxed": () => nest(1e5, 1, v => Object.assign(new Number(1), { v })),
+      "deep object": () => nest(deep, {}, v => ({ v })),
+      "deep array": () => nest(deep, [], v => [v]),
+      "deep Map": () => nest(deep, new Map(), v => new Map([[1, v]])),
+      "deep Set": () => nest(deep, new Set(), v => new Set([v])),
+      "deep JSX": () => nest(deep, "leaf", v => el("div", { children: v })),
+      "deep Proxy": () => nest(deep, { ok: 1 }, v => new Proxy(v, {})),
+      "deep cause": () => nest(deep / 10, new Error("e"), v => new Error("e", { cause: v })),
+      "deep errors": () => nest(deep / 10, new Error("e"), v => new AggregateError([v], "a")),
+      "deep boxed": () => nest(deep, 1, v => Object.assign(new Number(1), { v })),
 
       // Reaches itself.
       "cyclic object": () => tie({}, v => (v.v = v)),
@@ -2586,9 +2588,32 @@ describe("hostile values in every sink", () => {
     120_000,
   );
 
-  it.concurrent(
-    "bun:test diffs and messages",
-    async () => {
+  // One process each: a value with shared references prints its whole budget in every sink.
+  it.concurrent.each([
+    [
+      "diffs",
+      `
+            "toEqual received": v => fails(() => expect(v).toEqual(other)),
+            "toEqual expected": v => fails(() => expect(other).toEqual(v)),
+            "toStrictEqual nested": v => fails(() => expect({ a: [v] }).toStrictEqual(other)),`,
+    ],
+    [
+      "messages",
+      `
+            "toBe": v => fails(() => expect(v).toBe(other)),
+            "toBeNull": v => fails(() => expect(v).toBeNull()),
+            "toContain": v => fails(() => expect([other]).toContain(v)),`,
+    ],
+    [
+      "mocks and asymmetric matchers",
+      `
+            "toHaveBeenCalledWith": v => fails(() => { const f = mock(); f(v); expect(f).toHaveBeenCalledWith(other); }),
+            "objectContaining": v => fails(() => expect(other).toEqual(expect.objectContaining({ v }))),
+            "arrayContaining": v => fails(() => expect(other).toEqual(expect.arrayContaining([v]))),`,
+    ],
+  ])(
+    "bun:test %s",
+    async (_, sinks) => {
       const seen = await run(
         {
           "sinks.test.js": `
@@ -2604,16 +2629,7 @@ describe("hostile values in every sink", () => {
           };
           // A primitive, so that the comparison is over before it reads anything off the value.
           const other = 1;
-          test("sinks", () => check({
-            "toEqual received": v => fails(() => expect(v).toEqual(other)),
-            "toEqual expected": v => fails(() => expect(other).toEqual(v)),
-            "toStrictEqual nested": v => fails(() => expect({ a: [v] }).toStrictEqual(other)),
-            "toBe": v => fails(() => expect(v).toBe(other)),
-            "toBeNull": v => fails(() => expect(v).toBeNull()),
-            "toContain": v => fails(() => expect([other]).toContain(v)),
-            "toHaveBeenCalledWith": v => fails(() => { const f = mock(); f(v); expect(f).toHaveBeenCalledWith(other); }),
-            "objectContaining": v => fails(() => expect(other).toEqual(expect.objectContaining({ v }))),
-            "arrayContaining": v => fails(() => expect(other).toEqual(expect.arrayContaining([v]))),
+          test("sinks", () => check({${sinks}
           }, 8 * 1024 * 1024), 120_000);
         `,
         },

@@ -634,20 +634,24 @@ impl Generator {
 /// gives the last block of the program the end it has with one.
 fn as_if_terminated(blocks: &mut [BasicBlockRange], length: c_int) {
     let last = length - 1;
-    // The block ends with a function: JSC reports the empty range after the function. A function
-    // around that function reports one too, and that one stays as it is.
+    // The empty range that JSC reports after a function that ends a block on the last unit. The
+    // last block of the program ran, so one that did not run is left of a branch not taken.
     let after_function = |b: &BasicBlockRange| (b.start_offset, b.end_offset) == (length, last);
-    // The block starts at the end of the text: JSC moves its start onto the last unit, where the
-    // block before it ends too. That block is empty with or without a terminator.
+    if blocks.iter().any(after_function) {
+        let ran = |b: &BasicBlockRange| b.has_executed || b.execution_count > 0;
+        if let Some(program) = blocks.iter().position(|b| after_function(b) && ran(b)) {
+            blocks[program].end_offset = length;
+        }
+        return;
+    }
+    // JSC moves a last block that starts at or after the end of the text back onto the last
+    // unit. The block before it then ends on the last unit too, or one unit later. The moved
+    // block is empty with or without a terminator.
     let ends_with_text =
         |b: &BasicBlockRange| b.end_offset == last && (0..=last).contains(&b.start_offset);
-    let program = blocks.iter().position(after_function).or_else(|| {
-        blocks
-            .iter()
-            .position(ends_with_text)
-            .filter(|_| blocks.iter().filter(|b| ends_with_text(b)).count() == 1)
-    });
-    if let Some(program) = program {
+    let moved_back = blocks.iter().any(|b| b.end_offset == length)
+        || blocks.iter().filter(|b| ends_with_text(b)).count() > 1;
+    if !moved_back && let Some(program) = blocks.iter().position(ends_with_text) {
         blocks[program].end_offset = length;
     }
 }

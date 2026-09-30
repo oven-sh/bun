@@ -1052,6 +1052,17 @@ describe("a text that is not printed by bun and has no final newline", () => {
       "FNF:1\nFNH:1",
       { 5: false },
     ],
+    "branch-not-taken-ends-with-a-function.js": [
+      "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet) globalThis.second =\n  () => 2",
+      "FNF:2\nFNH:1",
+      { 4: false },
+    ],
+    // The function on line 4 never ran and no other code is on that line.
+    "conditional-ends-with-a-function.js": [
+      "// @bun\nexport const first = () => 1;\nexport const second = globalThis.neverSet ? () => 1 :\n  () => 2",
+      "FNF:3\nFNH:1",
+      { 3: true },
+    ],
     "statement-not-reached-on-the-last-line.js": [
       "// @bun\nexport const first = () => 1;\ntail();\nfunction tail() {\n  if (!globalThis.neverSet) return;\n  first(); }",
       "FNF:2\nFNH:2",
@@ -1071,9 +1082,16 @@ describe("a text that is not printed by bun and has no final newline", () => {
   };
   const terminated = (name: string) => `terminated-${name}`;
 
-  // `files`, each text as it is and with a final newline, and a test that calls first() of each.
-  function fixture(texts: Record<string, [string, ...unknown[]]>, files: Record<string, string>) {
-    files = { ...files };
+  let result: Awaited<ReturnType<typeof run>>;
+  beforeAll(async () => {
+    const files: Record<string, string> = {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+      "empty.cjs": "",
+      // bun prints these two. The test puts a wrapper of its own around the printed text.
+      "wrapped.cjs": "exports.first = () => 1;\nexports.second = () => 2;\n",
+      [terminated("wrapped.cjs")]: "exports.first = () => 1;\nexports.second = () => 2;\n",
+    };
+    // Each text as it is, and with a final newline.
     const names: string[] = [];
     for (const [name, [text]] of Object.entries(texts)) {
       files[name] = text;
@@ -1083,49 +1101,24 @@ describe("a text that is not printed by bun and has no final newline", () => {
     files["first.test.ts"] = `
 import { expect, test } from "bun:test";
 import { codeCoverageForFile } from "bun:jsc";
+import Module from "node:module";
 import { join } from "node:path";
 ${names.map((name, i) => (name.endsWith(".cjs") ? `const m${i} = require("./${name}");` : `import * as m${i} from "./${name}";`)).join("\n")}
-${"empty.cjs" in files ? `require("./empty.cjs");` : ""}
+require("./empty.cjs");
 const modules = { ${names.map((name, i) => `"${name}": m${i}`).join(", ")} };
+
+// The table row of a file, from the text that ran and not through a source map.
+const row = name => console.log(JSON.stringify({ name, row: codeCoverageForFile(join(import.meta.dir, name), true) }));
 
 test("calls first() and not second()", () => {
   for (const [name, module] of Object.entries(modules)) {
     const value = module.first();
     expect(typeof value === "function" ? value() : value).toBe(1);
-    console.log(JSON.stringify({ name, row: codeCoverageForFile(join(import.meta.dir, name), true) }));
+    row(name);
   }
 });
-`;
-    return files;
-  }
 
-  const bundle: typeof texts = {
-    "bundle.js": [
-      "// @bun\nfunction first(){return 1}function second(){return 2}export{first,second};",
-      "FNF:2\nFNH:1",
-      { 2: true },
-    ],
-  };
-  const bundleMap = JSON.stringify({
-    version: 3,
-    sources: ["lib.ts"],
-    sourcesContent: ["export function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n}\n"],
-    mappings: ";AAAO,SAAS,KAAK,EAAG,CACtB,MAAO,GAEF,SAAS,MAAM,EAAG,CACvB,MAAO",
-    names: [],
-  });
-  // `coverageIgnoreSourcemaps` makes a file with a source map report the lines of the text that ran.
-  const ignoringSourceMaps = {
-    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageIgnoreSourcemaps = true\n`,
-    "bundle.js.map": bundleMap,
-    [`${terminated("bundle.js")}.map`]: bundleMap,
-    // bun prints these two. The test puts a wrapper of its own around the printed text.
-    "wrapped.cjs": "exports.first = () => 1;\nexports.second = () => 2;\n",
-    [terminated("wrapped.cjs")]: "exports.first = () => 1;\nexports.second = () => 2;\n",
-    "wrapper.test.ts": `
-import { expect, test } from "bun:test";
-import Module from "node:module";
-
-test("calls first() and not second()", () => {
+test("calls first() and not second() under a changed Module.wrapper", () => {
   const defaultEnd = Module.wrapper[1];
   const end = "\\n;var unused = function () {};})";
   try {
@@ -1136,72 +1129,63 @@ test("calls first() and not second()", () => {
   } finally {
     Module.wrapper[1] = defaultEnd;
   }
+  row("wrapped.cjs");
+  row("${terminated("wrapped.cjs")}");
 });
-`,
-  };
-
-  const results: Record<string, Awaited<ReturnType<typeof run>>> = {};
-  beforeAll(async () => {
-    [results["no source map"], results["coverageIgnoreSourcemaps"]] = await Promise.all([
-      run(fixture(texts, { "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`, "empty.cjs": "" }), []),
-      run(fixture(bundle, ignoringSourceMaps), []),
-    ]);
+`;
+    result = await run(files, []);
   });
 
   // The table row and the lcov record of a file, without its name. `ran` is whether each line ran.
-  const report = ({ rows, lcov }: (typeof results)[string], file: string) => ({
-    row: rows[file],
-    record: lcov[file].replace(`SF:${file}\n`, "").trim(),
-    functions: lcov[file].match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
+  const report = (file: string) => ({
+    row: result.rows[file],
+    record: result.lcov[file].replace(`SF:${file}\n`, "").trim(),
+    functions: result.lcov[file].match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
     ran: Object.fromEntries(
-      Array.from(lcov[file].matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
+      Array.from(result.lcov[file].matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
     ),
   });
-  const any = {
-    row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
-    record: expect.any(String),
-  };
+  // What codeCoverageForFile() returned in the test, without the name of the file.
+  const rowFromBunJsc = (file: string) =>
+    result.stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line))
+      .filter(({ name }) => name === file)
+      .map(({ row }) => row.slice(row.indexOf("|")))[0];
 
-  describe.each(Object.entries({ ...texts, ...bundle }))("%s", (file, [, functions, lines]) => {
-    const result = () => results[file in texts ? "no source map" : "coverageIgnoreSourcemaps"];
-
+  describe.each(Object.entries(texts))("%s", (file, [, functions, lines]) => {
     test("bun test --coverage", () => {
-      expect(report(result(), file)).toEqual({ ...any, functions, ran: expect.objectContaining(lines) });
-      expect(report(result(), file)).toEqual(report(result(), terminated(file)));
+      expect(report(file)).toEqual({
+        row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
+        record: expect.any(String),
+        functions,
+        ran: expect.objectContaining(lines),
+      });
+      expect(report(file)).toEqual(report(terminated(file)));
     });
 
     test("bun:jsc codeCoverageForFile()", () => {
-      const rows = Object.fromEntries(
-        result()
-          .stdout.split("\n")
-          .filter(line => line.startsWith("{"))
-          .map(line => JSON.parse(line))
-          .map(({ name, row }) => [name, row.slice(row.indexOf("|"))]),
-      );
-      expect(rows[file]).toMatch(/^\| +\d+\.\d+ \| +\d+\.\d+ \| /);
-      expect(rows[file]).toBe(rows[terminated(file)]);
+      expect(rowFromBunJsc(file)).toMatch(/^\| +\d+\.\d+ \| +\d+\.\d+ \| /);
+      expect(rowFromBunJsc(file)).toBe(rowFromBunJsc(terminated(file)));
     });
   });
 
   test("CommonJS under a changed Module.wrapper", () => {
-    const result = results["coverageIgnoreSourcemaps"];
-    expect(report(result, "wrapped.cjs")).toEqual({
-      ...any,
-      // first(), second(), the wrapper, and the function in the end of the wrapper, on line 5.
-      functions: "FNF:4\nFNH:2",
-      ran: expect.objectContaining({ 5: true }),
-    });
-    expect(report(result, "wrapped.cjs")).toEqual(report(result, terminated("wrapped.cjs")));
+    // first(), second(), the wrapper, and the function in the end of the wrapper.
+    expect(rowFromBunJsc("wrapped.cjs")).toMatch(/^\| +50\.00 \| +100\.00 \| $/);
+    expect(rowFromBunJsc("wrapped.cjs")).toBe(rowFromBunJsc(terminated("wrapped.cjs")));
+    expect(report("wrapped.cjs")).toEqual(report(terminated("wrapped.cjs")));
   });
 
   test("a file with a final newline reports what it reported before", () => {
-    expect(results["no source map"].lcov[terminated("never-ran-alone-on-the-last-line.js")]).toContain(
+    expect(result.lcov[terminated("never-ran-alone-on-the-last-line.js")]).toContain(
       "\nFNF:2\nFNH:1\nDA:2,10\nDA:3,9\nDA:4,1\nDA:5,21\nLF:4\nLH:4\n",
     );
   });
 
   // The text of an empty CommonJS file is a wrapper that bun writes. The file has no line to report.
   test("an empty .cjs file reports no line", () => {
-    expect(results["no source map"].lcov["empty.cjs"]).toContain("\nFNF:1\nFNH:1\nLF:0\nLH:0\n");
+    expect(result.lcov["empty.cjs"]).toContain("\nFNF:1\nFNH:1\nLF:0\nLH:0\n");
   });
 });

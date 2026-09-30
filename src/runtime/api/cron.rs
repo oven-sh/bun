@@ -29,9 +29,8 @@ use bun_jsc::{
 };
 use bun_paths as path;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
-use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
-use bun_resolver::fs::RealFS;
+use bun_resolver::fs::{FileSystem, RealFS};
 
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
@@ -2175,7 +2174,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
             bun_sys::windows::libuv::Pipe,
         >()));
-    let cwd = FileSystem::get().top_level_dir;
+    let cwd = bun_core::cwd::get();
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,

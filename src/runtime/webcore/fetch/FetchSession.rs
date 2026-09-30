@@ -316,7 +316,7 @@ impl FetchSession {
         }
 
         if let Some(unix) = options.get(global, "unix")? {
-            if let Some(path) = super::parse_unix(vm, global, unix)? {
+            if let Some(path) = super::parse_unix(global, unix)? {
                 this.unix = path;
             } else if !unix.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(

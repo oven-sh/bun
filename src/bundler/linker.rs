@@ -31,7 +31,6 @@ pub struct Linker {
     // pointers and dereference at use-site; same
     // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
     pub(crate) options: *mut BundleOptions<'static>,
-    pub(crate) fs: *mut Fs::FileSystem,
     pub log: *mut Log,
     pub(crate) resolve_queue: *mut ResolveQueue,
     pub(crate) resolve_results: *mut ResolveResults,
@@ -158,19 +157,6 @@ impl Linker {
         unsafe { &*self.options }
     }
 
-    /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
-    ///
-    /// SAFETY: `self.fs` is the `FileSystem::instance()` singleton, set at
-    /// `Transpiler::init` time and never freed. Never null. Only scalar
-    /// fields (`top_level_dir`) are read.
-    #[inline]
-    pub(crate) fn fs(&self) -> &Fs::FileSystem {
-        debug_assert!(!self.fs.is_null());
-        // SAFETY: `self.fs` is the process-lifetime `FileSystem::instance()`
-        // singleton, set at `Transpiler::init` and never freed or mutated.
-        unsafe { &*self.fs }
-    }
-
     /// Exclusive borrow of the owning `Transpiler.log`.
     ///
     /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in
@@ -229,14 +215,12 @@ impl Linker {
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
         resolve_results: *mut ResolveResults,
-        fs: *mut Fs::FileSystem,
     ) -> Self {
         // The `LazyLock` accessor initializes `relative_paths_list` lazily on
         // first `intern_path()` / `relative_paths_list()` call, so no eager
         // poke is needed (it would be startup overhead for non-bundling code paths).
         Self {
             options,
-            fs,
             log,
             resolve_queue,
             resolve_results,
@@ -255,13 +239,11 @@ impl Linker {
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
         resolve_results: *mut ResolveResults,
-        fs: *mut Fs::FileSystem,
     ) {
         self.log = log;
         self.resolve_queue = resolve_queue;
         self.options = options;
         self.resolve_results = resolve_results;
-        self.fs = fs;
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
@@ -643,7 +625,7 @@ impl Linker {
                         }
                     }
 
-                    let top_level_dir = self.fs().top_level_dir;
+                    let top_level_dir = bun_core::cwd::get();
                     let mut base: &[u8] =
                         bun_paths::resolve_path::relative(top_level_dir, source_path);
                     if let Some(dot) = strings::last_index_of_char(base, b'.') {
@@ -675,12 +657,11 @@ impl Linker {
 
     pub(crate) fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
-        let fs = self.fs();
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash
-        if strings::starts_with(path.text, fs.top_level_dir) {
-            hash_key = &path.text[fs.top_level_dir.len()..];
+        if let Some(relative) = path.text.strip_prefix(bun_core::cwd::get()) {
+            hash_key = relative;
         }
 
         bun_wyhash::hash(hash_key)

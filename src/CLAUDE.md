@@ -36,6 +36,7 @@ or don't match the cross-platform behavior the runtime needs.
 | `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
 | `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
+| `std::env::current_dir` / `getcwd`      | `bun_core::cwd::get()` (the one record; `bun_sys::chdir` keeps it current)           |
 | `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`                                       |
 | `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
 | `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |

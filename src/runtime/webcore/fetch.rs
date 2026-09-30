@@ -90,16 +90,12 @@ pub(crate) use self::fetch_tasklet::{
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The `unix` option when it is a non-empty string.
-fn parse_unix(
-    vm: &VirtualMachine,
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<Box<[u8]>>> {
+fn parse_unix(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Box<[u8]>>> {
     if !value.is_string() || value.get_length(global)? == 0 {
         return Ok(None);
     }
     Ok(Some(absolute_unix_socket_path(
-        vm.top_level_dir(),
+        bun_core::cwd::get(),
         value.to_bun_string(global)?.to_owned_slice(),
     )))
 }
@@ -772,7 +768,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(socket_path) =
                     obj.get_common_string(global_this, jsc::CommonString::FetchOptionUnix)?
                 {
-                    if let Some(path) = parse_unix(vm, global_this, socket_path)? {
+                    if let Some(path) = parse_unix(global_this, socket_path)? {
                         break 'extract_unix_socket_path path;
                     }
                 }
@@ -1383,19 +1379,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 }
 
-                #[cfg(windows)]
-                let mut cwd_buf = bun_paths::path_buffer_pool::get();
-                #[cfg(windows)]
-                // `bun_sys::getcwd` returns the byte length written into
-                // `cwd_buf`; slice it here.
-                let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-                    Ok(len) => &cwd_buf[..len],
-                    Err(err) => {
-                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
-                    }
-                };
-                #[cfg(not(windows))]
-                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let cwd = bun_core::cwd::get();
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = global_this.bun_vm().as_mut().main();

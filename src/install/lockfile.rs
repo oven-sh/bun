@@ -1668,15 +1668,9 @@ impl<'a> Printer<'a> {
         let mut path_in_buf2 = false;
 
         if !bun_paths::is_absolute(path) {
-            // `bun_sys::getcwd` returns the length written into the
-            // caller-owned buffer.
-            let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
             let parts = [path];
-            // Copy `cwd` out of `buf1` so the
-            // join can write into `buf2` while `cwd` borrows `buf1` only.
-            let cwd = &lockfile_path_buf1[..cwd_len];
             let lockfile_path__len = resolve_path::join_abs_string_buf::<platform::Auto>(
-                cwd,
+                bun_core::cwd::require()?,
                 &mut lockfile_path_buf2.0,
                 &parts,
             )
@@ -1698,8 +1692,7 @@ impl<'a> Printer<'a> {
         if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
             let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
             // NUL-terminate into the buffer that does NOT back `lockfile_path`
-            // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
-            // after the join, so it is free for reuse here.
+            // (see `path_in_buf2` note above).
             let dir_z = if path_in_buf2 {
                 resolve_path::z(dir, &mut lockfile_path_buf1)
             } else {
@@ -1708,10 +1701,11 @@ impl<'a> Printer<'a> {
             let _ = sys::chdir(dir_z);
         }
 
+        bun_core::cwd::require()?;
         // Bootstrap the resolver FS singleton. `Printer::print` is an entry
         // point (`bun bun.lockb`), so
         // the singleton may not exist yet.
-        let _ = FileSystem::init(None)?;
+        FileSystem::init();
 
         let mut lockfile = Box::<Lockfile>::default();
 
@@ -1781,13 +1775,10 @@ impl<'a> Printer<'a> {
             ..Default::default()
         };
 
-        // Capture the `'static` cwd slice
-        // before borrowing `fs.fs` mutably.
-        let top_level_dir = fs.top_level_dir;
         // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
         // with the `&mut self` borrow `read_directory` took.
         let entries_option: *const Fs::EntriesOption =
-            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+            fs.fs.read_directory(bun_core::cwd::get(), None, 0, true)?;
         // Copy the listing's basenames out under `entries_mutex`; `.data` must
         // only be probed while the lock is held.
         let entries = {

@@ -2867,6 +2867,7 @@ mod draft {
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
+            #[allow(clippy::disallowed_methods)] // whatever crashed may have been the record
             let Ok(cwd) = bun_core::getcwd(&mut buf2) else {
                 return;
             };

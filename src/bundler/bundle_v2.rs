@@ -1005,7 +1005,7 @@ pub mod bv2_impl {
                             {
                                 b"/"
                             } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir
+                                bun_core::cwd::get()
                             }
                         } else {
                             source_dir
@@ -2851,9 +2851,7 @@ pub mod bv2_impl {
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
-                >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
-                );
+                >(bun_core::cwd::get(), path.text);
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
@@ -6269,12 +6267,8 @@ pub mod bv2_impl {
             // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
             let bump: &'static bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-            let out = generic_path_with_pretty_initialized(
-                path,
-                target,
-                self.transpiler.fs().top_level_dir,
-                bump,
-            )?;
+            let out =
+                generic_path_with_pretty_initialized(path, target, bun_core::cwd::get(), bump)?;
             Ok(out)
         }
 
@@ -6888,11 +6882,11 @@ pub mod bv2_impl {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
+                                            && let Some(specifier_to_use) = import_record
+                                                .path
+                                                .text
+                                                .strip_prefix(bun_core::cwd::get())
+                                        {
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
@@ -7012,9 +7006,7 @@ pub mod bv2_impl {
                             let rel = bun_paths::resolve_path::relative_platform::<
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
+                            >(bun_core::cwd::get(), path.text);
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL

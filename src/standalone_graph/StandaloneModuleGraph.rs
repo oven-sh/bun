@@ -2071,9 +2071,8 @@ pub(crate) fn inject<'a>(
     target: &CompileTarget,
     temp_path_buf: &'a mut PathBuffer,
 ) -> Option<Injected<'a>> {
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-        Ok(len) => &cwd_buf[..len],
+    let cwd: &[u8] = match bun_sys::require_cwd() {
+        Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
@@ -2087,7 +2086,7 @@ pub(crate) fn inject<'a>(
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<Box<[u8]>> = None;
-    let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
+    let mut zname: &ZStr = match bun_fs::tmpname(
         b"bun-build",
         &mut buf[..],
         // tmpname OR's this seed with nano_timestamp(). milli_timestamp() is a
@@ -2686,7 +2685,7 @@ pub(crate) fn download_to_path(
 
                 let mut tmpname_buf = [0u8; 1024];
                 let tempdir_name: &ZStr =
-                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+                    bun_fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;
                 scopeguard::defer! {
@@ -2915,9 +2914,8 @@ pub fn to_executable(
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
         // Get the current working directory and join with outfile
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(len) => &cwd_buf[..len],
+        let cwd_path: &[u8] = match bun_sys::require_cwd() {
+            Ok(cwd) => cwd.as_bytes(),
             Err(e) => {
                 fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(

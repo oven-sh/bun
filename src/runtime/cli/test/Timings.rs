@@ -12,7 +12,6 @@ use bun_core::{Output, strings};
 use bun_options_types::context::Shard;
 use bun_parsers::json as bun_json;
 use bun_ptr::Interned;
-use bun_resolver::fs::FileSystem;
 use bun_sys::{Fd, File};
 
 use super::parallel::file_range::FileRange;
@@ -109,7 +108,7 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir, abs_path);
+        let rel = bun_paths::resolve_path::relative(bun_core::cwd::get(), abs_path);
         let mut key = rel.to_vec();
         if cfg!(windows) {
             bun_paths::resolve_path::platform_to_posix_in_place(&mut key[..]);

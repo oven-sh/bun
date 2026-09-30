@@ -50,21 +50,13 @@ impl ExecCommand {
         // Read the field before the `&mut` method call (borrowck).
         let disable_default_env_files = bundle.options.env.disable_default_env_files;
         bundle.run_env_loader(disable_default_env_files)?;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let cwd: &[u8] = match bun_sys::getcwd(&mut *buf) {
-            Ok(n) => &buf[..n],
-            Err(e) => {
-                Output::err(e, "failed to run script <b>{}<r>", (BStr::new(&script),));
-                Global::exit(1);
-            }
-        };
         // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
         // process singleton, or freshly `heap::alloc`'d) — never null. The
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
         let env = unsafe { &mut *bundle.env };
-        let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
-        let parts: [&[u8]; 2] = [cwd, b"[eval]"];
+        let mini = bun_event_loop::MiniEventLoop::init_global(Some(env));
+        let parts: [&[u8]; 2] = [bun_core::cwd::get(), b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
         // SAFETY: `init_global` returns the thread-local singleton raw pointer;

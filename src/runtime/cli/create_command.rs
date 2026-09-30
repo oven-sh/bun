@@ -118,7 +118,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
             loop_: bun_event_loop::EventLoopHandle::init_mini(
-                bun_event_loop::MiniEventLoop::init_global(None, None),
+                bun_event_loop::MiniEventLoop::init_global(None),
             ),
             ..Default::default()
         },
@@ -276,8 +276,9 @@ impl CreateCommand {
             return CreateListExamplesCommand::exec(ctx);
         }
 
+        bun_core::cwd::require()?;
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
-        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init() };
         let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
@@ -293,7 +294,7 @@ impl CreateCommand {
                 .dirname_store
                 .append_slice(bun_paths::resolve_path::join_abs::<
                     bun_paths::platform::Loose,
-                >(filesystem.top_level_dir, dirname))?;
+                >(bun_core::cwd::get(), dirname))?;
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
@@ -1143,7 +1144,7 @@ impl CreateCommand {
                 #[cfg(windows)]
                 windows: spawn_sync::WindowsOptions {
                     loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None, None),
+                        bun_event_loop::MiniEventLoop::init_global(None),
                     ),
                     ..Default::default()
                 },
@@ -1227,10 +1228,7 @@ impl CreateCommand {
             );
         }
 
-        // `bun_resolver::fs::FileSystem` (the inline shim) has no `relative_to`; call
-        // the resolver path helper directly with the singleton's `top_level_dir`.
-        let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
+        let rel_destination = bun_paths::resolve_path::relative(bun_core::cwd::get(), destination);
         let is_empty_destination = rel_destination.is_empty();
 
         if is_empty_destination {
@@ -1265,7 +1263,7 @@ impl CreateCommand {
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
                         loop_: bun_event_loop::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                            bun_event_loop::MiniEventLoop::init_global(None),
                         ),
                         ..Default::default()
                     },
@@ -1279,8 +1277,9 @@ impl CreateCommand {
 
     pub(crate) fn extract_info(ctx: &Command::Context<'_>) -> crate::Result<ExtractedInfo> {
         let example_tag;
+        bun_core::cwd::require()?;
         // SAFETY: process-lifetime singleton; init returns *mut.
-        let filesystem = unsafe { &*fs::FileSystem::init(None)? };
+        let filesystem = unsafe { &*fs::FileSystem::init() };
 
         let create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
@@ -1300,7 +1299,7 @@ impl CreateCommand {
             let positional = positionals[0];
 
             'outer: {
-                let parts = [filesystem.top_level_dir, positional];
+                let parts = [bun_core::cwd::get(), positional];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 let len = outdir_path.len();
                 home_dir_buf[len] = 0;
@@ -1352,7 +1351,7 @@ impl CreateCommand {
                 }
 
                 'outer: {
-                    let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
+                    let parts = [bun_core::cwd::get(), BUN_CREATE_DIR, positional];
                     let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
@@ -1782,7 +1781,7 @@ impl Example {
             }
 
             {
-                let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
+                let parts = [bun_core::cwd::get(), BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[1] = bun_sys::Dir::open(outdir_path)
                     .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
@@ -2295,7 +2294,8 @@ struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
     fn exec(ctx: &Command::Context) -> crate::Result<()> {
-        let filesystem = fs::FileSystem::init(None)?;
+        bun_core::cwd::require()?;
+        let filesystem = fs::FileSystem::init();
         let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;
@@ -2432,7 +2432,7 @@ impl GitHandler {
         // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();

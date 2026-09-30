@@ -17,8 +17,6 @@ use bun_install_types::DependencyGroup;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
-use crate::bun_fs::FileSystem;
-
 use super::add_remove_with_filter::{
     WorkspaceMembers, WorkspaceTarget, fetch_entry_root, load_workspace_members,
     local_relative_path, root_package_json_path,
@@ -341,7 +339,7 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
 }
 
 fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = strings::without_trailing_slash(bun_core::cwd::get());
     let mut buf = path_buffer_pool::get();
     ws.members
         .keys()

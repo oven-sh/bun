@@ -217,8 +217,6 @@ impl InstallCompletionsCommand {
             0
         };
 
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-
         let stdout = File::stdout();
 
         let mut shell = Shell::Unknown;
@@ -226,8 +224,8 @@ impl InstallCompletionsCommand {
             shell = Shell::from_env(shell_name);
         }
 
-        let cwd_len = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(len) => len,
+        let cwd = match bun_core::cwd::require() {
+            Ok(cwd) => cwd,
             Err(_) => {
                 // don't fail on this if we don't actually need to
                 if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
@@ -248,7 +246,6 @@ impl InstallCompletionsCommand {
                 Global::exit(fail_exit_code);
             }
         };
-        let cwd: &[u8] = &cwd_buf[..cwd_len];
 
         let _ = Self::install_bunx_symlink(cwd);
 

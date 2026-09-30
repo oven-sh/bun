@@ -38,6 +38,7 @@ pub mod compress {
 }
 pub mod heap;
 
+pub mod cwd;
 pub mod debug;
 pub mod env;
 #[cfg(windows)]

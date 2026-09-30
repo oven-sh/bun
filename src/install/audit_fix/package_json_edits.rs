@@ -6,7 +6,6 @@ use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_semver::{PinnedVersion, Version};
 
-use crate::bun_fs::FileSystem;
 use crate::lockfile::CatalogMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::package_manager_real::add_remove_with_filter::{
@@ -115,7 +114,7 @@ fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTar
         }),
         ResolutionTag::Workspace => {
             let buf = lockfile.buffers.string_bytes.as_slice();
-            let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+            let top_level = strings::without_trailing_slash(bun_core::cwd::get());
             let mut path_buf = path_buffer_pool::get();
             Some(WorkspaceTarget {
                 name: Box::from(lockfile.packages.items_name()[owner as usize].slice(buf)),

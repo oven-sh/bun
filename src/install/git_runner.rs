@@ -278,10 +278,9 @@ pub(crate) struct CacheStaging {
 impl CacheStaging {
     fn new(cache_dir: Fd, cache_dir_path: &[u8]) -> Result<Self, Error> {
         let mut tmp_name_buf = [0u8; 64];
-        let tmp_name =
-            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?
-                .to_vec();
+        let tmp_name = Path::fs::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
+            .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?
+            .to_vec();
         let tmp_path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
             cache_dir_path,
             &[&tmp_name],

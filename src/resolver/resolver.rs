@@ -1333,7 +1333,7 @@ impl<'a> Resolver<'a> {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir;
+                    break 'brk bun_core::cwd::get();
                 }
             }
 
@@ -1350,7 +1350,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::MissingResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir;
+                break 'brk bun_core::cwd::get();
             }
 
             // This can also be hit if you use plugins with non-file namespaces,
@@ -1362,7 +1362,7 @@ impl<'a> Resolver<'a> {
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
                 // return ResultUnion::Failure(crate::Error::InvalidResolveDir);
-                break 'brk Fs::FileSystem::instance().top_level_dir;
+                break 'brk bun_core::cwd::get();
             }
 
             break 'brk source_dir_resolver
@@ -1519,7 +1519,7 @@ impl<'a> Resolver<'a> {
                         // resolver's lifetime; the `'static` erase only releases the `&self` borrow.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
-                        let top = self.fs_ref().top_level_dir;
+                        let top = bun_core::cwd::get();
                         return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                     }
                 }
@@ -2872,7 +2872,7 @@ impl<'a> Resolver<'a> {
                         // network drive). Report it as a catchable resolve
                         // error; the `Metadata::Resolve` msg carries the text
                         // for `import.meta.resolveSync` & co.
-                        let top_level_dir = self.fs_ref().top_level_dir;
+                        let top_level_dir = bun_core::cwd::get();
                         self.log_mut().add_resolve_error(
                             None,
                             bun_ast::Range::NONE,
@@ -4155,7 +4155,7 @@ impl<'a> Resolver<'a> {
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
-            input_path = self.fs_ref().top_level_dir;
+            input_path = bun_core::cwd::get();
         }
 
         // A path longer than MAX_PATH_BYTES cannot name a real directory.

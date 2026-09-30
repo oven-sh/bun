@@ -99,24 +99,14 @@ impl<'a> Scanner<'a> {
     }
 
     #[inline]
-    fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
-    }
-
-    #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`.
+        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
         unsafe { (*self.fs).filename_store }
     }
 
     #[inline]
-    fn abs_buf_projected<'b>(
-        top_level_dir: &'static [u8],
-        parts: &[&[u8]],
-        buf: &'b mut [u8],
-    ) -> Option<&'b [u8]> {
-        join_abs_string_buf_checked::<platform::Loose>(top_level_dir, buf, parts)
+    fn abs_buf<'b>(parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
+        join_abs_string_buf_checked::<platform::Loose>(bun_core::cwd::get(), buf, parts)
     }
 
     /// Take the list of test files out of this scanner. Caller owns the returned
@@ -127,9 +117,8 @@ impl<'a> Scanner<'a> {
 
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
-        let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
-        let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
-        else {
+        let parts: [&[u8]; 2] = [bun_core::cwd::get(), path_literal];
+        let Some(path) = Self::abs_buf(&parts, &mut scan_dir_buf) else {
             return Err(ScanError::DoesNotExist);
         };
 
@@ -288,7 +277,7 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
+        let rel_path = bun_paths::resolve_path::relative(bun_core::cwd::get(), abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
@@ -354,12 +343,9 @@ impl<'a> Scanner<'a> {
                     // reshaped for borrowck — drop the &mut borrow from
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
-                    let Some(dir_path_len) = Self::abs_buf_projected(
-                        self.top_level_dir(),
-                        &parts,
-                        &mut self.open_dir_buf,
-                    )
-                    .map(<[u8]>::len) else {
+                    let Some(dir_path_len) =
+                        Self::abs_buf(&parts, &mut self.open_dir_buf).map(<[u8]>::len)
+                    else {
                         return;
                     };
                     let dir_path = &self.open_dir_buf[..dir_path_len];
@@ -393,16 +379,14 @@ impl<'a> Scanner<'a> {
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
-                let Some(path_len) =
-                    Self::abs_buf_projected(self.top_level_dir(), &parts, &mut self.open_dir_buf)
-                        .map(<[u8]>::len)
+                let Some(path_len) = Self::abs_buf(&parts, &mut self.open_dir_buf).map(<[u8]>::len)
                 else {
                     return;
                 };
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
+                    let rel_path = bun_paths::resolve_path::relative(bun_core::cwd::get(), path);
                     if !self.does_path_match_filter(rel_path) {
                         return;
                     }

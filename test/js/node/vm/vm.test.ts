@@ -2310,6 +2310,37 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
   expect(exitCode).toBe(0);
 });
 
+// The timeout stops optimized code at its next loop iteration. The loop spends its time in a JIT
+// operation (the rope resolve) that never checks for a termination request; with signal-based VM
+// traps the script overran its timeout by 100 ms to 1.8 s.
+test.concurrent("a timeout stops a script busy in a JIT operation at its next loop iteration", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const vm = require("node:vm");
+      const code = "(function(){ const big = Buffer.alloc(1 << 16, 'x').toString(); let i = 0; while (true) i = (big + i).charCodeAt(0); })()";
+      const overshoot = [];
+      for (let r = 0; r < 3; r++) {
+        const t = performance.now();
+        try { vm.runInThisContext(code, { timeout: 300 }); } catch (e) { if (e.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw e; }
+        overshoot.push(performance.now() - t - 300);
+      }
+      console.log(JSON.stringify(overshoot.filter(ms => ms >= 100)));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("[]\n");
+  expect(exitCode).toBe(0);
+});
+
 // The following tests run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run
 // in a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // As in Node: microtasks a script left on an afterEvaluate context when its synchronous part timed out run

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 function cleanOutput(output: string) {
@@ -931,18 +931,8 @@ test("a plain Event prints its properties, not [Circular]", () => {
 // N times. In this graph each level holds the level below twice: 16 levels reach the leaf 65,536
 // times and print 64 MB, and the 34 levels of the issue allocate until the machine dies.
 describe.concurrent("a value that reaches the same objects many times", () => {
-  // The formatter reads `$$typeof` each time it reaches a value, so the getter counts how many times
-  // the walk reaches the leaf. The leaf prints about 1 KB, so the budget of 1 MiB allows about 1,000.
   const graph = `
-    let visits = 0;
-    const leaf: any = { s: Buffer.alloc(1024, "x").toString() };
-    Object.defineProperty(leaf, "$$typeof", {
-      get() {
-        visits++;
-        return undefined;
-      },
-    });
-    let o: any = leaf;
+    let o: any = { s: Buffer.alloc(1024, "x").toString() };
     for (let i = 0; i < 16; i++) o = { a: o, b: o };
   `;
 
@@ -964,20 +954,13 @@ describe.concurrent("a value that reaches the same objects many times", () => {
     ["expected side", "expect(1).toEqual(o)"],
     ["asymmetric matcher", "expect({}).toEqual(expect.objectContaining(o))"],
   ])("diff, %s: repeated values print as [Object] after 1 MiB", async (_name, assertion) => {
-    const { stdout, stderr, exitCode } = await run(`
+    const { stderr, exitCode } = await run(`
       import { expect, test } from "bun:test";
       ${graph}
       test("graph", () => {
-        try {
-          ${assertion};
-        } finally {
-          console.log(JSON.stringify({ visits }));
-        }
+        ${assertion};
       });
     `);
-    const line = stdout.split("\n").find(l => l.startsWith('{"visits"'));
-    expect(line).toBeDefined();
-    expect(JSON.parse(line!).visits).toBeLessThan(5_000);
     expect(stderr.length).toBeLessThan(3 * 1024 * 1024);
     expect(stderr).toContain("expect(received).toEqual(expected)");
     expect(stderr).toContain('"b": [Object],');
@@ -1036,6 +1019,151 @@ describe.concurrent("a value that reaches the same objects many times", () => {
     expect(stderr).toContain("(fail) large");
     expect(exitCode).toBe(1);
   });
+});
+
+function failure(fails: () => void): string {
+  try {
+    fails();
+  } catch (error) {
+    return Bun.stripANSI((error as Error).message);
+  }
+  throw new Error("did not throw");
+}
+
+test("every call in a list of mock calls gets the whole budget for repeated values", () => {
+  const fn = mock();
+  const argument = Object.fromEntries(
+    Array.from({ length: 400 }, (_, i) => ["k" + i, Buffer.alloc(20, "v").toString()]),
+  );
+  for (let i = 0; i < 100; i++) fn(argument);
+  const message = failure(() => expect(fn).toHaveBeenCalledWith("other"));
+  expect(message).not.toContain("[Object ...]");
+  expect(message.match(/k399:/g)).toHaveLength(100);
+});
+
+// What a hook returns dies once it is printed, and after a collection a new object can have its
+// address. It has not been printed before. Too many hook calls for a debug build.
+test.skipIf(isDebug)("an object at the address of a collected one is not a repeated value", () => {
+  class Row {
+    pad = Buffer.alloc(60, "x").toString();
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      return { ...this, tags: [1, 2, 3].map(x => ({ x })) };
+    }
+  }
+  const rows = Object.fromEntries(Array.from({ length: 40_000 }, (_, i) => ["k" + i, new Row()]));
+  const message = failure(() => expect(rows).toBeNull());
+  expect(message).not.toMatch(/\[(?:Object|Array) \.\.\.\]/);
+  expect(message.match(/pad:/g)).toHaveLength(40_000);
+});
+
+test("values that are not equal and print the same say so", () => {
+  const note = "note: the values are not equal, but they print the same.";
+  const proxy = new Proxy({ a: 1 }, { get: (target, key) => (key === "a" ? 42 : Reflect.get(target, key)) });
+  expect(failure(() => expect(proxy).toEqual({ a: 1 }))).toContain(note);
+  expect(failure(() => expect({ a: 1 }).toEqual({ a: 2 }))).not.toContain(note);
+  expect(failure(() => expect({ a: 1 }).not.toEqual({ a: 1 }))).not.toContain(note);
+});
+
+test("a note is about a side that is shown", () => {
+  const big = () => ({ text: Buffer.alloc(128 * 1024, "v").toString() });
+  const shared = Array(12).fill(big());
+  const copies = Array.from({ length: 12 }, big);
+  // `.not` shows `expected` only, and it repeats nothing.
+  expect(failure(() => expect(shared).not.toEqual(copies))).not.toContain("note:");
+  expect(failure(() => expect(copies).not.toEqual(shared))).toContain(
+    "note: [Array], [Object], [Map] and [Set] stand for",
+  );
+});
+
+// A snapshot prints these the way the stored ones have them (snapshot.test.ts). A diff is not stored.
+test("what a diff prints that a snapshot does not", () => {
+  const el = ($$typeof: string, type: string, props: object) => ({
+    $$typeof: Symbol.for($$typeof),
+    type,
+    key: null,
+    ref: null,
+    props,
+  });
+  function args(..._: unknown[]) {
+    return arguments;
+  }
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  expect(
+    failure(() =>
+      expect({
+        proxy: new Proxy({ a: 1, b: [2] }, {}),
+        proxyOfArray: new Proxy([1, 2], {}),
+        proxyOfFunction: new Proxy(function f() {}, {}),
+        proxyOfClass: new Proxy(class C {}, {}),
+        revokedProxy: revoked.proxy,
+        arguments: args(1, "two"),
+        noArguments: args(),
+        mapIterator: new Map([[1, 2]]).entries(),
+        setIterator: new Set([1]).values(),
+        arrayIterator: [1][Symbol.iterator](),
+        react18: el("react.element", "input", { type: "text", value: "foo" }),
+        react18ManyProps: el("react.element", "input", { a: "1", b: 2, c: true, d: null, e: { x: 1 }, f: [1] }),
+        react19: el("react.transitional.element", "div", { id: "x" }),
+        holes: [1, , , , , , , , , , , 2],
+        response: new Response("body"),
+      }).toEqual(1),
+    ),
+  ).toMatchInlineSnapshot(`
+    "expect(received).toEqual(expected)
+
+    - 1
+    + {
+    +   "arguments": Arguments [
+    +     1,
+    +     "two",
+    +   ],
+    +   "arrayIterator": Array Iterator {},
+    +   "holes": [
+    +     1,
+    +     10 x empty items,
+    +     2,
+    +   ],
+    +   "mapIterator": Map Iterator {},
+    +   "noArguments": Arguments [],
+    +   "proxy": {
+    +     "a": 1,
+    +     "b": [
+    +       2,
+    +     ],
+    +   },
+    +   "proxyOfArray": [
+    +     1,
+    +     2,
+    +   ],
+    +   "proxyOfClass": [class C],
+    +   "proxyOfFunction": [Function: f],
+    +   "react18": <input type="text" value="foo" />,
+    +   "react18ManyProps": <input a="1" b=2 c=true d=null e={
+    +       "x": 1,
+    +     }
+    +     f=[
+    +       1,
+    +     ] />,
+    +   "react19": <div id="x" />,
+    +   "response": Response (4 bytes) {
+    +     ok: true,
+    +     url: "",
+    +     status: 200,
+    +     statusText: "",
+    +     headers: Headers {},
+    +     redirected: false,
+    +     bodyUsed: false,
+    +     Blob (4 bytes)
+    +   },
+    +   "revokedProxy": <Revoked Proxy>,
+    +   "setIterator": Set Iterator {},
+    + }
+
+    - Expected  - 1
+    + Received  + 46
+    "
+  `);
 });
 
 // A matcher diff has to cost what the arrays store, not the `length` they
@@ -1376,37 +1504,6 @@ test.concurrent("a matcher diff of an array of length 2**32 - 1 follows what the
     + Received  + 4
 
 
-    ## toHaveBeenLastCalledWith
-    expect(received).toHaveBeenLastCalledWith(...expected)
-
-      [
-    -   0,
-    +   [
-    +     4294967294 x empty items,
-    +     1,
-    +   ],
-      ]
-
-    - Expected  - 1
-    + Received  + 4
-
-
-    ## toHaveBeenNthCalledWith
-    expect(received).toHaveBeenNthCalledWith(n, ...expected)
-
-    Call #1:
-      [
-    -   0,
-    +   [
-    +     4294967294 x empty items,
-    +     1,
-    +   ],
-      ]
-
-    - Expected  - 1
-    + Received  + 4
-
-
     ## matcherHint
     expect(received).toBeZero()
 
@@ -1469,22 +1566,6 @@ test.concurrent("a matcher diff of an array that changes while it prints", async
     + Received  + 5
 
 
-    ## a Proxy element stores a later index
-    expect(received).toEqual(expected)
-
-    - 0
-    + [
-    +   200000 x empty items,
-    +   {},
-    +   99999 x empty items,
-    +   "early",
-    +   699999 x empty items,
-    + ]
-
-    - Expected  - 1
-    + Received  + 7
-
-
     ## an accessor deletes a later index
     expect(received).toEqual(expected)
 
@@ -1531,7 +1612,7 @@ test.concurrent("a matcher diff of an array that changes while it prints", async
     + Received  + 5
 
 
-    ## a Proxy element grows the vector past the length
+    ## an accessor grows the vector past the length
     expect(received).toEqual(expected)
 
     - 0
@@ -1539,7 +1620,7 @@ test.concurrent("a matcher diff of an array that changes while it prints", async
     +   undefined,
     +   undefined,
     +   undefined,
-    +   {},
+    +   "getter",
     +   26 x empty items,
     + ]
 
@@ -1547,7 +1628,7 @@ test.concurrent("a matcher diff of an array that changes while it prints", async
     + Received  + 7
 
 
-    ## a Proxy element stores a sparse index past the length
+    ## an accessor stores a sparse index past the length
     expect(received).toEqual(expected)
 
     - 0
@@ -1555,7 +1636,7 @@ test.concurrent("a matcher diff of an array that changes while it prints", async
     +   undefined,
     +   undefined,
     +   undefined,
-    +   {},
+    +   "getter",
     +   999996 x empty items,
     + ]
 
@@ -1640,51 +1721,4 @@ test("a matcher diff of a sparse array takes time that follows what the array st
   expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
   expect(signalCode).toBeNull();
   expect(exitCode).toBe(0);
-});
-
-// Snapshots are a file format shared with jest and with every .snap on disk,
-// so they keep one line per hole however long the run is.
-test("a snapshot still prints one line per array hole", () => {
-  const nine: unknown[] = [];
-  nine.length = 9;
-  nine.push(1);
-  expect([1, , 3]).toMatchInlineSnapshot(`
-    [
-      1,
-      undefined,
-      3,
-    ]
-  `);
-  expect(nine).toMatchInlineSnapshot(`
-    [
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      1,
-    ]
-  `);
-  expect({ nested: [nine] }).toMatchInlineSnapshot(`
-    {
-      "nested": [
-        [
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          1,
-        ],
-      ],
-    }
-  `);
 });

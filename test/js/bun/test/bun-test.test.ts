@@ -84,11 +84,10 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(exitCode).toBe(1);
 });
 
-// Printing the failure for a test or hook that rejects with a value whose
-// formatting throws used to leave that second exception pending on the VM. The
-// next test callback then aborted the runner, or was reported as passed without
-// running its body. A boxed primitive or a RegExp prints from its internal slot,
-// so its hooks do not run. The \`size\` getter of a Map subclass does.
+// A test or a hook rejects with a value whose formatting throws. Left pending on the
+// VM, that second exception aborts the runner in the next test callback, or has it
+// reported as passed without running its body. A boxed primitive or a RegExp prints
+// from its internal slot, so its hooks do not run. The `size` getter of a Map subclass does.
 test.concurrent("a rejection whose toString/Symbol.toPrimitive throws does not break later tests", async () => {
   using dir = tempDir("test-hostile-rejection", {
     "hostile.test.js": `

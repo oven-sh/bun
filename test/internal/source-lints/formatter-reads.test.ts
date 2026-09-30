@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { file, Glob } from "bun";
 import { describe, expect, test } from "bun:test";
 import path from "path";
 
@@ -15,25 +15,43 @@ import path from "path";
 //
 // This is a ratchet: `formatter-reads.inventory.json` counts what is left per file and pattern, which
 // is the hooks the user asked to have called (`inspect.custom`, `toJSON`, `JSON.stringify`), string
-// conversions of values already known to be primitives, and the cells of `console.table`. New ones
-// fail the test; removing one requires lowering its count (the test tells you). Regenerate with
+// conversions of values already known to be primitives, the cells of `console.table`, an accessor on
+// an array index, and the `getPrototypeOf` trap of a Proxy. New ones fail the test; removing one requires lowering its count (the test tells you). Regenerate with
 // `bun test/internal/source-lints/formatter-reads.test.ts --update` (run as a script) only when removing.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/formatter-reads.inventory.json";
-const PRINTERS = ["src/jsc/ConsoleObject.rs", "src/jsc/formatter/guard.rs", "src/jsc/formatter/jest.rs"];
+const PRINTERS = [
+  "src/jsc/ConsoleObject.rs",
+  ...[...new Glob("src/jsc/formatter/*.rs").scanSync(root)].filter(source => !source.endsWith("reader.rs")).sort(),
+];
+
+const GLOBAL = String.raw`\(\s*(?:self\.|this\.|this\.formatter\.|formatter\.)?global`;
+// The options bag of `Bun.inspect` and `console.dir` is an argument, not a value being printed.
+const NOT_OPTIONS = String.raw`(?<!\bopts)(?<!\barg1)`;
 
 const PATTERNS: [name: string, re: RegExp][] = [
   [
     "property read that can run a getter or a Proxy trap",
-    /\.(?:get|get_own|get_own_truthy|get_truthy|fast_get|get_index|get_length|get_if_property_exists|get_stringish)\(\s*(?:self\.|this\.formatter\.|formatter\.)?global/,
+    new RegExp(
+      NOT_OPTIONS +
+        String.raw`\.(?:get|get_own|get_own_truthy|get_truthy|fast_get|get_index|get_direct_index|get_length|get_if_property_exists|get_stringish|get_name_property|get_prototype|is_instance_of)` +
+        GLOBAL,
+    ),
   ],
-  ["iterator protocol", /\.(?:for_each|is_iterable)\(\s*(?:self\.|this\.formatter\.|formatter\.)?global/],
+  [
+    "iterator protocol",
+    new RegExp(String.raw`\.(?:for_each|is_iterable|is_non_array_iterable|array_iterator)` + GLOBAL),
+  ],
   [
     "conversion that can run toString, valueOf or Symbol.toPrimitive",
-    /\.(?:to_js_string_view|to_bun_string|to_utf8|to_object|coerce_to_\w+|json_stringify\w*)\(\s*(?:self\.|this\.formatter\.|formatter\.)?global|\bBunString::from_js\(/,
+    new RegExp(
+      String.raw`\.(?:to_js_string_view|to_bun_string|to_utf8|to_object|to_number|coerce_to_\w+|json_stringify\w*)` +
+        GLOBAL +
+        String.raw`|\bBunString::from_js\(`,
+    ),
   ],
-  ["call into script", /\.call\(\s*(?:self\.|this\.formatter\.|formatter\.)?global/],
+  ["call into script", new RegExp(String.raw`\.call` + GLOBAL)],
 ];
 
 type Inventory = Record<string, Record<string, number>>;

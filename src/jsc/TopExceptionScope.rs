@@ -435,7 +435,7 @@ impl Drop for ExceptionValidationScopeGuard<'_> {
 }
 
 impl ExceptionValidationScope {
-    /// See [`TopExceptionScope::init`] for the storage-passing rationale.
+    /// See [`TopExceptionScope::init_at`] for the storage-passing rationale.
     #[track_caller]
     pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,

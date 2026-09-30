@@ -154,7 +154,9 @@ const groups: Record<string, () => void> = {
         printed = lines.slice(lines.indexOf("- 0"), lines.lastIndexOf("+ ]") + 1).join("\n");
       }
       const expected = model(array);
-      console.log(`## ${name}\n${printed === expected ? "as its own keys say" : `printed:\n${printed}\nown keys say:\n${expected}`}\n`);
+      console.log(
+        `## ${name}\n${printed === expected ? "as its own keys say" : `printed:\n${printed}\nown keys say:\n${expected}`}\n`,
+      );
     }
   },
 
@@ -179,16 +181,6 @@ const groups: Record<string, () => void> = {
       const fn = mock((..._: unknown[]) => {});
       fn(holes(most, 1));
       expect(fn).toHaveBeenCalledWith(0);
-    });
-    report("toHaveBeenLastCalledWith", () => {
-      const fn = mock((..._: unknown[]) => {});
-      fn(holes(most, 1));
-      expect(fn).toHaveBeenLastCalledWith(0);
-    });
-    report("toHaveBeenNthCalledWith", () => {
-      const fn = mock((..._: unknown[]) => {});
-      fn(holes(most, 1));
-      expect(fn).toHaveBeenNthCalledWith(1, 0);
     });
     report("matcherHint", () => {
       expect.extend({
@@ -233,20 +225,6 @@ const groups: Record<string, () => void> = {
       });
       expect(array).toEqual(0);
     });
-    report("a Proxy element stores a later index", () => {
-      const array = holes(1_000_000);
-      array[200_000] = new Proxy(
-        {},
-        {
-          ownKeys() {
-            array[500_000] = "late";
-            return [];
-          },
-        },
-      );
-      array[300_000] = "early";
-      expect(array).toEqual(0);
-    });
     report("an accessor deletes a later index", () => {
       const array = holes(1_000_000);
       array[300_000] = "deleted";
@@ -286,25 +264,17 @@ const groups: Record<string, () => void> = {
       expect(array).toEqual(0);
     });
     const storesAt = (array: unknown[], index: number) =>
-      new Proxy(
-        {},
-        {
-          ownKeys() {
-            array[index] = "past the end";
-            return [];
-          },
+      Object.defineProperty(array, 3, {
+        enumerable: true,
+        get() {
+          array[index] = "past the end";
+          return "getter";
         },
-      );
-    report("a Proxy element grows the vector past the length", () => {
-      const array = holes(30);
-      array[3] = storesAt(array, 40);
-      expect(array).toEqual(0);
-    });
-    report("a Proxy element stores a sparse index past the length", () => {
-      const array = holes(1_000_000);
-      array[3] = storesAt(array, 2_000_000);
-      expect(array).toEqual(0);
-    });
+      });
+    report("an accessor grows the vector past the length", () => expect(storesAt(holes(30), 40)).toEqual(0));
+    report("an accessor stores a sparse index past the length", () =>
+      expect(storesAt(holes(1_000_000), 2_000_000)).toEqual(0),
+    );
   },
 
   // The time must follow what the array stores. A walk that reads the whole

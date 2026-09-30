@@ -123,7 +123,7 @@ pub(crate) fn write_format_credentials<const ENABLE_ANSI_COLORS: bool>(
         // `?` early-return below still leaves the formatter at its original
         // depth (observable when `print_as` throws and the caller continues
         // formatting).
-        let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
+        let mut formatter = formatter.indented();
 
         let endpoint = displayed_endpoint(credentials);
 

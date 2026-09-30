@@ -7,13 +7,6 @@
 
 use super::*;
 
-/// A hole prints as a line of `undefined`, and an array can claim 2^32 - 1 of
-/// them and hold nothing. A diff prints a longer run than this as one line.
-const MAX_EXPANDED_HOLE_RUN: u32 = 8;
-/// The text of a snapshot is a file format, so it expands every run, and a
-/// longer one than this is an error.
-const MAX_SNAPSHOT_HOLE_RUN: u32 = 1000;
-
 impl<'a> Formatter<'a> {
     #[inline(always)]
     pub(super) fn dispatch_jest(
@@ -24,6 +17,9 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         js_type: jsc::JSType,
     ) -> JsResult<()> {
+        if entered.is_off_path() && format.is_on_the_path_of_a_stored_snapshot() {
+            return self.dispatch_on_path_of_stored_snapshot(format, writer_, value, js_type);
+        }
         match format {
             Tag::StringPossiblyFormatted | Tag::String => {
                 self.print_jest_string(writer_, value, js_type)
@@ -102,12 +98,7 @@ impl<'a> Formatter<'a> {
             value.js_type(),
             jsc::JSType::StringObject | jsc::JSType::DerivedStringObject
         );
-        use crate::StringJsc as _;
-        let owned = if js_type == jsc::JSType::RegExpObject {
-            reader::reg_exp_source(value)
-        } else {
-            BunString::from_js(reader::boxed_primitive(value), self.global_this)?
-        };
+        let owned = reader::text(self.global_this, value, js_type, self.is_stored_snapshot())?;
         let str = owned.to_encoded_slice();
         self.add_for_new_line(str.len);
 
@@ -256,9 +247,16 @@ impl<'a> Formatter<'a> {
         value: JSValue,
     ) -> JsResult<()> {
         let len = reader::array_length(self.global_this, value).min(u64::from(u32::MAX)) as u32;
+        // It does not equal the array with the same elements, so it does not print like it.
+        let name: &[u8] = if value.js_type().is_arguments() {
+            b"Arguments "
+        } else {
+            b""
+        };
         if len == 0 {
+            self.put(writer_, name);
             self.put(writer_, b"[]");
-            self.add_for_new_line(2);
+            self.add_for_new_line(name.len() + 2);
             return Ok(());
         }
 
@@ -275,8 +273,9 @@ impl<'a> Formatter<'a> {
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
             self.reset_line();
+            self.put(writer_, name);
             self.put(writer_, b"[");
-            self.add_for_new_line(1);
+            self.add_for_new_line(name.len() + 1);
 
             let mut present = reader::PresentIndexes::default();
             // The element that ended a run of holes, so that it is read once.
@@ -348,15 +347,7 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
         holes: u32,
     ) -> JsResult<bool> {
-        if self.is_exact() {
-            if holes <= MAX_SNAPSHOT_HOLE_RUN {
-                return Ok(false);
-            }
-            return Err(self.global_this.throw(format_args!(
-                "Snapshot value is too large to serialize: an array has {holes} empty items in a row. Snapshot a smaller part of the value."
-            )));
-        }
-        if holes <= MAX_EXPANDED_HOLE_RUN {
+        if !self.collapses_hole_run(holes)? {
             return Ok(false);
         }
         self.put(writer_, b"\n");
@@ -397,7 +388,7 @@ impl<'a> Formatter<'a> {
         } else if js_type != jsc::JSType::DOMWrapper && value.is_callable() {
             return self.print_jest_function(writer_, value);
         }
-        self.print_jest_object(entered, writer_, value)
+        self.dispatch_jest(entered, Tag::Object, writer_, value, js_type)
     }
 
     #[inline(never)]
@@ -407,6 +398,57 @@ impl<'a> Formatter<'a> {
             self.put_jest_indent(writer_);
         }
         self.put(writer_, b"Promise {}");
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn dispatch_on_path_of_stored_snapshot(
+        &mut self,
+        format: Tag,
+        writer_: &mut dyn bun_io::Write,
+        value: JSValue,
+        js_type: jsc::JSType,
+    ) -> JsResult<()> {
+        let Some(entered) = self.enter_path_of_stored_snapshot(writer_, value) else {
+            return Ok(());
+        };
+        let _leave = Leave::new(
+            &raw mut self.map,
+            &raw mut self.repeat_depth,
+            &entered,
+            value,
+        );
+        self.dispatch_jest(&entered, format, writer_, value, js_type)
+    }
+
+    fn jest_collection_size(&self, value: JSValue) -> JsResult<i32> {
+        if self.is_stored_snapshot() {
+            return reader::stored_collection_size(self.global_this, value);
+        }
+        reader::collection_size(self.global_this, value)
+    }
+
+    fn jest_entry_limit(&self, size: i32) -> i32 {
+        if self.is_stored_snapshot() {
+            return size.max(reader::MOST_A_SNAPSHOT_LISTS as i32);
+        }
+        size
+    }
+
+    #[cold]
+    fn print_jest_more_entries(
+        &mut self,
+        writer_: &mut dyn bun_io::Write,
+        name: &str,
+    ) -> JsResult<()> {
+        if self.is_stored_snapshot() {
+            return Err(self.global_this.throw(format_args!(
+                "Snapshot value is too large to serialize: a {name} lists more than {} entries, and more than its size. Snapshot a smaller part of the value.",
+                reader::MOST_A_SNAPSHOT_LISTS
+            )));
+        }
+        self.put_jest_indent(writer_);
+        self.put(writer_, b"... more items\n");
         Ok(())
     }
 
@@ -422,7 +464,7 @@ impl<'a> Formatter<'a> {
         } else {
             "Map"
         };
-        let size = reader::collection_size(self.global_this, value)?;
+        let size = self.jest_collection_size(value)?;
         if size == 0 {
             self.putf(writer_, format_args!("{name} {{}}"));
             return Ok(());
@@ -436,6 +478,7 @@ impl<'a> Formatter<'a> {
             self.indent += 1;
             let _indent = defer_decrement!(self.indent);
             let global_this = self.global_this;
+            let entries = self.jest_entry_limit(size);
             let mut iter = JestEntries {
                 formatter: self,
                 writer: writer_,
@@ -443,13 +486,12 @@ impl<'a> Formatter<'a> {
             let truncated = reader::for_each_entry(
                 value,
                 global_this,
-                size,
+                entries,
                 (&raw mut iter).cast::<c_void>(),
                 JestEntries::map_entry,
             )?;
             if truncated {
-                self.put_jest_indent(writer_);
-                self.put(writer_, b"... more items\n");
+                self.print_jest_more_entries(writer_, name)?;
             }
         }
         self.put_jest_indent(writer_);
@@ -464,7 +506,7 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
-        let size = reader::collection_size(self.global_this, value)?;
+        let size = self.jest_collection_size(value)?;
         self.put_jest_indent(writer_);
         let name = if value.js_type() == jsc::JSType::WeakSet {
             "WeakSet"
@@ -484,6 +526,7 @@ impl<'a> Formatter<'a> {
             self.indent += 1;
             let _indent = defer_decrement!(self.indent);
             let global_this = self.global_this;
+            let entries = self.jest_entry_limit(size);
             let mut iter = JestEntries {
                 formatter: self,
                 writer: writer_,
@@ -491,13 +534,12 @@ impl<'a> Formatter<'a> {
             let truncated = reader::for_each_entry(
                 value,
                 global_this,
-                size,
+                entries,
                 (&raw mut iter).cast::<c_void>(),
                 JestEntries::set_entry,
             )?;
             if truncated {
-                self.put_jest_indent(writer_);
-                self.put(writer_, b"... more items\n");
+                self.print_jest_more_entries(writer_, name)?;
             }
         }
         self.put_jest_indent(writer_);

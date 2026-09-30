@@ -2,6 +2,8 @@ import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
+import * as moduleNamespace from "./snapshot-namespace.fixture.ts";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -368,78 +370,6 @@ test("basic unchanging inline snapshot", () => {
   "v": Any<Date>,
 }
 `,
-  );
-});
-
-test("inline snapshot does not call a $$typeof getter", () => {
-  // The React element check reads `$$typeof`. An accessor is printed like any other
-  // getter and never called, so it is not mistaken for a React element.
-  let called = 0;
-  const obj = {
-    get $$typeof() {
-      called++;
-      return Symbol.for("react.element");
-    },
-  };
-  expect(obj).toMatchInlineSnapshot(`
-{
-  "$$typeof": [native code],
-}
-`);
-  expect(called).toBe(0);
-
-  const throwing = {
-    get $$typeof() {
-      throw new Error("Test failed!");
-    },
-  };
-  expect([throwing, "after"]).toMatchInlineSnapshot(`
-[
-  {
-    "$$typeof": [native code],
-  },
-  "after",
-]
-`);
-
-  // A plain data property still marks a React element.
-  const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
-  expect(element).toMatchInlineSnapshot(`<div id="x" />`);
-});
-
-test("inline snapshot of a React element does not call getters on its type, key, props or children", () => {
-  const $$typeof = Symbol.for("react.element");
-  let called = 0;
-  const getter = {
-    get() {
-      called++;
-      throw new Error("Test failed!");
-    },
-    enumerable: true,
-  };
-  const withGetter = (target: object, name: string) => Object.defineProperty(target, name, getter);
-
-  expect(withGetter({ $$typeof, props: {} }, "type")).toMatchInlineSnapshot(`<unknown />`);
-  expect(withGetter({ $$typeof, type: "div", props: {} }, "key")).toMatchInlineSnapshot(`<div />`);
-  expect(withGetter({ $$typeof, type: "div" }, "props")).toMatchInlineSnapshot(`<div />`);
-  expect({ $$typeof, type: "div", props: withGetter({}, "children") }).toMatchInlineSnapshot(`<div />`);
-  // An accessor prop prints like every other accessor.
-  expect({ $$typeof, type: "div", props: withGetter({}, "hidden") }).toMatchInlineSnapshot(
-    `<div hidden=[native code] />`,
-  );
-  // A Proxy props object, nested or not, is read through its innermost target.
-  const trap = () => {
-    called++;
-    throw new Error("Test failed!");
-  };
-  const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
-  expect({ $$typeof, type: "div", props: proxyProps }).toMatchInlineSnapshot(`<div id="x" />`);
-  expect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) }).toMatchInlineSnapshot(`<div id="x" />`);
-  expect(called).toBe(0);
-
-  // Data props, including a numeric key, still print.
-  expect({ $$typeof, type: "div", key: "k", props: { 0: "a", children: "hi" } }).toMatchInlineSnapshot(
-    `<div key="k" 0="a">hi</div>`,
   );
 });
 
@@ -1121,4 +1051,351 @@ test("the text of a stored snapshot does not change", () => {
   bodyUsed: false,
   Blob (4 bytes)
 }Response {}`);
+});
+
+// The formatter that wrote them made ordinary reads, so what a getter, a replaced `toString` or the
+// iterator of a subclass gave is in the file.
+test("a stored snapshot holds what an ordinary read of the value gave", () => {
+  const $$typeof = Symbol.for("react.element");
+  class MultiMap extends Map<string, number[]> {
+    // @ts-expect-error yields one pair per number
+    *[Symbol.iterator]() {
+      for (const [key, numbers] of super[Symbol.iterator]()) for (const number of numbers) yield [key, number];
+    }
+  }
+  class Twice extends Set<number> {
+    *[Symbol.iterator]() {
+      for (const number of super[Symbol.iterator]()) yield* [number, number * 10];
+    }
+  }
+  class OneShort extends Map {
+    get size() {
+      return 1;
+    }
+  }
+  class Told extends MessageEvent {
+    get data() {
+      return "from the getter";
+    }
+  }
+  class Named extends Event {
+    data = { own: true };
+  }
+  const dictionary: Record<string, unknown> = {
+    get g() {
+      return 1;
+    },
+    a: 1,
+  };
+  for (let i = 0; i < 200; i++) dictionary["k" + i] = i;
+  for (let i = 0; i < 200; i++) delete dictionary["k" + i];
+
+  expect({
+    mapIteratorYieldsMoreThanSize: new MultiMap([
+      ["a", [1, 2, 3]],
+      ["b", [4]],
+    ]),
+    setIteratorYieldsMoreThanSize: new Twice([1, 2]),
+    mapSizeSaysLess: new OneShort([
+      [1, 2],
+      [3, 4],
+    ]),
+    // prettier-ignore
+    jsxAccessorProp: { $$typeof, type: "div", key: null, props: { get a() { return 5; }, b: 2 } },
+    // prettier-ignore
+    jsxAccessorChildren: { $$typeof, type: "div", key: null, props: { get children() { return "kid"; } } },
+    // prettier-ignore
+    jsxAccessorType: { $$typeof, get type() { return "span"; }, key: null, props: { a: 1 } },
+    // prettier-ignore
+    jsxAccessorKey: { $$typeof, type: "p", get key() { return "k"; }, props: {} },
+    // prettier-ignore
+    jsxAccessorProps: { $$typeof, type: "p", key: null, get props() { return { z: 1 }; } },
+    jsxInheritedFields: Object.assign(Object.create({ type: "proto", props: { p: 1 } }), { $$typeof }),
+    jsxProxyProps: { $$typeof, type: "div", key: null, props: new Proxy({ id: "x" }, {}) },
+    // prettier-ignore
+    typeofAccessor: { get $$typeof() { return $$typeof; }, type: "i", key: null, props: {} },
+    stringObjectToString: Object.assign(new String("s"), { toString: () => "HOOK" }),
+    regExpToString: Object.assign(/a/g, { toString: () => "HOOK" }),
+    eventGetter: new Told("message", { data: "native" }),
+    eventNamedLikeAnother: new Named("message"),
+    // prettier-ignore
+    indexAccessor: { get 0() { return 1; }, a: 1 },
+    dictionaryAccessor: dictionary,
+    compiledModule: Object.defineProperty({ default: 1 }, "__esModule", { value: true }),
+    moduleNamespace,
+    globalProxy: globalThis,
+  }).toMatchInlineSnapshot(`
+    {
+      "compiledModule": {
+        "__esModule": true,
+        "default": 1,
+      },
+      "dictionaryAccessor": {
+        "a": 1,
+        "g": null,
+      },
+      "eventGetter": MessageEvent {
+        type: "message",
+        data: "from the getter", 
+      },
+      "eventNamedLikeAnother": MessageEvent {
+        type: "message",
+        data: {
+          "own": true,
+        }, 
+      },
+      "globalProxy": JSGlobalProxy {},
+      "indexAccessor": {
+        "0": null,
+        "a": 1,
+      },
+      "jsxAccessorChildren": <div>kid</div>,
+      "jsxAccessorKey": <p key="k" />,
+      "jsxAccessorProp": <div a=5b=2 />,
+      "jsxAccessorProps": <p z=1 />,
+      "jsxAccessorType": <span a=1 />,
+      "jsxInheritedFields": <proto p=1 />,
+      "jsxProxyProps": <div id="x" />,
+      "mapIteratorYieldsMoreThanSize": 
+    Map {
+        "a" => 1,
+        "a" => 2,
+        "a" => 3,
+        "b" => 4,
+      }
+    ,
+      "mapSizeSaysLess": 
+    Map {
+        1 => 2,
+        3 => 4,
+      }
+    ,
+      "moduleNamespace": Module {},
+      "regExpToString": HOOK,
+      "setIteratorYieldsMoreThanSize":   
+    Set {
+        1,
+        10,
+        2,
+        20,
+      }
+    ,
+      "stringObjectToString": String {
+        "0": "H",
+        "1": "O",
+        "2": "O",
+        "3": "K",
+    }
+    ,
+      "typeofAccessor": <i />,
+    }
+  `);
+});
+
+// It looked for cycles in arrays, objects, Maps and Sets only, so a cycle through anything else prints
+// that value again.
+test("a stored snapshot says [Circular] where the formatter that wrote it did", () => {
+  const $$typeof = Symbol.for("react.element");
+  const tie = <T>(make: (o: Record<string, unknown>) => T, key = "back"): T => {
+    const o: Record<string, unknown> = {};
+    return (o[key] = make(o)) as T;
+  };
+  const response = new Response("hi");
+  // @ts-expect-error
+  response.self = response;
+  const event = new Event("x");
+  // @ts-expect-error
+  event.self = event;
+  const formData = new FormData();
+  Object.defineProperty(formData, "toJSON", { value: () => formData, enumerable: true });
+  const shared = { $$typeof, type: "i", key: null, props: { a: { b: 1 } } };
+
+  expect({
+    jsxProp: tie(o => ({ $$typeof, type: "d", key: null, props: { o } })),
+    jsxKey: tie(o => ({ $$typeof, type: "d", key: o, props: {} })),
+    jsxChild: tie(o => ({
+      $$typeof,
+      type: "d",
+      key: null,
+      props: { children: [{ $$typeof, type: "i", key: null, props: { o } }] },
+    })),
+    messageEvent: tie(data => new MessageEvent("message", { data })),
+    errorEvent: tie(error => new ErrorEvent("error", { error })),
+    event,
+    objectContaining: tie(o => expect.objectContaining(o)),
+    response,
+    formData,
+    sharedNotCircular: [shared, shared, { $$typeof, type: "p", key: null, props: { children: [shared, shared] } }],
+  }).toMatchInlineSnapshot(`
+    {
+      "errorEvent": ErrorEvent {
+        type: "error",
+        message: "", 
+        error: {
+          "back": ErrorEvent {
+            type: "error",
+            message: "", 
+            error: [Circular]
+          },
+        }
+      },
+      "event": Event Event {
+        "isTrusted": false,
+        "self": [Circular],
+      },
+      "formData": FormData (entries) FormData FormData {
+        "toJSON": [Function],
+      },
+      "jsxChild": <d>
+        <i o={
+            "back": <d>
+              <i o=[Circular] />
+            </d>,
+          } />
+      </d>,
+      "jsxKey": <d key={
+        "back": <d key=[Circular] />,
+      } />,
+      "jsxProp": <d o={
+          "back": <d o=[Circular] />,
+        } />,
+      "messageEvent": MessageEvent {
+        type: "message",
+        data: {
+          "back": MessageEvent {
+            type: "message",
+            data: [Circular], 
+          },
+        }, 
+      },
+      "objectContaining": ObjectContaining {
+        "back": ObjectContaining [Circular],
+      },
+      "response": Response (2 bytes) {
+        ok: true,
+        url: "",
+        status: 200,
+        statusText: "",
+        headers: Headers {},
+        redirected: false,
+        bodyUsed: false,
+        Blob (2 bytes)
+      }Response Response {
+        "self": Response (2 bytes) {
+          ok: true,
+          url: "",
+          status: 200,
+          statusText: "",
+          headers: Headers {},
+          redirected: false,
+          bodyUsed: false,
+          Blob (2 bytes)
+        }[Circular],
+      },
+      "sharedNotCircular": [
+        <i a={
+            "b": 1,
+          } />,
+        <i a={
+            "b": 1,
+          } />,
+        <p>
+          <i a={
+              "b": 1,
+            } />
+          <i a={
+              "b": 1,
+            } />
+        </p>,
+      ],
+    }
+  `);
+});
+
+test("a stored snapshot lists nothing for what expect.objectContaining() holds, unless it is an ordinary object", () => {
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  expect({
+    typedArray: expect.objectContaining(new Uint8Array([1, 2, 3])),
+    buffer: expect.objectContaining(Buffer.from("ab")),
+    string: expect.objectContaining(new String("abc")),
+    proxy: expect.objectContaining(new Proxy({ a: 1 }, {})),
+    proxyOfArray: expect.objectContaining(new Proxy([1, 2], {})),
+    revokedProxy: expect.objectContaining(revoked.proxy),
+    not: expect.not.objectContaining(new Uint8Array([1])),
+    object: expect.objectContaining({ a: 1 }),
+  }).toMatchInlineSnapshot(`
+    {
+      "buffer": ObjectContaining Buffer {},
+      "not": ObjectNotContaining Uint8Array {},
+      "object": ObjectContaining {
+        "a": 1,
+      },
+      "proxy": ObjectContaining ProxyObject {},
+      "proxyOfArray": ObjectContaining ProxyObject {},
+      "revokedProxy": ObjectContaining ProxyObject {},
+      "string": ObjectContaining String {},
+      "typedArray": ObjectContaining Uint8Array {},
+    }
+  `);
+});
+
+// The spaces between the props of a React element do not count towards the line.
+test("a stored snapshot breaks the line before a Promise where the formatter that wrote it did", () => {
+  const $$typeof = Symbol.for("react.element");
+  const title = Buffer.alloc(80, "x").toString();
+  expect({ $$typeof, type: "div", key: null, props: { title, load: Promise.resolve() } }).toMatchInlineSnapshot(
+    `<div title="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"load=Promise {} />`,
+  );
+  expect([
+    { $$typeof, type: "div", key: null, props: { a: 1, b: 2, c: 3 } },
+    Buffer.alloc(70, "y").toString(),
+    Promise.resolve(),
+  ]).toMatchInlineSnapshot(`
+    [
+      <div a=1 b=2c=3 />,
+      "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      Promise {},
+    ]
+  `);
+});
+
+test.concurrent("a stored snapshot lists every hole of an array, and a BuildArtifact twice", async () => {
+  using dir = tempDir("stored-snapshot", {
+    "entry.js": "export default 1;",
+    "stored.test.js": `
+      test("holes", () => expect(new Array(1500)).toMatchSnapshot());
+      test("artifact", async () => {
+        const { outputs } = await Bun.build({ entrypoints: [import.meta.dir + "/entry.js"] });
+        expect(outputs[0]).toMatchSnapshot();
+      });
+      test("too many holes", () => {
+        expect(() => expect(new Array(2 ** 20 + 1)).toMatchSnapshot()).toThrow(
+          "Snapshot value is too large to serialize: an array has 1048577 empty items in a row.",
+        );
+      });
+      // A million steps take a debug build too long.
+      test.skipIf(${isDebug})("too many entries", () => {
+        class Endless extends Set { *[Symbol.iterator]() { for (;;) yield 1; } }
+        expect(() => expect(new Endless([1])).toMatchSnapshot()).toThrow(
+          "Snapshot value is too large to serialize: a Set lists more than 1048576 entries, and more than its size.",
+        );
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--update-snapshots", "stored.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stored = await Bun.file(join(String(dir), "__snapshots__", "stored.test.js.snap")).text();
+  expect(stored).toContain(
+    "exports[`holes 1`] = `\n[\n" + Buffer.alloc(1500 * 13, "  undefined,\n").toString() + "]\n`;",
+  );
+  expect(stored).toContain("  sourcemap: null\n}BuildArtifact {}`;");
+  expect(stdout + stderr).toContain(isDebug ? " 3 pass\n" : " 4 pass\n");
+  expect(exitCode).toBe(0);
 });

@@ -693,7 +693,9 @@ describe("environmentData", () => {
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
   });
+});
 
+describe("error event", () => {
   // The worker renders its uncaught error to text before it reports the error.
   // The render of each cause must not render the rest of the chain twice.
   test("is fired for an error with a chain of 30 assigned causes", async () => {
@@ -715,9 +717,7 @@ describe("environmentData", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Error: l29\n", stderr: "", exitCode: 0 });
   });
-});
 
-describe("error event", () => {
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });
     const [err] = await once(worker, "error");

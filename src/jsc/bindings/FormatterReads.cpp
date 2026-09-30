@@ -27,6 +27,11 @@
 
 using namespace JSC;
 
+extern "C" uint32_t Bun__FormatterReads__collections(JSGlobalObject* globalObject)
+{
+    return getVM(globalObject).heap.objectSpace().newlyAllocatedVersion();
+}
+
 // An own data property. Empty for an accessor, a Proxy or a module namespace export.
 extern "C" EncodedJSValue Bun__FormatterReads__ownData(EncodedJSValue encodedValue, JSGlobalObject* globalObject, const BunString* propertyName)
 {
@@ -195,7 +200,8 @@ static bool forEachLeftInIterator(VM& vm, JSGlobalObject* globalObject, Iterator
         JSValue item = kind == IterationKind::Keys ? key : value;
         if (kind == IterationKind::Entries) {
             item = constructArrayPair(globalObject, key, value);
-            RETURN_IF_EXCEPTION(scope, false);
+            if (scope.exception()) [[unlikely]]
+                return false;
         }
         callback(ctx, JSValue::encode(item), {});
         return !scope.exception();
@@ -236,6 +242,10 @@ extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
         return truncated;
     }
 
+    // `size` is then whatever its getter returned. What it holds is not.
+    uint32_t held = map ? map->size() : set->size();
+    size = static_cast<int32_t>(std::min<uint32_t>(std::max(size, 0), std::max<uint32_t>(held, 1 << 20)));
+
     IterationRecord iterationRecord = iteratorForIterable(globalObject, value);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -268,27 +278,16 @@ extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
     return truncated;
 }
 
-// `forEachInIterable` with the steps bounded: by the length of an array or a typed array,
-// and by `budget` for an iterable only its own iterator can list, such as a generator.
-// True when it had more to give.
+// `forEachInIterable` with the steps bounded: by the length of a typed array, and by `budget`
+// for an iterable only its own iterator can list, such as a generator. True when it had more to give.
 extern "C" bool Bun__FormatterReads__forEachLimited(EncodedJSValue encodedIterable, JSGlobalObject* globalObject, uint32_t budget, void* ctx, void (*callback)(VM*, JSGlobalObject*, void* ctx, EncodedJSValue))
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue iterable = JSValue::decode(encodedIterable);
 
-    if (getIterationMode(iterable) == IterationMode::FastArray) {
-        forEachInFastArray(globalObject, iterable, uncheckedDowncast<JSArray>(iterable), [&](VM&, JSGlobalObject*, JSValue item) {
-            callback(&vm, globalObject, ctx, JSValue::encode(item));
-        });
-        RETURN_IF_EXCEPTION(scope, false);
-        return false;
-    }
-
     uint64_t bound = budget;
-    if (auto* array = dynamicDowncast<JSArray>(iterable))
-        bound = array->length();
-    else if (auto* view = dynamicDowncast<JSArrayBufferView>(iterable))
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(iterable))
         bound = view->length();
 
     IterationRecord iterationRecord = iteratorForIterable(globalObject, iterable);

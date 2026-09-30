@@ -232,6 +232,19 @@ impl<'a> JSPropertyIterator<'a> {
     }
 }
 
+impl JSPropertyIterator<'_> {
+    /// Whether the name `next` last yielded is the description of a symbol.
+    pub fn is_symbol(&self) -> bool {
+        let Some(iter) = self.impl_ else {
+            return false;
+        };
+        Bun__JSPropertyIterator__isSymbol(
+            JSPropertyIteratorImpl::opaque_mut(iter.as_ptr()),
+            self.i.get() as usize,
+        )
+    }
+}
+
 impl<'a> Drop for JSPropertyIterator<'a> {
     fn drop(&mut self) {
         if let Some(impl_) = self.impl_ {
@@ -336,6 +349,7 @@ unsafe extern "C" {
         property_name: &mut bun_core::StringView<'_>,
         i: usize,
     );
+    safe fn Bun__JSPropertyIterator__isSymbol(iter: &mut JSPropertyIteratorImpl, i: usize) -> bool;
     fn Bun__JSPropertyIterator__deinit(iter: *mut JSPropertyIteratorImpl);
     safe fn Bun__JSPropertyIterator__getLongestPropertyName(
         iter: &mut JSPropertyIteratorImpl,

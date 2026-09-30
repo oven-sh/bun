@@ -5411,7 +5411,8 @@ enum class PropertyWalk : uint8_t {
     Chain,
     // Own properties, without the indexes and `length` of an array.
     OwnNonIndexed,
-    // Own properties, sorted by key.
+    // Own properties, sorted by key. Stored snapshots hold what it lists, which is why it
+    // differs from the other two in three places.
     OwnSorted,
 };
 
@@ -5424,18 +5425,21 @@ static bool isNeverListed(JSC::VM& vm, const UniquedStringImpl* key)
 
 // A class or a compiled module brands itself with the non-enumerable form of these.
 // An enumerable one was put there by a literal or an assignment, and is user data.
+template<PropertyWalk walk>
 static bool isHiddenBrand(JSC::VM& vm, const UniquedStringImpl* key, unsigned attributes)
 {
     if (!(attributes & PropertyAttribute::DontEnum))
         return false;
-    return key == vm.propertyNames->underscoreProto.impl() || key == vm.propertyNames->toStringTagSymbol.impl() || key == vm.propertyNames->__esModule.impl();
+    return key == vm.propertyNames->underscoreProto.impl() || key == vm.propertyNames->toStringTagSymbol.impl() || (walk != PropertyWalk::OwnSorted && key == vm.propertyNames->__esModule.impl());
 }
 
 // An accessor is listed as what it is and does not run.
+template<PropertyWalk walk>
 static JSC::JSValue listedValueOfSlot(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName property, JSC::PropertySlot& slot)
 {
+    // `getPureResult` is null for an accessor that cannot be cached: one on an index, or on a dictionary.
     if (slot.isAccessor())
-        return slot.isCacheableGetter() ? slot.getPureResult() : JSC::JSValue(slot.getterSetter());
+        return walk == PropertyWalk::OwnSorted || slot.isCacheableGetter() ? slot.getPureResult() : JSC::JSValue(slot.getterSetter());
     if (!(slot.attributes() & PropertyAttribute::DontEnum) || (slot.attributes() & PropertyAttribute::BuiltinOrFunction) || slot.isCustom() || slot.isValue())
         return slot.getValue(globalObject, property);
     if (object->getOwnPropertySlot(object, globalObject, property, slot))
@@ -5504,7 +5508,7 @@ restart:
             }
             auto* prop = entry.key();
 
-            if (isNeverListed(vm, prop) || isHiddenBrand(vm, prop, entry.attributes()))
+            if (isNeverListed(vm, prop) || isHiddenBrand<walk>(vm, prop, entry.attributes()))
                 return true;
 
             if (!visitedProperties.add(prop).isNewEntry)
@@ -5599,6 +5603,9 @@ restart:
         while (iterating && (walk == PropertyWalk::OwnSorted || !endsTheChain(iterating)) && prototypeCount++ < 5) {
             if constexpr (walk == PropertyWalk::OwnNonIndexed) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+            } else if constexpr (walk == PropertyWalk::OwnSorted) {
+                // Not the class's own: a module namespace and a global proxy list nothing.
+                JSC::JSObject::getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
                 iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             }
@@ -5631,7 +5638,7 @@ restart:
                 if (!hasProperty)
                     continue;
 
-                if (isHiddenBrand(vm, property.impl(), slot.attributes()))
+                if (isHiddenBrand<walk>(vm, property.impl(), slot.attributes()))
                     continue;
 
                 if constexpr (walk == PropertyWalk::Chain) {
@@ -5641,7 +5648,7 @@ restart:
 
                 EncodedSlice key = toEncodedSlice(property.impl());
 
-                JSC::JSValue propertyValue = listedValueOfSlot(globalObject, object, property, slot);
+                JSC::JSValue propertyValue = listedValueOfSlot<walk>(globalObject, object, property, slot);
 
                 // Ignore exceptions from getters.
                 if (scope.exception()) [[unlikely]] {
@@ -7133,7 +7140,7 @@ static uint64_t nextPresentVectorIndex(JSC::JSObject* object, uint32_t start)
 
 static JSC::SparseArrayValueMap* sparseMapOf(JSC::JSObject* object)
 {
-    if (!hasAnyArrayStorage(object->indexingType()))
+    if (!object || !hasAnyArrayStorage(object->indexingType()))
         return nullptr;
     return object->butterfly()->arrayStorage()->m_sparseMap.get();
 }
@@ -7155,6 +7162,8 @@ extern "C" uint64_t Bun__JSObject__nextPresentVectorIndex(
     uint32_t start)
 {
     JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return noPresentIndex;
     uint64_t result = nextPresentVectorIndex(object, start);
 
     switch (object->type()) {

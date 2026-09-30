@@ -540,7 +540,7 @@ impl Request {
         {
             // RAII guard restores indent on every exit incl. `?` error paths.
             // Shadows `formatter` for the block; auto-derefs to `&mut F`.
-            let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
+            let mut formatter = formatter.indented();
 
             formatter.write_indent(writer)?;
             writer.write_str(

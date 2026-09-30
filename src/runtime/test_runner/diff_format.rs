@@ -6,15 +6,15 @@ use bun_jsc::{Formatter, JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 
-/// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
-/// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
-/// inside `Display::fmt`.
+/// Renders a Jest-style diff of two already-formatted values. Formatting a JS value can throw, so it
+/// happens up front in [`DiffFormatter::new`], never inside `Display::fmt`.
 pub(crate) struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
-    /// A side printed `[Object]` for a value it had already printed in full.
-    abbreviated: bool,
+    /// A side printed `[Object]` for a value it had already printed in full, past this many bytes
+    /// of repeats.
+    abbreviated: Option<usize>,
     /// A side nests deeper than the native stack allows.
     stopped_early: bool,
 }
@@ -26,18 +26,23 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
-        let mut abbreviated = false;
+        let mut abbreviated = None;
         let mut stopped_early = false;
         let mut side = |value: JSValue| -> JsResult<Cow<'static, [u8]>> {
             let mut buf: Vec<u8> = Vec::new();
             let mut formatter = Formatter::diff(global_this);
             formatter.format_value::<false>(value, &mut buf)?;
-            abbreviated |= formatter.abbreviated_shared_references();
+            abbreviated = abbreviated.or_else(|| formatter.abbreviated_shared_references());
             stopped_early |= formatter.stopped_early();
             Ok(Cow::Owned(trim_one_newline(buf)))
         };
         Ok(DiffFormatter {
-            received_string: side(received)?,
+            // Only `expected` is shown.
+            received_string: if not {
+                Cow::Borrowed(b"")
+            } else {
+                side(received)?
+            },
             expected_string: side(expected)?,
             not,
             abbreviated,
@@ -50,7 +55,7 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),
             not,
-            abbreviated: false,
+            abbreviated: None,
             stopped_early: false,
         }
     }
@@ -77,8 +82,15 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             f,
             &diff_config,
         )?;
-        if self.abbreviated {
-            f.write_str("\n\nnote: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier in the same output. The output for repeated values is limited to 1 MiB.")?;
+        if !self.not && self.received_string == self.expected_string {
+            f.write_str("\n\nnote: the values are not equal, but they print the same.")?;
+        }
+        if let Some(limit) = self.abbreviated {
+            write!(
+                f,
+                "\n\nnote: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier in the same output. The output for repeated values is limited to {} MiB.",
+                limit / (1024 * 1024)
+            )?;
         }
         if self.stopped_early {
             f.write_str("\n\nnote: a value is nested too deeply to print in full.")?;

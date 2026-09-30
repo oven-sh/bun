@@ -113,6 +113,11 @@ extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIter
     return longest;
 }
 
+extern "C" bool Bun__JSPropertyIterator__isSymbol(JSPropertyIterator* iter, size_t i)
+{
+    return iter->properties->propertyNameVector()[i].isSymbol();
+}
+
 static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* object, const JSC::Identifier& prop, BunString* propertyName)
 {
     auto& vm = iter->vm;

@@ -537,8 +537,8 @@ describe("console.table reads a bounded number of rows from an iterator", () => 
   });
 
   // Each child counts what its iterator hands out and exits with 2 well past
-  // the budget, so the unfixed printer fails here at once and does not run
-  // until memory is gone.
+  // the budget, so a printer without one fails at once and does not run until
+  // memory is gone.
   const endless = `let yielded = 0;
 function* endless() {
   for (;;) {

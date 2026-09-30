@@ -5,6 +5,10 @@
 //! printed. The few that do run some return a `JsResult`, say what they run,
 //! and bound how long it can go on. What the user asked to have called
 //! (`[inspect.custom]`, `toJSON`) is not a read and does not belong here.
+//!
+//! A stored snapshot holds what an ordinary read gave the formatter that wrote
+//! it. The reads that take `stored` make that read for the `snapshot` policy,
+//! so that its text does not change. It keeps every bound.
 //! `test/internal/source-lints/formatter-reads.test.ts` keeps observable reads
 //! out of the printers.
 
@@ -35,6 +39,7 @@ pub(super) enum PropertyWalk {
 }
 
 unsafe extern "C" {
+    safe fn Bun__FormatterReads__collections(global: &JSGlobalObject) -> u32;
     safe fn Bun__FormatterReads__ownData(
         value: JSValue,
         global: &JSGlobalObject,
@@ -84,6 +89,67 @@ pub(super) fn own_data(
     (!value.is_empty() && !value.is_undefined()).then_some(value)
 }
 
+/// Changes with every garbage collection.
+pub(super) fn collections(global: &JSGlobalObject) -> u32 {
+    Bun__FormatterReads__collections(global)
+}
+
+/// What a chain of proxies stands for: its innermost target, or the first
+/// revoked Proxy in it. However long, it costs no native stack and no trap runs.
+pub(super) fn through_proxies(mut value: JSValue) -> JSValue {
+    while value.is_cell()
+        && value.js_type() == jsc::JSType::ProxyObject
+        && value
+            .get_proxy_internal_field(jsc::ProxyField::Handler)
+            .is_cell()
+    {
+        value = value.get_proxy_internal_field(jsc::ProxyField::Target);
+    }
+    value
+}
+
+/// The text of a string, a `String` object or a RegExp.
+pub(super) fn text(
+    global: &JSGlobalObject,
+    value: JSValue,
+    js_type: jsc::JSType,
+    stored: bool,
+) -> JsResult<BunString> {
+    use crate::StringJsc as _;
+    if stored {
+        return BunString::from_js(value, global);
+    }
+    if js_type == jsc::JSType::RegExpObject {
+        return Ok(reg_exp_source(value));
+    }
+    BunString::from_js(boxed_primitive(value), global)
+}
+
+/// `object[name]` as the printers of a React element read it.
+pub(super) fn field(
+    global: &JSGlobalObject,
+    object: JSValue,
+    name: &'static str,
+    stored: bool,
+) -> JsResult<Option<JSValue>> {
+    if stored {
+        return object.get(global, name);
+    }
+    Ok(own_data(global, object, name))
+}
+
+/// `value.$$typeof`, which marks a React element.
+pub(super) fn react_typeof(
+    global: &JSGlobalObject,
+    value: JSValue,
+    stored: bool,
+) -> JsResult<Option<JSValue>> {
+    if stored {
+        return value.get_own_truthy(global, "$$typeof");
+    }
+    Ok(own_data(global, value, "$$typeof"))
+}
+
 /// The primitive inside a `Number`, `String`, `Boolean`, `Symbol` or `BigInt`
 /// object.
 pub(super) fn boxed_primitive(value: JSValue) -> JSValue {
@@ -98,7 +164,7 @@ pub(super) fn reg_exp_source(value: JSValue) -> BunString {
 /// The length of an array, or the own `length` of an `arguments` object. When
 /// that is gone, an accessor or not a number: one past the last index that is
 /// present.
-pub(super) fn array_length(global: &JSGlobalObject, value: JSValue) -> u64 {
+pub(crate) fn array_length(global: &JSGlobalObject, value: JSValue) -> u64 {
     Bun__FormatterReads__arrayLength(value, global)
 }
 
@@ -110,14 +176,14 @@ pub(super) fn array_length(global: &JSGlobalObject, value: JSValue) -> u64 {
 /// changes the array. The copy then goes stale: an index stored later counts as
 /// a hole, and one deleted later is still reported.
 #[derive(Default)]
-pub(super) struct PresentIndexes {
+pub(crate) struct PresentIndexes {
     sparse: Option<Vec<u32>>,
     pos: usize,
 }
 
 impl PresentIndexes {
     /// The smallest index in `from..len` that `array` holds, or `len`.
-    pub(super) fn next(&mut self, array: JSValue, from: u32, len: u32) -> u32 {
+    pub(crate) fn next(&mut self, array: JSValue, from: u32, len: u32) -> u32 {
         unsafe extern "C" {
             safe fn Bun__JSObject__nextPresentVectorIndex(this: JSValue, start: u32) -> u64;
         }
@@ -175,6 +241,24 @@ pub(crate) fn collection_size(global: &JSGlobalObject, value: JSValue) -> JsResu
     })
 }
 
+/// Whether a stored snapshot prints `Map {}`: `value.size`, if it is a number.
+pub(super) fn stored_collection_size(global: &JSGlobalObject, value: JSValue) -> JsResult<i32> {
+    match value.get(global, "size")? {
+        Some(size) if size.is_number() => size.coerce_to_i32(global),
+        _ => Ok(0),
+    }
+}
+
+/// A diff prints a longer run of array holes than this as one line. A hole
+/// otherwise prints as a line of `undefined`, and an array can claim 2^32 - 1
+/// of them and hold nothing.
+pub(super) const MAX_EXPANDED_HOLE_RUN: u32 = 8;
+
+/// The text of a snapshot is a file format, so it lists what the value claims:
+/// every hole, and every entry a Map or a Set yields past its size. More of
+/// either than this is an error.
+pub(super) const MOST_A_SNAPSHOT_LISTS: u32 = 1 << 20;
+
 #[repr(u8)]
 #[derive(Copy, Clone)]
 pub(super) enum EventField {
@@ -190,7 +274,16 @@ pub(super) fn event_field(
     global: &JSGlobalObject,
     event: JSValue,
     field: EventField,
+    stored: bool,
 ) -> JsResult<Option<JSValue>> {
+    if stored {
+        return match field {
+            EventField::Type => Ok(event.get(global, "type")?.filter(|kind| kind.is_string())),
+            EventField::Message => event.fast_get(global, jsc::BuiltinName::Message),
+            EventField::Data => event.fast_get(global, jsc::BuiltinName::Data),
+            EventField::Error => event.fast_get(global, jsc::BuiltinName::Error),
+        };
+    }
     let value = jsc::host_fn::from_js_host_call_generic(global, || {
         Bun__FormatterReads__eventField(event, global, field)
     })?;
@@ -219,8 +312,8 @@ pub(crate) fn for_each_entry(
 }
 
 /// Calls back with every property the formatter lists. An accessor arrives as
-/// its `GetterSetter` cell and does not run. Every walk hides the same keys and
-/// turns a property into a value the same way.
+/// its `GetterSetter` cell and does not run. A Proxy in the prototype chain runs
+/// its traps, and a native property its C++ getter.
 ///
 /// Inlined, so that a level of nesting does not pay for a closure frame.
 #[inline(always)]
@@ -240,9 +333,30 @@ pub(super) fn for_each_property(
 /// generator. It can be endless.
 pub(crate) const UNSIZED_ITERABLE_BUDGET: u32 = 1000;
 
+/// The elements an array holds, in order. Not its holes, of which it can claim
+/// 2^32 - 1, not what a replaced iterator yields, and not what is pushed while
+/// it is listed.
+pub(crate) fn for_each_element(
+    array: JSValue,
+    global: &JSGlobalObject,
+    mut visit: impl FnMut(u32, JSValue) -> JsResult<()>,
+) -> JsResult<()> {
+    let len = array_length(global, array).min(u64::from(u32::MAX)) as u32;
+    let mut present = PresentIndexes::default();
+    let mut index = present.next(array, 0, len);
+    while index < len {
+        let element = array.get_direct_index(global, index)?;
+        if !element.is_empty() {
+            visit(index, element)?;
+        }
+        index = present.next(array, index + 1, len);
+    }
+    Ok(())
+}
+
 /// Runs the iterator of an iterable the caller was handed to list
 /// (`console.table`, `AggregateError.errors`). `Ok(true)` when it had more to
-/// give than its length, or than `budget` when it has none.
+/// give than a typed array's length, or than `budget`.
 pub(crate) fn for_each_limited(
     iterable: JSValue,
     global: &JSGlobalObject,

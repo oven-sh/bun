@@ -2447,7 +2447,7 @@ impl JSValue {
     /// [`is_iterable`](Self::is_iterable), but false for an array (through a
     /// Proxy too) and for anything that iterates with the intrinsic Array
     /// iterator, such as an `arguments` object.
-    pub fn is_non_array_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
+    pub(crate) fn is_non_array_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
         crate::cpp::Bun__JSValue__isNonArrayIterable(self, global)
     }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
@@ -2555,13 +2555,9 @@ impl JSValue {
         }
     }
 
-    /// `JSValue.toFmt(formatter)` — reset `formatter` for a
-    /// fresh top-level format of `self` and return a `Display` adapter.
-    ///
-    /// The `Formatter` releases any owned `map_node` in `Drop`, so reusing a
-    /// formatter that already owns a `map_node` is handled at end-of-scope.
-    /// All current callers pass a freshly-constructed formatter
-    /// (`map_node == None`).
+    /// A `Display` adapter that prints `self` through `formatter`. A formatter
+    /// can print several values this way: each starts with no value seen and
+    /// the whole shared-reference budget.
     pub fn to_fmt<'a, 'b>(
         self,
         formatter: &'a mut crate::console_object::Formatter<'b>,

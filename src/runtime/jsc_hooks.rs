@@ -1905,6 +1905,17 @@ fn console_print_runtime_object<'a, 'f>(
     }
 }
 
+/// `pretty_fmt!` for the `C` of the function it is used in.
+macro_rules! pf {
+    ($s:literal) => {
+        if C {
+            ::bun_core::pretty_fmt!($s, true)
+        } else {
+            ::bun_core::pretty_fmt!($s, false)
+        }
+    };
+}
+
 fn console_print_runtime_object_inner<const C: bool>(
     formatter: &mut bun_jsc::Formatter<'_>,
     writer_: &mut dyn bun_io::Write,
@@ -1913,16 +1924,6 @@ fn console_print_runtime_object_inner<const C: bool>(
     use crate::api::BuildArtifact;
     use crate::api::archive::Archive;
     use crate::webcore::{Blob, Request, Response, S3Client};
-
-    macro_rules! pf {
-        ($s:literal) => {
-            if C {
-                ::bun_core::pretty_fmt!($s, true)
-            } else {
-                ::bun_core::pretty_fmt!($s, false)
-            }
-        };
-    }
 
     // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
     // live `T` cell; conservative stack scan keeps `value` alive for the
@@ -1933,7 +1934,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let printed = unsafe { &mut *response }.write_format::<C>(formatter, writer_);
         formatter.printed(printed)?;
         // A stored snapshot goes on to print it as an object too: `Response {}`.
-        return Ok(!formatter.is_exact());
+        return Ok(!formatter.is_stored_snapshot());
     }
     if let Some(request) = value.as_::<Request>() {
         // SAFETY: `as_` returned a non-null `*mut Request` to the live native
@@ -1947,7 +1948,8 @@ fn console_print_runtime_object_inner<const C: bool>(
         // native wrapper backing `value`; GC keeps it alive (see above).
         let printed = unsafe { &*build }.write_format::<C>(value, formatter, writer_);
         formatter.printed(printed)?;
-        return Ok(true);
+        // Like `Response`: `BuildArtifact {}`.
+        return Ok(!formatter.is_stored_snapshot());
     }
     if let Some(blob) = value.as_::<Blob>() {
         // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
@@ -1956,7 +1958,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         formatter.printed(printed)?;
         return Ok(true);
     }
-    // A stored snapshot prints these three as `Name {}`.
+    // Snapshots and diffs print these three as `Name {}`.
     if formatter.style() == bun_jsc::console_object::formatter::Style::Jest {
         return console_print_shared_runtime_object::<C>(formatter, writer_, value);
     }
@@ -1998,16 +2000,6 @@ fn console_print_shared_runtime_object<const C: bool>(
     value: JSValue,
 ) -> JsResult<bool> {
     use core::fmt::Write as _;
-
-    macro_rules! pf {
-        ($s:literal) => {
-            if C {
-                ::bun_core::pretty_fmt!($s, true)
-            } else {
-                ::bun_core::pretty_fmt!($s, false)
-            }
-        };
-    }
 
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
         let internals = &timer.internals;

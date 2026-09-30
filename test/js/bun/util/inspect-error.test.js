@@ -948,3 +948,38 @@ describe.concurrent("an assigned cause", () => {
     });
   });
 });
+
+test("a stack overflow in a cause chain reaches the caller of Bun.inspect", () => {
+  let chain;
+  for (let i = 0; i < 20_000; i++) chain = new Error("e" + i, chain && { cause: chain });
+  const overflow = "Maximum call stack size exceeded.";
+  expect(() => Bun.inspect(chain, { depth: Infinity })).toThrow(overflow);
+  expect(() => Bun.inspect([chain], { depth: Infinity })).toThrow(overflow);
+  // Its members print after the chain, and listing them must not clear the exception.
+  const throughMembers = new Error("top", { cause: new AggregateError([new Error("m")], "agg", { cause: chain }) });
+  expect(() => Bun.inspect(throughMembers, { depth: Infinity })).toThrow(overflow);
+});
+
+test("an AggregateError whose members are all circular still prints", () => {
+  const a = new AggregateError([], "a");
+  const b = new AggregateError([a], "b");
+  a.errors.push(b);
+  const headers = text => text.split("\n").filter(line => /^(\[Circular\]|\w*[eE]rror: )/.test(line));
+  expect(headers(Bun.inspect(a))).toEqual(["[Circular]", "AggregateError: b"]);
+
+  const request = new Error("request");
+  request.failure = new AggregateError([request], "all mirrors failed");
+  expect(headers(Bun.inspect(request))).toEqual(["error: request", "AggregateError: all mirrors failed", "[Circular]"]);
+});
+
+test("a symbol described as cause or errors is a property like any other", () => {
+  const middle = new Error("middle", { cause: new Error("the cause") });
+  middle[Symbol("cause")] = new Error("under the symbol");
+  const text = Bun.inspect(new Error("top", { cause: middle }));
+  expect(text).toContain("error: the cause");
+  expect(text).toContain("error: under the symbol");
+
+  const aggregate = new AggregateError([], "aggregate");
+  aggregate[Symbol("errors")] = [1, 2];
+  expect(Bun.inspect(aggregate)).toContain("errors: [ 1, 2 ]");
+});

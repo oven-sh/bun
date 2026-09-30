@@ -264,32 +264,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
-    /// isIndexSignature of a class element, after "[": the test that tells it from a computed name.
+    /// isIndexSignature of a class element, after "[". No modifier is read: "[async x => x]" is a computed name.
     fn is_class_index_signature(&mut self) -> bool {
         let p = self;
-        let is_modifier = match p.lexer.token {
+        match p.lexer.token {
             T::TDotDotDot | T::TCloseBracket => return true,
-            T::TIdentifier => p.is_class_index_signature_modifier(),
+            T::TIdentifier if p.is_class_index_signature_name() => {}
             _ => return false,
-        };
-        if !is_modifier && !p.is_class_index_signature_name() {
-            return false;
         }
 
         let old_lexer = p.lexer.snapshot();
         p.lexer.is_log_disabled = true;
-        let is_index_signature = p.scan_class_index_signature(is_modifier).unwrap_or(false);
+        let is_index_signature = p.scan_class_index_signature().unwrap_or(false);
         p.lexer.restore(&old_lexer);
         is_index_signature
     }
 
-    /// nextIsUnambiguouslyIndexSignature, from the first word after "[".
-    fn scan_class_index_signature(&mut self, is_modifier: bool) -> crate::CrateResult<bool> {
+    /// nextIsUnambiguouslyIndexSignature, from the name after "[".
+    fn scan_class_index_signature(&mut self) -> crate::CrateResult<bool> {
         let p = self;
         p.lexer.next()?;
-        if is_modifier && p.lexer.token == T::TIdentifier && p.is_class_index_signature_name() {
-            return Ok(true);
-        }
         // "[id:" is an index signature, and "[id," is one that is not well formed
         if p.lexer.token == T::TColon || p.lexer.token == T::TComma {
             return Ok(true);
@@ -303,14 +297,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.token,
             T::TColon | T::TComma | T::TCloseBracket
         ))
-    }
-
-    /// IsModifierKind for a word: the reference reads "[public k" as the start of an index signature.
-    fn is_class_index_signature_modifier(&self) -> bool {
-        !matches!(
-            PropertyModifierKeyword::find(self.lexer.raw()),
-            None | Some(PropertyModifierKeyword::PGet | PropertyModifierKeyword::PSet)
-        )
     }
 
     /// isIdentifier for a word: "await" and "yield" are names where they are no operators.
@@ -327,36 +313,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// nextTokenIsOnSameLineAndCanFollowModifier for a modifier of a parameter; the lexer does not move.
-    fn class_index_signature_modifier_precedes_name(&mut self) -> bool {
-        self.next_token_matches(|p| {
-            !p.lexer.has_newline_before
-                && (p.lexer.is_identifier_or_keyword()
-                    || matches!(
-                        p.lexer.token,
-                        T::TOpenBracket
-                            | T::TOpenBrace
-                            | T::TAsterisk
-                            | T::TDotDotDot
-                            | T::TPrivateIdentifier
-                            | T::TStringLiteral
-                            | T::TNumericLiteral
-                            | T::TBigIntegerLiteral
-                    ))
-        })
-    }
-
     /// parseIndexSignatureDeclaration of a class element, after "[". Nothing of it is kept.
     fn skip_class_index_signature(&mut self) -> crate::CrateResult<()> {
         let p = self;
         while p.lexer.token != T::TCloseBracket {
-            // parseParameter: modifiers, "...", a name, "?", a type and an initializer
-            while p.lexer.token == T::TIdentifier
-                && p.is_class_index_signature_modifier()
-                && p.class_index_signature_modifier_precedes_name()
-            {
-                p.lexer.next()?;
-            }
+            // parseParameter without modifiers: "...", a name, "?", a type and an initializer
             if p.lexer.token == T::TDotDotDot {
                 p.lexer.next()?;
             }

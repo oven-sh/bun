@@ -803,9 +803,15 @@ it(
           globalThis.inFlight = import("./a.mjs");
         } else {
           globalThis.dependencyMayLoad();
-          console.log("in flight: evaluation", (await globalThis.inFlight).evaluation);
-          console.log("next: evaluation", (await import("./a.mjs")).evaluation);
-          process.exit(0);
+          try {
+            console.log("in flight: evaluation", (await globalThis.inFlight).evaluation);
+            console.log("next: evaluation", (await import("./a.mjs")).evaluation);
+            process.exit(0);
+          } catch (error) {
+            // --hot would keep the process alive after an uncaught error.
+            console.log("rejected:", error);
+            process.exit(1);
+          }
         }
       `,
     });

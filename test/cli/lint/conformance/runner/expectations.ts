@@ -1,6 +1,6 @@
 // The two lists of expectations.json: their one form, their checks against the corpus and against a run, the update that only adds, and what the lists lost since a revision.
 import { spawnSync } from "node:child_process";
-import { basename, dirname } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { utf8String } from "./gostrings";
 import type { Outcome } from "./run";
 
@@ -290,15 +290,49 @@ export function reportText(p: Plan, command: string): string {
   return lines.join("\n");
 }
 
-// The command that reportText prints: the command line of the run with --update, quoted for a POSIX shell.
-export function updateCommand(argv: readonly string[], binaryOfDefaultCheck?: string): string {
+// The options of sweep.ts that take a value: a copy of its set valued.
+const valuedOptions: ReadonlySet<string> = new Set([
+  "--bin",
+  "--check",
+  "--jobs",
+  "--timeout",
+  "--kind",
+  "--tag",
+  "--report",
+  "--since",
+  "--expectations",
+  "--corpus",
+]);
+
+// sweep.ts as the current directory reaches it: the path from there when the script is below it, else the whole path.
+function sweepScript(): string {
+  const script = join(import.meta.dir, "..", "sweep.ts");
+  const below = relative(process.cwd(), script);
+  // A path that begins with "-" would be an option of bun.
+  return /^(\.\.|-)/.test(below) || isAbsolute(below) ? script : below.split(sep).join("/");
+}
+
+// The command that reportText prints: the command line of the run with --update, quoted for a POSIX shell. It runs in the directory of the run, which the paths of argv start from: script is sweep.ts as that directory reaches it.
+export function updateCommand(
+  argv: readonly string[],
+  binaryOfDefaultCheck?: string,
+  script: string = sweepScript(),
+  valued: ReadonlySet<string> = valuedOptions,
+): string {
   const quote = (a: string) => (/^[A-Za-z0-9_\/.,:=@%+-]+$/.test(a) ? a : `'${a.replaceAll("'", `'\\''`)}'`);
-  const rest = argv.filter(a => a !== "--update");
-  const names = (option: string) => rest.some(a => a === option || a.startsWith(`${option}=`));
+  const rest: string[] = [];
+  let namesTheCheck = false;
+  for (let k = 0; k < argv.length; k++) {
+    const a = argv[k];
+    const name = a.split("=", 1)[0];
+    namesTheCheck ||= name === "--bin" || name === "--check";
+    if (a !== "--update") rest.push(a);
+    // The token after an option that takes a value is that value and no option, whatever it reads.
+    if (valued.has(a) && k + 1 < argv.length) rest.push(argv[++k]);
+  }
   // The binary that ran the sweep may not be the one that runs the printed command.
-  const implied = binaryOfDefaultCheck === undefined || names("--bin") || names("--check");
-  const all = [...(implied ? [] : ["--bin", binaryOfDefaultCheck]), ...rest, "--update"];
-  return ["bun", "test/cli/lint/conformance/sweep.ts", ...all.map(quote)].join(" ");
+  const bin = binaryOfDefaultCheck === undefined || namesTheCheck ? [] : ["--bin", binaryOfDefaultCheck];
+  return ["bun", script, ...bin, ...rest, "--update"].map(quote).join(" ");
 }
 
 export interface Shrink {

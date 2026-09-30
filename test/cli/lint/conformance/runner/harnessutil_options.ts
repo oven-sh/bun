@@ -1,5 +1,5 @@
 // Port of the options half of internal/testutil/harnessutil/harnessutil.go and of the skip rules of internal/testrunner/compiler_runner.go, typescript-go 89d5d5b.
-import { atoi, compareStrings, equalFold, toLower } from "./gostrings";
+import { atoi, compareStrings, equalFold, toLower, utf8String } from "./gostrings";
 import {
   type CompilerOptions,
   type JsonValue,
@@ -17,6 +17,7 @@ import {
 } from "./tsconfig";
 import { type CommandLineOption, elements, enumMap, optionsDeclarations } from "./tsoptions";
 import { getBaseFileName, getDirectoryPath, getNormalizedAbsolutePath, isRootedDiskPath } from "./tspath";
+import { MemFs, MemFsPanic, type MemInput, decodeBytes } from "./vfs";
 
 // compiler_runner.go:34
 const srcFolder = "/.src";
@@ -342,26 +343,33 @@ export interface InstanceStatus {
   notes: string[];
 }
 
-// test_case_parser.go:65: the units of a case as the file system of its config; it checks no path, follows no link and records that it was asked.
-function newUnitsHost(test: TestFiles, currentDirectory: string): ParseConfigHost & { asked: boolean } {
-  const allFiles = new Map<string, string>();
-  for (const data of test.units) allFiles.set(getNormalizedAbsolutePath(data.name, currentDirectory), data.content);
-  const host = {
-    asked: false,
+// test_case_parser.go:65 and tsoptionstest/vfsparseconfighost.go:45: the units and the links of a case as the file system of its config. The reference walks the links as a Go map and keeps either of two links of one name; this keeps the later. Throws MemFsPanic where the reference panics.
+function newParseConfigHost(test: TestFiles, currentDirectory: string): ParseConfigHost {
+  const entries = new Map<string, MemInput>();
+  for (const data of test.units) {
+    entries.set(getNormalizedAbsolutePath(data.name, currentDirectory), {
+      kind: "file",
+      data: Buffer.from(data.content, "utf8"),
+    });
+  }
+  for (const [link, target] of entriesOf(test.symlinks)) {
+    entries.set(getNormalizedAbsolutePath(link, currentDirectory), {
+      kind: "symlink",
+      target: getNormalizedAbsolutePath(target, currentDirectory),
+    });
+  }
+  const fs = new MemFs(entries, true);
+  return {
     useCaseSensitiveFileNames: true,
-    fileExists(path: string): boolean {
-      host.asked = true;
-      return allFiles.has(path);
-    },
-    readFile(path: string): string | undefined {
-      host.asked = true;
-      return allFiles.get(path);
+    fileExists: path => fs.fileExists(path),
+    readFile: path => {
+      const bytes = fs.readFile(path);
+      return bytes === undefined ? undefined : utf8String(decodeBytes(bytes), path);
     },
   };
-  return host;
 }
 
-// compiler_runner.go:206 up to SkipUnsupportedCompilerOptions, without the file systems and the compilation: makeUnitsFromTest, newCompilerTest, CompileFiles. host stands for the file system of the case where its config extends another file.
+// compiler_runner.go:206 up to SkipUnsupportedCompilerOptions, without the compilation and its file system: makeUnitsFromTest, newCompilerTest, CompileFiles. host, where given, reads the extends chain in place of the file system of the case.
 export function getInstanceStatus(
   basename: string,
   test: TestFiles,
@@ -370,28 +378,34 @@ export function getInstanceStatus(
 ): InstanceStatus {
   const notes: string[] = [];
   const unitsDirectory = test.currentDirectory === "" ? srcFolder : test.currentDirectory;
-  const configUnit = test.units.find(unit => getConfigNameFromFileName(unit.name) !== "");
   let tsConfig: ParsedCommandLine | undefined;
-  if (configUnit !== undefined) {
-    const unitsHost = newUnitsHost(test, unitsDirectory);
-    let existingOptions: CompilerOptions | undefined;
-    if (new Map(entriesOf(test.globalOptions)).get("runexternalcode") === "true") {
-      existingOptions = newCompilerOptions();
-      existingOptions.runExternalCode = TSTrue;
+  // The text of the panic with which the reference leaves makeUnitsFromTest.
+  let panic: string | undefined;
+  try {
+    // The reference makes this file system for every case, with or without a config.
+    const parseConfigHost = newParseConfigHost(test, unitsDirectory);
+    const configUnit = test.units.find(unit => getConfigNameFromFileName(unit.name) !== "");
+    if (configUnit !== undefined) {
+      let existingOptions: CompilerOptions | undefined;
+      if (new Map(entriesOf(test.globalOptions)).get("runexternalcode") === "true") {
+        existingOptions = newCompilerOptions();
+        existingOptions.runExternalCode = TSTrue;
+      }
+      const configFileName = getNormalizedAbsolutePath(configUnit.name, unitsDirectory);
+      const configDir = getDirectoryPath(configFileName);
+      tsConfig = parseJsonSourceFileConfigFileContent(
+        configUnit.content,
+        host ?? parseConfigHost,
+        configDir,
+        existingOptions,
+        configFileName,
+      );
+      notes.push(...tsConfig.notes);
+      panic = tsConfig.panic;
     }
-    const configFileName = getNormalizedAbsolutePath(configUnit.name, unitsDirectory);
-    const configDir = getDirectoryPath(configFileName);
-    tsConfig = parseJsonSourceFileConfigFileContent(
-      configUnit.content,
-      host ?? unitsHost,
-      configDir,
-      existingOptions,
-      configFileName,
-    );
-    notes.push(...tsConfig.notes);
-    if (unitsHost.asked && entriesOf(test.symlinks).length > 0) {
-      notes.push(`the extends chain of ${configFileName} is read without the symbolic links of the case`);
-    }
+  } catch (error) {
+    if (!(error instanceof MemFsPanic)) throw error;
+    panic = error.message;
   }
 
   const harnessConfig = configuration === undefined ? undefined : new Map(entriesOf(configuration));
@@ -405,7 +419,7 @@ export function getInstanceStatus(
 
   const { options, harnessOptions, fatal } = compileFilesOptions(harnessConfig, tsConfig?.options, currentDirectory);
   const result = { emitOnly: skippedEmitTests.has(basename), options, harnessOptions, currentDirectory, notes };
-  const invalidReason = tsConfig?.panic ?? fatal;
+  const invalidReason = panic ?? fatal;
   if (invalidReason !== undefined) return { status: "invalid", invalidReason, ...result };
   const skipReason = skipUnsupportedCompilerOptions(options);
   if (skipReason !== undefined) return { status: "skip", skipReason, ...result };

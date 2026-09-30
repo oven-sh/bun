@@ -2329,9 +2329,7 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 }
 
-/// Longest input `parse_with` / `StyleAttribute::parse` accept. Offsets, lines
-/// and columns are `i32` (`bun_ast::Loc`, `bun_ast::Location`); the largest
-/// one is `len + 1`, at the end of input.
+/// Longest input the parser accepts: positions are `i32`, and `len + 1` must fit.
 pub(crate) const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
 
 fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {

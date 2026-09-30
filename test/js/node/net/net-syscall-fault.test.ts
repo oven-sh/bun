@@ -228,6 +228,49 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     expect(p.serverSock.destroyed).toBe(true);
   });
 
+  // Node hands a send the kernel rejects at once to the stream inside write()
+  // itself, so write() returns false and the socket is errored in the same
+  // call. The stream runs the write callbacks and destroys it on the next tick.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+  for (const side of ["client", "server"] as const) {
+    test.each(["ECONNRESET", "EPIPE"] as const)(
+      `send → %s on the first attempt: write() returns false and the socket is errored in the same call (${side} writer)`,
+      async errno => {
+        using p = await connectedPair();
+        const writer = side === "client" ? p.client : p.serverSock;
+        const fd = (writer as any)._handle.fd as number;
+        expect(fd).toBeGreaterThanOrEqual(0);
+        fault.set({ syscall: "send", action: "errno", errno, repeat: 1, fd });
+
+        const events: string[] = [];
+        writer.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} ${e.syscall}`));
+        const closed = new Promise<void>(resolve => {
+          writer.on("close", hadError => {
+            events.push(`close ${hadError}`);
+            resolve();
+          });
+        });
+        const first = writer.write("x", e => events.push(`write#1 ${(e as NodeJS.ErrnoException)?.code}`));
+        const afterFirst = {
+          destroyed: writer.destroyed,
+          errored: (writer.errored as NodeJS.ErrnoException | null)?.code,
+          writable: writer.writable,
+          writableLength: writer.writableLength,
+        };
+        // The stream is errored, so this write never reaches send().
+        const second = writer.write("y", e => events.push(`write#2 ${(e as NodeJS.ErrnoException)?.code}`));
+        await closed;
+
+        expect({ first, afterFirst, second, events }).toEqual({
+          first: false,
+          afterFirst: { destroyed: false, errored: errno, writable: false, writableLength: 0 },
+          second: false,
+          events: [`write#1 ${errno}`, `write#2 ${errno}`, `error ${errno} write`, "close true"],
+        });
+      },
+    );
+  }
+
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
     server.listen(0, "127.0.0.1");

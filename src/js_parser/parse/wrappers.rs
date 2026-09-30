@@ -222,7 +222,7 @@ fn offset(loc: Loc) -> u32 {
 mod tests {
     use super::*;
     use crate::defines::Define;
-    use crate::parse::parse_entry::{Options, ParsedForLint, Parser};
+    use crate::parse::parse_entry::{Options, Parser};
     use bun_alloc::Arena;
     use bun_ast::{E, Loader, OpCode, StoreRef};
 
@@ -339,22 +339,21 @@ mod tests {
         let define = Define::default();
         let mut log = bun_ast::Log::init();
         let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
-        parser.parse_for_lint(describe).ok()
+        parser
+            .parse_for_lint(|parsed| {
+                let records = &parsed.sidecar.wrappers.records;
+                records.iter().map(line).collect::<Vec<String>>()
+            })
+            .ok()
     }
 
-    fn describe(parsed: &ParsedForLint<'_, '_>) -> Vec<String> {
-        let records = &parsed.sidecar.wrappers.records;
-        records
-            .iter()
-            .map(|record| {
-                let kind = record.data.kind_name();
-                let (op, end) = (record.op, record.end);
-                let type_node = record.type_node().map(described).unwrap_or_default();
-                let tag = <&'static str>::from(record.operand.data.tag());
-                let start = record.operand.loc.start;
-                format!("{kind} [{op},{end}){type_node} of {tag}@{start}")
-            })
-            .collect()
+    fn line(record: &Wrapper) -> String {
+        let kind = record.data.kind_name();
+        let (op, end) = (record.op, record.end);
+        let type_node = record.type_node().map(described).unwrap_or_default();
+        let tag = <&'static str>::from(record.operand.data.tag());
+        let start = record.operand.loc.start;
+        format!("{kind} [{op},{end}){type_node} of {tag}@{start}")
     }
 
     fn described(type_node: ts::Type) -> String {

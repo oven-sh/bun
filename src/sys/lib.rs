@@ -3612,8 +3612,16 @@ mod windows_impl {
     /// `path` as the name a native call relative to `dir` takes. To
     /// `NtCreateFile` `.` and `..` are names like any other, so a path that
     /// has one is resolved first, the way [`openat`] resolves every path.
-    fn nt_path_at<'a>(dir: Fd, path: &ZStr, buf: &'a mut [u16]) -> Maybe<&'a bun_core::WStr> {
+    pub(super) fn nt_path_at<'a>(
+        dir: Fd,
+        path: &ZStr,
+        buf: &'a mut [u16],
+    ) -> Maybe<&'a bun_core::WStr> {
         let path = path.as_bytes();
+        // To `NtCreateFile` no name at all is `dir` itself.
+        if path.is_empty() {
+            return Err(Error::from_code(E::ENOENT, Tag::open));
+        }
         if !bun_core::strings::split_any(path, b"/\\").any(|name| name == b"." || name == b"..") {
             return Ok(bun_paths::string_paths::to_nt_path(buf, path));
         }
@@ -5942,6 +5950,10 @@ pub fn normalize_path_windows_opts<'a>(
 ) -> Maybe<&'a bun_core::WStr> {
     use bun_core::WStr;
     let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
+    // To `NtCreateFile` no name at all is `dir_fd` itself.
+    if path.is_empty() {
+        return Err(Error::from_code(E::ENOENT, Tag::open));
+    }
 
     let mut path = path;
     if bun_paths::is_absolute_windows_wtf16(path) {
@@ -5971,10 +5983,13 @@ pub fn normalize_path_windows_opts<'a>(
             }
             use bun_paths::is_sep_any_t as is_sep;
             if is_sep(path[1]) && is_sep(path[3]) {
+                let names_a_drive = path.len() >= 6
+                    && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[4])
+                    && path[5] == b':' as u16;
                 // (b) `\\.\…` device path → the rest verbatim so `\\.\pipe\foo`
                 // is not collapsed to `\pipe\foo` by the normalizer. For
                 // `NtCreateFile` the prefix is spelled `\??\`.
-                if path[2] == b'.' as u16 {
+                if path[2] == b'.' as u16 && !names_a_drive {
                     if path.len() >= buf.len() {
                         return Err(too_long());
                     }
@@ -5993,8 +6008,9 @@ pub fn normalize_path_windows_opts<'a>(
                     return Ok(WStr::from_buf(&buf[..], path.len()));
                 }
                 // (c) `\??\…` / `\\?\…` already prefixed → strip the 4-u16
-                // prefix before re-normalizing to avoid a double `\??\`.
-                if path[2] == b'?' as u16 {
+                // prefix before re-normalizing to avoid a double `\??\`. So is
+                // `\\.\C:\…`, which Win32 resolves like any other path.
+                if path[2] == b'?' as u16 || path[2] == b'.' as u16 {
                     path = &path[4..];
                 }
             }
@@ -6582,9 +6598,15 @@ pub struct WindowsFileAttributes {
 /// `INVALID_FILE_ATTRIBUTES`.
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
-    use bun_windows_sys::externs as w;
     let wpath = windows::fs::WPath::new(path.as_bytes()).ok()?;
-    // SAFETY: a `WPath` is NUL-terminated.
+    get_file_attributes_w(wpath.as_wstr())
+}
+
+/// [`get_file_attributes`] of a path that is spelled for Win32 already.
+#[cfg(windows)]
+pub fn get_file_attributes_w(wpath: &bun_core::WStr) -> Option<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    // SAFETY: a `WStr` is NUL-terminated.
     let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
     if dword == windows::INVALID_FILE_ATTRIBUTES {
         return None;
@@ -6670,6 +6692,10 @@ pub enum ExistsAtType {
 #[cfg(windows)]
 fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
+    // To the kernel no name at all is `dir` itself.
+    if path.is_empty() {
+        return Err(Error::from_code(E::ENOENT, Tag::access));
+    }
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
     if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
@@ -6731,7 +6757,8 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
         // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+        let at = if dir.is_valid() { dir } else { Fd::cwd() };
+        let path = windows_impl::nt_path_at(at, sub, &mut wbuf.0[..])?.as_slice();
         exists_at_type_nt(dir, path)
     }
 }

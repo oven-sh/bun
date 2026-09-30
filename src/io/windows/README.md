@@ -24,13 +24,14 @@ I/O, cannot be associated with a completion port, and cannot be converted:
 | `KernelBase!NamedPipeEventSelect` (undocumented)                         | needs `PIPE_NOWAIT`; on Windows 10 also `FILE_WRITE_DATA`, which a read-only stdin lacks       |
 
 So reads of a `Mode::Sync` pipe block on the pipe's own reader thread
-(`pipe.rs`, `SyncReader`). It waits with a zero-byte read and then takes at most
-what `PeekNamedPipe` reports, for three reasons: the wait consumes nothing, so
+(`pipe.rs`, `SyncReader`). Like every mode, it waits with a zero-byte read and
+then takes at most what `PeekNamedPipe` reports: the wait consumes nothing, so
 pausing leaves the data for whoever reads the handle next (a child that
 inherits stdin); a zero-byte read can be cancelled without the peer's write
-losing anything, where cancelling an N-byte read can; and a pending N-byte read
+losing anything, where cancelling an N-byte read can; a pending N-byte read
 is charged against the writer's `WriteQuotaAvailable`, which has made
-Cygwin/MSYS writers believe the pipe is full.
+Cygwin/MSYS writers believe the pipe is full; and the first write to arrive
+completes a pending N-byte read alone, however much is written behind it.
 
 The doc comment of `SyncReader` describes how the loop and that thread take
 turns. Input leaves the pipe only after the loop thread has run with it
@@ -59,11 +60,13 @@ on a full stdout). With another thread parked in `ReadFile(h, _, 0)`:
 None of the calls that do not block tells the two kinds apart, and an
 overlapped file object has no such lock. So a handle of unknown kind
 (`Mode::Unknown`) is classified by the helper thread that does its first read or
-write, before that thread's first I/O (`classify`), for as long as that takes;
-the loop thread never asks. The three standard handles are remembered once
-classified. The one exception is an end nobody else does I/O on
-(`PipeOrigin::InheritedUnshared`, the IPC channel): its lock is free, so the
-loop thread tries `CreateIoCompletionPort` on it, and success says overlapped.
+write, before that thread's first I/O (`classify`), for as long as that takes.
+The three standard handles are remembered once classified. The loop thread asks
+only where it costs nothing more: when it is about to block on the same lock
+anyway (a synchronous write: `process.stdout`, `Bun.write(fd)`), and of an end
+nobody else does I/O on (`PipeOrigin::InheritedUnshared`, the IPC channel),
+whose lock is free: it tries `CreateIoCompletionPort`, and success says
+overlapped.
 
 ### What the reader thread costs
 

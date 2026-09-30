@@ -2,6 +2,7 @@ import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
+import { join } from "node:path";
 
 // Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
 // on POSIX-only behaviour (termios echo, SIGWINCH, cat/echo binaries). The
@@ -673,9 +674,9 @@ describe("Bun.Terminal subprocess integration", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "main-fixture.js"],
+      // Not run in `dir`: a child that was killed can still have it as its directory when it is removed.
+      cmd: [bunExe(), join(String(dir), "main-fixture.js")],
       env: bunEnv,
-      cwd: String(dir),
       stdout: "pipe",
       stderr: "inherit",
     });

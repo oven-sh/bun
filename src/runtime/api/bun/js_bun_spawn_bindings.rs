@@ -543,7 +543,8 @@ fn spawn_maybe_sync(
                 };
 
                 override_env = true;
-                // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+                // If the env object does not include a $PATH, argv[0] is not looked up here.
+                // (On Windows the spawn itself then looks for a bare name: `search_path.rs`.)
                 let mut new_path: &[u8] = b"";
                 // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
                 // centralised non-null-ZST deref proof.

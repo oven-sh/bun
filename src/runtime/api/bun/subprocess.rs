@@ -983,6 +983,8 @@ impl Subprocess<'_> {
                 unsafe {
                     (*reader).unpause();
                     bun_io::BufferedReader::read(reader);
+                    #[cfg(windows)]
+                    bun_io::BufferedReader::drain(reader);
                 }
             }
         }
@@ -994,6 +996,8 @@ impl Subprocess<'_> {
                 unsafe {
                     (*reader).unpause();
                     bun_io::BufferedReader::read(reader);
+                    #[cfg(windows)]
+                    bun_io::BufferedReader::drain(reader);
                 }
             }
         }
@@ -1490,7 +1494,7 @@ pub(crate) mod testing_apis {
         Ok(JSValue::TRUE)
     }
 
-    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
+    /// Close the stdin pipe's writer with no JS wrapper and no ref.
     #[bun_jsc::host_fn]
     pub(crate) fn close_stdin_writer(
         global_this: &JSGlobalObject,

@@ -1161,6 +1161,90 @@ pub trait WindowsWriterParent {
     unsafe fn deref(this: *mut Self);
 }
 
+/// A writer's place, while a write of its is out, in its thread's list of them.
+///
+/// The ref a writer holds on its parent for such a write is released when the
+/// result arrives. The loop of a VM that is being torn down does not turn any
+/// more, so it never does: [`abandon_writes_out`] releases those refs.
+#[cfg(windows)]
+pub(crate) struct WriteOut {
+    prev: *mut WriteOut,
+    next: *mut WriteOut,
+    listed: bool,
+    /// The writer this is a field of lets go of its source and of the ref.
+    abandon: unsafe fn(*mut WriteOut),
+}
+
+#[cfg(windows)]
+thread_local! {
+    static WRITES_OUT: core::cell::Cell<*mut WriteOut> = const { core::cell::Cell::new(core::ptr::null_mut()) };
+}
+
+#[cfg(windows)]
+impl WriteOut {
+    fn new(abandon: unsafe fn(*mut WriteOut)) -> WriteOut {
+        WriteOut {
+            prev: core::ptr::null_mut(),
+            next: core::ptr::null_mut(),
+            listed: false,
+            abandon,
+        }
+    }
+
+    /// # Safety
+    /// `this` is not listed and stays where it is until it is removed, on
+    /// this thread.
+    unsafe fn insert(this: *mut WriteOut) {
+        let head = WRITES_OUT.get();
+        // SAFETY: caller contract; `head` is a listed (live) entry or null.
+        unsafe {
+            debug_assert!(!(*this).listed);
+            (*this).listed = true;
+            (*this).prev = core::ptr::null_mut();
+            (*this).next = head;
+            if !head.is_null() {
+                (*head).prev = this;
+            }
+        }
+        WRITES_OUT.set(this);
+    }
+
+    /// # Safety
+    /// `this` is live, on the thread that listed it.
+    unsafe fn remove(this: *mut WriteOut) {
+        // SAFETY: caller contract; neighbours are listed (live) entries.
+        unsafe {
+            if !mem::take(&mut (*this).listed) {
+                return;
+            }
+            let (prev, next) = ((*this).prev, (*this).next);
+            if prev.is_null() {
+                WRITES_OUT.set(next);
+            } else {
+                (*prev).next = next;
+            }
+            if !next.is_null() {
+                (*next).prev = prev;
+            }
+        }
+    }
+}
+
+/// This thread's VM is being torn down and its loop has stopped turning, with
+/// the JS heap still there: a parent that goes with its last ref drops the JS
+/// handles it holds.
+#[cfg(windows)]
+pub fn abandon_writes_out() {
+    loop {
+        let head = WRITES_OUT.get();
+        if head.is_null() {
+            return;
+        }
+        // SAFETY: listed entries are live; `abandon` takes `head` off the list.
+        unsafe { ((*head).abandon)(head) };
+    }
+}
+
 /// Hand `data` to `source`; `on_write(ctx, ..)` runs from the loop afterwards.
 /// `refusal` is for a pipe: only its peer can have a write refused.
 ///
@@ -1215,6 +1299,7 @@ pub struct WindowsBufferedWriter<Parent: BufferedWriterParent> {
     pub(crate) is_done: bool,
     /// One write at a time; whatever the parent queues meanwhile goes out after it.
     pub(crate) pending_payload_size: usize,
+    out: WriteOut,
 }
 
 #[cfg(windows)]
@@ -1226,6 +1311,7 @@ impl<Parent: BufferedWriterParent> Default for WindowsBufferedWriter<Parent> {
             parent: core::ptr::null_mut(),
             is_done: false,
             pending_payload_size: 0,
+            out: WriteOut::new(Self::abandon),
         }
     }
 }
@@ -1375,6 +1461,19 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         self.close_source(false);
     }
 
+    /// [`WriteOut::abandon`].
+    unsafe fn abandon(out: *mut WriteOut) {
+        // SAFETY: `out` is the field of a writer with a write out, which the
+        // parent ref released last keeps alive.
+        unsafe {
+            let this = out.byte_sub(mem::offset_of!(Self, out)).cast::<Self>();
+            WriteOut::remove(out);
+            (*this).pending_payload_size = 0;
+            (*this).close_without_reporting();
+            Self::r_deref(this);
+        }
+    }
+
     /// # Safety
     /// `this` is the writer that submitted the write, kept alive by the
     /// parent ref taken in `write`.
@@ -1384,6 +1483,8 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
         // derived from the parent's intrusive `writer` field, writing
         // `self.is_done`. Launder so post-`on_write` reads see fresh state.
         let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: fn contract.
+        unsafe { WriteOut::remove(&raw mut (*this).out) };
         // Scopeguard deref to balance write()'s ref: `Parent::on_write` may
         // drop the last external strong ref, and the trailing `is_done` /
         // `close()` reads below need the parent (and `self`, inside it) alive.
@@ -1478,10 +1579,14 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
             }
         }
         self.pending_payload_size = len;
-        // The matching deref is in `on_write_result`, which runs for every
-        // submitted write, cancelled ones included.
-        // SAFETY: parent BACKREF valid; intrusive refcount bump.
-        unsafe { Parent::ref_(self.parent()) };
+        // The matching deref is in `on_write_result`, which a cancelled write
+        // reaches too, or in `abandon`.
+        // SAFETY: parent BACKREF valid; intrusive refcount bump. The parent
+        // stays where it is while it is referenced.
+        unsafe {
+            Parent::ref_(self.parent());
+            WriteOut::insert(&raw mut self.out);
+        }
         sys::Result::Ok(())
     }
 
@@ -1697,9 +1802,10 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     lent_cursor: usize,
     // we preserve the last write result for simplicity
     pub(crate) last_write_result: WriteResult,
-    // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
-    // `Parent::on_close` while the parent is mid-teardown.
+    // Set only by `close_without_reporting()` to suppress `Parent::on_close`
+    // while the parent is mid-teardown.
     pub closed_without_reporting: bool,
+    out: WriteOut,
 }
 
 #[cfg(windows)]
@@ -1716,6 +1822,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
             lent_cursor: 0,
             last_write_result: WriteResult::Wrote(0),
             closed_without_reporting: false,
+            out: WriteOut::new(Self::abandon),
         }
     }
 }
@@ -1864,18 +1971,18 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.close_source(report);
     }
 
-    /// For a parent whose VM is shutting down. The loop has stopped turning, so
-    /// the result of a write that is out never arrives, and neither does the
-    /// release of the parent ref taken for it. Lets go of the source and
-    /// returns whether there was such a write: its ref is the caller's to
-    /// release.
-    pub fn abandon_write_in_flight(&mut self) -> bool {
-        let in_flight =
-            self.source.is_some() && (self.current_payload.is_not_empty() || self.lent_len > 0);
-        if in_flight {
-            self.close_without_reporting();
+    /// [`WriteOut::abandon`].
+    unsafe fn abandon(out: *mut WriteOut) {
+        // SAFETY: `out` is the field of a writer with a write out, which the
+        // parent ref released last keeps alive.
+        unsafe {
+            let this = out.byte_sub(mem::offset_of!(Self, out)).cast::<Self>();
+            WriteOut::remove(out);
+            (*this).close_without_reporting();
+            (*this).lent_len = 0;
+            (*this).current_payload.reset();
+            Self::r_deref(this);
         }
-        in_flight
     }
 
     /// Close the source without invoking `Parent::on_close` — for a parent
@@ -1899,6 +2006,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // `self.parent`. Launder so all post-`on_write` field accesses see
         // fresh state.
         let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: fn contract.
+        unsafe { WriteOut::remove(&raw mut (*this).out) };
 
         // Deref the parent at the end to balance the ref taken in
         // process_send. Capturing `self.parent` by value here would snapshot
@@ -2058,10 +2167,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             Self::fail_send(this, err);
             return;
         }
-        // The matching deref is in `on_write_result`, which runs for every
-        // submitted write, cancelled ones included.
-        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        unsafe { Parent::ref_(Self::r(this).parent()) };
+        // The matching deref is in `on_write_result`, which a cancelled write
+        // reaches too, or in `abandon`.
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer
+        // alive, and it stays where it is while it is referenced.
+        unsafe {
+            Parent::ref_(Self::r(this).parent());
+            WriteOut::insert(&raw mut (*this).out);
+        }
         Self::r(this).last_write_result = WriteResult::Pending(0);
     }
 
@@ -2223,8 +2336,8 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // The `*WriterParent` traits are monomorphic function tables whose every
 // method is `unsafe fn(this: *mut Self, ..)`
 // that derefs the BACKREF and forwards to an inherent method. The impls of the
-// concrete parents (FileSink, WindowsNamedPipe, shell IOWriter,
-// StaticPipeWriter) differ only in:
+// concrete parents (FileSink, shell IOWriter, StaticPipeWriter) differ only
+// in:
 //   (a) the inherent-method names the vtable forwards to,
 //   (b) how the callback is dispatched off `*mut Self` — as `&mut`, `&`, or
 //       a raw-ptr method call (re-entrancy under Stacked/Tree Borrows — see

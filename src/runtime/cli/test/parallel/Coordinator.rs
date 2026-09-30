@@ -438,6 +438,7 @@ impl<'a> Coordinator<'a> {
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
+                w.drain_output();
                 self.flush_captured(w);
                 if formatted.is_empty() {
                     return; // e.g. pass under --only-failures
@@ -587,6 +588,7 @@ impl<'a> Coordinator<'a> {
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
+        w.drain_output();
         self.flush_captured(w);
         // Exited before the IPC handshake. `inflight` is None for these, so
         // the mid-file handling below never fires; the per-slot cap is what

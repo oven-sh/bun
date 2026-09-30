@@ -399,7 +399,8 @@ struct Inner {
     held_error: Option<Win32Error>,
     /// See [`Tty::end_input_at_ctrl_z`].
     ctrl_z_ends_input: bool,
-    /// A line that started with Ctrl-Z arrived; nothing was read after it.
+    /// A line that started with Ctrl-Z arrived, or Ctrl+C ended the read;
+    /// nothing was read after it.
     held_end: bool,
 
     output: OutputState,
@@ -442,7 +443,17 @@ struct LineOp {
     bytes: Vec<u8>,
     error: u32,
     woken: bool,
+    /// Who finishes the read that is out (`LINE_*`).
+    finisher: AtomicU8,
+    /// What closes `handle`, once the read is the helper thread's to free.
+    own: Option<Fd>,
 }
+
+const LINE_REQUESTED: u8 = 0;
+/// The helper thread is handing the result to the port.
+const LINE_POSTED: u8 = 1;
+/// The loop went away while the console had the read: the thread frees it.
+const LINE_ORPHANED: u8 = 2;
 
 /// A packet that carries no I/O: it delivers `written` and held input.
 #[repr(C)]
@@ -824,6 +835,8 @@ impl Inner {
                         bytes: Vec::new(),
                         error: 0,
                         woken: false,
+                        finisher: AtomicU8::new(LINE_REQUESTED),
+                        own: None,
                     }));
                 }
                 let op = (*this).line_op;
@@ -836,6 +849,7 @@ impl Inner {
                 (*op).bytes.clear();
                 (*op).cancel.store(false, Ordering::Release);
                 (*op).stop.store(false, Ordering::Release);
+                (*op).finisher.store(LINE_REQUESTED, Ordering::Release);
                 if !super::queue_blocking_work(LineOp::read_thread, op.cast()) {
                     let err = win::last_error();
                     (*op).port = None;
@@ -953,6 +967,29 @@ impl Inner {
         unsafe {
             if !(*this).gone() {
                 Self::cancel_reads(this);
+            }
+            // When a line read returns is the console's to say: one of its
+            // popups keeps the key that ends it from it. The loop does not
+            // wait for that.
+            let line = (*this).line_op;
+            if !line.is_null() && (*line).in_flight {
+                (*line).own = (*this).close_fd.take();
+                if (*line)
+                    .finisher
+                    .compare_exchange(
+                        LINE_REQUESTED,
+                        LINE_ORPHANED,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    (*this).line_op = ptr::null_mut();
+                    (*this).pending -= 1;
+                    super::settle((*this).link.loop_);
+                } else {
+                    (*this).close_fd = (*line).own.take();
+                }
             }
             (*this).flags.insert(Flags::CLOSING | Flags::SILENT);
             (*this).flags.remove(Flags::READING);
@@ -1303,6 +1340,21 @@ impl LineOp {
                     (*op).bytes = bun_core::strings::to_utf8_alloc_with_type(chars);
                 }
             }
+            if (*op)
+                .finisher
+                .compare_exchange(
+                    LINE_REQUESTED,
+                    LINE_POSTED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                if let Some(fd) = bun_core::heap::take(op).own {
+                    fd.close();
+                }
+                return 0;
+            }
             if let Some(port) = (*op).port.take() {
                 port.post(&raw mut (*op).op);
             }
@@ -1327,7 +1379,11 @@ impl LineOp {
             if (*line).error != 0 {
                 (*this).held_error = Some(Win32Error::from_u32((*line).error));
             } else if !(*line).woken {
-                if (*this).ctrl_z_ends_input && (*line).bytes.first() == Some(&0x1A) {
+                // The console ends a line read at Ctrl+C or Ctrl+Break with no
+                // characters, which a `ReadFile` reports as it does the end.
+                if (*this).ctrl_z_ends_input
+                    && (*line).bytes.first().is_none_or(|&first| first == 0x1A)
+                {
                     (*line).bytes.clear();
                     (*this).held_end = true;
                 } else {

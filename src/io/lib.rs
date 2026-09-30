@@ -335,8 +335,8 @@ impl EventLoopCtx {
     /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
     /// hive buffer) is live. Every in-crate caller is a leaf op that decays
     /// any conflicting `&mut FilePoll` to a raw slot pointer first
-    /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
-    /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
+    /// (`deinit_possibly_defer`) or holds none (`alloc_file_poll`), so no two
+    /// `&mut Store` ever coexist.
     #[inline]
     fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
@@ -600,6 +600,8 @@ macro_rules! buffered_reader_parent_link {
         }
     };
 }
+#[cfg(windows)]
+pub use pipe_writer::abandon_writes_out;
 pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult, WriteStatus};
 #[cfg(windows)]
 pub use source::Source;

@@ -56,11 +56,8 @@ Object.defineProperty(ReadStream, "prototype", {
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
 
-      // On windows, this goes through the stream handle itself, as the native
-      // reader owns the console handle the mode is set on.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
+      // On Windows the input mode belongs to the console, and is set through the
+      // process's stdin handle. On POSIX it is the file descriptor's termios.
       if (process.platform === "win32") {
         // Special case for stdin: the mode is set on the process's stdin
         // handle, and its stream is constructed differently

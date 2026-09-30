@@ -211,7 +211,7 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
-        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
+        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. `start()`, `unpause()` and `from()` keep it: a reader from `init()` reads again, and one whose owner takes the flag off.
         const READ_FAILED              = 1 << 11;
     }
 }
@@ -592,8 +592,6 @@ impl BufferedReader {
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        // The shell starts a reader again for a listener that came after an error.
-        self.flags.remove(ReaderFlags::READ_FAILED);
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(ReaderFlags::IS_DONE);
@@ -1250,8 +1248,7 @@ impl BufferedReader {
         Ok(source)
     }
 
-    /// Read from a source that is already open (an accepted or connected
-    /// named pipe).
+    /// Read from what [`open_source`](Self::open_source) opened.
     pub fn start_with_source(&mut self, source: Source) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         if !self.flags.contains(ReaderFlags::KEEP_ALIVE) {
@@ -1470,7 +1467,22 @@ impl BufferedReader {
         }
     }
 
-    /// Windows reads complete through the loop, never synchronously; this unpauses the reader.
+    /// Hand the parent, from inside this call, what a pipe Bun created holds
+    /// now ([`Pipe::drain`](crate::windows::Pipe::drain)): what a child that
+    /// has exited left in it, say.
+    ///
+    /// # Safety
+    /// `this` is the live reader, and the caller is not inside one of its
+    /// dispatches. They re-enter the parent, which can reach the reader again.
+    pub unsafe fn drain(this: *mut Self) {
+        // SAFETY: caller contract; the borrow of the source ends where the
+        // pipe's own state is reached.
+        if let Some(Source::Pipe(pipe)) = unsafe { (*this).source.as_mut() } {
+            pipe.drain();
+        }
+    }
+
+    /// Windows reads complete through the loop; this unpauses the reader.
     ///
     /// # Safety
     /// `this` is the live reader.

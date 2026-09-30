@@ -397,6 +397,7 @@ static void slow_req_orphan(struct us_loop_t *loop, struct us_internal_slow_poll
 static void us_internal_resume_list_add(struct us_loop_t *loop);
 static void us_internal_resume_list_remove(struct us_loop_t *loop);
 static void acceptors_cancel(struct us_loop_t *loop);
+static void acceptors_arm_dispatching(struct us_loop_t *loop);
 
 /* The Winsock error a refused poll is reported as: the callers read errno as one. */
 static int afd_poll_refusal_error(NTSTATUS status) {
@@ -1261,6 +1262,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 
     us_internal_loop_pre(loop);
     us_internal_retry_starved(loop);
+    if (loop->data.tick_depth > 1) {
+        acceptors_arm_dispatching(loop);
+    }
 
     /* Only a tick entered from a completion callback has anything left here. */
     us_internal_begin_batch(loop);
@@ -1398,12 +1402,13 @@ void us_loop_free(struct us_loop_t *loop) {
 
 /* Accepting */
 
-/* A listening socket is not polled for readiness. accept() on a non-blocking
- * socket is a readiness check followed by a wait for the connection, and when
- * several acceptors share the socket (cluster workers, the loops of two
- * threads) another one can take the connection in between, which leaves this
- * thread blocked in that wait. An overlapped AcceptEx is handed a connection by
- * the kernel or stays pending, however many acceptors there are. */
+/* A listening socket is not polled for readiness where AcceptEx works on it (see
+ * acceptor_create). accept() on a non-blocking socket is a readiness check
+ * followed by a wait for the connection, and when several acceptors share the
+ * socket (cluster workers, the loops of two threads) another one can take the
+ * connection in between, which leaves this thread blocked in that wait. An
+ * overlapped AcceptEx is handed a connection by the kernel or stays pending,
+ * however many acceptors there are. */
 
 #define US_ACCEPT_ADDRESS_LENGTH ((DWORD) (sizeof(struct sockaddr_storage) + 16))
 
@@ -1627,6 +1632,16 @@ static void acceptor_cancel(struct us_internal_acceptor *a) {
     }
 }
 
+/* Between two calls of us_internal_accept the owner's callback runs with no
+ * AcceptEx out. A tick entered from there has to hear of the next connection. */
+static void acceptors_arm_dispatching(struct us_loop_t *loop) {
+    for (struct us_internal_acceptor *a = loop->acceptors; a; a = a->next) {
+        if (a->dispatching && a->owner && !a->in_flight && !a->accepted) {
+            acceptor_arm(a, 0);
+        }
+    }
+}
+
 static void acceptors_cancel(struct us_loop_t *loop) {
     for (struct us_internal_acceptor *a = loop->acceptors; a; a = a->next) {
         acceptor_cancel(a);
@@ -1636,6 +1651,10 @@ static void acceptors_cancel(struct us_loop_t *loop) {
 static void acceptor_stop(struct us_internal_acceptor *a) {
     a->owner = NULL;
     acceptor_set_starved(a, 0);
+    /* It has taken a connection, and the packet that says so is on its way. */
+    if (a->in_flight && HasOverlappedIoCompleted(&a->op.overlapped) && acceptor_adopt(a)) {
+        acceptor_reset_accepted(a);
+    }
     acceptor_cancel(a);
     acceptor_maybe_free(a);
 }

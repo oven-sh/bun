@@ -836,9 +836,7 @@ pub(crate) mod get_addr_info_request {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
-        fn waits(_: &Self) -> bool {
-            true
-        }
+        const ALWAYS_WAITS: bool = true;
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
@@ -3038,12 +3036,12 @@ pub(crate) mod internal {
         Some(req)
     }
 
-    /// getaddrinfo() on the work pool; the result reaches every waiter through
+    /// getaddrinfo() on the work pool's threads for waits; the result reaches every waiter through
     /// the global cache, whichever thread asked. Also how a lookup whose
     /// per-thread mDNSResponder connection went away with its thread is
     /// finished (see `SharedConnection::close_for_terminate`).
     pub(super) fn run_on_work_pool(req: *mut Request) {
-        let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
+        let _ = bun_threading::work_pool::WorkPool::go_wait(SendPtr(req), |r: SendPtr<Request>| {
             work_pool_callback(r.0)
         });
     }

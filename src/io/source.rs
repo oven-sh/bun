@@ -112,7 +112,8 @@ impl Source {
 
     /// Close, letting writes that have not completed report back (`ECANCELED`
     /// for a pipe). Dropping the source instead calls nobody back, except for
-    /// a file write, whose callback is what releases the bytes it borrowed.
+    /// a file write whose writer was not forgotten: its callback is what
+    /// releases the bytes it borrowed.
     pub fn close(self) {
         match self {
             Source::Pipe(pipe) => pipe.close(),

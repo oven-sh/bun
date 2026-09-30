@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { realpathSync } from "fs";
+import { spawn } from "child_process";
+import { once } from "events";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 
@@ -18,6 +20,23 @@ async function runMulti(
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+/** Resolves once the processes whose ids `files` hold, separated by spaces, are all gone. */
+async function processesGone(files: string[]) {
+  for (const file of files) {
+    while (!existsSync(file)) await Bun.sleep(5);
+    for (const pid of readFileSync(file, "utf8").split(" ").map(Number)) {
+      for (;;) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          break;
+        }
+        await Bun.sleep(5);
+      }
+    }
+  }
 }
 
 /**
@@ -1588,6 +1607,38 @@ describe.concurrent("unusual output", () => {
     const dataLines = r.stdout.split("\n").filter(l => /rapid\s+\| L\d+/.test(l));
     expect(dataLines.length).toBe(1000);
     expect(r.exitCode).toBe(0);
+  });
+
+  // Nobody reads this run's stdout until every script is gone, so it stops at the first 64 KiB it
+  // prints: when it goes on, it has the exit of each script waiting behind a read that brought the
+  // script's first write alone.
+  test("what a script wrote is not lost when it has exited by the time it is read", async () => {
+    const names = ["a", "b", "c", "d"];
+    using dir = tempDir("mr-last-line", {
+      "package.json": JSON.stringify({
+        scripts: Object.fromEntries(names.map(name => [name, `${bunExe()} out.js ${name}`])),
+      }),
+      "out.js": `
+        require("fs").writeFileSync(process.argv[2] + ".pids", process.pid + " " + process.ppid);
+        // The first write is what a read that was waiting for it brings; the rest stays in the pipe.
+        process.stdout.write("first of " + process.argv[2] + "\\n");
+        let out = "";
+        for (let i = 0; i < 500; i++) out += "line " + i + " " + Buffer.alloc(80, "x") + "\\n";
+        process.stdout.write(out + "last of " + process.argv[2] + "\\n");
+      `,
+    });
+    const proc = spawn(bunExe(), ["run", "--parallel", ...names], {
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const exited = once(proc, "exit");
+    await processesGone(names.map(name => path.join(String(dir), name + ".pids")));
+    let stdout = "";
+    for await (const chunk of proc.stdout) stdout += chunk;
+    expect(names.filter(name => !stdout.includes("last of " + name))).toEqual([]);
+    expect(stdout.split("\n").filter(line => line.includes("| line ")).length).toBe(500 * names.length);
+    expect((await exited)[0]).toBe(0);
   });
 
   test("output with unicode characters", async () => {

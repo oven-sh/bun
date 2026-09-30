@@ -2048,6 +2048,48 @@ it.concurrent("a data handler that re-enters the event loop does not lose the ot
   });
 });
 
+// The wait is for a connection to the listener whose handler is waiting.
+it.concurrent.each(["Bun.listen", "node:net"])(
+  "%s accepts the next connection while the handler of one waits for it synchronously",
+  async api => {
+    const listen =
+      api === "Bun.listen"
+        ? `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: onConnection, data() {} } });
+           const port = server.port;`
+        : `const server = require("node:net").createServer(onConnection);
+           await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+           const port = server.address().port;`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { expect } from "bun:test";
+         const second = Promise.withResolvers();
+         const done = Promise.withResolvers();
+         let connections = 0;
+         function onConnection() {
+           if (++connections === 2) return second.resolve("accepted");
+           let seen;
+           // \`.resolves\` blocks until the promise settles by ticking the event loop from inside this callback.
+           expect(second.promise.then(value => (seen = value))).resolves.toBe("accepted");
+           done.resolve(seen);
+         }
+         ${listen}
+         const options = { hostname: "127.0.0.1", port, socket: { data() {} } };
+         const clients = [await Bun.connect(options), await Bun.connect(options)];
+         console.log("before the handler returned:", await done.promise);
+         process.exit(0);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "before the handler returned: accepted\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // A reply to something written during a tick cannot have been ready when that tick looked for
 // events, so it belongs to a later tick. Code that awaits between a write and the state its reply
 // needs relies on that whenever the ticks come from a synchronous wait, which runs microtasks only

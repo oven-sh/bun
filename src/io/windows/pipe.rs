@@ -17,12 +17,15 @@
 //!   thread of its first read or write does that before anything else, and the
 //!   loop moves the pipe to `Event` or `Sync` when it hears.
 //!
-//! A read that takes bytes is never cancelled except by closing: cancelling a
-//! buffered pipe read can make the peer's `WriteFile` report success for bytes
-//! nobody received. Pausing an `Owned` pipe lets the read complete and holds
-//! what it produced. On the others, which someone else may read next, what
-//! is pending is a zero-byte read; pausing cancels that, and nothing has left
-//! the pipe (see [`Pipe::read_stop`]).
+//! What is pending on a pipe is a zero-byte read. Bytes leave the pipe when
+//! they are about to be handed to the owner, so a peer that is told they were
+//! read (`FlushFileBuffers`) is told so of bytes the owner has, an owner that
+//! wants what the pipe holds now can have it ([`Pipe::drain`]), and one that
+//! pauses leaves everything in the pipe. The exception is a message-type pipe
+//! somebody else serves: a zero-length message, which says its writer has
+//! finished, ends only a read that asks for bytes. A read that takes bytes is
+//! never cancelled except by closing: that can make the peer's `WriteFile`
+//! report success for bytes nobody received.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -77,9 +80,8 @@ const STD_MODE_SYNC: u8 = 2;
 /// Where a pipe HANDLE came from, which decides how it is driven.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PipeOrigin {
-    /// An overlapped end Bun created (a spawned child's stdio, a pseudoconsole
-    /// pipe, a connected client). It is associated with the loop's completion
-    /// port.
+    /// An overlapped end of a pipe Bun created (a spawned child's stdio, a
+    /// pseudoconsole pipe). It is associated with the loop's completion port.
     Created,
     /// A HANDLE to a file object that was opened as [`Created`](Self::Created)
     /// on this loop before (a duplicate): the port has it already, and a file
@@ -174,6 +176,8 @@ bitflags::bitflags! {
         const TYPE_KNOWN     = 1 << 9;
         /// The pipe was created as a message-type pipe.
         const MESSAGE_TYPE   = 1 << 10;
+        /// The kernel refused a write because the other end is gone.
+        const PEER_GONE      = 1 << 11;
     }
 }
 
@@ -352,9 +356,9 @@ struct ReadOp {
     /// `read_stop` took the wait out of the kernel: an aborted completion is
     /// not an error.
     stopped: bool,
-    /// Every mode but `Owned`: the operation out waits for data (a zero-byte
-    /// read) and takes none. Its completion says the pipe is readable; the loop
-    /// then asks for the bytes, if its owner still wants them.
+    /// The operation out waits for data (a zero-byte read) and takes none. Its
+    /// completion says the pipe is readable; the loop then asks for the bytes,
+    /// if its owner still wants them.
     zero_wait: bool,
     /// `Sync` and `Unknown` modes, once the reader thread has taken the
     /// request: who finishes it (`READ_*`).
@@ -438,13 +442,13 @@ impl Pipe {
         close_fd: bool,
     ) -> sys::Result<Pipe> {
         match origin {
-            PipeOrigin::Created => Self::open_created(loop_, fd, close_fd),
-            PipeOrigin::Associated => Ok(Self::create(
+            PipeOrigin::Created => Self::open_created(loop_, fd, close_fd).map(Self::of_byte_type),
+            PipeOrigin::Associated => Ok(Self::of_byte_type(Self::create(
                 loop_,
                 fd.native(),
                 close_fd.then_some(fd),
                 Mode::Owned,
-            )),
+            ))),
             PipeOrigin::CreatedSynchronous => Ok(Self::create(
                 loop_,
                 fd.native(),
@@ -474,7 +478,19 @@ impl Pipe {
     /// A pipe-server instance that was associated with `loop_`'s port when it
     /// was created.
     pub(crate) fn from_associated(loop_: *mut Loop, handle: HANDLE) -> Pipe {
-        Self::create(loop_, handle, Some(Fd::from_system(handle)), Mode::Owned)
+        Self::of_byte_type(Self::create(
+            loop_,
+            handle,
+            Some(Fd::from_system(handle)),
+            Mode::Owned,
+        ))
+    }
+
+    /// Every pipe Bun makes is byte-type: nothing has to be asked.
+    fn of_byte_type(self) -> Pipe {
+        // SAFETY: `inner` is live while `self` is.
+        unsafe { (*self.raw()).flags.insert(Flags::TYPE_KNOWN) };
+        self
     }
 
     fn open_foreign(loop_: *mut Loop, fd: Fd, close_fd: bool) -> sys::Result<Pipe> {
@@ -748,12 +764,11 @@ impl Pipe {
         }
     }
 
-    /// Stop delivering. On a HANDLE Bun created, a read already handed to the
-    /// kernel is left to finish and what it produces is kept for the next
-    /// `read_start`. Any other HANDLE (inherited stdin) may be read by another
-    /// process next, so what is out on it is a zero-byte wait, and that is
-    /// taken back: nothing has left the pipe at that point, and cancelling a
-    /// zero-byte read costs the peer's write nothing.
+    /// Stop delivering. What is out is a zero-byte wait: nothing has left the
+    /// pipe. On a HANDLE somebody else created (inherited stdin), which another
+    /// process may read next, it is taken back, which costs the peer's write
+    /// nothing. The read of a message-type pipe is left to finish, and what it
+    /// brings is kept for the next `read_start`.
     pub fn read_stop(&mut self) {
         // SAFETY: `inner` is live while the owner's `Pipe` is; `read_op` is
         // owned by it while non-null.
@@ -771,7 +786,49 @@ impl Pipe {
                     win::CancelIoEx((*this).handle, (&raw mut (*read).op).cast());
                 }
             }
+            if (*this).flags.contains(Flags::PEER_GONE) && !(*this).gone() {
+                Inner::pump_writes(this, ptr::null_mut());
+            }
             Inner::update_keep_alive(this);
+        }
+    }
+
+    /// Deliver what a HANDLE Bun created holds now, from inside this call: for
+    /// an owner that has heard elsewhere that it was written (its writer
+    /// exited, or said so on another pipe) and is not inside `on_read`.
+    pub fn drain(&mut self) {
+        let this = self.raw();
+        // SAFETY: `inner` is live while the owner's `Pipe` is; `read_op` is
+        // owned by it while non-null, and the packet its wait is owed keeps
+        // both allocated whatever the owner does from `on_read`.
+        unsafe {
+            let op = (*this).read_op;
+            if (*this).gone()
+                || (*this).mode != Mode::Owned
+                || !(*this).flags.contains(Flags::READING)
+                || (*this).reader.is_none()
+                || op.is_null()
+                || (*op).state != ReadState::InFlight
+                || !(*op).zero_wait
+            {
+                return;
+            }
+            let Ok(mut behind @ 1..) = Inner::peek(this) else {
+                return;
+            };
+            (*op).outcome = ReadOp::read_present(this, op, &mut behind);
+            let open = ReadOp::deliver(this, op, behind, ReadState::InFlight);
+            if (*op).zero_wait {
+                // Its packet carries on, or frees the read of a closed pipe.
+                (*op).state = ReadState::InFlight;
+            } else if open {
+                (*op).state = ReadState::Idle;
+                ReadOp::resume(this, op);
+            } else {
+                (*this).read_op = ptr::null_mut();
+                ReadOp::destroy(op);
+                Inner::maybe_finish(this);
+            }
         }
     }
 
@@ -866,8 +923,7 @@ impl Pipe {
     }
 
     /// As [`write`](Self::write) with [`Refusal::Returned`], for bytes the
-    /// operation should own: nothing needs to outlive the call, and `on_write`
-    /// is optional.
+    /// operation should own: nothing needs to outlive the call.
     pub fn write_owned<T>(
         &mut self,
         data: Vec<u8>,
@@ -1041,20 +1097,10 @@ impl Pipe {
         }
     }
 
-    /// Whether a read has finished in the kernel and its packet is still on
-    /// its way to the loop.
-    pub fn read_awaits_delivery(&self) -> bool {
-        const STATUS_PENDING: usize = 0x103;
-        // SAFETY: `inner` is live while the owner's `Pipe` is; `read_op` is
-        // owned by it while non-null.
-        unsafe {
-            let this = self.raw();
-            let read = (*this).read_op;
-            !read.is_null()
-                && (*this).mode == Mode::Owned
-                && (*read).state == ReadState::InFlight
-                && (*read).op.overlapped.Internal != STATUS_PENDING
-        }
+    /// Whether the pipe holds bytes its owner has not been given.
+    pub fn has_unread(&self) -> bool {
+        // SAFETY: `inner` is live while the owner's `Pipe` is.
+        unsafe { !(*self.raw()).gone() && Inner::peek(self.raw()).is_ok_and(|bytes| bytes > 0) }
     }
 
     /// The process on the other end of a named pipe.
@@ -1113,13 +1159,16 @@ fn read_error(err: Win32Error) -> sys::Error {
     sys::Error::from_win32(err, Tag::read)
 }
 
-fn write_error(err: Win32Error) -> sys::Error {
-    // A pipe whose reader is gone reports one of three codes depending on how
-    // it went; all of them are EPIPE to a writer.
-    if err == Win32Error::BROKEN_PIPE
+/// A pipe whose reader is gone refuses a write with one of three codes,
+/// depending on how it went.
+fn is_peer_gone(err: Win32Error) -> bool {
+    err == Win32Error::BROKEN_PIPE
         || err == Win32Error::NO_DATA
         || err == Win32Error::PIPE_NOT_CONNECTED
-    {
+}
+
+fn write_error(err: Win32Error) -> sys::Error {
+    if is_peer_gone(err) {
         return sys::Error::from_code(E::EPIPE, Tag::write);
     }
     if err == Win32Error::OPERATION_ABORTED {
@@ -1262,6 +1311,145 @@ impl Inner {
         }
     }
 
+    /// The bytes in the pipe.
+    ///
+    /// # Safety
+    /// `this` is live and not closing.
+    unsafe fn peek(this: *mut Inner) -> Result<usize, Win32Error> {
+        let mut available: u32 = 0;
+        // SAFETY: caller contract; `available` is a live local.
+        let ok = unsafe {
+            win::PeekNamedPipe(
+                (*this).handle,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                &raw mut available,
+                ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(win::last_error());
+        }
+        Ok(available as usize)
+    }
+
+    /// The event of an operation this thread waits for itself.
+    ///
+    /// # Safety
+    /// `this` is live.
+    unsafe fn blocking_event(this: *mut Inner) -> Result<HANDLE, Win32Error> {
+        // SAFETY: caller contract; plain Win32 call.
+        unsafe {
+            if (*this).blocking_event.is_null() {
+                let event = win::CreateEventW(ptr::null_mut(), 1, 0, ptr::null());
+                if event.is_null() {
+                    return Err(win::last_error());
+                }
+                (*this).blocking_event = event;
+            }
+            Ok((*this).blocking_event)
+        }
+    }
+
+    /// Read, to `dest`, `len` bytes that [`peek`](Self::peek) has seen in an
+    /// `Owned` pipe. Nobody else reads it, so they are there and the read is
+    /// over when this returns. It queues no packet.
+    ///
+    /// # Safety
+    /// `this` is live and not closing; `dest` has room for `len` bytes.
+    unsafe fn read_seen(this: *mut Inner, dest: *mut u8, len: usize) -> (Win32Error, usize) {
+        // SAFETY: caller contract. The OVERLAPPED may live on this stack frame
+        // because the frame does not return before the operation completes.
+        unsafe {
+            let event = match Self::blocking_event(this) {
+                Ok(event) => event,
+                Err(err) => return (err, 0),
+            };
+            let mut overlapped: win::OVERLAPPED = bun_core::ffi::zeroed();
+            // Low bit set: no packet for this one, the event is all.
+            overlapped.hEvent = (event as usize | 1) as HANDLE;
+            let ok = win::ReadFile(
+                (*this).handle,
+                dest,
+                len as u32,
+                ptr::null_mut(),
+                (&raw mut overlapped).cast(),
+            );
+            if ok == 0 {
+                if win::last_error() != Win32Error::IO_PENDING {
+                    return (win::last_error(), 0);
+                }
+                bun_sys::windows::kernel32::WaitForSingleObject(event, bun_sys::windows::INFINITE);
+            }
+            (
+                win::status_to_win32(overlapped.Internal as i32),
+                overlapped.InternalHigh,
+            )
+        }
+    }
+
+    /// One overlapped `ReadFile` of `len` bytes to `op.dest` on an `Owned`
+    /// HANDLE. `true`: a packet brings its completion. `false`: it failed at
+    /// once, and `op.posted` says how.
+    ///
+    /// # Safety
+    /// `this` is live in `Owned` mode, `op` is its read with nothing out, and
+    /// `op.dest` has room for `len` bytes.
+    unsafe fn port_read(this: *mut Inner, op: *mut ReadOp, len: u32) -> bool {
+        // SAFETY: caller contract. The buffer and OVERLAPPED handed to the
+        // kernel live in `op`, which is freed only from its own completion.
+        unsafe {
+            (*op).posted = None;
+            (*op).op.overlapped.Internal = 0;
+            (*op).op.overlapped.InternalHigh = 0;
+            (*op).op.overlapped.hEvent = ptr::null_mut();
+            let ok = win::ReadFile(
+                (*this).handle,
+                (*op).dest,
+                len,
+                ptr::null_mut(),
+                (&raw mut (*op).op).cast(),
+            );
+            if ok != 0 || win::last_error() == Win32Error::IO_PENDING {
+                // A read that finished at once still queues its packet.
+                super::op_submitted((*this).link.loop_);
+                return true;
+            }
+            (*op).posted = Some((win::last_error(), 0));
+            false
+        }
+    }
+
+    /// The zero-byte wait of an `Owned` HANDLE completed: read what is there.
+    /// `behind` is what the pipe holds beyond that. Returns as
+    /// [`port_read`](Self::port_read).
+    ///
+    /// # Safety
+    /// As `port_read`.
+    unsafe fn owned_fetch(this: *mut Inner, op: *mut ReadOp, behind: &mut usize) -> bool {
+        // SAFETY: caller contract.
+        unsafe {
+            ReadOp::make_room(op, (*this).read_size);
+            let available = match Self::peek(this) {
+                Ok(available) => available,
+                Err(err) => {
+                    (*op).posted = Some((err, 0));
+                    return false;
+                }
+            };
+            if available == 0 {
+                // `drain` has had what the wait was for.
+                (*op).zero_wait = true;
+                return Self::port_read(this, op, 0);
+            }
+            let len = available.min((*op).max_len as usize);
+            (*op).posted = Some(Self::read_seen(this, (*op).dest, len));
+            *behind = available - len;
+            false
+        }
+    }
+
     /// One overlapped `ReadFile` of `len` bytes to `op.dest` on an `Event`
     /// HANDLE. `Ok(true)`: it is pending and its completion arrives as a
     /// packet. `Ok(false)`: it is over already and `op.posted` says how.
@@ -1388,19 +1576,7 @@ impl Inner {
         // kernel live in `op`, which is freed only from its own completion.
         unsafe {
             let loop_ = (*this).link.loop_;
-            let want = (*this).read_size;
-            let buf = &mut (*op).buf;
-            buf.truncate((*op).kept);
-            if buf.capacity() - buf.len() < want {
-                if buf.is_empty() {
-                    buf.reserve_exact(want);
-                } else {
-                    buf.reserve(want);
-                }
-            }
-            (*op).dest = buf.as_mut_ptr().add(buf.len());
-            let len = want as u32;
-            (*op).max_len = len;
+            ReadOp::make_room(op, (*this).read_size);
             (*op).outcome = Outcome::None;
             (*op).posted = None;
             (*op).op.overlapped.Internal = 0;
@@ -1408,27 +1584,16 @@ impl Inner {
             (*op).op.overlapped.Offset = 0;
             (*op).op.overlapped.OffsetHigh = 0;
 
+            // Wait with a zero-byte read and take the data when it completes.
             match (*this).mode {
                 Mode::Owned => {
-                    (*op).op.overlapped.hEvent = ptr::null_mut();
-                    let ok = win::ReadFile(
-                        (*this).handle,
-                        (*op).dest,
-                        len,
-                        ptr::null_mut(),
-                        (&raw mut (*op).op).cast(),
-                    );
-                    if ok != 0 || win::last_error() == Win32Error::IO_PENDING {
-                        // A read that finished at once still queues its packet.
-                        super::op_submitted(loop_);
-                    } else {
-                        (*op).posted = Some((win::last_error(), 0));
+                    (*op).zero_wait = !Self::is_message_type(this);
+                    let len = if (*op).zero_wait { 0 } else { (*op).max_len };
+                    if !Self::port_read(this, op, len) {
                         super::complete_from_loop(loop_, &raw mut (*op).op);
                     }
                 }
                 Mode::Event => {
-                    // Wait with a zero-byte read and take the data when it
-                    // completes: see `read_stop`.
                     (*op).zero_wait = true;
                     if !Self::event_read(this, op, 0)? {
                         super::complete_from_loop(loop_, &raw mut (*op).op);
@@ -1551,6 +1716,11 @@ impl Inner {
     /// reports through the port: its `write` call returned long ago, or asked
     /// for that.
     ///
+    /// A write refused because the other end is gone stays queued while the
+    /// owner reads: an owner closes the pipe on that failure, and what the
+    /// other end wrote before it left may be in a read whose packet the loop
+    /// has not come to yet. The end of the reading starts the write again.
+    ///
     /// # Safety
     /// `this` is live and not closing.
     unsafe fn pump_writes(this: *mut Inner, fresh: *mut WriteOp) -> Option<Win32Error> {
@@ -1561,6 +1731,7 @@ impl Inner {
                 if op.is_null()
                     || !(*this).chunked_write.is_null()
                     || ((*this).mode != Mode::Owned && (*this).writes_in_flight > 0)
+                    || (*this).flags.contains(Flags::PEER_GONE | Flags::READING)
                 {
                     return None;
                 }
@@ -1576,6 +1747,23 @@ impl Inner {
                 }
                 match Self::start_write(this, op) {
                     None => {}
+                    Some((err, _))
+                        if is_peer_gone(err)
+                            && (*this).mode == Mode::Owned
+                            && (*this).flags.contains(Flags::READING) =>
+                    {
+                        if (*this).chunked_write == op {
+                            (*this).chunked_write = ptr::null_mut();
+                        }
+                        (*this).writes_in_flight -= 1;
+                        (*this).pending -= 1;
+                        (*op).next = (*this).write_head;
+                        (*this).write_head = op;
+                        if (*this).write_tail.is_null() {
+                            (*this).write_tail = op;
+                        }
+                        (*this).flags.insert(Flags::PEER_GONE);
+                    }
                     Some((err, _)) if op == fresh && err != Win32Error::SUCCESS => {
                         if (*this).chunked_write == op {
                             (*this).chunked_write = ptr::null_mut();
@@ -1765,13 +1953,7 @@ impl Inner {
                     return Err(sys::Error::from_code(errno, Tag::write));
                 }
             }
-            if (*this).blocking_event.is_null() {
-                let event = win::CreateEventW(ptr::null_mut(), 1, 0, ptr::null());
-                if event.is_null() {
-                    return Err(write_error(win::last_error()));
-                }
-                (*this).blocking_event = event;
-            }
+            let event = Self::blocking_event(this).map_err(write_error)?;
             let mut written = 0usize;
             while written < data.len() {
                 let chunk = (data.len() - written).min(MAX_WRITE_CHUNK) as u32;
@@ -1780,7 +1962,7 @@ impl Inner {
                 // overlapped one may pend and is waited for.
                 let mut overlapped: win::OVERLAPPED = bun_core::ffi::zeroed();
                 // Low bit set: no packet for this one, the event is all.
-                overlapped.hEvent = ((*this).blocking_event as usize | 1) as HANDLE;
+                overlapped.hEvent = (event as usize | 1) as HANDLE;
                 let ok = win::WriteFile(
                     (*this).handle,
                     data.as_ptr().add(written),
@@ -1793,7 +1975,7 @@ impl Inner {
                         return Err(write_error(win::last_error()));
                     }
                     bun_sys::windows::kernel32::WaitForSingleObject(
-                        (*this).blocking_event,
+                        event,
                         bun_sys::windows::INFINITE,
                     );
                 }
@@ -1917,6 +2099,10 @@ impl Inner {
                         (*this).read_op = ptr::null_mut();
                         ReadOp::destroy(read);
                     }
+                    // `drain` delivers with the wait still out.
+                    ReadState::Delivering if (*read).zero_wait => {
+                        win::CancelIoEx(handle, (&raw mut (*read).op).cast());
+                    }
                     ReadState::Replaying | ReadState::Delivering => {}
                 }
             }
@@ -2023,6 +2209,12 @@ impl ReadOp {
             super::op_dequeued(loop_);
             let pipe = (*this).pipe;
             (*pipe).pending -= 1;
+            if (*this).state == ReadState::Delivering {
+                // The wait `drain` delivers under, heard of from a loop that
+                // the owner's callback runs. `drain` goes on from here.
+                (*this).zero_wait = false;
+                return;
+            }
             if (*pipe).gone() {
                 (*pipe).read_op = ptr::null_mut();
                 Self::destroy(this);
@@ -2030,6 +2222,7 @@ impl ReadOp {
                 return;
             }
 
+            let mut behind = 0;
             let verdict = (*this).verdict.take();
             if let Some(kind) = verdict {
                 Inner::classified(pipe, kind);
@@ -2069,6 +2262,8 @@ impl ReadOp {
                     }
                     let fetch = if (*pipe).sync_reader.is_some() {
                         Inner::sync_fetch(pipe, this, loop_)
+                    } else if (*pipe).mode == Mode::Owned {
+                        Ok(Inner::owned_fetch(pipe, this, &mut behind))
                     } else {
                         Inner::event_fetch(pipe, this)
                     };
@@ -2092,52 +2287,120 @@ impl ReadOp {
                     }
                 }
             }
-            if !(*pipe).flags.contains(Flags::READING) {
+            if !(*pipe).flags.contains(Flags::READING) || (*pipe).reader.is_none() {
                 (*this).state = ReadState::Held;
                 return;
             }
-            let Some(reader) = (*pipe).reader else {
-                (*this).state = ReadState::Held;
-                return;
-            };
 
-            (*this).state = ReadState::Delivering;
-            (*pipe).pins += 1;
-            match core::mem::replace(&mut (*this).outcome, Outcome::None) {
-                Outcome::None => {}
-                Outcome::Data if (*this).buf.len() == (*this).kept => {}
-                Outcome::Data => {
-                    // Before the call, which may lend the next one.
-                    (*this).kept = 0;
-                    reader.invoke(ReadEvent::Data(&mut (*this).buf));
-                }
-                Outcome::Eof => {
-                    (*pipe).flags.remove(Flags::READING);
-                    (*pipe).flags.insert(Flags::READ_ENDED);
-                    reader.invoke(ReadEvent::Eof);
-                }
-                Outcome::EndOfWrite => {
-                    (*pipe).flags.remove(Flags::READING);
-                    (*pipe).flags.insert(Flags::READ_ENDED);
-                    reader.invoke(ReadEvent::EndOfWrite);
-                }
-                Outcome::Err(err) => {
-                    (*pipe).flags.remove(Flags::READING);
-                    (*pipe).flags.insert(Flags::READ_ENDED);
-                    reader.invoke(ReadEvent::Err(err));
-                }
-            }
-            (*pipe).pins -= 1;
-            (*this).state = ReadState::Idle;
-
-            if (*pipe).gone() {
+            if !Self::deliver(pipe, this, behind, ReadState::Idle) {
                 (*pipe).read_op = ptr::null_mut();
                 Self::destroy(this);
                 Inner::maybe_finish(pipe);
                 return;
             }
-            Inner::update_keep_alive(pipe);
             Self::resume(pipe, this);
+            if (*pipe).flags.contains(Flags::PEER_GONE) {
+                Inner::pump_writes(pipe, ptr::null_mut());
+            }
+        }
+    }
+
+    /// Hand `this.outcome` to the owner, and after it the `behind` bytes an
+    /// `Owned` pipe held beyond it: whoever wrote them may have gone on to say
+    /// so elsewhere (it exited, it wrote to another pipe), which the loop
+    /// comes to next. `this` is left in `state`. `false`: the owner closed the
+    /// pipe meanwhile.
+    ///
+    /// # Safety
+    /// `this` is `pipe`'s read, whose `buf` no operation has; `pipe` is live,
+    /// not closing, and has a reader.
+    unsafe fn deliver(
+        pipe: *mut Inner,
+        this: *mut ReadOp,
+        mut behind: usize,
+        state: ReadState,
+    ) -> bool {
+        // SAFETY: caller contract.
+        unsafe {
+            loop {
+                let Some(reader) = (*pipe).reader else {
+                    (*this).state = ReadState::Held;
+                    return true;
+                };
+                (*this).state = ReadState::Delivering;
+                (*pipe).pins += 1;
+                match core::mem::replace(&mut (*this).outcome, Outcome::None) {
+                    Outcome::None => {}
+                    Outcome::Data if (*this).buf.len() == (*this).kept => {}
+                    Outcome::Data => {
+                        // Before the call, which may lend the next one.
+                        (*this).kept = 0;
+                        reader.invoke(ReadEvent::Data(&mut (*this).buf));
+                    }
+                    Outcome::Eof => {
+                        (*pipe).flags.remove(Flags::READING);
+                        (*pipe).flags.insert(Flags::READ_ENDED);
+                        reader.invoke(ReadEvent::Eof);
+                    }
+                    Outcome::EndOfWrite => {
+                        (*pipe).flags.remove(Flags::READING);
+                        (*pipe).flags.insert(Flags::READ_ENDED);
+                        reader.invoke(ReadEvent::EndOfWrite);
+                    }
+                    Outcome::Err(err) => {
+                        (*pipe).flags.remove(Flags::READING);
+                        (*pipe).flags.insert(Flags::READ_ENDED);
+                        reader.invoke(ReadEvent::Err(err));
+                    }
+                }
+                (*pipe).pins -= 1;
+                if (*pipe).gone() {
+                    return false;
+                }
+                (*this).state = state;
+                Inner::update_keep_alive(pipe);
+                if behind == 0 || !(*pipe).flags.contains(Flags::READING) {
+                    return true;
+                }
+                (*this).outcome = Self::read_present(pipe, this, &mut behind);
+            }
+        }
+    }
+
+    /// Room in `buf`, behind what was lent, for a read of `want` bytes.
+    ///
+    /// # Safety
+    /// `this` is live and no operation has its `buf`.
+    unsafe fn make_room(this: *mut ReadOp, want: usize) {
+        // SAFETY: caller contract.
+        unsafe {
+            let buf = &mut (*this).buf;
+            buf.truncate((*this).kept);
+            if buf.capacity() - buf.len() < want {
+                if buf.is_empty() {
+                    buf.reserve_exact(want);
+                } else {
+                    buf.reserve(want);
+                }
+            }
+            (*this).dest = buf.as_mut_ptr().add(buf.len());
+            (*this).max_len = want as u32;
+        }
+    }
+
+    /// Read as much of the `behind` bytes that are in an `Owned` pipe as the
+    /// owner takes at a time, and take them off `behind`.
+    ///
+    /// # Safety
+    /// As [`deliver`](Self::deliver).
+    unsafe fn read_present(pipe: *mut Inner, this: *mut ReadOp, behind: &mut usize) -> Outcome {
+        // SAFETY: caller contract.
+        unsafe {
+            Self::make_room(this, (*pipe).read_size);
+            let len = (*behind).min((*pipe).read_size);
+            *behind -= len;
+            (*this).posted = Some(Inner::read_seen(pipe, (*this).dest, len));
+            Self::outcome(this)
         }
     }
 
@@ -3112,8 +3375,9 @@ struct ConnectOp {
 /// How long a connecting client waits for a busy server to offer an instance.
 const CONNECT_BUSY_WAIT_MS: i64 = 30_000;
 
-/// `FSCTL_PIPE_FLUSH` (`ntifs.h`): what `FlushFileBuffers` sends to a pipe.
-/// It completes when the other end has read what was written before it.
+/// `FSCTL_PIPE_FLUSH` (`ntifs.h`): `FlushFileBuffers` on a pipe, as a request
+/// that can be pending. It completes when the other end has read what was
+/// written before it.
 const FSCTL_PIPE_FLUSH: u32 = 0x0011_8040;
 
 /// One [`Pipe::flush_peer`] request.
@@ -3453,8 +3717,9 @@ impl ConnectOp {
                 return;
             }
             let result = if connected {
+                // Of the type its server made it.
                 let fd = Fd::from_system(this.handle);
-                Pipe::open(loop_, fd, PipeOrigin::Created, true).inspect_err(|_| {
+                Pipe::open_created(loop_, fd, true).inspect_err(|_| {
                     win::CloseHandle(this.handle);
                 })
             } else {

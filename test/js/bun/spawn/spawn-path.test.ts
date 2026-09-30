@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn as cpSpawn } from "child_process";
 import { chmodSync, copyFileSync } from "fs";
-import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 test.skipIf(isWindows)("spawn uses PATH from env if present", async () => {
@@ -138,5 +138,74 @@ describe.skipIf(!isWindows).each(["spawn", "spawnSync"] as const)("%s: the image
     ["nothing by that name", () => "./missing", "ENOENT"],
   ])("%s", async (_, file, expected) => {
     expect(await imageOf(file())).toBe(expected);
+  });
+});
+
+// The name is then looked for the way CreateProcess and cmd.exe look for one: in the child's directory, then along
+// this process's own PATH. Windows has a cmd.exe in two directories, and each sets %COMSPEC% to its own path.
+describe.skipIf(!isWindows).concurrent("the image a bare name runs when the env option has no PATH", () => {
+  const windows = process.env.SystemRoot!;
+  const System32 = path.join(windows, "System32");
+  const SysWOW64 = path.join(windows, "SysWOW64");
+
+  /** The directory of the cmd.exe that ran, or the code `Bun.spawnSync` threw. */
+  async function found(PATH: string, { name = "cmd", cwd = windows, env = {} } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+           const cmd = [${JSON.stringify(name)}, "/d", "/c", "echo %COMSPEC%"];
+           const { stdout } = Bun.spawnSync({ cmd, env: {}, cwd: ${JSON.stringify(cwd)} });
+           console.log(require("path").basename(require("path").dirname(stdout.toString().trim())));
+         } catch (e) {
+           console.log(e.code);
+         }`,
+      ],
+      env: { ...bunEnv, NoDefaultCurrentDirectoryInExePath: undefined, ...env, PATH },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { found: stdout.trim(), stderr, exitCode };
+  }
+  const is = (found: string) => ({ found, stderr: "", exitCode: 0 });
+
+  test.each([
+    ["the first entry that has it", `${SysWOW64};${System32}`, "SysWOW64"],
+    ["the first entry that has it, the other way round", `${System32};${SysWOW64}`, "System32"],
+    ["an entry that does not have it is passed over", `${windows};${SysWOW64};${System32}`, "SysWOW64"],
+    ["an entry that is not there is passed over", `${windows}\\nothing here;${SysWOW64}`, "SysWOW64"],
+    ["empty entries are passed over", `;;${SysWOW64};;${System32}`, "SysWOW64"],
+    ["an entry in quotes", `"${SysWOW64}";${System32}`, "SysWOW64"],
+    ["an entry that is quoted in part", `${windows}\\"SysWOW64";${System32}`, "System32"],
+    ["an entry that ends in a separator", `${SysWOW64}\\;${System32}`, "SysWOW64"],
+    ["an entry relative to the child's directory", `SysWOW64;${System32}`, "SysWOW64"],
+    ["nowhere", windows, "ENOENT"],
+    ["an empty PATH", "", "ENOENT"],
+  ])("%s", async (_name, PATH, expected) => {
+    expect(await found(PATH)).toEqual(is(expected));
+  });
+
+  // libuv took the closing quote off an entry that is one quote long, and copied 2^64 - 1 characters.
+  test.each([`${windows};"`, `"`, `${windows};'`, `${windows};""`, `${windows};";`, `";${SysWOW64}`])(
+    "PATH=%s does not end the process",
+    async PATH => {
+      expect(await found(PATH, { name: "no-such-program" })).toEqual(is("ENOENT"));
+    },
+  );
+
+  test("the child's directory comes before PATH", async () => {
+    expect(await found(System32, { cwd: SysWOW64 })).toEqual(is("SysWOW64"));
+  });
+
+  test("the child's directory is left out when NoDefaultCurrentDirectoryInExePath is set", async () => {
+    expect(await found(System32, { cwd: SysWOW64, env: { NoDefaultCurrentDirectoryInExePath: "1" } })).toEqual(
+      is("System32"),
+    );
+  });
+
+  test("a name with an extension is looked for as it is", async () => {
+    expect(await found(`${SysWOW64};${System32}`, { name: "cmd.exe" })).toEqual(is("SysWOW64"));
   });
 });

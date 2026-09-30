@@ -56,6 +56,7 @@ unsafe impl Send for CopyFile {}
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
+    const OWED_AT_EXIT: bool = cfg!(windows);
     #[cfg(windows)]
     fn waits(this: &Self) -> bool {
         super::waits_on(&this.source_file_store.pathlike)
@@ -64,6 +65,11 @@ impl jsc::JobContext for CopyFile {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run_async();
         Some(done)
+    }
+    fn closed(this: &mut Self) {
+        this.system_error = Some(
+            bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::copyfile).to_system_error(),
+        );
     }
     fn then(
         mut this: Self,
@@ -102,7 +108,11 @@ impl CopyFile {
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        jsc::Job::<CopyFile>::schedule(cx, copy, promise);
+        let fd_uses = [
+            super::reads_fd_of(&copy.source_file_store.pathlike),
+            super::writes_fd_of(&copy.destination_file_store.pathlike),
+        ];
+        jsc::Job::<CopyFile>::schedule_on_fds(cx, copy, promise, fd_uses);
         value
     }
 

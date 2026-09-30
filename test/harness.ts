@@ -532,8 +532,19 @@ export function tempVolume(fileSystem: "FAT32" | "exFAT" | "NTFS"): { path: stri
     if (exitCode !== 0) throw new Error(`diskpart failed with ${exitCode}:\n${commands.join("\n")}\n${stdout}`);
   };
   const discard = () => {
-    diskpart(`select vdisk file="${disk}"`, "detach vdisk");
-    rmSync(base, { recursive: true, force: true });
+    try {
+      // The disk management service serves one caller at a time, and a disk that stays attached stays until a reboot.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          diskpart(`select vdisk file="${disk}"`, "detach vdisk");
+          break;
+        } catch (error) {
+          if (attempt === 5) throw error;
+        }
+      }
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   };
   try {
     diskpart(

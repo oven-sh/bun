@@ -7,9 +7,11 @@
 import { $ } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync } from "fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, statSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { spawn as nodeSpawn } from "node:child_process";
+import { once } from "node:events";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -90,6 +92,21 @@ describe("bunshell", () => {
             .runAsTest(cmdstr)
         : "",
     );
+  });
+
+  // An errno does not fit an exit code.
+  describe("a builtin whose output cannot be written exits with 1", () => {
+    test.skipIf(isWindows).each(["echo hi", "which which"])("%s > /dev/full", async script => {
+      const { exitCode } = await $`${{ raw: script }} > /dev/full`.nothrow().quiet();
+      expect(exitCode).toBe(1);
+    });
+
+    test.each(["echo hi", "which which"])("%s, to a pipe nobody reads", async script => {
+      const proc = nodeSpawn(bunExe(), ["exec", script], { env: bunEnv, stdio: ["ignore", "pipe", "ignore"] });
+      proc.stdout.destroy();
+      const [exitCode, signal] = await once(proc, "exit");
+      expect({ exitCode, signal }).toEqual({ exitCode: 1, signal: null });
+    });
   });
 
   describe("concurrency", () => {
@@ -4228,9 +4245,13 @@ test.skipIf(!isWindows)("starting builtins on a stdin that another reader is par
 });
 
 // `yes` never stops by itself and a disk file takes every chunk without waiting, so the builtin has to
-// give the event loop its turn. If it does not, the child is killed when the test times out.
+// give the event loop its turn. If it does not, the child is killed before the file fills the disk.
 test("a timer fires while `yes` writes to a file", async () => {
   using dir = tempDir("shell-yes-to-file", {});
+  const tooLarge = setInterval(() => {
+    if (statSync(join(String(dir), "out.txt"), { throwIfNoEntry: false })?.size! > 256 << 20) proc.kill();
+  }, 20);
+  using _ = { [Symbol.dispose]: () => clearInterval(tooLarge) };
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

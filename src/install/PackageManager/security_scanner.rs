@@ -1313,9 +1313,15 @@ impl<'a> SecurityScanSubprocess<'a> {
             // has no pending task, so it ticks uws, the poll delivers
             // readable+HUP, `read_with_fn` drains to `Ok(0)`, and
             // `on_reader_done` decrements `remaining_fds` exactly once.
-            //
-            // Windows: the read end is overlapped, so it cannot be drained with
-            // a synchronous read.
+            #[cfg(windows)]
+            {
+                // SAFETY: the live reader, outside its dispatches.
+                unsafe { BufferedReader::drain(&raw mut self.ipc_reader) };
+                if self.has_received_ipc {
+                    // The end of the pipe follows from the loop.
+                    return;
+                }
+            }
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();

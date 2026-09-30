@@ -1323,7 +1323,10 @@ class ChildProcess extends EventEmitter {
           // On Windows it is the HANDLE of a pipe end Bun.spawn made.
           const fd = handle && handle.stdio[i];
           if (fd == null) return null;
-          return NetModule.connect(process.platform === "win32" ? { fd, fdIsSpawnedPipe: true } : { fd });
+          const socket = NetModule.connect(process.platform === "win32" ? { fd, fdIsSpawnedPipe: true } : { fd });
+          this.#closesNeeded++;
+          socket.once("close", () => this.#maybeClose());
+          return socket;
         }
         return null;
     }

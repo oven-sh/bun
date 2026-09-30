@@ -32,9 +32,8 @@ pub use tty::Tty;
 // Loop bookkeeping
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A packet that leads to `op` is now owed to `loop_`: the loop must keep
-/// turning (`num_polls`) and must not close its port (`us_iocp_op_submitted`)
-/// until it is dequeued.
+/// A packet that leads to `op` is now owed to `loop_`, which must keep turning
+/// and must not close its port until it is dequeued.
 ///
 /// # Safety
 /// `loop_` is the live loop of the calling thread.

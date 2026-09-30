@@ -279,6 +279,20 @@ impl ChannelOwner for Worker {
     }
 }
 
+impl Worker {
+    /// What the worker printed before the frame that is being handled, or
+    /// before it exited, is in its pipes by now, and the loop may come to
+    /// those after this: take it.
+    pub(crate) fn drain_output(&mut self) {
+        #[cfg(windows)]
+        for pipe in [&raw mut self.out, &raw mut self.err] {
+            // SAFETY: live readers, outside their dispatches, which touch
+            // `captured` and `done` alone.
+            unsafe { bun_io::BufferedReader::drain(&raw mut (*pipe).reader) };
+        }
+    }
+}
+
 /// Reads worker stdout/stderr. Accumulates into the worker's `captured` buffer
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.

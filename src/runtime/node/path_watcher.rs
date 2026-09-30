@@ -412,7 +412,8 @@ pub(crate) fn watch(
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
         #[cfg(windows)]
-        let reusable = unsafe { Platform::watches_its_path(&*existing) };
+        let reusable =
+            unsafe { (*existing).is_file == is_file && Platform::watches_its_path(&*existing) };
         #[cfg(not(windows))]
         let reusable = true;
         if reusable {

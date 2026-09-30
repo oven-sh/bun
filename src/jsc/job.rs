@@ -21,6 +21,7 @@
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::HashMap;
 use bun_core::Fd;
@@ -208,6 +209,19 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
+    /// [`run`](Self::run) gives back something of the process's, which is to
+    /// happen also when the VM that asked for it is on its way out.
+    const RUNS_CANCELLED: bool = false;
+
+    /// [`run`](Self::run) writes what script takes for written when the call
+    /// that made the job returns: `process.exit()` waits for it
+    /// ([`WorkPool::owe_write`]), unless it [`waits`](Self::waits).
+    const OWED_AT_EXIT: bool = false;
+
+    /// [`waits`](Self::waits) is true whatever the job was given: nothing has
+    /// to be asked, and it goes to those threads directly.
+    const ALWAYS_WAITS: bool = false;
+
     /// Pool thread, before [`run`](Self::run): whether that may wait, for as
     /// long as it takes, on something outside the process. It then runs on
     /// [`WorkPool::schedule_wait`]'s threads.
@@ -218,7 +232,8 @@ pub trait JobContext: Sized + 'static {
 
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
-    /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
+    /// cleanup `uv_cancel`s queued work, unless it
+    /// [`RUNS_CANCELLED`](Self::RUNS_CANCELLED)). Return `done` to complete now; keep
     /// it (e.g. across async I/O that finishes on another thread) and call
     /// [`Completion::finish`] later to complete then. `done.ticket()` is the
     /// job's ticket: proof the VM is alive (for [`JsPtr::under_ticket`]), and
@@ -339,6 +354,10 @@ impl JobList {
 #[derive(Clone, Copy)]
 pub enum FdUse {
     Uses(Fd),
+    /// Writes at the descriptor's position, so what it writes is to come
+    /// after what the jobs of this kind that were given the descriptor before
+    /// it write: it goes to the pool when the last of them is done.
+    Appends(Fd),
     /// Goes to the pool once every job that was given the descriptor before it
     /// is back. The pool starts jobs in no particular order, and a number that
     /// is closed early is the next file's: what was still to be written would
@@ -349,7 +368,23 @@ pub enum FdUse {
 impl FdUse {
     pub fn fd(self) -> Fd {
         match self {
-            Self::Uses(fd) | Self::Closes(fd) => fd,
+            Self::Uses(fd) | Self::Appends(fd) | Self::Closes(fd) => fd,
+        }
+    }
+
+    /// Whether jobs are out on the descriptor: what the JS thread did to it
+    /// now would be ahead of them.
+    pub fn is_behind_jobs(self, vm: &VirtualMachine) -> bool {
+        vm.fd_jobs
+            .with_mut(|jobs| jobs.lines.contains_key(&self.fd()))
+    }
+
+    /// The JS thread is about to do this itself, at once. A close does not
+    /// wait for what is out on the descriptor, which then is not counted
+    /// against the next file to get the number.
+    pub fn on_js_thread(self, vm: &VirtualMachine) {
+        if let Self::Closes(fd) = self {
+            vm.fd_jobs.with_mut(|jobs| jobs.end(fd));
         }
     }
 }
@@ -369,12 +404,19 @@ struct FdLine {
     running: u32,
     /// Goes to the pool when they are back.
     close: Option<*mut WorkPoolTask>,
+    /// [`Job::next_append`] of the last [`FdUse::Appends`] job, while it is out.
+    last_append: *const AtomicPtr<WorkPoolTask>,
 }
+
+/// In [`Job::next_append`]: the job is done, and nothing can be put behind it.
+const APPENDED: *mut WorkPoolTask = core::ptr::without_provenance_mut(1);
 
 /// What is to become of a job that was given a descriptor.
 enum Entered {
     /// The pool's now.
     Goes(Option<FdPlace>),
+    /// The pool's when the job it was put behind is done, which sees to it.
+    Follows(FdPlace),
     /// A close: the pool's when the jobs of this line are back.
     Waits(u64),
     /// Given the descriptor behind a close that is waiting. The number is
@@ -395,7 +437,13 @@ pub struct FdJobs {
 }
 
 impl FdJobs {
-    fn enter(&mut self, task: *mut WorkPoolTask, fd_use: FdUse) -> Entered {
+    /// `next_append` is the job's own.
+    fn enter(
+        &mut self,
+        task: *mut WorkPoolTask,
+        next_append: *const AtomicPtr<WorkPoolTask>,
+        fd_use: FdUse,
+    ) -> Entered {
         let fd = fd_use.fd();
         if matches!(fd_use, FdUse::Closes(_)) {
             return match self.lines.get_mut(&fd) {
@@ -413,21 +461,42 @@ impl FdJobs {
                 id: self.ids,
                 running: 0,
                 close: None,
+                last_append: core::ptr::null(),
             }
         });
         if line.close.is_some() {
             return Entered::Closed;
         }
         line.running += 1;
-        Entered::Goes(Some(FdPlace { fd, line: line.id }))
+        let place = FdPlace { fd, line: line.id };
+        if matches!(fd_use, FdUse::Appends(_)) {
+            let last = core::mem::replace(&mut line.last_append, next_append);
+            // SAFETY: a job takes itself out of `last_append` before it is freed (`leave`).
+            if let Some(last) = unsafe { last.as_ref() }
+                && last
+                    .compare_exchange(
+                        core::ptr::null_mut(),
+                        task,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+            {
+                return Entered::Follows(place);
+            }
+        }
+        Entered::Goes(Some(place))
     }
 
     /// A job that was counted is back from the pool.
-    fn leave(&mut self, place: FdPlace) {
+    fn leave(&mut self, place: FdPlace, next_append: *const AtomicPtr<WorkPoolTask>) {
         // A close went ahead of it otherwise.
         if let Some(line) = self.lines.get_mut(&place.fd)
             && line.id == place.line
         {
+            if line.last_append == next_append {
+                line.last_append = core::ptr::null();
+            }
             line.running -= 1;
             if line.running == 0 {
                 self.end(place.fd);
@@ -459,36 +528,41 @@ impl FdJobs {
 }
 
 #[cfg(windows)]
-fn is_regular_file(fd: Fd) -> bool {
+fn is_on_disk(fd: Fd) -> bool {
     bun_sys::windows::fs::is_disk_file(fd)
 }
 
 #[cfg(unix)]
-fn is_regular_file(fd: Fd) -> bool {
-    bun_sys::fstat(fd).is_ok_and(|stat| bun_sys::is_regular_file(stat.st_mode as _))
+fn is_on_disk(fd: Fd) -> bool {
+    bun_sys::fstat(fd).is_ok_and(|stat| {
+        matches!(
+            bun_sys::kind_from_mode(stat.st_mode as _),
+            bun_sys::FileKind::File | bun_sys::FileKind::Directory
+        )
+    })
 }
 
 /// Whether a close has to wait for the jobs that are out on its descriptor.
-/// Those on a regular file come back by themselves. On a pipe, a console or a
-/// device one can be out for as long as the other end likes.
+/// Those on a file or a directory come back by themselves. On a pipe, a
+/// console or a device one can be out for as long as the other end likes.
 enum FdKind {}
 
 struct FdKindQuery {
     place: FdPlace,
-    regular: bool,
+    on_disk: bool,
 }
 
 impl JobContext for FdKind {
     type OffThread = FdKindQuery;
     type Js = ();
     fn run(query: &mut FdKindQuery, done: Completion<Self>) -> Option<Completion<Self>> {
-        query.regular = is_regular_file(query.place.fd);
+        query.on_disk = is_on_disk(query.place.fd);
         Some(done)
     }
     /// Not `then`: the close is on its way also when the script that asked for
     /// it is not there to hear of it any more.
     fn back(query: &FdKindQuery, vm: &VirtualMachine) {
-        if !query.regular {
+        if !query.on_disk {
             vm.fd_jobs.with_mut(|jobs| jobs.stop_waiting(query.place));
         }
     }
@@ -509,8 +583,13 @@ pub struct Job<C: JobContext> {
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     keep_alive: KeepAlive,
-    /// Its place in the VM's [`FdJobs`].
-    place: Option<FdPlace>,
+    /// Its places in the VM's [`FdJobs`].
+    places: [Option<FdPlace>; 2],
+    /// Counted by [`WorkPool::owe_write`]. The pool's with the job.
+    owed: bool,
+    /// The [`FdUse::Appends`] job that goes to the pool when this one is done,
+    /// or [`APPENDED`].
+    next_append: AtomicPtr<WorkPoolTask>,
     off: C::OffThread,
     js: C::Js,
 }
@@ -533,13 +612,26 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        Self::schedule_on_fd(cx, off, js, None);
+        Self::schedule_on_fds(cx, off, js, [None, None]);
     }
 
     /// [`schedule`](Self::schedule) for a job that may be working on a file
     /// descriptor of script's.
     #[track_caller]
     pub fn schedule_on_fd(cx: &JsThread<'_>, off: C::OffThread, js: C::Js, fd_use: Option<FdUse>) {
+        Self::schedule_on_fds(cx, off, js, [fd_use, None]);
+    }
+
+    /// [`schedule_on_fd`](Self::schedule_on_fd) for one that may be working on
+    /// two. A close has no other, and [`FdUse::Appends`] comes last: a job
+    /// that was put behind another is that one's to start.
+    #[track_caller]
+    pub fn schedule_on_fds(
+        cx: &JsThread<'_>,
+        off: C::OffThread,
+        js: C::Js,
+        fd_uses: [Option<FdUse>; 2],
+    ) {
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -561,10 +653,16 @@ impl<C: JobContext> Job<C> {
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
                 node: Default::default(),
-                callback: Self::run_on_pool,
+                callback: if C::ALWAYS_WAITS {
+                    Self::run
+                } else {
+                    Self::run_on_pool
+                },
             },
             keep_alive,
-            place: None,
+            places: [None, None],
+            owed: false,
+            next_append: AtomicPtr::new(core::ptr::null_mut()),
             off,
             js,
         }));
@@ -575,33 +673,50 @@ impl<C: JobContext> Job<C> {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
             let task = &raw mut (*job).task;
-            let Some(fd_use) = fd_use else {
-                return WorkPool::schedule(task);
-            };
-            match cx.vm().fd_jobs.with_mut(|jobs| jobs.enter(task, fd_use)) {
-                Entered::Goes(place) => {
-                    (*job).place = place;
-                    WorkPool::schedule(task);
-                }
-                Entered::Waits(line) => {
-                    let place = FdPlace {
-                        fd: fd_use.fd(),
-                        line,
-                    };
-                    let query = FdKindQuery {
-                        place,
-                        regular: true,
-                    };
-                    Job::<FdKind>::schedule(cx, query, ());
-                }
-                Entered::Closed => {
-                    C::closed(&mut (*job).off);
-                    Completion {
-                        job: NonNull::new(job).expect("job"),
-                        ticket: (*job).ticket.take().expect("job"),
+            let next_append = &raw const (*job).next_append;
+            let mut follows = false;
+            for (index, fd_use) in fd_uses.into_iter().enumerate() {
+                let Some(fd_use) = fd_use else { continue };
+                let entered = cx
+                    .vm()
+                    .fd_jobs
+                    .with_mut(|jobs| jobs.enter(task, next_append, fd_use));
+                match entered {
+                    Entered::Goes(place) => (*job).places[index] = place,
+                    Entered::Follows(place) => {
+                        (*job).places[index] = Some(place);
+                        follows = true;
                     }
-                    .finish();
+                    Entered::Waits(line) => {
+                        let place = FdPlace {
+                            fd: fd_use.fd(),
+                            line,
+                        };
+                        let query = FdKindQuery {
+                            place,
+                            on_disk: true,
+                        };
+                        return Job::<FdKind>::schedule(cx, query, ());
+                    }
+                    Entered::Closed => {
+                        C::closed(&mut (*job).off);
+                        return Completion {
+                            job: NonNull::new(job).expect("job"),
+                            ticket: (*job).ticket.take().expect("job"),
+                        }
+                        .finish();
+                    }
                 }
+            }
+            if C::ALWAYS_WAITS {
+                return WorkPool::schedule_wait(task);
+            }
+            if C::OWED_AT_EXIT {
+                (*job).owed = true;
+                WorkPool::owe_write();
+            }
+            if !follows {
+                WorkPool::schedule(task);
             }
         }
     }
@@ -613,6 +728,9 @@ impl<C: JobContext> Job<C> {
             // A job that `run` hands back unrun has nothing to ask about.
             let cancelled = (*this).ticket.as_ref().expect("job").cancelled();
             if !cancelled && C::waits(&(*this).off) {
+                if core::mem::take(&mut (*this).owed) {
+                    WorkPool::write_settled();
+                }
                 (*task).callback = Self::run;
                 return WorkPool::schedule_wait(task);
             }
@@ -631,7 +749,7 @@ impl<C: JobContext> Job<C> {
             job: NonNull::new(this).expect("job"),
             ticket,
         };
-        if done.ticket().cancelled() {
+        if !C::RUNS_CANCELLED && done.ticket().cancelled() {
             return done.finish();
         }
         if let Some(done) = C::run(off, done) {
@@ -650,16 +768,18 @@ impl<C: JobContext> Job<C> {
             vm.jobs
                 .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
         }
+        // SAFETY: fn contract. Compared below, not followed.
+        let next_append = unsafe { &raw const (*this).next_append };
         // SAFETY: fn contract.
         let Job {
             mut keep_alive,
-            place,
+            places,
             off,
             js,
             ..
         } = unsafe { *Box::from_raw(this) };
-        if let Some(place) = place {
-            vm.fd_jobs.with_mut(|jobs| jobs.leave(place));
+        for place in places.into_iter().flatten() {
+            vm.fd_jobs.with_mut(|jobs| jobs.leave(place, next_append));
         }
         C::back(&off, vm);
         keep_alive.unref(bun_io::js_vm_ctx());
@@ -694,12 +814,31 @@ impl<C: JobContext> Completion<C> {
     pub fn finish(self) {
         // Consumed: the obligation is met here, so its Drop check must not run.
         let me = ManuallyDrop::new(self);
+        // SAFETY: the job is this thread's until it is posted below.
+        let job = unsafe { &mut *me.job.as_ptr() };
+        if C::OWED_AT_EXIT && core::mem::take(&mut job.owed) {
+            WorkPool::write_settled();
+        }
+        let next = job.next_append.swap(APPENDED, Ordering::AcqRel);
+        if !next.is_null() {
+            WorkPool::schedule(next);
+        }
         // SAFETY: moving the field out of a value that is never dropped.
         let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
         ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
             me.job.as_ptr(),
         ));
     }
+    /// The job found that it may wait on something outside the process, which
+    /// [`JobContext::waits`] could not tell: an exit does not wait for it
+    /// ([`JobContext::OWED_AT_EXIT`]).
+    pub fn not_owed_at_exit(&self) {
+        // SAFETY: the job is the holder's until it is finished.
+        if unsafe { core::mem::take(&mut (*self.job.as_ptr()).owed) } {
+            WorkPool::write_settled();
+        }
+    }
+
     /// The job's ticket: its VM is alive while this is held.
     #[inline]
     pub fn ticket(&self) -> &Ticket {

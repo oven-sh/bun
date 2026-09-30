@@ -165,7 +165,7 @@ impl Drop for PipeServer {
 
 /// One more instance of `name`, associated with the loop's port.
 fn create_instance(loop_: *mut Loop, name: &[u16], first: bool) -> Result<HANDLE, Win32Error> {
-    // WRITE_DAC so the pipe's access control can be changed after the fact.
+    // WRITE_DAC as libuv asks for it: nothing here changes the access control.
     let open_mode = win::PIPE_ACCESS_DUPLEX
         | win::FILE_FLAG_OVERLAPPED
         | win::WRITE_DAC

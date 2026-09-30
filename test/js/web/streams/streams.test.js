@@ -2556,7 +2556,7 @@ it("Bun.file().stream() read text from large file", async () => {
 });
 
 // Windows does not let a directory be renamed while a file in it is open.
-describe("Bun.file().stream() has closed the file", () => {
+describe.skipIf(!isWindows)("Bun.file().stream() has closed the file", () => {
   const files = { "d/big": Buffer.alloc(300_000, "x").toString(), "d/small": "hello", "d/empty": "" };
   for (const name of ["big", "small", "empty"]) {
     it(`when ${name} has been read to its end`, async () => {

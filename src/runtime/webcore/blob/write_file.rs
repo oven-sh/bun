@@ -55,6 +55,7 @@ impl bun_jsc::JobContext for WriteFile {
     /// Whom the write is reported to. (Dropped with the job when that is released unrun: the
     /// promise then stays pending.)
     type Js = Box<WriteFilePromise>;
+    const OWED_AT_EXIT: bool = cfg!(windows);
     #[cfg(windows)]
     fn waits(this: &Self) -> bool {
         super::waits_on(this.pathlike())
@@ -63,6 +64,9 @@ impl bun_jsc::JobContext for WriteFile {
         // Starts the write; finishes from the io loop via the token.
         this.run(done);
         None
+    }
+    fn closed(this: &mut Self) {
+        this.fail(&sys::Error::from_code(sys::E::EBADF, sys::Tag::write));
     }
     fn then(
         this: Self,
@@ -92,7 +96,8 @@ impl WriteFile {
         promise: Box<WriteFilePromise>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        bun_jsc::Job::<WriteFile>::schedule(cx, this, promise);
+        let fd_use = super::writes_fd_of(this.pathlike());
+        bun_jsc::Job::<WriteFile>::schedule_on_fd(cx, this, promise, fd_use);
     }
 }
 
@@ -405,6 +410,15 @@ impl WriteFile {
 
         #[cfg(not(windows))]
         let fd = self.opened_fd;
+
+        // A path can name a pipe, whose reader takes as long as it likes.
+        #[cfg(windows)]
+        if self.pathlike().is_path()
+            && !sys::windows::fs::is_disk_file(fd_)
+            && let Some(task) = &self.io_task
+        {
+            task.not_owed_at_exit();
+        }
 
         #[cfg(not(windows))]
         {

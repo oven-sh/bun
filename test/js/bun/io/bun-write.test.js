@@ -17,6 +17,7 @@ import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import { finished } from "node:stream/promises";
+import { Worker } from "node:worker_threads";
 import path, { join } from "path";
 
 let i = 0;
@@ -1853,6 +1854,54 @@ describe("Bun.write() calls that are not awaited keep their order", () => {
     expect(exitCode).toBe(0);
   });
 
+  // What is not short, or not bytes yet, is written by the work pool: a short write that follows it
+  // is not made ahead of it, and the pool keeps the order they were made in.
+  describe.each([
+    ["a long string", `Buffer.alloc(300_000, "M").toString()`, 300_000],
+    ["long bytes", `Buffer.alloc(300_000, "M")`, 300_000],
+    ["a Blob", `new Blob(["M"])`, 1],
+    ["a Response", `new Response("M")`, 1],
+    ["a file", `Bun.file("m.txt")`, 1],
+  ])("with %s among them", (_name, middle, length) => {
+    const expected = "<" + Buffer.alloc(length, "M").toString() + ">" + Buffer.alloc(length, "M").toString() + "!";
+    const writes = destination => `
+      for (const data of ["<", ${middle}, ">", ${middle}, "!"]) Bun.write(${destination}, data);
+    `;
+
+    it("to a pipe", async () => {
+      using dir = tempDir("bun-write-order-pipe", { "m.txt": "M" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", writes("Bun.stdout")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    // On Windows a file is copied over the file the descriptor is of, not written at its position.
+    it.skipIf(isWindows && _name === "a file")("to the descriptor of a file", async () => {
+      using dir = tempDir("bun-write-order-fd", { "m.txt": "M" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const fd = require("fs").openSync("out.txt", "w"); ${writes("fd")}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, written: fs.readFileSync(join(String(dir), "out.txt"), "utf8") }).toEqual({
+        stdout: "",
+        stderr: "",
+        written: expected,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // The rows a terminal shows after `output`. A Windows pseudoconsole does not pass on what the
   // program wrote: it sends whatever repaints its own screen, which can paint a row more than once.
   function screenAfter(output, cols, rows) {
@@ -1922,6 +1971,84 @@ describe("Bun.write() calls that are not awaited keep their order", () => {
     proc.terminal.close();
     await ended.promise;
     expect(screenAfter(output, 200, 50).filter(row => row.length > 0)).toEqual(lines);
+  });
+});
+
+// Nothing but the write keeps the process alive, and the await is not the module's own: what it
+// continues is a microtask that somebody has to run once the file is closed.
+describe.concurrent("the code after `await Bun.write(path, stream)` runs", () => {
+  it.each([
+    ["a file's stream", `Bun.file("source.txt").stream()`],
+    ["part of a file's stream", `Bun.file("source.txt").slice(2, 5).stream()`],
+    ["a stream from JavaScript", `new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1000)); c.close(); } })`],
+    [
+      "a Response of one",
+      `new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1000)); c.close(); } }))`,
+    ],
+    ["a child's stdout", `Bun.spawn({ cmd: [process.execPath, "-e", "console.log(1)"], stdout: "pipe" }).stdout`],
+  ])("%s", async (_name, source) => {
+    using dir = tempDir("bun-write-then-continue", { "source.txt": Buffer.alloc(300_000, "s").toString() });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `(async () => { console.log("wrote", typeof (await Bun.write("out.bin", ${source}))); })();`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "wrote number\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("the body of a fetch", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              for (let i = 0; i < 16; i++) controller.enqueue(new Uint8Array(65536));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    using dir = tempDir("bun-write-fetch-then-continue", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `(async () => { console.log("wrote", await Bun.write("out.bin", await fetch(${JSON.stringify(server.url.href)}))); })();`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "wrote 1048576\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("in a Worker", async () => {
+    using dir = tempDir("bun-write-worker-then-continue", { "source.txt": "source" });
+    const worker = new Worker(
+      `(async () => {
+         const { parentPort, workerData } = require("node:worker_threads");
+         parentPort.postMessage(await Bun.write(workerData + "/out.bin", Bun.file(workerData + "/source.txt").stream()));
+       })();`,
+      { eval: true, workerData: String(dir) },
+    );
+    const outcome = await new Promise(resolve => {
+      worker.once("message", resolve);
+      worker.once("exit", () => resolve("exited without a word"));
+    });
+    expect(outcome).toBe(6);
+    await worker.terminate();
   });
 });
 

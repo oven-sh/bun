@@ -21,6 +21,8 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 // uv_tty_mode_t; the result is 0 or a negative UV_E* number.
 extern "C" int Bun__Windows__setConsoleMode(void* inputHandle, int mode);
 extern "C" void Bun__Windows__resetConsoleMode();
+// `_get_osfhandle`; INVALID_HANDLE_VALUE for an fd that has no HANDLE.
+extern "C" void* Bun__crtGetOsfhandle(int fd);
 
 // Exported through src/symbols.def.
 extern "C" int uv_tty_reset_mode(void)
@@ -234,7 +236,7 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
     memcpy(&state, rawState, sizeof(state));
     // No early-out on state.mode: the mode belongs to the console, which another
     // stream or uv_tty_reset_mode can have changed since `state` recorded it.
-    int rc = Bun__Windows__setConsoleMode(reinterpret_cast<void*>(_get_osfhandle(fd)), mode);
+    int rc = Bun__Windows__setConsoleMode(Bun__crtGetOsfhandle(fd), mode);
     if (rc == 0) {
         state.mode = mode;
         memcpy(rawState, &state, sizeof(state));

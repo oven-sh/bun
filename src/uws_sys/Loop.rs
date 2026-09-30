@@ -6,8 +6,7 @@ use crate::Timespec;
 
 bun_core::declare_scope!(Loop, visible);
 
-/// A `now_ns` the caller has no reading to share for. The tick takes its own only if
-/// it reaches the idle sweep, so passing this costs nothing on the paths that never park.
+/// A `now_ns` the caller has no reading to share for: the tick takes its own where it needs one.
 pub const NOW_NS_UNKNOWN: u64 = 0;
 
 // Mirrors C `struct us_loop_t` (packages/bun-usockets/src/internal/eventing/

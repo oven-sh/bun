@@ -2,9 +2,7 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -482,22 +480,47 @@ if (isWindows) {
   });
 
   // fs.openSync gives a synchronous pipe end, which is written from a helper thread. In PIPE_NOWAIT
-  // mode a write with no room takes what fits and says so by succeeding short, and the writer sends
-  // the rest again. Bun puts an end it takes over in blocking mode, but whoever shares the end can
-  // change that at any time: here the child does, once its first write has been through.
+  // mode a write that does not fit the pipe's buffer gives a read that is waiting what that asked for,
+  // or nothing to nobody, and says so by succeeding short: the writer sends the rest again. Bun puts
+  // an end it takes over in blocking mode, but whoever shares the end can change that at any time:
+  // here the child does, once its first write has been through.
   it("a writer to a synchronous pipe sends the rest of a write that came back short", async () => {
     const pipe = `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
-    const received = Promise.withResolvers<number>();
-    const connected = Promise.withResolvers<Socket>();
-    await using server = createServer(conn => {
-      let total = 0;
-      conn.pause();
-      conn.on("data", chunk => (total += chunk.length));
-      conn.on("error", received.reject);
-      conn.on("close", () => received.resolve(total));
-      connected.resolve(conn);
+    await using server = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen, ptr } from "bun:ffi";
+        import fs from "node:fs";
+        const { CreateNamedPipeW, ConnectNamedPipe, ReadFile } = dlopen("kernel32.dll", {
+          CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
+          ConnectNamedPipe: { args: ["i64", "ptr"], returns: "i32" },
+          ReadFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+        }).symbols;
+        const name = Buffer.from(process.argv[1] + "\\0", "utf16le");
+        const handle = CreateNamedPipeW(ptr(name), 1 /* PIPE_ACCESS_INBOUND */, 0, 1, 65536, 65536, 0, null);
+        console.log("listening");
+        ConnectNamedPipe(handle, null);
+        const buffer = Buffer.alloc(65536);
+        const count = new Uint32Array(1);
+        let total = 0;
+        const read = () => ReadFile(handle, ptr(buffer), buffer.length, ptr(count), null) !== 0 && ((total += count[0]), true);
+        read();
+        // Reads on only once the child has written into the stall.
+        fs.readSync(0, Buffer.alloc(1));
+        while (read());
+        console.log(total);
+        `,
+        pipe,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
     });
-    await once(server.listen(pipe), "listening");
+    const serverOutput = server.stdout.getReader();
+    expect(new TextDecoder().decode((await serverOutput.read()).value)).toBe("listening\n");
 
     await using proc = Bun.spawn({
       cmd: [
@@ -528,7 +551,8 @@ if (isWindows) {
         writer.write("first");
         await writer.flush();
         const nowait = new Uint32Array([1]);
-        if (!k32.symbols.SetNamedPipeHandleState(end, ptr(nowait), null, null)) throw new Error("SetNamedPipeHandleState");
+        // Refused for as long as something this end wrote is in the pipe unread.
+        while (!k32.symbols.SetNamedPipeHandleState(end, ptr(nowait), null, null)) await new Promise(setImmediate);
 
         const chunk = Buffer.alloc(64 * 1024, 120);
         for (let i = 0; i < 32; i++) writer.write(chunk);
@@ -550,8 +574,6 @@ if (isWindows) {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const conn = await connected.promise;
-    // The server reads only once the child has written into the stall.
     const reader = proc.stdout.getReader();
     let stdout = "";
     while (!stdout.includes("wrote more")) {
@@ -559,7 +581,8 @@ if (isWindows) {
       if (done) break;
       stdout += new TextDecoder().decode(value);
     }
-    conn.resume();
+    server.stdin.write("x");
+    server.stdin.end();
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -570,7 +593,9 @@ if (isWindows) {
       stdout: ["pending", "wrote more", "done"],
       stderr: "",
     });
-    expect(await received.promise).toBe("first".length + 32 * 64 * 1024 + 20);
+    expect(new TextDecoder().decode((await serverOutput.read()).value)).toBe(
+      "first".length + 32 * 64 * 1024 + 20 + "\n",
+    );
     expect(exitCode).toBe(0);
   });
 }
@@ -1598,9 +1623,8 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
 
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
 // on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
-// sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase
-// of a Windows worker closes the writer in this state (see worker-terminate-lifetime.test.ts), so the
-// hook does that close here, on every platform.
+// sink after it (ASAN: heap-use-after-free in settle_stream_done). Nothing outside tests closes the
+// writer in this state (see worker-terminate-lifetime.test.ts), so the hook does that close here.
 it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not use the freed sink", async () => {
   await using proc = Bun.spawn({
     cmd: [

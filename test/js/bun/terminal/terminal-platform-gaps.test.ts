@@ -652,6 +652,38 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("SIGINT");
   });
 
+  // A line that is being read ends when the console host is given a key that ends it, which it does
+  // not take while it shows one of its popups (F7: the lines typed so far).
+  test.skipIf(!isWindows)("a Worker that reads lines from a console with a popup open can be terminated", async () => {
+    using dir = tempDir("console-popup-worker", {});
+    const go = join(String(dir), "go");
+    const { output } = await runInTerminal(
+      `const worker = new Worker(URL.createObjectURL(new Blob([\`
+         const reader = Bun.stdin.stream().getReader();
+         postMessage("READY");
+         while (!(await reader.read()).done) postMessage("GOT-LINE");
+       \`], { type: "application/javascript" })));
+       worker.onmessage = ({ data }) => console.log(data);
+       worker.addEventListener("close", () => console.log("WORKER-CLOSED"));
+       const poll = setInterval(() => {
+         if (!require("fs").existsSync(${JSON.stringify(go)})) return;
+         clearInterval(poll);
+         worker.terminate();
+       }, 5);`,
+      {
+        done: o => o.includes("WORKER-CLOSED"),
+        async afterReady(terminal, _output, waitFor) {
+          terminal.write("typed\r");
+          await waitFor("GOT-LINE");
+          terminal.write("\x1b[18~");
+          await waitFor("0: typed");
+          writeFileSync(go, "");
+        },
+      },
+    );
+    expect(Bun.stripANSI(output)).toContain("WORKER-CLOSED");
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // output ← child
   // ──────────────────────────────────────────────────────────────────────────
@@ -700,6 +732,23 @@ describe("Bun.Terminal platform behaviour", () => {
       { done: o => o.includes("READY") },
     );
     expect(Bun.stripANSI(output)).toMatch(/\u4e16 *\ufffd *\u754c/);
+  });
+
+  // Two bytes that spell "/" or ESC are not that character: whoever checked the bytes did not see one.
+  test.skipIf(!isWindows)("bytes that are not UTF-8 are replaced, whatever they would decode to", async () => {
+    const { output } = await runInTerminal(
+      `for (const bytes of [
+         [0xc0, 0xaf], [0xc1, 0x9b], [0xe0, 0x80, 0xaf], [0xf0, 0x80, 0x80, 0xaf],
+         [0xf4, 0x90, 0x80, 0x80], [0xf8, 0x88, 0x80, 0x80, 0x80], [0xfe], [0xff],
+       ]) {
+         process.stdout.write("<");
+         process.stdout.write(Buffer.from(bytes));
+         process.stdout.write(">");
+       }
+       process.stdout.write(" READY");`,
+      { done: o => o.includes("READY") },
+    );
+    expect(Bun.stripANSI(output).replaceAll(" ", "")).toMatch(/^(?:<\ufffd+>){8}READY/);
   });
 
   test("GAP: ANSI escape sequences", async () => {

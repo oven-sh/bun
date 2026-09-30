@@ -1392,7 +1392,8 @@ pub mod fd {
     /// The HANDLE a CRT fd owns; `INVALID_HANDLE_VALUE` for a bad fd, and for
     /// a stdio fd with no stream attached (where the CRT reports `-2`).
     #[cfg(windows)]
-    pub fn crt_get_osfhandle(fd: c_int) -> *mut c_void {
+    #[unsafe(export_name = "Bun__crtGetOsfhandle")]
+    pub extern "C" fn crt_get_osfhandle(fd: c_int) -> *mut c_void {
         if fd < 0 {
             return crate::windows_sys::INVALID_HANDLE_VALUE;
         }
@@ -1420,8 +1421,12 @@ pub mod fd {
         if fd < 0 {
             return -1;
         }
+        // Only a bad fd asserts. The lock is not held across `_close`, which
+        // waits behind a read that is parked on a synchronous pipe.
         #[cfg(debug_assertions)]
-        let _one_at_a_time = LOWIO.lock();
+        if crt_get_osfhandle(fd) == crate::windows_sys::INVALID_HANDLE_VALUE {
+            return -1;
+        }
         _close(fd)
     }
     #[cfg(windows)]

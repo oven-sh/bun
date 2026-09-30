@@ -1,6 +1,6 @@
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -744,6 +744,46 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 
 // server.unref() on a Windows named-pipe listener must drop everything that
 // keeps the loop alive, as it does for TCP and unix-socket listeners.
+// One of them may have been taken from the backlog already, for a handler that never hears of it.
+it("close() ends every connection that nobody was told of the same way", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = require("node:net").createServer(() => console.log("told of one"));
+       server.listen(0, "127.0.0.1", () => {
+         console.log(server.address().port);
+         // Busy until the clients are connected, and closed in the same turn.
+         require("node:fs").readSync(0, Buffer.alloc(1));
+         server.close();
+       });`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const port = Number(new TextDecoder().decode((await reader.read()).value).trim());
+  const endings: Promise<string>[] = [];
+  for (let i = 0; i < 4; i++) {
+    const client = connect(port, "127.0.0.1");
+    await once(client, "connect");
+    endings.push(
+      new Promise(resolve => {
+        client.on("end", () => resolve("end"));
+        client.on("error", error => resolve((error as NodeJS.ErrnoException).code!));
+      }),
+    );
+    client.resume();
+  }
+  proc.stdin.write("x");
+  proc.stdin.end();
+  expect(new Set(await Promise.all(endings)).size).toBe(1);
+  expect((await reader.read()).done).toBe(true);
+  expect(await proc.exited).toBe(0);
+});
+
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.

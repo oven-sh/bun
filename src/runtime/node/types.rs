@@ -822,7 +822,7 @@ pub(crate) trait PathLikeExt {
     /// platform's own rules for names. On Windows those are Win32's: a device
     /// name (`NUL`, `CON`) is the device, trailing dots and spaces are dropped,
     /// and the call puts a path past `MAX_PATH` in the long form itself.
-    /// `Bun.file` paths are opened this way, as Node opens every path.
+    /// `Bun.file` paths are opened this way.
     /// [`slice_z`](Self::slice_z) is `node:fs`'s, which names files literally.
     fn slice_z_as_written<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where

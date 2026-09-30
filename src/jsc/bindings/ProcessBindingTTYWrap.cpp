@@ -31,6 +31,8 @@
 
 #if OS(WINDOWS)
 extern "C" int Source__setRawModeStdin(bool raw);
+// `_get_osfhandle`; INVALID_HANDLE_VALUE for an fd that has no HANDLE.
+extern "C" void* Bun__crtGetOsfhandle(int fd);
 #endif
 
 namespace Bun {
@@ -404,7 +406,7 @@ public:
 
 #if OS(WINDOWS)
         DWORD consoleMode;
-        bool isTTY = GetConsoleMode(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), &consoleMode);
+        bool isTTY = GetConsoleMode(Bun__crtGetOsfhandle(fd), &consoleMode);
 #else
         bool isTTY = isatty(fd);
 #endif

@@ -2258,6 +2258,9 @@ impl VirtualMachine {
             self.event_loop_mut().deferred_tasks.run();
             self.is_inside_deferred_task_queue.set(false);
         }
+        if self.is_main_thread() {
+            bun_threading::WorkPool::wait_for_writes();
+        }
 
         self.is_shutting_down = true;
 
@@ -2353,7 +2356,8 @@ impl VirtualMachine {
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
-    ///     parked; RareData's JS handles released.
+    ///     parked; (Windows) writes still out let go of; RareData's JS handles
+    ///     released.
     ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
     ///     timers ride the timer heap until ~VM returns); sockets they closed
     ///     drained.
@@ -2446,6 +2450,10 @@ impl VirtualMachine {
             teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
             return;
         }
+        // The loop does not turn again: what a writer holds until the result
+        // of its write arrives is released here, with the heap alive.
+        #[cfg(windows)]
+        bun_io::abandon_writes_out();
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
             if let Some(rare) = (*this).rare_data.as_deref_mut() {

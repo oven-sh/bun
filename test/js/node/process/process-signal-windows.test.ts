@@ -117,6 +117,30 @@ describe.skipIf(!isWindows)("console control events", () => {
     };
   }
 
+  // Ctrl+C ends the child, and the console ends the line `cat` is reading with no characters in it.
+  // That is the end of `cat`'s input: nothing else ends the pipeline.
+  test.concurrent.each(["cat | CHILD", "(cat) | CHILD", "cat | cat | CHILD"])(
+    "Ctrl+C ends the shell pipeline %s",
+    async script => {
+      // What a process started in a new process group passes on to its children: they ignore Ctrl+C.
+      dlopen("kernel32.dll", { SetConsoleCtrlHandler: { args: ["ptr", "i32"], returns: "i32" } })
+        .symbols //
+        .SetConsoleCtrlHandler(null, 0);
+      using dir = tempDir("shell-ctrl-c", { "idle.js": `console.log("up"); setInterval(() => {}, 1e6);` });
+      const { options, match } = terminalOutput();
+      const up = match(/up/);
+      const idle = `"${bunExe().replaceAll("\\", "/")}" "${join(String(dir), "idle.js").replaceAll("\\", "/")}"`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "exec", script.replace("CHILD", idle)],
+        env: bunEnv,
+        terminal: { cols: 100, rows: 30, ...options },
+      });
+      expect(await up).not.toBeNull();
+      proc.terminal!.write("\x03");
+      expect((await proc.exited) & 0xff).toBe(0xc000013a /* STATUS_CONTROL_C_EXIT, the child's */ & 0xff);
+    },
+  );
+
   test.concurrent.each([
     ["SIGINT", 0],
     ["SIGBREAK", 1],

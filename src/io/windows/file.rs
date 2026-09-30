@@ -424,6 +424,9 @@ impl Inner {
         unsafe {
             super::op_submitted((*this).link.loop_);
             (*(*this).link.loop_).add_active(1);
+            if matches!((*this).request, Request::Write { .. }) {
+                WorkPool::owe_write();
+            }
             WorkPool::schedule(&raw mut (*this).task);
         }
     }
@@ -438,16 +441,19 @@ impl Inner {
         unsafe {
             let this = Inner::from_task_ptr(task);
             let fd = (*this).fd;
-            let from = match (*this).state.compare_exchange(
-                QUEUED,
-                RUNNING,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ) {
-                Ok(_) => {
-                    (*this).result = Self::perform(this);
-                    RUNNING
-                }
+            let owed = matches!((*this).request, Request::Write { .. });
+            let claimed =
+                (*this)
+                    .state
+                    .compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst);
+            if claimed.is_ok() {
+                (*this).result = Self::perform(this);
+            }
+            if owed {
+                WorkPool::write_settled();
+            }
+            let from = match claimed {
+                Ok(_) => RUNNING,
                 Err(CANCELED) => {
                     (*this).result =
                         Err(sys::Error::from_code(E::ECANCELED, (*this).request.tag()).with_fd(fd));

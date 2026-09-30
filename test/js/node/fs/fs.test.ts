@@ -58,7 +58,7 @@ import fs, {
   writevSync,
 } from "node:fs";
 import * as os from "node:os";
-import path, { dirname, relative, resolve } from "node:path";
+import path, { basename, dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
 import { Worker } from "node:worker_threads";
 
@@ -1590,8 +1590,8 @@ it("stat == statSync", async () => {
 });
 
 it("mkdtempSync names do not repeat from one thread to the next", async () => {
-  using dir = tempDir("mkdtemp-threads", {});
-  const prefix = join(String(dir), "t-");
+  // A directory for each thread: in one, a name that is taken is passed over.
+  using dir = tempDir("mkdtemp-threads", { "0": {}, "1": {}, "2": {} });
   const worker = `
     const fs = require("node:fs");
     const { parentPort, workerData } = require("node:worker_threads");
@@ -1600,14 +1600,14 @@ it("mkdtempSync names do not repeat from one thread to the next", async () => {
   const names: string[] = [];
   for (let i = 0; i < 3; i++) {
     const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-    const w = new Worker(worker, { eval: true, workerData: prefix });
+    const w = new Worker(worker, { eval: true, workerData: join(String(dir), String(i), "t-") });
     w.once("message", resolve);
     w.once("error", reject);
     names.push(...(await promise));
     await w.terminate();
   }
   // Each thread's first names: a generator every thread seeds alike gives the same three, three times.
-  expect(new Set(names.map(name => name.slice(prefix.length))).size).toBe(9);
+  expect(new Set(names.map(name => basename(name))).size).toBe(9);
 });
 
 // libuv's path conversion refuses bytes that are not WTF-8 with ERROR_INVALID_NAME; Node reports ENOENT.
@@ -3963,6 +3963,85 @@ describe("rm", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "{}", stderr: "", exitCode: 0 });
+  });
+
+  // To the native calls on Windows no name at all, relative to a directory, is that directory.
+  it("takes an empty path for no file, not for the current directory", async () => {
+    using dir = tempDir("fs-empty-path", { "kept.txt": "kept", "tree/inner.txt": "kept" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const codes = {};
+          for (const [name, call] of Object.entries({
+            rmSync: () => fs.rmSync("", { recursive: true }),
+            "rmSync force": () => fs.rmSync("", { recursive: true, force: true }),
+            "promises.rm": () => fs.promises.rm("", { recursive: true }),
+            "promises.rm force": () => fs.promises.rm("", { recursive: true, force: true }),
+            readdirSync: () => fs.readdirSync(""),
+            writeFileSync: () => fs.writeFileSync("", "x"),
+            mkdirSync: () => fs.mkdirSync(""),
+            "shell rm -rf": () => Bun.$\`rm -rf ""\`.nothrow().quiet(),
+          })) {
+            try {
+              await call();
+              codes[name] = null;
+            } catch (e) {
+              codes[name] = e.code;
+            }
+          }
+          console.log(JSON.stringify({ codes, left: fs.readdirSync(".", { recursive: true }).length }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        codes: {
+          rmSync: "ENOENT",
+          "rmSync force": null,
+          "promises.rm": "ENOENT",
+          "promises.rm force": null,
+          readdirSync: "ENOENT",
+          writeFileSync: "ENOENT",
+          mkdirSync: "ENOENT",
+          "shell rm -rf": null,
+        },
+        left: 3,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Win32 takes a \\?\ path as it is written and resolves any other, \\.\C:\ included.
+  it.skipIf(!isWindows)("removes what a \\\\.\\ path with . or .. or / in it names", () => {
+    using dir = tempDir("fs-rm-device-path", {});
+    const device = "\\\\.\\" + String(dir);
+    const notRemoved: Record<string, string> = {};
+    for (const spelled of [
+      device + "\\tree",
+      device + "\\.\\tree",
+      device + "\\other\\..\\tree",
+      device + "/tree",
+      device.replaceAll("\\", "/") + "/tree",
+    ]) {
+      mkdirSync(join(String(dir), "tree", "inner"), { recursive: true });
+      writeFileSync(join(String(dir), "tree", "inner", "file.txt"), "contents");
+      try {
+        rmSync(spelled, { recursive: true, force: true });
+        if (existsSync(join(String(dir), "tree"))) notRemoved[spelled.slice(device.length)] = "returned";
+      } catch (e: any) {
+        notRemoved[spelled.slice(device.length)] = e.code;
+      }
+    }
+    expect(notRemoved).toEqual({});
   });
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
@@ -8153,6 +8232,26 @@ describe("fs.close() that is not waited for", () => {
     ["futimes", 0, [(fd, cb) => fs.futimes(fd, 1, 1, cb)]],
     ["fchmod", 0, [(fd, cb) => fs.fchmod(fd, 0o644, cb)]],
     ["fchown", 0, [(fd, cb) => fs.fchown(fd, process.getuid?.() ?? 0, process.getgid?.() ?? 0, cb)]],
+    [
+      "Bun.write of bytes",
+      megabyte.length,
+      [(fd, cb) => void Bun.write(Bun.file(fd), megabyte).then(() => cb(null), cb)],
+    ],
+    [
+      "Bun.write of a file",
+      statSync(import.meta.path).size,
+      [(fd, cb) => void Bun.write(Bun.file(fd), Bun.file(import.meta.path)).then(() => cb(null), cb)],
+    ],
+    [
+      "Bun.file().bytes()",
+      0,
+      [
+        (fd, cb) =>
+          void Bun.file(fd)
+            .bytes()
+            .then(() => cb(null), cb),
+      ],
+    ],
   ])("runs after %s", (_name, size, operations) => {
     it("that came before it", async () => {
       using dir = tempDir("fs-close-runs-last", {});
@@ -8193,6 +8292,41 @@ describe("fs.close() that is not waited for", () => {
     for (let index = 0; index < files; index++) {
       const contents = readFileSync(join(String(dir), `${index}.txt`), "utf8");
       if (contents !== contentsOf(index)) wrong.push({ index, contents });
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it.each<[string, (fd: number, index: number) => Promise<unknown>]>([
+    ["bytes", (fd, index) => Bun.write(Bun.file(fd), Buffer.alloc(300_000, 97 + (index % 26)))],
+    [
+      "a file",
+      (fd, index) => Bun.write(Bun.file(fd), Bun.file(join(import.meta.dir, index % 2 ? "fs.test.ts" : "cp.test.ts"))),
+    ],
+  ])("does not let Bun.write() of %s reach the next file that gets the descriptor's number", async (_name, write) => {
+    using dir = tempDir("fs-close-fd-reuse-bun-write", {});
+    const files = 400;
+    let next = 0;
+    async function flows() {
+      while (next < files) {
+        const index = next++;
+        const fd = await promisify(fs.open)(join(String(dir), `${index}.bin`), "w");
+        await Promise.all([write(fd, index), codeOf(cb => fs.close(fd, cb))]);
+      }
+    }
+    await Promise.all(Array.from({ length: 32 }, flows));
+    // What the same write leaves in a file of its own.
+    const expected = new Map<number, Buffer>();
+    const wrong: number[] = [];
+    for (let index = 0; index < files; index++) {
+      const kind = index % 26;
+      if (!expected.has(kind)) {
+        const file = join(String(dir), `expected-${kind}.bin`);
+        const fd = openSync(file, "w");
+        await write(fd, index);
+        closeSync(fd);
+        expected.set(kind, readFileSync(file));
+      }
+      if (!readFileSync(join(String(dir), `${index}.bin`)).equals(expected.get(kind)!)) wrong.push(index);
     }
     expect(wrong).toEqual([]);
   });
@@ -8314,6 +8448,36 @@ describe("fs.close() that is not waited for", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  // The read outlives its descriptor here too, and is not counted against the next file to get the
+  // number. (On Windows a close of a synchronous pipe waits for the read that is out on it.)
+  it.skipIf(isWindows)("does not wait for a read on a pipe that fs.closeSync() closed under it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+           fs.read(0, Buffer.alloc(1), 0, 1, null, () => {});
+           fs.closeSync(0);
+           const fd = fs.openSync(process.execPath, "r");
+           fs.close(fd, err => console.log("closed the next", fd, err ? err.code : null));`,
+      ],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      // Ends the read, and with it the child.
+      if (stdout.includes("closed the next")) proc.stdin.end();
+    }
+    expect({ stdout, stderr: await stderr }).toEqual({ stdout: "closed the next 0 null\n", stderr: "" });
+    expect(await proc.exited).toBe(0);
+  });
+
   // The script that asked for the close is gone before the pool has said what the descriptor is.
   it("does not wait for a read on a pipe when its test file is over either", async () => {
     using dir = tempDir("fs-close-isolate", {
@@ -8372,6 +8536,118 @@ describe("fs.close() that is not waited for", () => {
     );
     expect(await new Promise(resolve => worker.once("message", resolve))).toBe("queued");
     expect(await worker.terminate()).toBeNumber();
+  });
+
+  // The descriptor is the process's: it does not stay open because the Worker that asked for it to
+  // be closed was gone before the writes it waited for were done.
+  it.each(["process.exit()", "terminate()"])("closes the descriptor when its Worker ends by %s first", async how => {
+    using dir = tempDir("fs-close-worker-ends", {});
+    const worker = new Worker(
+      `
+        const fs = require("node:fs");
+        const { parentPort, workerData } = require("node:worker_threads");
+        const chunk = Buffer.alloc(8 << 20, "w");
+        const ignore = () => {};
+        const fds = [];
+        for (let file = 0; file < 16; file++) {
+          const fd = fs.openSync(workerData.dir + "/" + file + ".txt", "w");
+          fds.push(fd);
+          fs.write(fd, chunk, ignore);
+          fs.close(fd, ignore);
+        }
+        parentPort.postMessage(fds);
+        if (workerData.how === "process.exit()") setImmediate(() => process.exit(0));
+      `,
+      { eval: true, workerData: { dir: String(dir), how } },
+    );
+    const exited = new Promise(resolve => worker.once("exit", resolve));
+    const fds = await new Promise<number[]>(resolve => worker.once("message", resolve));
+    if (how === "terminate()") await worker.terminate();
+    await exited;
+    const stillOpen = fds.filter(fd => {
+      try {
+        fstatSync(fd);
+        closeSync(fd);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    expect(stillOpen).toEqual([]);
+  });
+});
+
+// A process that has done nothing on the work pool yet has no thread there, and is gone before one is made.
+// Elsewhere nothing tells a write that can wait for a reader from one that cannot, so an exit waits for neither.
+describe.skipIf(!isWindows).concurrent("what was written is in the file when process.exit() follows at once", () => {
+  it.each([
+    ["fs.write()", `fs.write(fs.openSync("out.txt", "w"), text, () => {});`],
+    ["fs.writev()", `fs.writev(fs.openSync("out.txt", "w"), [Buffer.from(text)], () => {});`],
+    ["Bun.file().writer()", `const writer = Bun.file("out.txt").writer(); writer.write(text); writer.end();`],
+    ["Bun.file().writer() that is not ended", `Bun.file("out.txt").writer().write(text);`],
+    ["Bun.write() of a Blob", `Bun.write("out.txt", new Blob([text]));`],
+    ["Bun.write() to a descriptor", `Bun.write(fs.openSync("out.txt", "w"), Buffer.alloc(700_000, "x"));`, 700_000],
+  ])("%s", async (_name, write, size = 1000) => {
+    using dir = tempDir("fs-write-then-exit", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs"); const text = Buffer.alloc(1000, "x").toString(); ${write} process.exit(0);`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+    expect(statSync(join(String(dir), "out.txt")).size).toBe(size);
+  });
+});
+
+// Each is written where the one before it left the descriptor's position. The work pool starts jobs in no particular order.
+describe.concurrent("writes at a descriptor's position that are not awaited keep their order", () => {
+  it.each([
+    ["fs.write()", "(fd, text) => new Promise(resolve => fs.write(fd, text, resolve))"],
+    ["fs.write() of bytes", "(fd, text) => new Promise(resolve => fs.write(fd, Buffer.from(text), resolve))"],
+    ["FileHandle.write()", "(fd, text, handle) => handle.write(text)"],
+    ["fs.writeFile()", "(fd, text) => new Promise(resolve => fs.writeFile(fd, text, resolve))"],
+    ["fs.appendFile()", "(fd, text) => new Promise(resolve => fs.appendFile(fd, text, resolve))"],
+    [
+      "one after the other of them, and Bun.write()",
+      `(fd, text, handle, i) =>
+         [
+           () => new Promise(resolve => fs.write(fd, text, resolve)),
+           () => handle.write(text),
+           () => new Promise(resolve => fs.appendFile(fd, text, resolve)),
+           () => Bun.write(fd, text),
+         ][i % 4]()`,
+    ],
+  ])("%s", async (_name, write) => {
+    using dir = tempDir("fs-write-order", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         const write = ${write};
+         const parts = Array.from({ length: 30 }, (_, i) => "<" + i + ">");
+         let outOfOrder = 0;
+         for (let round = 0; round < 10; round++) {
+           const handle = await fs.promises.open("out.txt", "w");
+           await Promise.all(parts.map((text, i) => write(handle.fd, text, handle, i)));
+           await handle.close();
+           if (fs.readFileSync("out.txt", "utf8") !== parts.join("")) outOfOrder++;
+         }
+         console.log(outOfOrder);`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "0\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });
 

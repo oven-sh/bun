@@ -183,8 +183,7 @@ impl<'a> ProcessHandle<'a> {
 
     /// On process exit, read what the pipes already hold, then force-end any
     /// pipe a leftover child still keeps open: its EOF may never come and
-    /// must not stall the finish. Windows has no synchronous drain, so only
-    /// the force-end applies there.
+    /// must not stall the finish.
     ///
     /// # Safety
     /// `this` is the live handle; the reader callbacks re-enter
@@ -198,6 +197,10 @@ impl<'a> ProcessHandle<'a> {
                 #[cfg(unix)]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
                     BufferedReader::read(reader);
+                }
+                #[cfg(windows)]
+                if !(*reader).is_done() {
+                    BufferedReader::drain(reader);
                 }
                 if !(*reader).is_done() {
                     (*reader).deinit();

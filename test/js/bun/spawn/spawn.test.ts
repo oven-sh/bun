@@ -2811,3 +2811,42 @@ describe.skipIf(!isWindows).concurrent("an exit code that does not fit in a byte
     }
   });
 });
+
+// Nothing of it was read while it was written: this thread is busy until the child is gone. (Elsewhere a child
+// that has exited is there to signal until this thread has heard of it.)
+describe.skipIf(!isWindows)("what a child wrote in several writes before any of it was read", () => {
+  function whenGone(pid: number) {
+    for (;;) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break;
+      }
+    }
+    // The exit is announced a moment after the process stops being there to signal.
+    spawnSync({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+  }
+  const writes = `const fs = require("fs"); for (const part of ["listening ", "on ", "a port\\n"]) fs.writeSync(1, part);`;
+
+  it("arrives in one chunk", async () => {
+    await using proc = spawn({ cmd: [bunExe(), "-e", writes], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    whenGone(proc.pid);
+    const chunks: string[] = [];
+    for await (const chunk of proc.stdout) chunks.push(Buffer.from(chunk).toString());
+    expect(chunks).toEqual(["listening on a port\n"]);
+  });
+
+  it("has all been read when a child that was killed for its timeout is reported", async () => {
+    // Reads nothing of its own accord, as node:child_process asks of Bun.spawn.
+    const proc = spawn({
+      cmd: [bunExe(), "-e", writes + "setInterval(() => {}, 1e6);"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      lazy: true,
+      timeout: 1000,
+    });
+    await proc.exited;
+    expect(await proc.stdout.text()).toBe("listening on a port\n");
+  });
+});

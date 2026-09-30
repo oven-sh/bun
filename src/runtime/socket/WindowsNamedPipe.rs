@@ -277,7 +277,7 @@ impl WindowsNamedPipe {
     fn on_read_end(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadEnd");
         let _keep_alive = self.keep_alive();
-        // we received FIN but we dont allow half-closed connections right now
+        // The other end is gone: there is nobody left to write to.
         (self.handlers.on_end)(self.handlers.ctx);
         self.close_writer();
     }
@@ -404,9 +404,8 @@ impl WindowsNamedPipe {
         if !self.closes_when_idle() || self.flags.get().is_closed() {
             return;
         }
-        // A read that finished in the kernel is delivered next: data re-arms
-        // this, the end of the stream or an error closes.
-        if self.with_pipe(|pipe| pipe.read_awaits_delivery()) == Some(true) {
+        // What has arrived is delivered next, and re-arms this.
+        if self.with_pipe(|pipe| pipe.has_unread()) == Some(true) {
             return;
         }
         self.on_read_end();

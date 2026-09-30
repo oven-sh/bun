@@ -219,6 +219,14 @@ impl bun_jsc::JobContext for ReadFile {
         this.run(done);
         None
     }
+    fn closed(this: &mut Self) {
+        let mut err = bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::read);
+        if let PathOrFileDescriptor::Fd(fd) = &this.file_store.pathlike {
+            err = err.with_fd(*fd);
+        }
+        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+        this.system_error = Some(err.to_system_error().into());
+    }
     fn then(
         this: Self,
         completion: ReadFileCompletionFns,
@@ -249,7 +257,8 @@ impl ReadFile {
         completion: ReadFileCompletionFns,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        bun_jsc::Job::<ReadFile>::schedule(cx, this, completion);
+        let fd_use = super::reads_fd_of(&this.file_store.pathlike);
+        bun_jsc::Job::<ReadFile>::schedule_on_fd(cx, this, completion, fd_use);
     }
 }
 

@@ -1750,8 +1750,8 @@ pub fn git_diff_internal(
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
-    // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
-    // resolve `git` here — same as `patchCommit`'s `bun.which` call.
+    // On POSIX `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search),
+    // so resolve `git` here — same as `patchCommit`'s `bun.which` call.
     let mut gitbuf = bun_paths::path_buffer_pool::get();
     let git = bun_which::which(
         &mut gitbuf,

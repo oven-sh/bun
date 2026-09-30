@@ -418,6 +418,13 @@ mod _async_tasks {
         }
     }
 
+    fn appends_to_fd(file: &PathOrFileDescriptor<'_>) -> Option<FdUse> {
+        match file {
+            PathOrFileDescriptor::Fd(fd) => Some(FdUse::Appends(*fd)),
+            PathOrFileDescriptor::Path(_) => None,
+        }
+    }
+
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
     /// already defines. `=> fd_use` is the body of [`FsArgument::fd_use`].
     macro_rules! impl_fs_argument {
@@ -459,7 +466,10 @@ mod _async_tasks {
     impl_fs_argument!(
         args::FdVectorIo => |args| Some(FdUse::Uses(args.fd)),
         args::FTruncate => |args| Some(FdUse::Uses(args.fd)),
-        args::Write<'static> => |args| Some(FdUse::Uses(args.fd)),
+        args::Write<'static> => |args| Some(match args.position {
+            Some(_) => FdUse::Uses(args.fd),
+            None => FdUse::Appends(args.fd),
+        }),
         args::Read => |args| Some(FdUse::Uses(args.fd)),
         args::Fchown => |args| Some(FdUse::Uses(args.fd)),
         args::FChmod => |args| Some(FdUse::Uses(args.fd)),
@@ -504,7 +514,7 @@ mod _async_tasks {
         }
         #[inline]
         fn fd_use(&self) -> Option<FdUse> {
-            uses_fd(&self.file)
+            appends_to_fd(&self.file)
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -520,7 +530,7 @@ mod _async_tasks {
         }
         #[inline]
         fn fd_use(&self) -> Option<FdUse> {
-            uses_fd(&self.0.file)
+            appends_to_fd(&self.0.file)
         }
     }
     const _: () = assert!(<args::ReadFile<'static> as FsArgument>::HAVE_ABORT_SIGNAL);
@@ -765,6 +775,10 @@ mod _async_tasks {
     {
         type OffThread = Self;
         type Js = AsyncFSJs;
+        const RUNS_CANCELLED: bool = matches!(F, NodeFSFunctionEnum::Close);
+        /// Where `waits` tells a write that can block from one that cannot.
+        const OWED_AT_EXIT: bool =
+            cfg!(windows) && matches!(F, NodeFSFunctionEnum::Write | NodeFSFunctionEnum::Writev);
 
         /// A read of a pipe or a console lasts until there is something to
         /// read, and whatever else is asked of that handle meanwhile waits

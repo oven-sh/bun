@@ -197,6 +197,53 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
   });
 });
 
+// Windows can end a process and nothing else. As in Node, that is what any signal does to a child, and the child
+// is reported as killed: `killSignal` is all that a timeout or an abort has to end it with.
+describe.concurrent.skipIf(!isWindows)("a signal Windows cannot send ends a child", () => {
+  const idle = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
+  const killed = { exitCode: null, signalCode: "SIGKILL" };
+
+  describe.each(["SIGHUP", "SIGABRT", "SIGWINCH", constants.signals.SIGHUP] as const)("%s", signal => {
+    test("kill()", async () => {
+      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+      proc.kill(signal);
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual(killed);
+    });
+
+    test("killSignal, when the timeout is over", async () => {
+      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet, timeout: 1, killSignal: signal });
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual(killed);
+    });
+
+    test("killSignal, when the AbortSignal fires", async () => {
+      const controller = new AbortController();
+      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet, signal: controller.signal, killSignal: signal });
+      controller.abort();
+      await proc.exited;
+      expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual(killed);
+    });
+
+    test("killSignal of spawnSync", () => {
+      const { exitCode, signalCode, exitedDueToTimeout } = Bun.spawnSync({
+        cmd: idle,
+        env: bunEnv,
+        ...quiet,
+        timeout: 1,
+        killSignal: signal,
+      });
+      expect({ exitCode, signalCode, exitedDueToTimeout }).toEqual({ ...killed, exitedDueToTimeout: true });
+    });
+  });
+
+  test("process.kill() of a process by its id is still refused", async () => {
+    await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+    expect(() => process.kill(proc.pid, "SIGHUP")).toThrow(expect.objectContaining({ code: "ENOSYS" }));
+    expect(proc.exitCode).toBe(null);
+  });
+});
+
 // Before, macOS sent signal 30 for "SIGPWR", which is SIGUSR1 there.
 test.each(unsupportedSignals)("%s: a name this OS has no signal for is rejected like an unknown name", async name => {
   const rejected = (fn: () => unknown) => {

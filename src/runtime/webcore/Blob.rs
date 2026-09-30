@@ -4847,6 +4847,10 @@ fn write_bytes_to_file_fast(
     let _ = opened_destination;
     let needs_open = matches!(pathlike, PathOrFileDescriptor::Path(_));
     let fd: Fd = if !needs_open {
+        if bun_jsc::FdUse::Uses(pathlike.fd()).is_behind_jobs(global_this.bun_vm()) {
+            *needs_async = true;
+            return JSValue::ZERO;
+        }
         #[cfg(windows)]
         if !windows_write_returns_promptly(pathlike.fd()) {
             *needs_async = true;
@@ -6142,6 +6146,22 @@ pub(crate) trait FileOpener: Sized {
 
 #[cfg(not(windows))]
 pub(crate) use io_parking::IoParking;
+
+/// What a job that reads `file` tells [`Job::schedule_on_fds`](bun_jsc::Job::schedule_on_fds).
+pub(crate) fn reads_fd_of(file: &PathOrFileDescriptor<'_>) -> Option<bun_jsc::FdUse> {
+    match file {
+        PathOrFileDescriptor::Fd(fd) => Some(bun_jsc::FdUse::Uses(*fd)),
+        PathOrFileDescriptor::Path(_) => None,
+    }
+}
+
+/// [`reads_fd_of`] for a job that writes to `file`.
+pub(crate) fn writes_fd_of(file: &PathOrFileDescriptor<'_>) -> Option<bun_jsc::FdUse> {
+    match file {
+        PathOrFileDescriptor::Fd(fd) => Some(bun_jsc::FdUse::Appends(*fd)),
+        PathOrFileDescriptor::Path(_) => None,
+    }
+}
 
 /// [`JobContext::waits`](bun_jsc::JobContext::waits) for a job that reads or
 /// writes `file`. What a path names is not known before it is opened.

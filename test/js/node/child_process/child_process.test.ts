@@ -1021,6 +1021,29 @@ describe("execSync()", () => {
   });
 });
 
+// The parent hears of the exit and of the first write together, having been busy until the child was gone.
+// (Elsewhere a child that has exited is there to signal until this thread has heard of it.)
+it.skipIf(!isWindows)("'close' comes after everything the child wrote to a pipe above stderr", async () => {
+  const child = spawn(
+    bunExe(),
+    ["-e", `const fs = require("fs"); for (let i = 0; i < 5; i++) fs.writeSync(3, "0123456789");`],
+    { env: bunEnv, stdio: ["ignore", "ignore", "inherit", "pipe"] },
+  );
+  let received = "";
+  child.stdio[3]!.on("data", chunk => (received += chunk));
+  const closed = new Promise<string>(resolve => child.on("close", () => resolve(received)));
+  for (;;) {
+    try {
+      process.kill(child.pid!, 0);
+    } catch {
+      break;
+    }
+  }
+  // The exit is announced a moment after the process stops being there to signal.
+  spawnSync(bunExe(), ["-e", ""], { env: bunEnv });
+  expect(await closed).toBe(Buffer.alloc(50, "0123456789").toString());
+});
+
 it("should call close and exit before process exits", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), path.join("fixtures", "child-process-exit-event.js")],

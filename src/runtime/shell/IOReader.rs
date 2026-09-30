@@ -246,6 +246,9 @@ impl IOReader {
 
     #[cfg(not(windows))]
     fn start_reader(r: &mut ReaderImpl, fd: Fd) -> sys::Result<()> {
+        // A listener that came after an error reads the fd again.
+        r.flags
+            .remove(bun_io::pipe_reader::ReaderFlags::READ_FAILED);
         r.start(fd, true)
     }
 

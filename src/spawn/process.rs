@@ -733,7 +733,16 @@ impl Process {
             if self.has_exited() || self.process_handle == bun_sys::windows::INVALID_HANDLE_VALUE {
                 return Ok(());
             }
-            match bun_spawn_sys::windows::kill(self.process_handle, c_int::from(signal)) {
+            use bun_spawn_sys::windows::kill::{SIGKILL, kill};
+            let mut signal = signal;
+            let mut result = kill(self.process_handle, c_int::from(signal));
+            // A signal Windows cannot send still ends a child, as in Node: a
+            // `killSignal` is all a timeout or an abort has to end it with.
+            if matches!(&result, Err(err) if err.get_errno() == bun_sys::E::ENOSYS) {
+                signal = SIGKILL as u8;
+                result = kill(self.process_handle, SIGKILL);
+            }
+            match result {
                 // Signal 0 only probes: it ends nothing, so it is not how the process ended.
                 Ok(()) if signal == 0 => {}
                 Ok(()) => self.exit_signal = signal,

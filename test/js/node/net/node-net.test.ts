@@ -177,8 +177,15 @@ it.skipIf(!isWindows)("a reply to the last write before end() on a named pipe is
 
 /** Runs node-net-message-pipe-fixture.ts and resolves once its pipe exists. */
 async function messagePipeServer(
-  scenario: "reply-after-end" | "disconnect-after-end" | "ignore-end" | "end-first" | "end-then-close",
-  flags: "plain" | "reject-remote" = "reject-remote",
+  scenario:
+    | "reply-after-end"
+    | "silent-after-end"
+    | "disconnect-after-end"
+    | "ignore-end"
+    | "end-first"
+    | "end-then-close"
+    | "reply-then-close",
+  flags: "plain" | "reject-remote" | "byte" = "reject-remote",
 ) {
   const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
   const proc = Bun.spawn({
@@ -215,11 +222,41 @@ async function messagePipeServer(
   };
 }
 
+// The server has done what Microsoft's documentation asks of it: it closed once its flush had said that the reply
+// was read. The client's write finds the pipe closed, which is not to cost it the reply it has taken already.
+describe.skipIf(!isWindows).each(["byte", "plain"] as const)(
+  "a reply from a named pipe server (%s) that closes as soon as the reply was read",
+  flags => {
+    it.each<[string, (write: () => void) => void]>([
+      ["as soon as it is connected", write => write()],
+      ["from setImmediate()", write => void setImmediate(write)],
+      ["twice", write => (write(), write())],
+    ])("reaches a client that writes %s", async (_when, schedule) => {
+      const outcomes: string[][] = [];
+      for (let round = 0; round < 5; round++) {
+        await using server = await messagePipeServer("reply-then-close", flags);
+        const events: string[] = [];
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const client = connect(server.name, () => schedule(() => client.write("request")));
+        client.on("data", data => events.push("data:" + data));
+        client.on("error", () => {});
+        client.on("close", () => resolve());
+        await promise;
+        outcomes.push(events);
+      }
+      expect(outcomes).toEqual(Array(5).fill(["data:hello"]));
+    });
+  },
+);
+
 describe.skipIf(!isWindows).each(["plain", "reject-remote"] as const)(
   "end() on a message-type named pipe (%s)",
   flags => {
     /** Writes "request", ends, and resolves with what the client and the server saw once the client has closed. */
-    async function requestThenEnd(scenario: "reply-after-end" | "ignore-end", options: { allowHalfOpen?: boolean }) {
+    async function requestThenEnd(
+      scenario: "reply-after-end" | "silent-after-end" | "ignore-end",
+      options: { allowHalfOpen?: boolean },
+    ) {
       await using server = await messagePipeServer(scenario, flags);
       const events: string[] = [];
       const { promise, resolve } = Promise.withResolvers<void>();
@@ -244,9 +281,9 @@ describe.skipIf(!isWindows).each(["plain", "reject-remote"] as const)(
 
     // As in Node, where it is so for every pipe.
     it("without it, tells the server and closes once the server has been silent for a moment", async () => {
-      expect(await requestThenEnd("reply-after-end", {})).toEqual({
+      expect(await requestThenEnd("silent-after-end", {})).toEqual({
         client: ["end", "close:false"],
-        server: ["listening", "data:request", "end-of-write", "wrote:false"],
+        server: ["listening", "data:request", "end-of-write", "closed"],
       });
     });
 
@@ -258,7 +295,7 @@ describe.skipIf(!isWindows).each(["plain", "reject-remote"] as const)(
     });
 
     it.each([true, false])("Bun.connect({ allowHalfOpen: %p }) does the same", async allowHalfOpen => {
-      await using server = await messagePipeServer("reply-after-end", flags);
+      await using server = await messagePipeServer(allowHalfOpen ? "reply-after-end" : "silent-after-end", flags);
       const events: string[] = [];
       const { promise, resolve } = Promise.withResolvers<void>();
       await Bun.connect({
@@ -281,7 +318,7 @@ describe.skipIf(!isWindows).each(["plain", "reject-remote"] as const)(
       await promise;
       expect({ client: events, server: await server.lines() }).toEqual({
         client: allowHalfOpen ? ["data:late reply", "end", "close"] : ["end", "close"],
-        server: ["listening", "data:request", "end-of-write", "wrote:" + allowHalfOpen],
+        server: ["listening", "data:request", "end-of-write", allowHalfOpen ? "wrote:true" : "closed"],
       });
     });
   },

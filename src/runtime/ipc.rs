@@ -909,8 +909,7 @@ pub(crate) struct SendQueue {
     /// the close itself comes later: what the peer sends meanwhile is dropped.
     input_stopped: Cell<bool>,
     /// Input that could not be decoded closed the channel: what follows it in
-    /// the same read is not delivered (a `disconnect()` from a handler is
-    /// different, see `accepts_input`).
+    /// the same read is not delivered.
     input_failed: Cell<bool>,
 
     #[cfg(windows)]
@@ -1078,7 +1077,7 @@ impl SendQueue {
     /// comes later (the deferred task, the end of the write in flight).
     fn stop_input(&self) {
         self.input_stopped.set(true);
-        // What a read already handed to the kernel produces stays with the pipe.
+        // What arrives from here on stays in the pipe.
         #[cfg(windows)]
         self.socket.with_mut(|socket| {
             if let SocketUnion::Open(pipe) = socket {

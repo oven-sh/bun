@@ -3,8 +3,10 @@
 #include "NodeTTYModule.h"
 
 #if OS(WINDOWS)
-#include <io.h>
 #include <windows.h>
+
+// `_get_osfhandle`; INVALID_HANDLE_VALUE for an fd that has no HANDLE.
+extern "C" void* Bun__crtGetOsfhandle(int fd);
 #endif
 
 using namespace JSC;
@@ -28,7 +30,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
     // A character device that is not a console (NUL, a serial port) is not a tty.
     bool isTTY = false;
     if (fd >= 0) {
-        HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+        HANDLE handle = Bun__crtGetOsfhandle(fd);
         DWORD mode;
         isTTY = GetFileType(handle) == FILE_TYPE_CHAR && GetConsoleMode(handle, &mode);
     }

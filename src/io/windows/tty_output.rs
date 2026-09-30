@@ -76,6 +76,8 @@ enum AnsiState {
 pub(crate) struct OutputState {
     utf8_bytes_left: u8,
     utf8_codepoint: u32,
+    /// The least a sequence of this length is the shortest form of.
+    utf8_least: u32,
     /// `\n` or `\r` if that was the last character written, else 0.
     previous_eol: u8,
     ansi_state: AnsiState,
@@ -92,6 +94,7 @@ impl OutputState {
         Self {
             utf8_bytes_left: 0,
             utf8_codepoint: 0,
+            utf8_least: 0,
             previous_eol: 0,
             ansi_state: AnsiState::Normal,
             csi_argc: 0,
@@ -508,8 +511,8 @@ struct Writer<'a> {
 }
 
 impl Writer<'_> {
-    /// Non-shortest forms, surrogates and values past U+10FFFF are let through; sequences of up
-    /// to seven bytes are decoded.
+    /// Surrogates are let through. A non-shortest form is not: it would spell a control
+    /// character (`C0 9B` for ESC) in bytes that a check for that character has passed.
     fn write(&mut self, data: &[u8]) {
         for &c in data {
             if self.state.utf8_bytes_left != 0 {
@@ -518,7 +521,14 @@ impl Writer<'_> {
                     self.state.utf8_codepoint =
                         (self.state.utf8_codepoint << 6) | u32::from(c & 0x3F);
                     if self.state.utf8_bytes_left == 0 {
-                        self.put_codepoint(self.state.utf8_codepoint);
+                        let codepoint = self.state.utf8_codepoint;
+                        self.put_codepoint(
+                            if (self.state.utf8_least..=0x10FFFF).contains(&codepoint) {
+                                codepoint
+                            } else {
+                                REPLACEMENT_CHARACTER
+                            },
+                        );
                     }
                     continue;
                 }
@@ -529,12 +539,13 @@ impl Writer<'_> {
 
             match c.leading_ones() {
                 0 => self.put_codepoint(u32::from(c)),
-                // A continuation byte, or 0xFF.
-                1 | 8 => self.put_codepoint(REPLACEMENT_CHARACTER),
-                ones => {
+                ones @ 2..=4 => {
                     self.state.utf8_codepoint = u32::from(c) & (0xFF >> (ones + 1));
                     self.state.utf8_bytes_left = (ones - 1) as u8;
+                    self.state.utf8_least = [0x80, 0x800, 0x10000][ones as usize - 2];
                 }
+                // A continuation byte, or the start of nothing UTF-8 has.
+                _ => self.put_codepoint(REPLACEMENT_CHARACTER),
             }
         }
     }

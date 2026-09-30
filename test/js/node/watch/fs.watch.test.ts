@@ -250,7 +250,7 @@ describe("fs.watch", () => {
 
   // Elsewhere the sequence differs (Linux: two "rename" events). The watcher stays open everywhere.
   describe.skipIf(!isWindows).each([false, true])("deleting the watched directory (recursive: %p)", recursive => {
-    // `script` sees `fs`, `path`, `root` and `watchTarget()`, which makes `root/watched`, watches it
+    // `script` sees `fs`, `path`, `root` and `watchTarget()`, which makes `root/<name>`, watches it
     // and resolves with what was heard about the directory itself once the event loop has gone
     // round 500 more times: asking a deleted directory for its changes again fails again.
     // No "error" listener: an error is an uncaught exception.
@@ -264,8 +264,8 @@ describe("fs.watch", () => {
             const fs = require("fs");
             const path = require("path");
             const root = fs.realpathSync(process.argv[1]);
-            function watchTarget(populate, remove) {
-              const target = path.join(root, "watched");
+            function watchTarget(populate, remove, name = "watched") {
+              const target = path.join(root, name);
               fs.mkdirSync(target);
               populate(target);
               const { promise, resolve } = Promise.withResolvers();
@@ -303,26 +303,28 @@ describe("fs.watch", () => {
     });
 
     // Its files go first, and each is a change to report: the directory can be gone by the time the
-    // next changes are asked for.
+    // next changes are asked for. All at once: the system takes tens of milliseconds over the last
+    // close of a deleted directory that was watched.
     test("reports one rename and no error when it had files in it", async () => {
-      const rounds = 40;
+      const directories = 40;
       expect(
         await run(`
           const outcomes = [];
-          for (let round = 0; round < ${rounds}; round++) {
+          for (let i = 0; i < ${directories}; i++) {
             outcomes.push(
-              await watchTarget(
+              watchTarget(
                 target => {
                   fs.mkdirSync(path.join(target, "sub"));
                   for (const name of ["a.txt", "b.txt", "sub/c.txt"]) fs.writeFileSync(path.join(target, name), name);
                 },
-                target => fs.rmSync(target, { recursive: true }),
+                target => void fs.promises.rm(target, { recursive: true }),
+                "watched" + i,
               ),
             );
           }
-          console.log(JSON.stringify(outcomes));
+          console.log(JSON.stringify(await Promise.all(outcomes)));
         `),
-      ).toEqual({ stdout: JSON.stringify(Array(rounds).fill(["rename"])), stderr: "", exitCode: 0 });
+      ).toEqual({ stdout: JSON.stringify(Array(directories).fill(["rename"])), stderr: "", exitCode: 0 });
     });
   });
 
@@ -371,6 +373,31 @@ describe("fs.watch", () => {
   test.skipIf(!isWindows)("a directory that was moved away and made again can be watched again", () =>
     watchAgain(false, "moved"),
   );
+
+  // The watcher of a file watches the directory the file is in, for that one name.
+  test("a directory that took the place of a watched file is watched as a directory", async () => {
+    using dir = tempDir("watch-file-then-directory", { watched: "a file" });
+    const target = path.join(String(dir), "watched");
+    const first = fs.watch(target);
+    let second: fs.FSWatcher | undefined;
+    let interval: ReturnType<typeof repeat> | undefined;
+    try {
+      fs.unlinkSync(target);
+      fs.mkdirSync(target);
+      second = fs.watch(target);
+      const failed = new Promise<never>((_, reject) => second!.on("error", reject));
+      const sawFile = Promise.withResolvers<void>();
+      second.on("change", (_, filename) => {
+        if (filename === "new.txt") sawFile.resolve();
+      });
+      interval = repeat(() => fs.writeFileSync(path.join(target, "new.txt"), "x"));
+      await Promise.race([sawFile.promise, failed]);
+    } finally {
+      clearInterval(interval);
+      first.close();
+      second?.close();
+    }
+  });
 
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {

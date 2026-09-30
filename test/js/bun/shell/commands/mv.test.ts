@@ -68,6 +68,28 @@ describe("mv", async () => {
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
 
+  // A rename does not write to the file.
+  test.each(["new", "existing"])("move read-only file -> %s file", async target => {
+    const dir = join(tmpdir(), `bun-mv-read-only-${process.pid}-${target}`);
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(join(dir, "a"), "read-only\n");
+      chmodSync(join(dir, "a"), 0o444);
+      if (target === "existing") writeFileSync(join(dir, "b"), "replaced\n");
+      const { stderr, exitCode } = await $`mv a b`.cwd(dir).nothrow().quiet();
+      expect({ stderr: stderr.toString(), left: readdirSync(dir), b: readFileSync(join(dir, "b"), "utf8") }).toEqual({
+        stderr: "",
+        left: ["b"],
+        b: "read-only\n",
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      for (const name of readdirSync(dir)) chmodSync(join(dir, name), 0o666);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
   // mount on a different device from the harness temp dir.

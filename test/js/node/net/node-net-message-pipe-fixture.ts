@@ -1,6 +1,8 @@
-// A message-type named pipe server made of blocking Win32 calls, for node-net.test.ts.
-// argv: <pipe name> <"reply-after-end" | "disconnect-after-end" | "ignore-end" | "end-first" | "end-then-close">
-//       <"plain" | "reject-remote">.
+// A named pipe server made of blocking Win32 calls, for node-net.test.ts. Its pipe is message-type unless it is "byte".
+// argv: <pipe name>
+//       <"reply-after-end" | "silent-after-end" | "disconnect-after-end" | "ignore-end" | "end-first" | "end-then-close"
+//        | "reply-then-close">
+//       <"plain" | "reject-remote" | "byte">.
 // Prints one line per thing it sees.
 import { dlopen, ptr } from "bun:ffi";
 
@@ -24,7 +26,7 @@ const [name, scenario, flags] = process.argv.slice(2);
 const handle = CreateNamedPipeW(
   ptr(Buffer.from(name + "\0", "utf16le")),
   PIPE_ACCESS_DUPLEX,
-  PIPE_TYPE_MESSAGE | (flags === "reject-remote" ? PIPE_REJECT_REMOTE_CLIENTS : 0),
+  (flags === "byte" ? 0 : PIPE_TYPE_MESSAGE) | (flags === "reject-remote" ? PIPE_REJECT_REMOTE_CLIENTS : 0),
   1,
   4096,
   4096,
@@ -63,6 +65,10 @@ if (scenario === "reply-after-end") {
   // Longer than the 50 ms for which a pipe that is not to stay half-open is still read after end().
   Bun.sleepSync(150);
   console.log("wrote:" + write("late reply"));
+} else if (scenario === "silent-after-end") {
+  readUntilEndOrClose();
+  // Says nothing more, and stays for as long as the client does.
+  readUntilEndOrClose();
 } else if (scenario === "ignore-end") {
   // What mpv's IPC server does: a read of no bytes is nothing to it, and the client closing is the end.
   while (true) {
@@ -77,6 +83,10 @@ if (scenario === "reply-after-end") {
   console.log("wrote:" + write("reply"));
   FlushFileBuffers(handle);
   DisconnectNamedPipe(handle);
+} else if (scenario === "reply-then-close") {
+  write("hello");
+  // Returns once the client has taken it out of the pipe.
+  FlushFileBuffers(handle);
 } else {
   write("hello");
   // Returns once the client has read it: a zero-length message behind unread bytes is merged into them.

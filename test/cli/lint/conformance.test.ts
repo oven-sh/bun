@@ -29,6 +29,11 @@ import { type Origin, listErrorBaselines, roundTripFiles, sampleErrorBaselines }
 import { skipTrivia } from "./conformance/runner/scanner";
 import { toWriterInput } from "./conformance/runner/shape";
 import { isLineBreak, isWhiteSpaceLike, isWhiteSpaceSingleLine } from "./conformance/runner/stringutil";
+import {
+  extractCompilerSettings,
+  getConfigNameFromFileName,
+  parseTestFilesAndSymlinksWithOptions,
+} from "./conformance/runner/test_case_parser";
 import { decodeBytes } from "./conformance/runner/vfs";
 
 const home = join(import.meta.dir, "conformance");
@@ -284,7 +289,6 @@ describe("reference", () => {
 });
 
 describe("directives", () => {
-  const { extractCompilerSettings, getConfigNameFromFileName, parseTestFilesAndSymlinksWithOptions } = runner;
   const obj = (m: Map<string, string>) => Object.fromEntries([...m.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
 
   test("the vectors of the reference parser", () => {
@@ -355,7 +359,7 @@ describe("directives", () => {
 });
 
 describe("variations", () => {
-  const { extractCompilerSettings, getCompilerVaryByMap, getFileBasedTestConfigurations } = runner;
+  const { getCompilerVaryByMap, getFileBasedTestConfigurations } = runner;
   const vary = lazy(() => getCompilerVaryByMap());
   const names = (text: string) =>
     getFileBasedTestConfigurations(extractCompilerSettings(text), vary()).map(c => c.name);

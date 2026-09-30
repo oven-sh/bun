@@ -229,46 +229,71 @@ JSObject* nodeEventEmitterPrototype(Zig::GlobalObject* globalObject)
     return prototype;
 }
 
-static void moveToEnd(VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& key, PropertyOffset offset, unsigned attributes)
+static void moveToEnd(VM& vm, JSGlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue value, unsigned attributes)
 {
     // putDirect() takes no accessor, and what cannot be deleted stays where it is.
     if (attributes & (PropertyAttribute::DontDelete | PropertyAttribute::AccessorOrCustomAccessorOrValue))
         return;
-    JSValue value = object->getDirect(offset);
     object->deleteProperty(globalObject, key);
     object->putDirect(vm, key, value, attributes);
 }
+
+// What reifyAllStaticProperties() makes of `constructor` and of `emit`: the getter of the table, as a property. A value
+// can take its place, unless the property cannot be deleted.
+static bool isLazyValue(unsigned attributes)
+{
+    return (attributes & PropertyAttribute::CustomValue) && !(attributes & PropertyAttribute::DontDelete);
+}
+
+// The global object has a property of this name once src/js/node/events.ts has the prototype. No builtin reads it,
+// which is why it is not one of BunBuiltinNames.
+static WTF::SymbolImpl::StaticSymbolImpl prototypeAdoptedPrivateName { "nodeEventsPrototypeAdopted"_s, WTF::SymbolImpl::s_flagIsPrivate };
 
 JSValue nodeEventEmitterPrototypeForModule(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = nodeEventEmitterPrototype(globalObject);
-    // node:events is evaluated again when it threw after this call.
-    if (prototype->staticPropertiesReified())
+    // node:events is evaluated again when it threw after this call. It has defined properties of its own by then,
+    // and a second pass would move the methods behind them.
+    auto adopted = Identifier::fromUid(prototypeAdoptedPrivateName);
+    if (globalObject->getDirect(vm, adopted))
         return prototype;
 
+    // JavaScriptCore itself defines every name of the table, all at once, for the `delete` of one of them and for a
+    // copy of the object (Object.assign(), Object.values(), a spread). A name that the object does not have after
+    // that was deleted.
+    bool wasReified = prototype->staticPropertiesReified();
+
     auto emitName = Identifier::fromString(vm, "emit"_s);
+    unsigned emitAttributes;
+    bool hasEmit = isValidOffset(prototype->getDirectOffset(vm, emitName, emitAttributes));
     JSValue emit;
-    if (!isValidOffset(prototype->getDirectOffset(vm, emitName))) {
+    if (hasEmit ? isLazyValue(emitAttributes) : !wasReified) {
         // The one step that can throw comes before the first change.
         emit = callFactory(vm, globalObject, eventEmitterPrototypeCreateEmitCodeGenerator(vm));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // What native code read or assigned before node:events was evaluated is ahead of the names that the table has before it.
+    // What was read or assigned before node:events was evaluated is ahead of the names that the table has before it.
     bool hadProperties = isValidOffset(prototype->structure()->maxOffset());
     // Nothing looks at the table from here on, and deleting a name does not define the others.
-    prototype->structure()->setStaticPropertiesReified(true);
+    if (!wasReified)
+        prototype->structure()->setStaticPropertiesReified(true);
     for (auto& entry : eventEmitterPrototypeTableValues) {
         auto key = Identifier::fromString(vm, entry.m_key);
         unsigned attributes;
         PropertyOffset offset = prototype->getDirectOffset(vm, key, attributes);
         if (isValidOffset(offset)) {
-            if (hadProperties)
-                moveToEnd(vm, globalObject, prototype, key, offset, attributes);
+            // `constructor` is undefined until events.ts assigns it.
+            if (isLazyValue(attributes))
+                moveToEnd(vm, globalObject, prototype, key, key == emitName ? emit : jsUndefined(), attributes & ~PropertyAttribute::CustomValue);
+            else if (hadProperties)
+                moveToEnd(vm, globalObject, prototype, key, prototype->getDirect(offset), attributes);
             continue;
         }
+        if (wasReified)
+            continue;
         if (key == vm.propertyNames->constructor) {
             // events.ts assigns it. This is the place that it has in the order of the keys.
             prototype->putDirect(vm, key, jsUndefined());
@@ -277,6 +302,8 @@ JSValue nodeEventEmitterPrototypeForModule(Zig::GlobalObject* globalObject)
         else
             reifyStaticProperty(vm, NodeEventEmitterPrototype::info(), key, entry, *prototype);
     }
+
+    globalObject->putDirect(vm, adopted, jsBoolean(true), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return prototype;
 }
 

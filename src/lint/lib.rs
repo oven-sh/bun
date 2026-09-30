@@ -3,10 +3,13 @@
 mod ast_utils;
 mod context;
 pub mod diagnostic;
+pub mod diagnosticwriter;
 mod linter;
 mod rule;
 mod rules;
+pub mod scanner;
 mod tokens;
+pub mod tspath;
 
 use bun_js_parser::parse::parse_entry::ParsedOnly;
 

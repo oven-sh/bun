@@ -144,7 +144,11 @@ bun_core::define_scoped_log!(log, IPC, visible);
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
 enum IncomingBuffer {
     /// For advanced mode - uses length-prefix, no scanning needed
-    Advanced(Vec<u8>),
+    Advanced {
+        data: Vec<u8>,
+        /// Read position in `data`. A pause leaves it where it is, so no loop holds a copy.
+        head: usize,
+    },
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
     Json(JSONLineBuffer),
 }
@@ -152,7 +156,10 @@ enum IncomingBuffer {
 impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
-            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
+            Mode::Advanced => IncomingBuffer::Advanced {
+                data: Vec::<u8>::default(),
+                head: 0,
+            },
             Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
         }
     }
@@ -2377,30 +2384,31 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
     })
 }
 
-fn decode_next_advanced(
-    incoming: &JsCell<IncomingBuffer>,
-    global: &JSGlobalObject,
-    slice_start: &mut usize,
-) -> DecodeStep {
+fn decode_next_advanced(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
     incoming.with_mut(|inc| {
-        let IncomingBuffer::Advanced(adv_buf) = inc else {
+        let IncomingBuffer::Advanced {
+            data: adv_buf,
+            head,
+        } = inc
+        else {
             unreachable!()
         };
-        let slice = &adv_buf.slice()[*slice_start..];
+        let slice = &adv_buf.slice()[*head..];
         match decode_ipc_message(Mode::Advanced, slice, global, None) {
             Ok(r) => {
                 let consumed = r.bytes_consumed as usize;
                 if consumed < slice.len() {
-                    *slice_start += consumed;
+                    *head += consumed;
                 } else {
                     adv_buf.clear();
-                    *slice_start = 0;
+                    *head = 0;
                 }
                 DecodeStep::Message(r)
             }
             Err(IPCDecodeError::NotEnoughBytes) => {
                 // copy the remaining bytes to the start of the buffer
-                adv_buf.drain_front(*slice_start);
+                adv_buf.drain_front(*head);
+                *head = 0;
                 DecodeStep::Wait
             }
             Err(e) => DecodeStep::Fail(e),
@@ -2411,16 +2419,13 @@ fn decode_next_advanced(
 /// Dispatches the complete messages in `incoming`. Stops once nothing reads them, and the rest waits for the resume.
 fn dispatch_incoming(send_queue: &SendQueue, global_this: &JSGlobalObject) {
     let was_dispatching = send_queue.dispatching_incoming.replace(true);
-    let mut slice_start: usize = 0;
     let step = loop {
         if !send_queue.is_reading() {
             break None;
         }
         let step = match send_queue.mode {
             Mode::Json => decode_next_json(&send_queue.incoming, global_this),
-            Mode::Advanced => {
-                decode_next_advanced(&send_queue.incoming, global_this, &mut slice_start)
-            }
+            Mode::Advanced => decode_next_advanced(&send_queue.incoming, global_this),
         };
         match step {
             DecodeStep::Message(result) => {
@@ -2430,13 +2435,8 @@ fn dispatch_incoming(send_queue: &SendQueue, global_this: &JSGlobalObject) {
         }
     };
     send_queue.dispatching_incoming.set(was_dispatching);
-    match step {
-        Some(step) => finish_decode(send_queue, &step),
-        None => send_queue.incoming.with_mut(|inc| {
-            if let IncomingBuffer::Advanced(adv_buf) = inc {
-                adv_buf.drain_front(slice_start);
-            }
-        }),
+    if let Some(step) = step {
+        finish_decode(send_queue, &step);
     }
 }
 
@@ -2460,7 +2460,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             // Advanced mode: uses length-prefix, no newline scanning needed.
             // Try to decode directly from the incoming chunk first, only buffer if needed.
             let buffered = send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced(adv_buf) = inc else {
+                let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
                     unreachable!()
                 };
                 adv_buf.len() != 0
@@ -2493,7 +2493,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     Ok(()) => {}
                     Err(IPCDecodeError::NotEnoughBytes) => {
                         send_queue.incoming.with_mut(|inc| {
-                            let IncomingBuffer::Advanced(adv_buf) = inc else {
+                            let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
                                 unreachable!()
                             };
                             handle_oom(adv_buf.write(data));
@@ -2507,7 +2507,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
 
             // Buffer has existing data, append and process
             send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced(adv_buf) = inc else {
+                let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
                     unreachable!()
                 };
                 handle_oom(adv_buf.write(all_data));
@@ -2600,7 +2600,7 @@ pub(crate) mod IPCHandlers {
                     let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
                     &mut spare[..suggested_size]
                 }
-                IncomingBuffer::Advanced(adv_buf) => {
+                IncomingBuffer::Advanced { data: adv_buf, .. } => {
                     // SAFETY: libuv writes into this region before on_read commits.
                     let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
                     &mut spare[..suggested_size]
@@ -2637,7 +2637,7 @@ pub(crate) mod IPCHandlers {
                 }
                 Mode::Advanced => {
                     send_queue.incoming.with_mut(|inc| {
-                        let IncomingBuffer::Advanced(adv_buf) = inc else {
+                        let IncomingBuffer::Advanced { data: adv_buf, .. } = inc else {
                             unreachable!()
                         };
                         // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.

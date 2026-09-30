@@ -16,14 +16,7 @@ import {
   parseListTypeOption,
 } from "./tsconfig";
 import { type CommandLineOption, elements, enumMap, optionsDeclarations } from "./tsoptions";
-import {
-  ExtensionDts,
-  fileExtensionIs,
-  getBaseFileName,
-  getDirectoryPath,
-  getNormalizedAbsolutePath,
-  isRootedDiskPath,
-} from "./tspath";
+import { getBaseFileName, getDirectoryPath, getNormalizedAbsolutePath, isRootedDiskPath } from "./tspath";
 
 // compiler_runner.go:34
 const srcFolder = "/.src";
@@ -339,7 +332,7 @@ export interface InstanceStatus {
   skipReason?: string;
   // The text of t.Fatalf or of the panic, for status invalid.
   invalidReason?: string;
-  // The reference skips the "output" subtest of the instance by name and still compares its error baseline.
+  // The case is one of skippedEmitTests: where the instance runs, its "output" subtest is skipped and its error baseline is still compared.
   emitOnly: boolean;
   // The options that the skip rule reads: those of the compilation.
   options: CompilerOptions;
@@ -411,11 +404,10 @@ export function getInstanceStatus(
   }
 
   const { options, harnessOptions, fatal } = compileFilesOptions(harnessConfig, tsConfig?.options, currentDirectory);
-  const result = { emitOnly: false, options, harnessOptions, currentDirectory, notes };
+  const result = { emitOnly: skippedEmitTests.has(basename), options, harnessOptions, currentDirectory, notes };
   const invalidReason = tsConfig?.panic ?? fatal;
   if (invalidReason !== undefined) return { status: "invalid", invalidReason, ...result };
   const skipReason = skipUnsupportedCompilerOptions(options);
   if (skipReason !== undefined) return { status: "skip", skipReason, ...result };
-  const hasNonDtsFiles = test.units.some(unit => unit !== configUnit && !fileExtensionIs(unit.name, ExtensionDts));
-  return { status: "run", ...result, emitOnly: hasNonDtsFiles && skippedEmitTests.has(basename) };
+  return { status: "run", ...result };
 }

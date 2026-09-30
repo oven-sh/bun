@@ -1,4 +1,5 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
+import { httpRouterScript } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "node:net";
@@ -1105,5 +1106,277 @@ describe.concurrent("false route with no fetch handler", () => {
 
     proc.kill();
     await proc.exited;
+  });
+});
+
+// uWS::HttpRouter with no server around it. A script line is one router call, and
+// `route` prints 1 or 0 for the result and then " id(params)" for each handler
+// that ran. Handlers are numbered in the order they are added. The last field of
+// an `add` line is the share of requests the handler yields: 0 answers every
+// request, 100 yields every request to the next handler.
+describe("uWS::HttpRouter", () => {
+  const run = (...lines: string[]) => httpRouterScript(lines.join("\n")).split("\n").slice(0, -1);
+
+  // The cases of uWebSockets' tests/HttpRouter.cpp (Apache-2.0), with its
+  // handler names as comments.
+  describe("uWebSockets router tests", () => {
+    test("method priority", () => {
+      expect(
+        run(
+          "add L * /static/route 0", // 0 AS
+          "add M PATCH /static/route 100", // 1 PS
+          "add M GET /static/route 0", // 2 GS
+          "route nonsense /static/route",
+          "route GET /static",
+          "route POST /static/route",
+          "route GET /static/route",
+          "route PATCH /static/route",
+        ),
+      ).toEqual(["1 0()", "0", "1 0()", "1 2()", "1 1() 0()"]);
+    });
+
+    test("deep parameter routes", () => {
+      expect(
+        run(
+          "add M GET /something/:id/sync 100", // 0 ETT
+          "add M GET /something/:somethingId/pin 100", // 1 TVÅ
+          "add M GET /something/:id/:attribute 100", // 2 TRE
+          "route GET /something/1234/pin",
+          "route GET /something/1234/sync",
+        ),
+      ).toEqual(["0 1(1234) 2(1234,pin)", "0 0(1234) 2(1234,sync)"]);
+    });
+
+    test("pattern priority", () => {
+      expect(
+        run(
+          "add L * /a/b/c 100", // 0 AS
+          "add M GET /a/:b/c 100", // 1 GP
+          "add M GET /a/* 100", // 2 GW
+          "add M GET /a/b/c 100", // 3 GS
+          "add M POST /a/:b/c 100", // 4 PP
+          "add L * /a/:b/c 100", // 5 AP
+          "route POST /a/b/c",
+          "route GET /a/b/c",
+        ),
+      ).toEqual(["0 4(b) 0() 5(b)", "0 3() 1(b) 2() 0() 5(b)"]);
+    });
+
+    test("upgrade", () => {
+      expect(
+        run(
+          "add M GET /something 0", // 0 GS
+          "add M GET /* 100", // 1 GW
+          "add H GET /* 100", // 2 WW
+          "route GET /something",
+          "route GET /",
+        ),
+      ).toEqual(["1 2() 0()", "0 2() 1()"]);
+    });
+
+    test("bug reports", () => {
+      expect({
+        removedParameterRoute: run(
+          "add M GET /route 0",
+          "add M GET /route/:id 0",
+          "route GET /route/21",
+          "route GET /route",
+          "remove M GET /route",
+          "route GET /route",
+          "remove M GET /route/:id",
+          "route GET /route/21",
+        ),
+        manySlashes: run(
+          "add M GET /foo//////bar/baz/qux 100", // 0 MANYSLASH
+          "add M GET /foo 100", // 1 FOO
+          "route GET /foo",
+          "route GET /foo/",
+          "route GET /foo//bar/baz/qux",
+          "route GET /foo//////bar/baz/qux",
+        ),
+        wildcardAfterSlash: run("add M GET /test/* 100", "route GET /test/"),
+        upgradeBeforeStaticBeforeWildcard: run(
+          "add H GET /* 100", // 0 WW
+          "add M GET /ok 100", // 1 GS
+          "add M GET /* 100", // 2 GW
+          "route GET /ok",
+        ),
+        upgradeOnRoot: run("add H GET / 100", "add M GET / 100", "route GET /"),
+        upgradeStaticAny: run(
+          "add H GET /* 100", // 0 WW
+          "add M GET /static 100", // 1 GSL
+          "add L * /* 100", // 2 AW
+          "route GET /static",
+        ),
+        upgradeRootStaticAny: run(
+          "add H GET /* 100", // 0 WW
+          "add M GET / 100", // 1 GSS
+          "add M GET /static 100", // 2 GSL
+          "add L * /* 100", // 3 AW
+          "route GET /static",
+        ),
+        staticBeforeParameter: run(
+          "add M GET /foo 100", // 0 FOO
+          "add M GET /:id 100", // 1 ID
+          "add M GET /1ab 100", // 2 ONEAB
+          "route GET /1ab",
+        ),
+        staticBeforeWildcard: run(
+          "add M GET /* 100", // 0 STAR
+          "add M GET / 100", // 1 STATIC
+          "route GET /",
+        ),
+      }).toEqual({
+        removedParameterRoute: ["1 1(21)", "1 0()", "r1", "0", "r1", "0"],
+        manySlashes: ["0 1()", "0", "0", "0 0()"],
+        wildcardAfterSlash: ["0 0()"],
+        upgradeBeforeStaticBeforeWildcard: ["0 0() 1() 2()"],
+        upgradeOnRoot: ["0 0() 1()"],
+        upgradeStaticAny: ["0 0() 1() 2()"],
+        upgradeRootStaticAny: ["0 0() 2() 3()"],
+        staticBeforeParameter: ["0 2() 1(1ab)"],
+        staticBeforeWildcard: ["0 1() 0()"],
+      });
+    });
+
+    test("parameters", () => {
+      expect(
+        run(
+          "add M GET /candy/:kind/* 100", // 0 GPW
+          "add M GET /candy/lollipop/* 100", // 1 GLW
+          "add M GET /candy/:kind/:action 100", // 2 GPP
+          "add M GET /candy/lollipop/:action 100", // 3 GLP
+          "add M GET /candy/lollipop/eat 100", // 4 GLS
+          "route GET /candy/lollipop/eat",
+          "route GET /candy/lollipop/",
+          "route GET /candy/lollipop",
+          "route GET /candy/",
+        ),
+      ).toEqual(["0 4() 3(eat) 1() 2(lollipop,eat) 0(lollipop)", "0 1() 0(lollipop)", "0", "0"]);
+    });
+  });
+
+  // A fixed pseudo-random sequence of router calls. The digests are the output
+  // of the router on main at bf42a525d5, so a router change that sends any of
+  // these requests to other handlers, in another order or with other
+  // parameters changes a digest. To find the call, run the same script on a
+  // build without the change and compare the two outputs line by line.
+  describe("random call sequences", () => {
+    function randomScript(seed: number, calls: number, names: number) {
+      let state = (seed * 2654435761 + 1013904223) >>> 0;
+      const below = (n: number) => {
+        state ^= state << 13;
+        state >>>= 0;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        state >>>= 0;
+        return state % n;
+      };
+      const pick = <T>(list: readonly T[]) => list[below(list.length)];
+      const patternSegments = ["a", "b", "c", "d", "", ":x", ":yy", ":", "*", "*z", "e", "a-longer-static-name", "a"];
+      const urlSegments = ["a", "b", "c", "d", "", "e", "zz", ":x", ":", "*", "*z", "a-longer-static-name", "q"];
+      const methods = ["GET", "POST", "HEAD", "PUT", "*"];
+      const priorities = ["H", "M", "L"];
+      const depth = 1 + below(4);
+      const yields = below(3) === 0 ? 0 : 10 + below(70);
+      const routeShare = 20 + below(60);
+      const repeatShare = below(50);
+      // An empty ANY node is dropped by the first removal. Half of the
+      // sequences keep a route under ANY so that the node stays.
+      const keeper = seed % 2 === 0 ? ["add L * /never-requested/keeper 100"] : [];
+      const path = (segments: readonly string[], maxDepth: number) => {
+        let out = "";
+        for (let i = 1 + below(maxDepth); i > 0; i--) {
+          out += "/" + (names && below(10) < 8 ? "name-" + below(names) : pick(segments));
+        }
+        return out;
+      };
+      const lines = [...keeper];
+      let added: string[] = [];
+      for (let i = 0; i < calls; i++) {
+        if (below(16) === 0) lines.push("sort");
+        const dice = below(100);
+        if (dice < routeShare) {
+          lines.push(`route ${below(8) === 0 ? "PATCH" : pick(methods)} ${path(urlSegments, depth + 1)}`);
+        } else if (dice < routeShare + 8) {
+          // Half of the removals name a route that was added.
+          if (added.length && below(2) === 0) {
+            const [, priority, list, pattern] = pick(added).split(" ");
+            lines.push(`remove ${priority} ${pick(list.split(","))} ${pattern}`);
+          } else {
+            lines.push(`remove ${pick(priorities)} ${pick(methods)} ${path(patternSegments, depth)}`);
+          }
+        } else if (dice < routeShare + 9 && (!names || below(400) === 0)) {
+          lines.push("reset", ...keeper);
+          added = [];
+        } else if (added.length && below(100) < repeatShare) {
+          // The same method, pattern and priority again replaces the route.
+          lines.push(pick(added));
+        } else {
+          const first = below(methods.length);
+          const list = Array.from({ length: 1 + below(3) }, (_, k) => methods[(first + k) % methods.length]);
+          // One method can be in the list twice.
+          if (below(12) === 0) list.push(list[0]);
+          const line = `add ${pick(priorities)} ${list.join(",")} ${path(patternSegments, depth)} ${yields}`;
+          lines.push(line);
+          added.push(line);
+        }
+      }
+      lines.push("steps");
+      return lines.join("\n");
+    }
+    const digest = (script: string) => {
+      const output = httpRouterScript(script);
+      // The last line is the step count, which is not part of the routing result.
+      return new Bun.CryptoHasher("sha1").update(output.slice(0, output.lastIndexOf("\ns") + 1)).digest("hex");
+    };
+
+    test.each([
+      [
+        0,
+        [
+          "e32cf48c7ccbc3f1ea5229f847a46b7be1cdba68",
+          "4fcb682b14ff6e5387dd9f9700ebbd13283131ee",
+          "1e22b601cf88fe7765c1ea9fc38b07d48ec1adb1",
+          "d00fb3e84a191d0a44a67d09e8ebbf616e6125fb",
+        ],
+      ],
+      [
+        4,
+        [
+          "4492dcb6307657b9f0634d1db3fb7d07863c16a7",
+          "207433ed61f3a5a2d9f30f249838e24311cc9117",
+          "ae5a7eb90e3dc0b88efe620769474505c9657983",
+          "49032f562000d253cffbff9c201421edf9ab297b",
+        ],
+      ],
+      [
+        8,
+        [
+          "9ae60068227e476daf570cb1fe3777e56c682ccf",
+          "f0ac51b2df94012c33e8be09619296559b09c1f2",
+          "7d4785c1b68f0625c4d642027ec036f37bc26388",
+          "da35183dafc0f36afd68f30da698fa21900800bc",
+        ],
+      ],
+      [
+        12,
+        [
+          "7a6b5156325fbc3b0fcf6e1188f34678c6a0b9c5",
+          "a22d996ab3c3efccfb44b5bd2515d8febceb52fb",
+          "21b3c4488493edbb6c8f377751bfc2c845a21f1d",
+          "8cf4e9f84833c52a225e8a201074bbe12fd5000d",
+        ],
+      ],
+    ])("short sibling lists, 4 sequences from seed %d", (first, digests) => {
+      expect(Array.from({ length: 4 }, (_, i) => digest(randomScript(first + i, 300, 0)))).toEqual(digests);
+    });
+
+    test.each([
+      [100, "4e57733ca6d82949f12ba81e2ff1fbad4bd78c19"],
+      [101, "ac045a2e3a18d1e62615b435f1110d768fd1de5b"],
+    ])("sibling lists of hundreds of names, seed %d", (seed, expected) => {
+      expect(digest(randomScript(seed, 1500, 400))).toBe(expected);
+    });
   });
 });

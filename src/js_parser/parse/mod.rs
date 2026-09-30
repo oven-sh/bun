@@ -66,6 +66,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
     }
+    /// `parse_expr`, read with `flags`.
+    #[inline]
+    pub(crate) fn parse_expr_flagged(
+        &mut self,
+        level: Level,
+        flags: EFlags,
+    ) -> Result<Expr, Error> {
+        let mut expr = Expr::EMPTY;
+        self.parse_expr_common(level, None, flags, &mut expr)?;
+        Ok(expr)
+    }
+    /// What the expression that is the body of an arrow function is read with, where the arrow function is read with `flags`.
+    #[inline]
+    pub(crate) fn arrow_body_flags(flags: EFlags) -> EFlags {
+        if Self::IS_TYPESCRIPT_ENABLED && flags == EFlags::AfterQuestionAndBeforeColon {
+            flags
+        } else {
+            EFlags::None
+        }
+    }
     pub(crate) fn parse_expr_common(
         &mut self,
         level: Level,
@@ -674,9 +694,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Are these arguments to an arrow function?
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
+        // "a ? -<T>(b) : c": an operand is no arrow function, so the ":" after it starts no return type
         if is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && level.lte(Level::Assign))
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -761,7 +784,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
-                let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data)?;
+                // "a ? (b) => (c) : d => e": after parameters that could be an expression, the body is before the ":" too
+                let body_flags = if Self::IS_TYPESCRIPT_ENABLED
+                    && opts.is_after_question_and_before_colon
+                    && !items.is_empty()
+                    && spread_range.len == 0
+                    && type_colon_range.len == 0
+                    && errors.invalid_expr_after_question.is_none()
+                {
+                    EFlags::AfterQuestionAndBeforeColon
+                } else {
+                    EFlags::None
+                };
+                let mut arrow =
+                    p.parse_arrow_body_with_flags(args_slice, &mut arrow_data, body_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;
                 p.pop_scope();
@@ -1832,7 +1868,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        let body_flags = Self::arrow_body_flags(flags);
+                        let arrow_body =
+                            p.parse_arrow_body_with_flags(args, &mut data, body_flags)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1869,8 +1907,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 needs_async_loc: args[0].binding.loc,
                                 ..Default::default()
                             };
+                            let body_flags = Self::arrow_body_flags(flags);
+                            let parsed = p.parse_arrow_body_with_flags(args, &mut data, body_flags);
                             // Pop the scope on the error path too.
-                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                            let mut arrow_body = match parsed {
                                 Ok(body) => body,
                                 Err(e) => {
                                     p.pop_scope();
@@ -1919,6 +1959,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
+                                        is_after_question_and_before_colon: flags
+                                            == EFlags::AfterQuestionAndBeforeColon,
                                         ..Default::default()
                                     },
                                 );

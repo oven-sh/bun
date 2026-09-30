@@ -10,6 +10,7 @@ use crate::parser::{
     ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
+use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
@@ -574,6 +575,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
     ) -> Result<E::Arrow, Error> {
+        self.parse_arrow_body_with_flags(args, data, EFlags::None)
+    }
+
+    /// `parse_arrow_body`, where a body that is an expression is read with `flags`.
+    pub(crate) fn parse_arrow_body_with_flags(
+        &mut self,
+        args: &'a mut [G::Arg],
+        data: &mut FnOrArrowDataParse,
+        flags: EFlags,
+    ) -> Result<E::Arrow, Error> {
         let p = self;
         let arrow_loc = p.lexer.loc();
 
@@ -628,7 +639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
-        let expr = match p.parse_expr(Level::Comma) {
+        let expr = match p.parse_expr_flagged(Level::Comma, flags) {
             Ok(e) => e,
             Err(err) => {
                 // The error path returns without restoring fn_or_arrow_data_parse;

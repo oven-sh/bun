@@ -320,7 +320,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
-            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            let body_flags = Self::arrow_body_flags(flags);
+            let arrow_result =
+                p.parse_arrow_body_with_flags(args, &mut fn_or_arrow_data, body_flags);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));
         }
@@ -1022,6 +1024,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+                            is_after_question_and_before_colon: flags
+                                == EFlags::AfterQuestionAndBeforeColon,
                             ..Default::default()
                         },
                     );
@@ -1060,6 +1064,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 level,
                 ParenExprOpts {
                     force_arrow_fn: true,
+                    is_after_question_and_before_colon: flags
+                        == EFlags::AfterQuestionAndBeforeColon,
                     ..Default::default()
                 },
             );
@@ -1071,7 +1077,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let open = p.lexer.loc();
                 let assertion = Self::pfx_type_before_paren_for_lint(p, &less_than, open);
                 p.lexer.expect(T::TOpenParen)?;
-                let value = p.parse_paren_expr(loc, level, ParenExprOpts::default())?;
+                let value = p.parse_paren_expr(
+                    loc,
+                    level,
+                    ParenExprOpts {
+                        is_after_question_and_before_colon: flags
+                            == EFlags::AfterQuestionAndBeforeColon,
+                        ..Default::default()
+                    },
+                )?;
                 // An arrow function starts at the "<", and what parentheses hold starts after them.
                 if value.loc.start == loc.start {
                     return Ok(value);

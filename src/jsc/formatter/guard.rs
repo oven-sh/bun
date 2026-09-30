@@ -313,6 +313,10 @@ impl<'a> Formatter<'a> {
         self.style
     }
 
+    pub fn raise_shared_reference_budget(&mut self, bytes: usize) {
+        self.shared_reference_budget.bytes = self.shared_reference_budget.bytes.max(bytes);
+    }
+
     /// The budget, if it ran out and a shared reference printed as `[Object ...]`.
     pub fn abbreviated_shared_references(&self) -> Option<usize> {
         self.abbreviated

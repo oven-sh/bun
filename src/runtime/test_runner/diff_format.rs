@@ -26,27 +26,49 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
-        let mut abbreviated = None;
-        let mut stopped_early = false;
-        let mut side = |value: JSValue| -> JsResult<Cow<'static, [u8]>> {
-            let mut buf: Vec<u8> = Vec::new();
+        struct Side {
+            text: Vec<u8>,
+            abbreviated: Option<usize>,
+            stopped_early: bool,
+        }
+        let side = |value: JSValue, repeats: Option<usize>| -> JsResult<Side> {
+            let mut text: Vec<u8> = Vec::new();
             let mut formatter = Formatter::diff(global_this);
-            formatter.format_value::<false>(value, &mut buf)?;
-            abbreviated = abbreviated.or_else(|| formatter.abbreviated_shared_references());
-            stopped_early |= formatter.stopped_early();
-            Ok(Cow::Owned(trim_one_newline(buf)))
+            if let Some(bytes) = repeats {
+                formatter.raise_shared_reference_budget(bytes);
+            }
+            formatter.format_value::<false>(value, &mut text)?;
+            Ok(Side {
+                text: trim_one_newline(text),
+                abbreviated: formatter.abbreviated_shared_references(),
+                stopped_early: formatter.stopped_early(),
+            })
         };
-        Ok(DiffFormatter {
+        let mut expected_side = side(expected, None)?;
+        if not {
             // Only `expected` is shown.
-            received_string: if not {
-                Cow::Borrowed(b"")
-            } else {
-                side(received)?
-            },
-            expected_string: side(expected)?,
+            return Ok(DiffFormatter {
+                received_string: Cow::Borrowed(b""),
+                expected_string: Cow::Owned(expected_side.text),
+                not,
+                abbreviated: expected_side.abbreviated,
+                stopped_early: expected_side.stopped_early,
+            });
+        }
+        let mut received_side = side(received, None)?;
+        // One side shares an object where the other has copies of it. Abbreviated on one side
+        // only, every line of it would differ. What the other side printed in full bounds this.
+        if received_side.abbreviated.is_some() && expected_side.abbreviated.is_none() {
+            received_side = side(received, Some(expected_side.text.len()))?;
+        } else if expected_side.abbreviated.is_some() && received_side.abbreviated.is_none() {
+            expected_side = side(expected, Some(received_side.text.len()))?;
+        }
+        Ok(DiffFormatter {
+            received_string: Cow::Owned(received_side.text),
+            expected_string: Cow::Owned(expected_side.text),
             not,
-            abbreviated,
-            stopped_early,
+            abbreviated: received_side.abbreviated.or(expected_side.abbreviated),
+            stopped_early: received_side.stopped_early || expected_side.stopped_early,
         })
     }
 

@@ -1075,6 +1075,21 @@ test("a note is about a side that is shown", () => {
   );
 });
 
+test("an object that one side shares and the other has copies of does not differ", () => {
+  const big = () => ({ text: Buffer.alloc(128 * 1024, "v").toString() });
+  const shared = Array(12).fill(big());
+  const copies = Array.from({ length: 12 }, big);
+  for (const message of [
+    failure(() => expect(shared).toEqual([...copies, 1])),
+    failure(() => expect([...copies, 1]).toEqual(shared)),
+  ]) {
+    expect(message).toMatch(/- Expected  - [01]\n\+ Received  \+ [01]\n/);
+    expect(message).not.toContain("note:");
+  }
+  // Next to something small, it is abbreviated.
+  expect(failure(() => expect(shared).toEqual(1))).toContain("note: [Array], [Object], [Map] and [Set] stand for");
+});
+
 // A snapshot prints these the way the stored ones have them (snapshot.test.ts). A diff is not stored.
 test("what a diff prints that a snapshot does not", () => {
   const el = ($$typeof: string, type: string, props: object) => ({

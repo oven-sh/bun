@@ -1379,18 +1379,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 }
 
-                #[cfg(windows)]
-                let mut cwd_buf = bun_paths::path_buffer_pool::get();
-                #[cfg(windows)]
-                // `bun_sys::getcwd` returns the byte length written into
-                // `cwd_buf`; slice it here.
-                let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-                    Ok(len) => &cwd_buf[..len],
-                    Err(err) => {
-                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
-                    }
-                };
-                #[cfg(not(windows))]
                 let cwd = bun_core::cwd::get();
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.

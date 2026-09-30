@@ -660,8 +660,8 @@ impl Linker {
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash
-        if strings::starts_with(path.text, bun_core::cwd::get()) {
-            hash_key = &path.text[bun_core::cwd::get().len()..];
+        if let Some(relative) = path.text.strip_prefix(bun_core::cwd::get()) {
+            hash_key = relative;
         }
 
         bun_wyhash::hash(hash_key)

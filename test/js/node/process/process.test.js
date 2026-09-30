@@ -415,6 +415,45 @@ describe("after process.chdir()", () => {
   });
 });
 
+// POSIX-only: Windows refuses to remove a directory that is a process's cwd.
+it.skipIf(isWindows)(
+  "from a working directory removed before startup, what needs its name gives getcwd's error",
+  async () => {
+    using dir = tempDir("process-cwd-removed-before-startup", {});
+    const script = `
+    const attempt = async f => {
+      try {
+        return await f();
+      } catch (e) {
+        return { code: e.code, syscall: e.syscall };
+      }
+    };
+    console.log(JSON.stringify({
+      shell: await attempt(() => Bun.$\`pwd\`.quiet()),
+      glob: await attempt(() => [...new Bun.Glob("*").scanSync({ cwd: "sub", absolute: true })]),
+      compileCache: require("node:module").enableCompileCache("cache").message,
+    }));
+  `;
+    // A shell wrapper removes the directory and then execs bun.
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `cd "${dir}" && rmdir "${dir}" && exec "${bunExe()}" -e "$SCRIPT"`],
+      env: { ...bunEnv, SCRIPT: script },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      out: {
+        shell: { code: "ENOENT", syscall: "getcwd" },
+        glob: { code: "ENOENT", syscall: "getcwd" },
+        compileCache: "Cannot resolve cache directory: ENOENT",
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

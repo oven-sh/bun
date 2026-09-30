@@ -2071,9 +2071,8 @@ pub(crate) fn inject<'a>(
     target: &CompileTarget,
     temp_path_buf: &'a mut PathBuffer,
 ) -> Option<Injected<'a>> {
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-        Ok(len) => &cwd_buf[..len],
+    let cwd: &[u8] = match bun_sys::require_cwd() {
+        Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
@@ -2915,9 +2914,8 @@ pub fn to_executable(
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
         // Get the current working directory and join with outfile
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(len) => &cwd_buf[..len],
+        let cwd_path: &[u8] = match bun_sys::require_cwd() {
+            Ok(cwd) => cwd.as_bytes(),
             Err(e) => {
                 fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(

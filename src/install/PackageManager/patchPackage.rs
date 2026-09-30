@@ -447,14 +447,7 @@ pub fn do_patch_commit(
             }
         }
 
-        let mut cwdbuf = bun_paths::path_buffer_pool::get();
-        let cwd = match sys::getcwd_z(&mut cwdbuf) {
-            Ok(fd) => fd,
-            Err(e) => {
-                bun_core::pretty_error!("<r><red>error<r>: failed to get cwd path {}<r>\n", e);
-                Global::crash();
-            }
-        };
+        let cwd = bun_core::cwd::get_z();
         let mut gitbuf = bun_paths::path_buffer_pool::get();
         let git = match bun_which::which(
             &mut gitbuf,

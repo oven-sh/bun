@@ -904,23 +904,19 @@ fn record_cwd() -> Maybe<()> {
     }
 }
 
-/// Read cwd into a stack
-/// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
-pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
-    let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-    let len = getcwd(&mut buf[..])?;
-    Ok(bun_core::ZBox::from_bytes(&buf[..len]))
-}
-
-/// `getcwd` returning a NUL-terminated
-/// borrow into `buf`. POSIX `getcwd(3)` already NUL-terminates; on Windows
-/// the libuv path does too.
-pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
-    let len = getcwd(&mut buf[..])?;
-    debug_assert!(len < buf.len());
-    buf[len] = 0;
-    // SAFETY: NUL written at buf[len]; slice is within buf.
-    Ok(ZStr::from_buf(&buf[..], len))
+/// [`bun_core::cwd::get_z`], or the error `getcwd` gave if the OS could not
+/// name the working directory.
+pub fn require_cwd() -> Maybe<&'static ZStr> {
+    let Some(os_error) = bun_core::cwd::os_error() else {
+        return Ok(bun_core::cwd::get_z());
+    };
+    #[cfg(unix)]
+    return Err(Error::from_code_int(os_error as _, Tag::getcwd));
+    #[cfg(windows)]
+    return Err(Error::from_win32(
+        windows::Win32Error::from_u32(os_error),
+        Tag::getcwd,
+    ));
 }
 
 pub mod coreutils_error_map;

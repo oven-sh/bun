@@ -116,8 +116,8 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
+                    let root = match bun_sys::require_cwd() {
+                        Ok(cwd) => cwd,
                         Err(e) => {
                             return Err(global.throw_error(
                                 e.to_zig_err(),
@@ -175,8 +175,8 @@ impl UserOptions {
         let root: &[u8] = if let Some(slice) = config.get_optional_slice(global, "root")? {
             allocations.track(slice)
         } else {
-            match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
+            match bun_sys::require_cwd() {
+                Ok(cwd) => cwd.as_bytes(),
                 Err(e) => {
                     return Err(global
                         .throw_error(e.to_zig_err(), "while querying current working directory"));

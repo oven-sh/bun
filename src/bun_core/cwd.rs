@@ -17,17 +17,24 @@ struct Recorded {
     path: Box<[u8]>,
     /// Why the OS could not name the working directory, if `path` is the
     /// directory standing in for it.
-    error: Option<crate::Error>,
+    unnamed: Option<Unnamed>,
+}
+
+#[derive(Clone, Copy)]
+struct Unnamed {
+    error: crate::Error,
+    /// `errno`, or `GetLastError()` on Windows.
+    os_error: u32,
 }
 
 impl Recorded {
-    fn new(path: &[u8], error: Option<crate::Error>) -> Self {
+    fn new(path: &[u8], unnamed: Option<Unnamed>) -> Self {
         let mut bytes = Vec::with_capacity(path.len() + 1);
         bytes.extend_from_slice(path);
         bytes.push(0);
         Self {
             path: bytes.into_boxed_slice(),
-            error,
+            unnamed,
         }
     }
 
@@ -66,6 +73,9 @@ fn make_current(recorded: &'static Recorded) {
 /// (it was removed, say), this is the executable's directory until a change of
 /// directory succeeds. That lets `bun file.js` start, as `node file.js` does.
 /// A command that acts on the project it was run in calls [`require`].
+///
+/// Two calls can differ if a change of directory lands between them, so a
+/// computation that uses this twice reads it once.
 #[inline]
 pub fn get() -> &'static [u8] {
     get_z().as_bytes()
@@ -79,10 +89,16 @@ pub fn get_z() -> &'static ZStr {
 
 /// [`get`], or the OS's error if it could not name the working directory.
 pub fn require() -> crate::CrateResult<&'static [u8]> {
-    match current().error {
-        Some(error) => Err(error),
+    match current().unnamed {
+        Some(unnamed) => Err(unnamed.error),
         None => Ok(get()),
     }
+}
+
+/// The code behind a failing [`require`]: `errno`, or `GetLastError()` on
+/// Windows. For `bun_sys::require_cwd`.
+pub fn os_error() -> Option<u32> {
+    current().unnamed.map(|unnamed| unnamed.os_error)
 }
 
 /// Called once, from `main`, before anything reads the working directory.
@@ -91,6 +107,10 @@ pub fn startup() {
     match crate::getcwd(&mut buf) {
         Ok(cwd) => set(cwd.as_bytes()),
         Err(error) => {
+            #[cfg(unix)]
+            let os_error = crate::ffi::errno() as u32;
+            #[cfg(windows)]
+            let os_error = crate::windows_sys::kernel32::GetLastError();
             let exe_dir = crate::self_exe_path()
                 .ok()
                 .and_then(|exe| crate::dirname(exe.as_bytes()))
@@ -98,7 +118,9 @@ pub fn startup() {
                 // /proc/self/exe is not bounded by their size.
                 .filter(|dir| dir.len() < crate::MAX_PATH_BYTES)
                 .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
-            make_current(STAND_IN.get_or_init(|| Recorded::new(exe_dir, Some(error))));
+            make_current(
+                STAND_IN.get_or_init(|| Recorded::new(exe_dir, Some(Unnamed { error, os_error }))),
+            );
         }
     }
 }

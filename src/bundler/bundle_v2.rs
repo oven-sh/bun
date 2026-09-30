@@ -6882,13 +6882,11 @@ pub mod bv2_impl {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record
+                                            && let Some(specifier_to_use) = import_record
                                                 .path
                                                 .text
-                                                .starts_with(bun_core::cwd::get())
+                                                .strip_prefix(bun_core::cwd::get())
                                         {
-                                            let specifier_to_use = &import_record.path.text
-                                                [bun_core::cwd::get().len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(

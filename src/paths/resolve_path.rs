@@ -2278,13 +2278,8 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — `getcwd` writes into
-                    // `buf` and returns a borrow of it; capture the lengths we
-                    // need, drop the borrow, then re-slice `buf`.
-                    let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
-                        windows_filesystem_root(cwd.as_bytes()).len()
-                    };
+                    let cwd_root = windows_filesystem_root(bun_core::cwd::require()?);
+                    let sr_len = cwd_root.len();
                     // The cwd root (arbitrarily long for UNC cwds) plus the
                     // path must fit `buf` with one byte of headroom: the
                     // joined result feeds `normalize_buf`, whose UNC-root
@@ -2295,6 +2290,7 @@ impl PosixToWinNormalizer {
                     if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
+                    buf[..sr_len].copy_from_slice(cwd_root);
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
@@ -2326,11 +2322,8 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — see resolve_cwd above.
-                    let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
-                        windows_filesystem_root(cwd.as_bytes()).len()
-                    };
+                    let cwd_root = windows_filesystem_root(bun_core::cwd::require()?);
+                    let sr_len = cwd_root.len();
                     // The cwd root (arbitrarily long for UNC cwds) plus the
                     // path and its NUL must fit `buf`; such a combination
                     // can't exist on NT anyway, so error out instead of
@@ -2338,6 +2331,7 @@ impl PosixToWinNormalizer {
                     if sr_len + maybe_posix_path.len() > buf.len() {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
+                    buf[..sr_len].copy_from_slice(cwd_root);
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;

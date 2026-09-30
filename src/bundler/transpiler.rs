@@ -470,10 +470,9 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
+                    let top_level_dir = bun_core::cwd::get();
                     // Neither buster name below would fit `cache_bust_buf`.
-                    if bun_core::cwd::get().len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
+                    if top_level_dir.len() + entry_point.len() + 4 > bun_paths::MAX_PATH_BYTES {
                         break 'name false;
                     }
                     if bun_paths::is_absolute(entry_point) {
@@ -497,7 +496,6 @@ impl<'a> Transpiler<'a> {
 
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = bun_core::cwd::get();
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,

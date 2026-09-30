@@ -2725,14 +2725,11 @@ impl RunCommand {
             target.len()
         } else {
             // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+            let Ok(cwd) = bun_core::cwd::require() else {
                 return false;
             };
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::SEP;
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
+                cwd,
                 &mut script_name_buf.0,
                 &[target],
             );
@@ -3388,14 +3385,12 @@ impl RunCommand {
         // that sits next to README.md. Resolve to an absolute dir first
         // so joinAbsString downstream doesn't double-apply cwd.
         let mut base_buf = bun_paths::path_buffer_pool::get();
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let abs_md_path: &[u8] = 'blk: {
             if paths::is_absolute(path) {
                 break 'blk path;
             }
-            let cwd: &[u8] = match sys::getcwd(&mut cwd_buf.0[..]) {
-                Ok(n) => &cwd_buf[..n],
-                Err(_) => break 'blk path,
+            let Ok(cwd) = bun_core::cwd::require() else {
+                break 'blk path;
             };
             paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
                 cwd,

@@ -458,9 +458,10 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // Real syscall (not the resolver's cached top_level_dir): Node's
-        // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
+        // Real syscall (not `bun_core::cwd`): Node's process.cwd() calls
+        // uv_cwd() so a deleted cwd must surface here.
         let mut buf = bun_paths::path_buffer_pool::get();
+        #[allow(clippy::disallowed_methods)]
         match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => {
                 bun_string_jsc::create_utf8_for_js(global_object, &buf[..len])

@@ -403,12 +403,11 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
 
     // Resolve `dir` to an absolute path against the process cwd.
     let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let abs: &[u8] = if bun_paths::is_absolute(dir) {
         dir
     } else {
-        let cwd_len = match sys::getcwd(&mut cwd_buf[..]) {
-            Ok(n) => n,
+        let cwd = match sys::require_cwd() {
+            Ok(cwd) => cwd,
             Err(e) => {
                 return EnableResult {
                     status: STATUS_FAILED,
@@ -421,7 +420,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
             }
         };
         bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::resolve_path::platform::Auto>(
-            &cwd_buf[..cwd_len],
+            cwd.as_bytes(),
             &mut abs_buf[..],
             &[dir],
         )

@@ -1609,11 +1609,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let mut buf2 = bun_paths::path_buffer_pool::get();
 
             let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
-                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-                let cwd = &buf[..cwd_len];
                 let parts: [&[u8]; 1] = [cwd_];
                 let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    cwd,
+                    bun_core::cwd::require()?,
                     &mut buf2[..],
                     &parts,
                 )

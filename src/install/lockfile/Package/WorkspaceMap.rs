@@ -361,8 +361,6 @@ impl WorkspaceMap {
                             ),
                         );
                     } else {
-                        let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
                         let _ = log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
@@ -370,7 +368,7 @@ impl WorkspaceMap {
                                 "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                 err.name(),
                                 BStr::new(input_path),
-                                BStr::new(&cwd_buf[..cwd_len]),
+                                BStr::new(bun_core::cwd::get()),
                             ),
                         );
                     }

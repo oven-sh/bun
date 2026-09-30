@@ -68,9 +68,8 @@ impl ScanOpts {
             }
 
             // Convert to an absolute path
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
-                bun_sys::Result::Ok(len) => len,
+            let cwd = match bun_sys::require_cwd() {
+                bun_sys::Result::Ok(cwd) => cwd,
                 bun_sys::Result::Err(err) => {
                     let err_js = err.to_js(global_this);
                     return Err(global_this.throw_value(err_js));
@@ -79,7 +78,7 @@ impl ScanOpts {
 
             let cwd_str = join_string_buf::<platform::Auto>(
                 &mut path_buf2,
-                &[&path_buf[..cwd_len], cwd_utf8.slice()],
+                &[cwd.as_bytes(), cwd_utf8.slice()],
             );
             break 'cwd_str Box::<[u8]>::from(cwd_str);
         };

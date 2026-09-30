@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,50 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+it(
+  "should import a module again after a hot reload while its import() was still loading its dependencies",
+  async () => {
+    using dir = tempDir("hot-reload-import-in-flight", {
+      "a.mjs": `import "./dependency.mjs"; export const from = "a.mjs";`,
+      "dependency.mjs": `export {};`,
+      "entry.mjs": `
+        import { readFileSync, writeFileSync } from "node:fs";
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        if (globalThis.runs === 1) {
+          Bun.plugin({
+            name: "hold the dependency's load open until the reload",
+            setup(build) {
+              build.onLoad({ filter: /dependency\\.mjs$/ }, () => {
+                const loaded = { contents: "export {}", loader: "js" };
+                if (globalThis.dependencyMayLoad) return loaded;
+                const { promise, resolve } = Promise.withResolvers();
+                globalThis.dependencyMayLoad = () => resolve(loaded);
+                writeFileSync(import.meta.path, readFileSync(import.meta.path));
+                return promise;
+              });
+            },
+          });
+          globalThis.inFlight = import("./a.mjs");
+        } else {
+          globalThis.dependencyMayLoad();
+          console.log("in flight:", (await globalThis.inFlight).from);
+          console.log("next:", (await import("./a.mjs")).from);
+          process.exit(0);
+        }
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("in flight: a.mjs\nnext: a.mjs\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
 );

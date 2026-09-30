@@ -398,5 +398,7 @@
 	{"code":"#!/usr/bin/env node\nclass A { a; a; }","expect":[{"line":2,"column":14,"message":"Duplicate name 'a'."}]},
 	{"code":"class A{a(){}a(){}}","expect":[{"line":1,"column":14,"message":"Duplicate name 'a'."}]},
 	{"code":"class A { static/**/a; static/**/a; }","expect":[{"line":1,"column":34,"message":"Duplicate name 'a'."}]},
-	{"code":"class A { static [  'a'  ]; static [  'a'  ]; }","expect":[{"line":1,"column":39,"message":"Duplicate name 'a'."}]}
+	{"code":"class A { static [  'a'  ]; static [  'a'  ]; }","expect":[{"line":1,"column":39,"message":"Duplicate name 'a'."}]},
+	{"code":"class A { a() {} a() {} }","expect":[{"line":1,"column":18,"message":"Duplicate name 'a'."}]},
+	{"code":"(class { a = 1; a = 2; });","expect":[{"line":1,"column":17,"message":"Duplicate name 'a'."}]}
 ]

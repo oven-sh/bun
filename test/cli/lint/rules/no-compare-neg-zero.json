@@ -84,5 +84,18 @@
 	{"code":"é === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
 	{"code":"\"😀\" + (y === -0)","expect":[{"line":1,"column":9,"message":"Do not use the '===' operator to compare against -0."}]},
 	{"code":"x === -/* c */0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
-	{"code":"x === -00","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]}
+	{"code":"x === -00","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"x === NaN === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"x === -0 === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"x < -0 < -0 < -0","expect":[{"line":1,"column":1,"message":"Do not use the '<' operator to compare against -0."}]},
+	{"code":"(\n x) === -0","expect":[{"line":2,"column":2,"message":"Do not use the '===' operator to compare against -0."}],"differs":"moved","eslint":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"( // c\n x) === -0","expect":[{"line":2,"column":2,"message":"Do not use the '===' operator to compare against -0."}],"differs":"moved","eslint":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"(x /* ) */) === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"((x) // )\n) === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"f((x) === -0, (y))","expect":[{"line":1,"column":3,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"(x).y === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"((x).y) === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"(x)(1) === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"(x === -0) === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."},{"line":1,"column":2,"message":"Do not use the '===' operator to compare against -0."}]},
+	{"code":"((x === -0)) === -0","expect":[{"line":1,"column":1,"message":"Do not use the '===' operator to compare against -0."},{"line":1,"column":3,"message":"Do not use the '===' operator to compare against -0."}]}
 ]

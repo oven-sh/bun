@@ -139,5 +139,13 @@
 	{"code":"x = [\"😀\",,1]","expect":[{"line":1,"column":11,"message":"Unexpected comma in middle of array."}]},
 	{"code":"x = <a b={[,]} />","jsx":true,"expect":[{"line":1,"column":12,"message":"Unexpected comma in middle of array."}]},
 	{"code":"x = <a>{[1,,2]}</a>","jsx":true,"expect":[{"line":1,"column":12,"message":"Unexpected comma in middle of array."}]},
-	{"code":"[x = <a b={[,]} />] = y","jsx":true,"expect":[{"line":1,"column":13,"message":"Unexpected comma in middle of array."}]}
+	{"code":"[x = <a b={[,]} />] = y","jsx":true,"expect":[{"line":1,"column":13,"message":"Unexpected comma in middle of array."}]},
+	{"code":"switch (a) { case [,]: break; case [ , ]: break; }","expect":[{"line":1,"column":20,"message":"Unexpected comma in middle of array."},{"line":1,"column":38,"message":"Unexpected comma in middle of array."}]},
+	{"code":"switch (a) { case [,,]: break; case [,]: break; }","expect":[{"line":1,"column":20,"message":"Unexpected comma in middle of array."},{"line":1,"column":21,"message":"Unexpected comma in middle of array."},{"line":1,"column":38,"message":"Unexpected comma in middle of array."}]},
+	{"code":"switch (a) { case [,a]: break; case [,a]: break; }","expect":[{"line":1,"column":20,"message":"Unexpected comma in middle of array."},{"line":1,"column":38,"message":"Unexpected comma in middle of array."}]},
+	{"code":"switch (a) { case [,a]: break; case [a]: break; }","expect":[{"line":1,"column":20,"message":"Unexpected comma in middle of array."}]},
+	{"code":"[a,, b] = [, b, a]","expect":[{"line":1,"column":12,"message":"Unexpected comma in middle of array."}]},
+	{"code":"[a, b] = [, b]","expect":[{"line":1,"column":11,"message":"Unexpected comma in middle of array."}]},
+	{"code":"[a, , b] = [a, , b]","expect":[{"line":1,"column":16,"message":"Unexpected comma in middle of array."}]},
+	{"code":"[, a] = [, a]","expect":[{"line":1,"column":10,"message":"Unexpected comma in middle of array."}]}
 ]

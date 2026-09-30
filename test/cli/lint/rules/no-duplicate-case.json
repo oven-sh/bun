@@ -245,7 +245,7 @@
 	{"code":"switch (x) { case <a/>: break; case <a/>: break; }","jsx":true,"expect":[{"line":1,"column":32,"message":"Duplicate case label."}]},
 	{"code":"switch (x) { case <a/>: break; case <a />: break; }","jsx":true,"expect":[],"differs":"missing","eslint":[{"line":1,"column":32,"message":"Duplicate case label."}]},
 	{"code":"switch (x) { case f(<a>it's</a>): break; case f(<a>it's</a>): break; }","jsx":true,"expect":[{"line":1,"column":42,"message":"Duplicate case label."}]},
-	{"code":"function C() { switch (x) { case 'a': return <A b={c = c} />; case 'a': return null; } }","jsx":true,"expect":[{"line":1,"column":63,"message":"Duplicate case label."}]},
+	{"code":"function C() { switch (x) { case 'a': return <A b={c = d} />; case 'a': return null; } }","jsx":true,"expect":[{"line":1,"column":63,"message":"Duplicate case label."}]},
 	{"code":"switch (a) { case typeof(a): break; case typeof a: break; }","expect":[]},
 	{"code":"switch (a) { case (a, b), c: break; case a, b, c: break; }","expect":[]},
 	{"code":"switch (a) { case f((a)): break; case f(a): break; }","expect":[]},
@@ -346,5 +346,6 @@
 	{"code":"switch (a) { case function(){ return x ? 1 : 2 }: break; case function(){ return x ? 1 : 2 }: break; }","expect":[{"line":1,"column":58,"message":"Duplicate case label."}]},
 	{"code":"switch (a) { case x => x ? 1 : 2: break; case x => x ? 1 : 2: break; }","expect":[{"line":1,"column":42,"message":"Duplicate case label."}]},
 	{"code":"switch (a) { case a: case a: case a: case b: case b: }","expect":[{"line":1,"column":22,"message":"Duplicate case label."},{"line":1,"column":30,"message":"Duplicate case label."},{"line":1,"column":46,"message":"Duplicate case label."}]},
-	{"code":"switch (a) { case class { static x = 1 ? 2 : 3 }: break; case class { static x = 1 ? 2 : 3 }: break; }","expect":[{"line":1,"column":58,"message":"Duplicate case label."}]}
+	{"code":"switch (a) { case class { static x = 1 ? 2 : 3 }: break; case class { static x = 1 ? 2 : 3 }: break; }","expect":[{"line":1,"column":58,"message":"Duplicate case label."}]},
+	{"code":"switch(foo) { case bar: break; case NaN: break; case baz: break; case NaN: break; }","expect":[{"line":1,"column":66,"message":"Duplicate case label."}]}
 ]

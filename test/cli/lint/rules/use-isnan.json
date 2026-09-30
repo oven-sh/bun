@@ -409,5 +409,6 @@
 	{"code":"export function NaN() {} x === NaN","expect":[]},
 	{"code":"import { Number as N } from 'a'; x === Number.NaN","expect":[{"line":1,"column":34,"message":"Use the isNaN function to compare with NaN."}]},
 	{"code":"class A { f = x === NaN }","expect":[{"line":1,"column":15,"message":"Use the isNaN function to compare with NaN."}]},
-	{"code":"class A { static { x === NaN } }","expect":[{"line":1,"column":20,"message":"Use the isNaN function to compare with NaN."}]}
+	{"code":"class A { static { x === NaN } }","expect":[{"line":1,"column":20,"message":"Use the isNaN function to compare with NaN."}]},
+	{"code":"typeof a === NaN","expect":[{"line":1,"column":1,"message":"Use the isNaN function to compare with NaN."}]}
 ]

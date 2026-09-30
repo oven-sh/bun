@@ -468,5 +468,12 @@
 	{"code":"class A { a() {} a() {} }","expect":[]},
 	{"code":"(class { a = 1; a = 2; });","expect":[]},
 	{"code":"class A { static a = { b: 1, b: 2 }; }","expect":[{"line":1,"column":30,"message":"Duplicate key 'b'."}]},
-	{"code":"class A { [{ a: 1, a: 2 }.a]() {} }","expect":[{"line":1,"column":20,"message":"Duplicate key 'a'."}]}
+	{"code":"class A { [{ a: 1, a: 2 }.a]() {} }","expect":[{"line":1,"column":20,"message":"Duplicate key 'a'."}]},
+	{"code":"class A { static { ({ a: 1, a: 2 }); } }","expect":[{"line":1,"column":29,"message":"Duplicate key 'a'."}]},
+	{"code":"var x = { a: class { a() {} a() {} }, a: 1 };","expect":[{"line":1,"column":39,"message":"Duplicate key 'a'."}]},
+	{"code":"class A { a = { b: 1, b: 2 }; a() {} }","expect":[{"line":1,"column":23,"message":"Duplicate key 'b'."}]},
+	{"code":"export default { a: 1, a: 2 };","expect":[{"line":1,"column":24,"message":"Duplicate key 'a'."}]},
+	{"code":"export const o = { a: 1, a: 2 };","expect":[{"line":1,"column":26,"message":"Duplicate key 'a'."}]},
+	{"code":"class A { m() { return { a: 1, a: 2 }; } }","expect":[{"line":1,"column":32,"message":"Duplicate key 'a'."}]},
+	{"code":"({a} = {a, a})","expect":[{"line":1,"column":12,"message":"Duplicate key 'a'."}]}
 ]

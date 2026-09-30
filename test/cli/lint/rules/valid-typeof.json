@@ -474,5 +474,6 @@
 	{"code":"<undefined/>; typeof x === undefined","jsx":true,"expect":[{"line":1,"column":28,"message":"Invalid typeof comparison value."}]},
 	{"code":"<a undefined=\"1\"/>; typeof x === undefined","jsx":true,"expect":[{"line":1,"column":34,"message":"Invalid typeof comparison value."}]},
 	{"code":"<a.undefined/>; typeof x === undefined","jsx":true,"expect":[{"line":1,"column":30,"message":"Invalid typeof comparison value."}]},
-	{"code":"<a>undefined</a>; typeof x === undefined","jsx":true,"expect":[{"line":1,"column":32,"message":"Invalid typeof comparison value."}]}
+	{"code":"<a>undefined</a>; typeof x === undefined","jsx":true,"expect":[{"line":1,"column":32,"message":"Invalid typeof comparison value."}]},
+	{"code":"switch (a) { case typeof a === 'x': break; case typeof a==='x': break; }","expect":[{"line":1,"column":32,"message":"Invalid typeof comparison value."},{"line":1,"column":60,"message":"Invalid typeof comparison value."}]}
 ]

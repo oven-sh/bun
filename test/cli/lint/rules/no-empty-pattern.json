@@ -181,5 +181,8 @@
 	{"code":"x = <a b={({}) => 1} />","jsx":true,"expect":[{"line":1,"column":12,"message":"Unexpected empty object pattern."}]},
 	{"code":"x = <a>{([] = y)}</a>","jsx":true,"expect":[{"line":1,"column":10,"message":"Unexpected empty array pattern."}]},
 	{"code":"export const {} = a;","expect":[{"line":1,"column":14,"message":"Unexpected empty object pattern."}]},
-	{"code":"import a from \"a\"; var [] = a;","expect":[{"line":1,"column":24,"message":"Unexpected empty array pattern."}]}
+	{"code":"import a from \"a\"; var [] = a;","expect":[{"line":1,"column":24,"message":"Unexpected empty array pattern."}]},
+	{"code":"[] = []","expect":[{"line":1,"column":1,"message":"Unexpected empty array pattern."}]},
+	{"code":"({} = {})","expect":[{"line":1,"column":2,"message":"Unexpected empty object pattern."}]},
+	{"code":"({} = {a})","expect":[{"line":1,"column":2,"message":"Unexpected empty object pattern."}]}
 ]

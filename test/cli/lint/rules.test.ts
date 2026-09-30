@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bun } from "./lint-helpers";
 
@@ -10,12 +11,19 @@ type Case = { code: string; jsx?: true; expect: Report[]; differs?: string; esli
 const rulesDir = join(import.meta.dir, "rules");
 // `rules/<rule>.json` holds the cases of one rule.
 const rules = [...new Bun.Glob("*.json").scanSync(rulesDir)].map(file => file.slice(0, -".json".length)).sort();
+const fixtures: Record<string, Case[]> = Object.fromEntries(
+  rules.map(rule => [rule, JSON.parse(readFileSync(join(rulesDir, `${rule}.json`), "utf8"))]),
+);
+// The file that a case is for `bun --lint`: its extension and its text.
+const key = (c: Case) => `${c.jsx ? "jsx" : "js"}:${c.code}`;
+const keys = new Map(rules.map(rule => [rule, new Set(fixtures[rule].map(key))]));
 
 describe("bun --lint rules", () => {
   test.concurrent.each(rules)("%s", async rule => {
-    const cases: Case[] = await Bun.file(join(rulesDir, `${rule}.json`)).json();
+    const cases = fixtures[rule];
     // Each case is a file of its own and one run checks them all.
     const names = cases.map((c, i) => `c${String(i).padStart(4, "0")}.${c.jsx ? "jsx" : "js"}`);
+    const indexOf = new Map(names.map((name, i) => [name, i]));
     using dir = tempDir(`lint-${rule}`, Object.fromEntries(cases.map((c, i) => [names[i], c.code])));
     const { stdout, stderr, exitCode } = await bun(String(dir), ["--lint", ...names]);
 
@@ -27,11 +35,14 @@ describe("bun --lint rules", () => {
     const unexpected: string[] = [];
     for (const line of stderr.split("\n").filter(Boolean)) {
       const [, name, category, code] = /^(c\d+\.jsx?)\(\d+,\d+\): (\w+) ([\w-]+): /.exec(line) ?? [];
-      const lines = received[names.indexOf(name)];
-      if (!lines) unexpected.push(line);
-      else if (code === rule) lines.push(line);
-      // Another rule has its own cases, and a warning of the parser is not a report of a rule.
-      else if (!rules.includes(code) && !(category === "warning" && code === "syntax")) unexpected.push(line);
+      const index = indexOf.get(name);
+      const other = keys.get(code);
+      if (index === undefined) unexpected.push(line);
+      else if (code === rule) received[index].push(line);
+      // The test of another rule checks a line of that rule, so the cases of that rule have to have this one too.
+      // A warning of the parser is not a report of a rule.
+      else if (other ? !other.has(key(cases[index])) : !(category === "warning" && code === "syntax"))
+        unexpected.push(line);
     }
     const wrong = cases
       .map((c, i) => ({ code: c.code, expected: expected[i], received: received[i] }))

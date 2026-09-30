@@ -399,7 +399,7 @@ private:
             }
             /* Same for bytes that arrive behind a finished response that closes the
              * connection while its body is still draining (onWritable closes then). */
-            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) [[unlikely]] {
+            if (httpResponseData->template isDrainingBeforeClose<true>() && !httpResponseData->isConnectRequest) [[unlikely]] {
                 us_socket_unref(s);
                 return s;
             }
@@ -441,7 +441,7 @@ private:
              * has not drained stays open, and the parser holds this request's
              * framing, so later bytes must not reach it. Before the timeout reset,
              * so that socket still times out. */
-            if (httpResponseData->isDrainingBeforeClose()) [[unlikely]] {
+            if (httpResponseData->template isDrainingBeforeClose<IsNodeHttp>()) [[unlikely]] {
                 /* node:http stops without the latch: llhttp does not see the response, so a later read is no parse error. */
                 if constexpr (!IsNodeHttp) {
                     httpResponseData->sawConnectionClose = true;
@@ -540,13 +540,8 @@ private:
 
                 const bool isAncient = httpRequest->isAncient();
                 if constexpr (IsNodeHttp) {
-                    /* node:http: the version selects the framing, the parser's verdict on this request the close. */
-                    if (isAncient) {
-                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST;
-                    }
-                    if (httpResponseData->sawConnectionClose) {
-                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                    }
+                    /* node:http: the parser's verdict on this request closes the connection. So does HTTP/1.0, unless the head of the response keeps it open. */
+                    httpResponseData->markNodeRequest(isAncient, httpResponseData->sawConnectionClose);
                 } else if (isAncient) {
                     /* Bun.serve: an ancient (HTTP/1.0) request gets no keep-alive and no chunked framing. */
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;

@@ -465,6 +465,8 @@ static constexpr uint32_t kAutoHeaderDate = 1 << 0;
 static constexpr uint32_t kAutoHeaderConnKeepAlive = 1 << 1;
 static constexpr uint32_t kAutoHeaderConnClose = 1 << 2;
 static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
+// Not a header line: node:http wants the connection to stay open behind this response.
+static constexpr uint32_t kAutoHeaderPersist = 1 << 7;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
@@ -510,6 +512,10 @@ static std::string_view keepAliveHeaderBlob(uint32_t timeoutSecs)
 template<bool isSSL>
 static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs)
 {
+    // The writer decides before the Connection line: a response that cannot keep the connection open says close.
+    if (!response->getHttpResponseData()->keepAliveBehindHead(autoHeaderBits & kAutoHeaderPersist) && (autoHeaderBits & kAutoHeaderConnKeepAlive)) {
+        autoHeaderBits = (autoHeaderBits & ~(kAutoHeaderConnKeepAlive | kAutoHeaderKeepAliveTimeout)) | kAutoHeaderConnClose;
+    }
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
         response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());

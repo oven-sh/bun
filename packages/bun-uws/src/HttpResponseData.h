@@ -124,6 +124,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
          * the request handler dispatch is on the stack. */
         HTTP_NODE_PIPELINED_DISPATCH = 1 << 11,
+        /* node:http: the request was HTTP/1.0, so its response is the last one on
+         * this connection (the "no keep-alive" of HTTP_ANCIENT_REQUEST) unless the
+         * head of that response keeps the connection open: keepAliveBehindHead()
+         * clears the bit. A response that ends with no head from node:http, or with
+         * a head that cannot keep it open, closes the connection. */
+        HTTP_NODE_CLOSE_BY_DEFAULT = 1 << 26,
         /* The JS layer stopped HTTP processing on this connection (Node frees the
          * parser when 'close' is emitted on the socket); any further request data
          * in the buffer is not parsed. */
@@ -202,6 +208,35 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         }
     }
 
+    /* node:http: the response that begins answers this request. The parser gave
+     * the verdict connectionClose (HttpParser::sawConnectionClose). */
+    void markNodeRequest(bool isAncient, bool connectionClose) {
+        if (isAncient) {
+            state |= HTTP_ANCIENT_REQUEST | HTTP_NODE_CLOSE_BY_DEFAULT;
+        }
+        if (connectionClose) {
+            state |= HTTP_CONNECTION_CLOSE;
+        }
+    }
+
+    /* node:http, one time for each head, behind its header lines and before its
+     * Connection line. `asked`: node:http wants the connection to stay open behind
+     * this response. The response to an HTTP/1.0 request gets no chunks, so the
+     * connection stays open behind it only if the head has a Content-Length line
+     * and no Transfer-Encoding line, or if the response has no body. Returns
+     * false if the connection closes behind this response for that reason. */
+    bool keepAliveBehindHead(bool asked) {
+        if (!(state & HTTP_NODE_CLOSE_BY_DEFAULT)) [[likely]] {
+            return true;
+        }
+        if (asked && ((state & HTTP_NO_BODY_STATUS)
+            || (state & (HTTP_WROTE_CONTENT_LENGTH_HEADER | HTTP_WROTE_TRANSFER_ENCODING_HEADER)) == HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+            state &= ~HTTP_NODE_CLOSE_BY_DEFAULT;
+            return true;
+        }
+        return false;
+    }
+
     /* Shared context pointer for onAborted/onTimeout/onData */
     void* userData = nullptr;
     /* onWritable can be owned by a different object (the streaming body
@@ -248,10 +283,16 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
+    /* A request or its response marked the response in flight as the last one on
+     * this connection. Only node:http sets HTTP_NODE_CLOSE_BY_DEFAULT. */
+    bool isLastResponse() const {
+        return state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_BY_DEFAULT);
+    }
+
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_BY_DEFAULT | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
@@ -260,9 +301,12 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * close-delimited body) is complete; the socket only stays open until its
      * buffered bytes drain. Nothing received from here on is a request this
      * connection may answer (RFC 9112 9.6), and after a close-delimited body the
-     * peer would read whatever we send as more body. */
+     * peer would read whatever we send as more body.
+     * ForNodeHttp is false for a Bun.serve connection: it never has HTTP_NODE_CLOSE_BY_DEFAULT. */
+    template <bool ForNodeHttp>
     bool isDrainingBeforeClose() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
+        constexpr uint32_t last = ForNodeHttp ? HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_BY_DEFAULT : HTTP_CONNECTION_CLOSE;
+        return (state & last) && !(state & HTTP_RESPONSE_PENDING);
     }
 };
 

@@ -1273,10 +1273,10 @@ describe("EventEmitter.prototype", () => {
   });
 
   test("the source text of a method is hidden", () => {
-    const shown = Object.keys(EventEmitter.prototype).filter(
-      key => key !== "constructor" && !String(EventEmitter.prototype[key]).includes("[native code]"),
-    );
-    expect(shown).toEqual([]);
+    const prototype = EventEmitter.prototype;
+    const methods = Object.keys(prototype).filter(key => key !== "constructor" && typeof prototype[key] === "function");
+    expect(methods).toHaveLength(15);
+    expect(methods.filter(key => !String(prototype[key]).includes("[native code]"))).toEqual([]);
   });
 
   test("the methods work on an object that the constructor did not initialize", () => {
@@ -1362,49 +1362,62 @@ describe("EventEmitter.prototype", () => {
 
   test.each([
     [
+      "on('x', 1)",
       "on",
       ["x", 1],
       "ERR_INVALID_ARG_TYPE",
       'The "listener" argument must be of type function. Received type number (1)',
     ],
     [
+      "prependListener('x', null)",
       "prependListener",
       ["x", null],
       "ERR_INVALID_ARG_TYPE",
       'The "listener" argument must be of type function. Received null',
     ],
-    ["once", ["x"], "ERR_INVALID_ARG_TYPE", 'The "listener" argument must be of type function. Received undefined'],
     [
+      "once('x')",
+      "once",
+      ["x"],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received undefined',
+    ],
+    [
+      "prependOnceListener('x', 'f')",
       "prependOnceListener",
       ["x", "f"],
       "ERR_INVALID_ARG_TYPE",
       `The "listener" argument must be of type function. Received type string ('f')`,
     ],
     [
+      "off('x', {})",
       "off",
       ["x", {}],
       "ERR_INVALID_ARG_TYPE",
       'The "listener" argument must be of type function. Received an instance of Object',
     ],
     [
+      "setMaxListeners(-1)",
       "setMaxListeners",
       [-1],
       "ERR_OUT_OF_RANGE",
       'The value of "setMaxListeners" is out of range. It must be >= 0. Received -1',
     ],
     [
+      "setMaxListeners(NaN)",
       "setMaxListeners",
       [NaN],
       "ERR_OUT_OF_RANGE",
       'The value of "setMaxListeners" is out of range. It must be >= 0. Received NaN',
     ],
     [
+      "setMaxListeners('1')",
       "setMaxListeners",
       ["1"],
       "ERR_INVALID_ARG_TYPE",
       `The "setMaxListeners" argument must be of type number. Received type string ('1')`,
     ],
-  ] as const)("%s(%j) throws %s", (method, args, code, message) => {
+  ] as const)("%s throws", (_call, method, args, code, message) => {
     const emitter = new EventEmitter();
     let error: any;
     try {

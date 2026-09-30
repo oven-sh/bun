@@ -3,9 +3,13 @@ import { expectType } from "./utilities";
 {
   const graph = new Bun.ModuleGraph({
     globals: { config: { name: "a" }, log: (line: string) => console.log(line) },
-    onError(error, kind) {
+    uncaughtException(error, origin) {
       expectType(error).is<unknown>();
-      expectType(kind).is<"uncaughtException" | "unhandledRejection">();
+      expectType(origin).is<"uncaughtException" | "unhandledRejection">();
+    },
+    unhandledRejection(reason, promise) {
+      expectType(reason).is<unknown>();
+      expectType(promise).is<Promise<unknown>>();
     },
   });
   const app = await graph.import<{ start(): void }>("./app.mjs");
@@ -13,8 +17,10 @@ import { expectType } from "./utilities";
   // @ts-expect-error there is no mainModule: the host has what import() gave it
   graph.mainModule;
   expectType(graph.import("./x.ts")).is<Promise<any>>();
-  // @ts-expect-error onError must be a function
-  new Bun.ModuleGraph({ onError: 1 });
+  // @ts-expect-error uncaughtException must be a function
+  new Bun.ModuleGraph({ uncaughtException: 1 });
+  // @ts-expect-error unhandledRejection must be a function
+  new Bun.ModuleGraph({ unhandledRejection: 1 });
   // @ts-expect-error globals must be an object
   new Bun.ModuleGraph({ globals: "x" });
   // @ts-expect-error specifier must be a string

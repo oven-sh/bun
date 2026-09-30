@@ -313,15 +313,15 @@ const dir = String(
       const hostSaw = [];
       process.on("unhandledRejection", error => hostSaw.push(error.message));
       let calls = 0, inner;
-      // The tenant's onError causes a rejection in the code of a graph the tenant made without an
-      // onError: given back to the same onError it would go round for ever.
-      const tenant = new Bun.ModuleGraph({ onError: () => { if (++calls <= 50) inner.rejects(); } });
+      // The tenant's uncaughtException causes a rejection in the code of a graph the tenant made without an
+      // uncaughtException: given back to the same uncaughtException it would go round for ever.
+      const tenant = new Bun.ModuleGraph({ uncaughtException: () => { if (++calls <= 50) inner.rejects(); } });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
       inner = await tenant.run(() => app.makesAGraph().import(import.meta.dir + "/rejects-when-called.mjs"));
       tenant.run(() => inner.startsIt());
       while (hostSaw.length === 0 && calls <= 50) await new Promise(resolve => setImmediate(resolve));
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
+      console.log(JSON.stringify({ callsOfTheTenantsHandler: calls, hostSaw }));
       process.exit(0);
     `,
     "imports-a-commonjs-module.mjs": `import ran from "./commonjs-that-tells.cjs"; export default ran;`,
@@ -1035,7 +1035,7 @@ const dir = String(
       });
     `,
     "spawns-after-it-was-disposed.mjs": `
-      // No onError, and no handler of the host's: an error in the graph's leftover code would end this process.
+      // No uncaughtException, and no handler of the host's: an error in the graph's leftover code would end this process.
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/spawns-and-feeds-a-child.mjs");
       graph.run(() => app.later());
@@ -1054,7 +1054,7 @@ const dir = String(
       };
     `,
     "disposed-in-the-turn-it-listens.mjs": `
-      // No onError, and no handler of the host's: an error in the graph's leftover code would end this process.
+      // No uncaughtException, and no handler of the host's: an error in the graph's leftover code would end this process.
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/listens-and-reads-its-address.mjs");
       graph.run(() => app.listen());
@@ -1116,9 +1116,9 @@ const dir = String(
       const hostSaw = [], tenantSaw = [];
       process.on("uncaughtException", error => hostSaw.push(error.message));
       process.on("unhandledRejection", error => hostSaw.push(error.message));
-      const tenant = new Bun.ModuleGraph({ globals: { hostMakesAGraph: () => new Bun.ModuleGraph() }, onError: error => tenantSaw.push(error.message) });
+      const tenant = new Bun.ModuleGraph({ globals: { hostMakesAGraph: () => new Bun.ModuleGraph() }, uncaughtException: error => tenantSaw.push(error.message) });
       const app = await tenant.import(import.meta.dir + "/left-behind-tenant.mjs");
-      // A graph made in the tenant's context that was given no onError of its own: by the tenant's
+      // A graph made in the tenant's context that was given no uncaughtException of its own: by the tenant's
       // code, or by a function of the host's that the tenant called.
       const inner = tenant.run(() => (process.argv[2] === "by a host function it called" ? app.hasTheHostMakeAGraph() : app.makesAGraph()));
       await inner.import(import.meta.dir + "/throws-later.mjs");
@@ -1188,7 +1188,7 @@ const dir = String(
     "disposes-while-opening.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       // (What the opener had queued still runs, in a world that was closed under it: what that throws is the graph's.)
-      const graph = new Bun.ModuleGraph({ onError: error => console.error("the opener, after dispose():", error) });
+      const graph = new Bun.ModuleGraph({ uncaughtException: error => console.error("the opener, after dispose():", error) });
       const app = await graph.import(import.meta.dir + "/app.mjs");
       // Not awaited: whatever the opener has under way (a connect, a handshake, a listen) is cut short.
       graph.run(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); });
@@ -2925,12 +2925,12 @@ describe.concurrent("ModuleGraph isolation: whose context a call runs in", () =>
 });
 
 describe.concurrent("ModuleGraph isolation: errors go to the graph whose code threw", () => {
-  test("an exception from a timer and a rejection from a socket handler reach only that graph's onError", async () => {
+  test("an exception from a timer and a rejection from a socket handler reach only that graph's uncaughtException", async () => {
     const errors: string[] = [];
-    const onError = (who: string) => (error: any, kind: string) =>
+    const uncaughtException = (who: string) => (error: any, kind: string) =>
       void errors.push(`${who}: ${kind}: ${error.message}`);
-    using a = await newGraph({ onError: onError("a") });
-    using b = await newGraph({ onError: onError("b") });
+    using a = await newGraph({ uncaughtException: uncaughtException("a") });
+    using b = await newGraph({ uncaughtException: uncaughtException("b") });
     a.graph.run(() => a.app.throwFromTimer("a's timer"));
     b.graph.run(() => b.app.throwFromTimer("b's timer"));
     await a.graph.run(() => a.app.rejectFromSocket(hostTcp.port, "a's socket"));
@@ -3283,12 +3283,13 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
     expect(fired).toEqual(set.filter(label => !label.startsWith("b")));
   });
 
-  test("errors thrown from every kind of hop in interleaved chains reach the onError of the graph whose chain threw, before and after another graph is disposed", async () => {
+  test("errors thrown from every kind of hop in interleaved chains reach the uncaughtException of the graph whose chain threw, before and after another graph is disposed", async () => {
     const errors: Record<string, string[]> = { "throws-0": [], "throws-1": [], "throws-2": [] };
-    const onError = (tag: string) => (error: any, kind: string) => void errors[tag].push(kind + ": " + error.message);
+    const uncaughtException = (tag: string) => (error: any, kind: string) =>
+      void errors[tag].push(kind + ": " + error.message);
     using stack = new DisposableStack();
     const graphs = await Promise.all(
-      Object.keys(errors).map(async tag => stack.use(await newGraph({ onError: onError(tag) }))),
+      Object.keys(errors).map(async tag => stack.use(await newGraph({ uncaughtException: uncaughtException(tag) }))),
     );
     const states = Object.keys(errors).map(tag => newState(tag));
     try {
@@ -3741,7 +3742,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
   });
   test.each(["by its script", "by a host function it called"])(
-    "errors of a graph made in its context (%s) without an onError go to its onError, not to the host",
+    "errors of a graph made in its context (%s) without a handler go to its uncaughtException, not to the host",
     async how => {
       expect(await runsFixture("errors-of-a-graph-made-by-a-graph.mjs", how)).toEqual({
         stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
@@ -3749,9 +3750,9 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       });
     },
   );
-  test("a rejection its onError causes in the code of a graph it made goes to the host, not back to that onError", async () => {
+  test("a rejection its uncaughtException causes in the code of a graph it made goes to the host, not back to that uncaughtException", async () => {
     expect(await runsFixture("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
-      stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,
+      stdout: `{"callsOfTheTenantsHandler":1,"hostSaw":["rejected by the inner graph's code"]}`,
       exitCode: 0,
     });
   });

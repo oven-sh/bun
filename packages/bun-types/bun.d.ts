@@ -5433,9 +5433,16 @@ declare module "bun" {
      */
     globals?: Record<string, unknown> | undefined;
     /**
-     * Called with the uncaught exceptions and unhandled rejections that happen
-     * in this graph's context, instead of the process-wide
-     * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
+     * Bun calls this, instead of the process-wide `uncaughtException`
+     * handling, when nothing caught an exception that was thrown in this
+     * graph's context. It takes what a `process.on("uncaughtException")`
+     * listener takes: the exception, and the origin `"uncaughtException"`.
+     *
+     * Bun also calls this when nothing handled a rejection and the graph has
+     * no {@link ModuleGraphOptions.unhandledRejection | unhandledRejection}.
+     * The origin is then `"unhandledRejection"`. `error` is the reason when
+     * the reason is an error, as in Node.js. Otherwise it is a new error with
+     * the code `ERR_UNHANDLED_REJECTION` that describes the reason.
      *
      * An error is the graph's when it happens in the graph's context, whoever
      * wrote the code that threw: the graph's modules and what they start, and
@@ -5447,13 +5454,30 @@ declare module "bun" {
      * The handler runs in the context the graph was made in, so what it throws
      * or rejects is that context's: the host's, when the host made the graph.
      *
-     * Without an `onError`, errors go to the `onError` of the graph in whose
+     * A graph with no handler for an error hands it to the graph in whose
      * context this graph was made, and to the process-wide path when the host
      * made it.
      *
      * @see https://bun.com/docs/runtime/module-graph#errors
      */
-    onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+    uncaughtException?: ((error: unknown, origin: "uncaughtException" | "unhandledRejection") => void) | undefined;
+    /**
+     * Bun calls this, instead of the process-wide `unhandledRejection`
+     * handling, when nothing handled a rejection of a promise that was
+     * rejected in this graph's context. It takes what a
+     * `process.on("unhandledRejection")` listener takes: `reason` is the value
+     * the promise was rejected with, unchanged, and `promise` is the rejected
+     * promise.
+     *
+     * When a graph's handler takes a rejection, `process` gets no
+     * `unhandledRejection` event for it and no `rejectionHandled` event later.
+     *
+     * The handler runs in the context the graph was made in, like
+     * {@link ModuleGraphOptions.uncaughtException | uncaughtException}.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#errors
+     */
+    unhandledRejection?: ((reason: unknown, promise: Promise<unknown>) => void) | undefined;
   }
 
   /**
@@ -5487,7 +5511,7 @@ declare module "bun" {
    * ```ts
    * const graph = new Bun.ModuleGraph({
    *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
-   *   onError: (err, kind) => console.error(kind, err),
+   *   uncaughtException: (err, origin) => console.error(origin, err),
    * });
    * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
    * graph.run(() => app.start()); // what start() opens is the graph's
@@ -5539,6 +5563,10 @@ declare module "bun" {
      * socket, a worker, a stream) no longer work, for the host either.
      *
      * Not a sandbox: synchronous calls run to completion. Idempotent.
+     *
+     * Keep a reference to a graph for as long as its work should run. When
+     * nothing references a graph any more, the garbage collector frees it,
+     * and Bun then closes what its code opened as `dispose()` does.
      *
      * @see https://bun.com/docs/runtime/module-graph#disposing
      */

@@ -181,7 +181,7 @@ const dir = String(
           }
           if (name.startsWith("order:")) return void control.orders.push(name.slice(6));
           if (name === "orders-performed") return until(() => control.orders.length === 0);
-          if (name === "errored") return until(() => out.onError);
+          if (name === "errored") return until(() => out.uncaughtException);
           if (name.startsWith("leaf-message:")) {
             control.onLeafMessage = name.slice(13);
             control.held.worker.postMessage("ping");
@@ -213,7 +213,7 @@ const dir = String(
 
         graph = new Bun.ModuleGraph({
           globals: { control },
-          onError: cell.onError && ((error, kind) => { out.onError = kind + ": " + error.message; if (cell.onError !== "record") step(cell.onError); }),
+          uncaughtException: cell.uncaughtException && ((error, kind) => { out.uncaughtException = kind + ": " + error.message; if (cell.uncaughtException !== "record") step(cell.uncaughtException); }),
         });
 
         const inState = async ([kind, arg]) => {
@@ -397,7 +397,7 @@ const dir = String(
         disposed: main.disposed(),
         heard: main.disposed() ? null : main.names(subject.heard),
         terminateResolved: cell.terminate === "either" ? "either" : (subject.terminateResolved ?? null),
-        onError: subject.onError ?? null,
+        uncaughtException: subject.uncaughtException ?? null,
         postThrew: subject.postThrew ?? null,
         import: Bun.peek.status(subject.import),
       });
@@ -429,7 +429,7 @@ const dir = String(
       import { runHost } from "./host.mjs";
       import { S, until } from "./shared.mjs";
       let host;
-      const report = stage => parentPort.postMessage({ stage, heard: host.heard, late: host.heard.slice(host.heardAtDispose), onError: host.onError ?? null, terminateResolved: host.terminateResolved ?? null });
+      const report = stage => parentPort.postMessage({ stage, heard: host.heard, late: host.heard.slice(host.heardAtDispose), uncaughtException: host.uncaughtException ?? null, terminateResolved: host.terminateResolved ?? null });
       parentPort.on("message", message => {
         if (message === "ping") parentPort.postMessage("pong");
         // What a live graph is due to hear (its worker's exit), it hears.
@@ -502,10 +502,10 @@ const dir = String(
         await main.quiet();
         subject.worker.postMessage("report");
         await until(() => subject.seen.stages.includes("report"));
-        const { heard, late, onError, terminateResolved } = subject.seen.reported;
+        const { heard, late, uncaughtException, terminateResolved } = subject.seen.reported;
         // (Named, when there is something to name.)
         if (late.length) result.heardAfterDispose = late;
-        Object.assign(result, { heard: main.disposed() ? null : main.names(heard), onError, leafTerminateResolved: cell.terminate === "either" ? "either" : terminateResolved });
+        Object.assign(result, { heard: main.disposed() ? null : main.names(heard), uncaughtException, leafTerminateResolved: cell.terminate === "either" ? "either" : terminateResolved });
         await subject.worker.terminate();
       } else {
         await until(() => subject.seen.exit !== undefined);
@@ -589,7 +589,7 @@ function hears(
   plan: string[],
   kinds: string,
   graphState?: string,
-  onError?: string,
+  uncaughtException?: string,
 ) {
   const heard = new Set<string>();
   // An import suspended on something slow finishes once that does, if the graph was not disposed meanwhile.
@@ -597,7 +597,7 @@ function hears(
   if (
     leaf &&
     (plan.some(step => step.endsWith("terminate-leaf")) ||
-      onError === "terminate-leaf" ||
+      uncaughtException === "terminate-leaf" ||
       ["terminated", "exit", "throwing", "drain"].includes(leaf.mode))
   )
     heard.add("close");
@@ -618,26 +618,26 @@ type OwnerCell = {
   graphState?: string;
   work?: Work[];
   hostPlan: string[];
-  onError?: string;
+  uncaughtException?: string;
   terminate?: "either";
 };
 function a(name: string, api: Api, mode: LeafState, cell: OwnerCell) {
-  // (onError's terminate() is the host's too, issued where the error was thrown: from a timer of the graph's.
+  // (uncaughtException's terminate() is the host's too, issued where the error was thrown: from a timer of the graph's.
   // The host's next step comes once its "errored" wait has seen the error, which is a setImmediate later.)
   const terminate =
     cell.terminate ??
     hostTerminate(
       api,
       mode,
-      cell.onError === "terminate-leaf" ? ["terminate-leaf", ...cell.hostPlan.slice(1)] : cell.hostPlan,
+      cell.uncaughtException === "terminate-leaf" ? ["terminate-leaf", ...cell.hostPlan.slice(1)] : cell.hostPlan,
       cell.graphState,
     );
   const disposes =
     cell.hostPlan.some(step => step.endsWith("dispose")) ||
     cell.graphState === "disposed" ||
-    cell.onError === "dispose";
+    cell.uncaughtException === "dispose";
   const work: Work[] = [...(cell.work ?? []), ["worker", { api, mode }]];
-  const heard = hears({ mode }, cell.hostPlan, JSON.stringify(work), cell.graphState, cell.onError);
+  const heard = hears({ mode }, cell.hostPlan, JSON.stringify(work), cell.graphState, cell.uncaughtException);
   add("A: a graph on the main thread whose code starts a worker", {
     name,
     script: "a.mjs",
@@ -649,7 +649,7 @@ function a(name: string, api: Api, mode: LeafState, cell: OwnerCell) {
           disposed: disposes,
           heard: disposes ? null : heard,
           terminateResolved: resolved(terminate),
-          onError: cell.onError ? thrown : null,
+          uncaughtException: cell.uncaughtException ? thrown : null,
           postThrew: null,
           import:
             cell.graphState === "tla-never" || (cell.graphState === "tla-slow" && disposes) ? "pending" : "fulfilled",
@@ -727,18 +727,18 @@ for (const api of apis) {
     "idle",
     { hostPlan: ["leaf-close:arm", "terminate-leaf", "ticking", "dispose"] },
   );
-  a(`${api} Worker idle: the graph's message handler throws, onError records it`, api, "idle", {
-    onError: "record",
+  a(`${api} Worker idle: the graph's message handler throws, uncaughtException records it`, api, "idle", {
+    uncaughtException: "record",
     hostPlan: ["leaf-message:throw", "errored"],
   });
-  // An error thrown by the graph's code, and what its onError does about it.
-  for (const onError of ["record", "terminate-leaf", "dispose"])
+  // An error thrown by the graph's code, and what its uncaughtException does about it.
+  for (const uncaughtException of ["record", "terminate-leaf", "dispose"])
     for (const then of [[], ["dispose"]])
       a(
-        `${api} Worker idle: the graph's code throws, onError: ${onError}${then.length ? ", then dispose() in the same turn" : ""}`,
+        `${api} Worker idle: the graph's code throws, uncaughtException: ${uncaughtException}${then.length ? ", then dispose() in the same turn" : ""}`,
         api,
         "idle",
-        { work: orders, onError, hostPlan: ["order:throw", "errored", ...then] },
+        { work: orders, uncaughtException, hostPlan: ["order:throw", "errored", ...then] },
       );
 }
 
@@ -785,7 +785,7 @@ type HostedCell = {
   work?: Work[];
   hostPlan?: string[];
   mainPlan: string[];
-  onError?: string;
+  uncaughtException?: string;
   racy?: boolean;
   channel?: string;
 };
@@ -797,7 +797,7 @@ function b(topology: string, name: string, hostApi: Api, cell: HostedCell, ends:
   const disposes =
     hostPlan.some(step => step.endsWith("dispose") || step.endsWith("dispose-inner")) ||
     cell.graphState === "disposed" ||
-    cell.onError === "dispose";
+    cell.uncaughtException === "dispose";
   const leaf = work.flatMap(([kind, arg]) => (kind === "worker" ? [arg as { api: Api; mode: LeafState }] : []))[0];
   const heard = hears(leaf, hostPlan, kinds, cell.graphState);
   const terminate = leaf && hostTerminate(leaf.api, leaf.mode, hostPlan, cell.graphState);
@@ -825,7 +825,7 @@ function b(topology: string, name: string, hostApi: Api, cell: HostedCell, ends:
             ...(ends === "alive" && {
               sibling: "ticks",
               heard: disposes ? null : heard,
-              onError: cell.onError ? thrown : null,
+              uncaughtException: cell.uncaughtException ? thrown : null,
               leafTerminateResolved: resolved(terminate),
             }),
             error: ends === "threw" ? "thrown by the graph's code" : null,
@@ -849,7 +849,7 @@ type HostedEvent = {
   hostPlan?: string[];
   mainPlan: string[];
   ends: Ends;
-  onError?: string;
+  uncaughtException?: string;
   orders?: true;
   needsGraph?: true;
   racy?: true;
@@ -887,22 +887,22 @@ const hostedEvents: Record<string, HostedEvent> = {
     orders: true,
   },
   "process.exit() on the main thread": { mainPlan: ["ready", "exit-main"], ends: "main exits" },
-  "the graph's code throws, onError records it": {
+  "the graph's code throws, uncaughtException records it": {
     hostPlan: ["order:throw", "errored"],
     mainPlan: ["done"],
     ends: "alive",
-    onError: "record",
+    uncaughtException: "record",
     orders: true,
   },
-  "the graph's code throws, onError disposes the graph, then the main thread terminates the worker": {
+  "the graph's code throws, uncaughtException disposes the graph, then the main thread terminates the worker": {
     hostPlan: ["order:throw", "errored"],
     mainPlan: ["done", "terminate"],
     ends: "terminated",
-    onError: "dispose",
+    uncaughtException: "dispose",
     orders: true,
     needsGraph: true,
   },
-  "the graph's code throws and there is no onError": {
+  "the graph's code throws and the graph has no handler": {
     hostPlan: ["order:throw", "errored"],
     mainPlan: ["ready"],
     ends: "threw",
@@ -951,7 +951,7 @@ function hosted(
   extra: Partial<HostedCell> = {},
 ) {
   events.forEach((event, i) => {
-    const { hostPlan, mainPlan, ends, onError, orders: needsOrders, needsGraph, racy } = hostedEvents[event];
+    const { hostPlan, mainPlan, ends, uncaughtException, orders: needsOrders, needsGraph, racy } = hostedEvents[event];
     if (shape.graphState === "disposed" && needsOrders) return;
     if (shape.graphState === "unreferenced" && needsGraph) return;
     const hostApi = apis[(i + apiOffset) % 2];
@@ -965,7 +965,7 @@ function hosted(
         work: [...(needsOrders ? orders : []), ...(shape.work ?? [])],
         hostPlan,
         mainPlan,
-        onError,
+        uncaughtException,
         racy,
       },
       ends,
@@ -1035,9 +1035,9 @@ leafStates.forEach((mode, i) => {
     );
     b(
       C,
-      `the graph's ${api} Worker is idle, in a ${hostApi} Worker: the graph's message handler throws, onError records it`,
+      `the graph's ${api} Worker is idle, in a ${hostApi} Worker: the graph's message handler throws, uncaughtException records it`,
       hostApi,
-      { work, onError: "record", hostPlan: ["leaf-message:throw", "errored"], mainPlan: ["done"] },
+      { work, uncaughtException: "record", hostPlan: ["leaf-message:throw", "errored"], mainPlan: ["done"] },
       "alive",
     );
   }

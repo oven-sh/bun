@@ -548,7 +548,7 @@ impl<'a> Checker<'a> {
                             error_node,
                             diagnostics::OUTPUT_FILE_0_HAS_NOT_BEEN_BUILT_FROM_SOURCE_FILE_1,
                             &[
-                                Arg::Str(&redirect.output_dts),
+                                Arg::Str(redirect.output_dts),
                                 Arg::Str(resolved.resolved_file_name),
                             ],
                         );
@@ -822,9 +822,7 @@ impl<'a> Checker<'a> {
                 }
             }
             // The list stays nil when no global is an ambient module, as upstream's append leaves it.
-            if !ambient_modules.is_empty() {
-                self.ambient_modules.value = self.list_of(&ambient_modules);
-            }
+            self.ambient_modules.value = self.list(&ambient_modules);
             self.ambient_modules.done = true;
         }
         self.ambient_modules.value

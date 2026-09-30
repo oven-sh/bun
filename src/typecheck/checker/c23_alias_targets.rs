@@ -18,7 +18,7 @@ use crate::checker::{
     has_export_assignment_symbol, is_contained_by_namespace, is_shorthand_ambient_module_symbol,
     is_syntactic_default,
 };
-use crate::core::{List, ModuleKind, RESOLUTION_MODE_NONE, ResolutionMode, find, if_else, some};
+use crate::core::{ModuleKind, RESOLUTION_MODE_NONE, ResolutionMode, find, if_else, some};
 use crate::diagnostics;
 use crate::scanner::declaration_name_to_string;
 use crate::tspath::get_declaration_file_extension;
@@ -544,11 +544,7 @@ impl<'a> Checker<'a> {
         let mut declarations: Vec<NodeId> = value_data.declarations.as_slice().to_vec();
         declarations.extend_from_slice(type_data.declarations.as_slice());
         declarations.dedup();
-        let declarations = if declarations.is_empty() {
-            List::NIL
-        } else {
-            self.list_of(&declarations)
-        };
+        let declarations = self.list(&declarations);
         let mut parent = value_data.parent;
         if parent.is_nil() {
             parent = type_data.parent;

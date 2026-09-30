@@ -2665,7 +2665,6 @@ pub mod parse_worker {
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
-        let _ = topts;
         // "use client" in the browser graph is plain client code; the other cases need a boundary.
         let directive_without_framework = framework_server_components.is_none()
             && match use_directive {

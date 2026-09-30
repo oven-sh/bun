@@ -4916,10 +4916,6 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     if duplex_context_ref.ssl_config.get().is_none() {
         drop(ssl_opts.take());
     }
-    // Disarm the guard — either moved into duplexContext or just
-    // freed above; both the move-target and the deinit case must not see it
-    // freed again on a later throw.
-    let _ = ssl_opts;
     tls_ref.ref_();
 
     tls_ref.socket.set(duplex_context_ref.duplex_socket());
@@ -5224,11 +5220,14 @@ pub(crate) mod testing_apis {
                 )));
             };
 
-            // "short" clamps a byte count, which only recv/send have; arming it
-            // on any other syscall would silently never fire.
-            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+            // "short" clamps a byte count, which only these have; arming it on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT
+                && syscall != fi::RECV
+                && syscall != fi::SEND
+                && syscall != fi::WRITEV
+            {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"writev\""
                 )));
             }
 

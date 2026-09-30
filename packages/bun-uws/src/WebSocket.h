@@ -378,7 +378,7 @@ public:
         Subscriber *sender = webSocketData->subscriber;
 
         /* Publish as sender, does not receive its own messages even if subscribed to relevant topics */
-        if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
+        if (message.length() >= LoopData::CORK_COPY_MAX) {
             SendStatus worst = SUCCESS;
             bool hasReceivers = false;
             webSocketContextData->topicTree->publishBig(sender, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {

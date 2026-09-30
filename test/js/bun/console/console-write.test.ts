@@ -131,6 +131,8 @@ try {
   await reader.cancel();
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("caught EPIPE\n");
+  // macOS fails the one write that the close lands in with ENOTCONN, and every later one with EPIPE.
+  const codes = process.platform === "darwin" ? ["EPIPE", "ENOTCONN"] : ["EPIPE"];
+  expect(stderr).toBeOneOf(codes.map(code => `caught ${code}\n`));
   expect(exitCode).toBe(0);
 });

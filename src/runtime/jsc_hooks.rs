@@ -583,6 +583,37 @@ unsafe fn configure_debugger(
     };
 
     let Some(debugger) = debugger else { return };
+    // The debugger evaluates what its client sends, whatever the engine's eval setting.
+    if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Disallowed {
+        const STRICT: &str = "--disallow-code-generation-from-strings=strict";
+        // Editors set this one for every process started from their terminals (Bun's VS Code
+        // extension does by default), so it does not say that anybody asked to debug this one.
+        if debugger.mode == Mode::Connect {
+            bun_core::warn!(
+                "BUN_INSPECT_CONNECT_TO is ignored with {}: the inspector evaluates code from strings",
+                STRICT
+            );
+            bun_core::Output::flush();
+            return;
+        }
+        // Asking for both is an error, so that the process never runs without something its
+        // operator asked for.
+        bun_core::Output::err_generic(
+            "{} cannot be used with {}: the inspector evaluates code from strings\n",
+            (
+                match cli_flag {
+                    CliDebugger::Enable(enable) if enable.set_breakpoint_on_first_line => {
+                        "--inspect-brk"
+                    }
+                    CliDebugger::Enable(enable) if enable.wait_for_connection => "--inspect-wait",
+                    CliDebugger::Enable(_) => "--inspect",
+                    CliDebugger::Unspecified => "BUN_INSPECT",
+                },
+                STRICT,
+            ),
+        );
+        bun_core::Global::exit(1);
+    }
     let mode = debugger.mode;
     // SAFETY: `vm` is the unique freshly-boxed VM; sole writer.
     unsafe { (*vm).debugger = Some(Box::new(debugger)) };
@@ -1048,8 +1079,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // field address is stable for the VM lifetime.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1170,8 +1199,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
-    #[cfg(not(unix))]
-    let _ = state;
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1514,7 +1541,7 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Scan a Worker's `execArgv` for `--no-addons` and `--no-ffi-cc`. Like the
+/// Scan a Worker's `execArgv` for the flags that mean something there. Like the
 /// CLI parser, the scan stops at the first positional.
 ///
 /// # Safety
@@ -1526,8 +1553,9 @@ unsafe fn parse_worker_exec_argv_flags(
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
+        invalid: None,
     };
-    for &arg in exec_argv {
+    for (index, &arg) in exec_argv.iter().enumerate() {
         if arg.is_null() {
             continue;
         }
@@ -1544,6 +1572,11 @@ unsafe fn parse_worker_exec_argv_flags(
             flags.allow_addons = false;
         } else if bytes == b"--no-ffi-cc" {
             flags.allow_ffi_cc = false;
+        } else if matches!(
+            bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
+            Some([] | [b'=', ..])
+        ) {
+            flags.invalid.get_or_insert(index);
         }
     }
     Some(flags)
@@ -2425,7 +2458,6 @@ fn transpile_source_code_inner(
                         };
                         virtual_source = Some(&fallback_source);
                     }
-                    let _ = code;
                 }
             }
 
@@ -3393,7 +3425,6 @@ fn transpile_source_code_inner(
 /// with the dev-server watcher (if enabled, absolute, and not in
 /// `node_modules`). Factored out of the two call sites.
 #[inline]
-#[allow(clippy::too_many_arguments)]
 fn maybe_watch_file(
     jsc_vm: *mut VirtualMachine,
     should_close_input_file_fd: &mut bool,
@@ -4228,7 +4259,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                 )
             };
         }
-        let _ = concurrent_loader;
     }
 
     // ── Synchronous-loader fallback ────────────────────────────────────────

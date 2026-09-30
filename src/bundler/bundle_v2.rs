@@ -3425,7 +3425,6 @@ pub mod bv2_impl {
         /// callers are done); each call returns a fresh disjoint slot, so the
         /// resulting `&mut T` is unique.
         #[inline]
-        #[allow(clippy::mut_from_ref)]
         fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
             // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
             unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }

@@ -558,6 +558,36 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     expect(pool.received).toEqual([{ conn: 0, sql: "SELECT 'in flight'" }, ...afterTransaction(1)]);
   });
 
+  // Neither of these ever reaches the server, and neither leaves the reservation's set of
+  // pending queries, so close({ timeout }) takes its wait with nothing in flight. It still
+  // has to close the connection. bun:test also fails these tests if the wait reports the
+  // entry's rejection as unhandled.
+  test.each([
+    {
+      entry: "an identifier helper",
+      make: async (reserved: Bun.ReservedSQL) => {
+        reserved("users");
+      },
+    },
+    {
+      entry: "a query whose text cannot be built",
+      make: async (reserved: Bun.ReservedSQL) => {
+        const error = await reserved`INSERT INTO users ${reserved({})}`.then(
+          () => null,
+          e => e.message,
+        );
+        expect(error).toBe("Cannot INSERT with no columns");
+      },
+    },
+  ])("reserved.close({ timeout }) closes a reservation whose only pending entry is $entry", async ({ make }) => {
+    await using pool = await closeTestPool();
+    const reserved = await pool.sql.reserve();
+    await make(reserved);
+    await reserved.close({ timeout: 60 });
+    await expectSlotReturned(pool);
+    expect(pool.received).toEqual(afterTransaction(1));
+  });
+
   // A query that fails while close() waits does not end the wait: the transaction that is
   // still open on the same reservation must get to COMMIT before the connection closes.
   // bun:test also fails this test if close()'s wait reports the handled failure as unhandled.

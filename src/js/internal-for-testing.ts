@@ -578,6 +578,16 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
+type Http2StreamTable = { len: number; walkPositions: number };
+/**
+ * The three stream tables of a `node:http2` session, given its native parser
+ * (`session[Symbol.for("::bunhttp2native::")]`). `len` is the number of entries.
+ * `walkPositions` is the number of positions one full walk of the table reads.
+ */
+export const http2StreamTables = $newRustFunction("h2_frame_parser.rs", "streamTablesForTesting", 1) as (
+  parser: object,
+) => { streams: Http2StreamTable; contexts: Http2StreamTable; engine: Http2StreamTable };
+
 interface setSocketOptionsFn {
   (socket: Bun.Socket, sendBuffer: 1, size: number): void;
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;

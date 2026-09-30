@@ -6,10 +6,11 @@
  * only if it knows the size before it writes the first block. For
  * `zlib.zstdCompress()` that is the case with a `pledgedSrcSize`. Bun pledges
  * the size of the input if the caller does not (#23314). Node.js does that
- * from nodejs/node#66358, so the tests ask the runtime if it does.
+ * from nodejs/node fa4af16414 (not in v26.10.0 or earlier), so the tests ask
+ * the runtime if it does.
  *
  * The expected results for an explicit `pledgedSrcSize` were recorded from
- * Node v26.3.0 and v26.10.0.
+ * Node v24.21.0, v26.3.0 and v26.10.0.
  */
 import assert from "node:assert";
 import { describe, test } from "node:test";
@@ -19,15 +20,6 @@ import zlib from "node:zlib";
 const { ZSTD_e_flush, ZSTD_c_compressionLevel } = zlib.constants;
 
 const isBun = typeof process.versions.bun === "string";
-const nodeIsAtLeast = (major: number, minor: number) => {
-  const [runtimeMajor, runtimeMinor] = process.versions.node.split(".").map(Number);
-  return !isBun && (runtimeMajor > major || (runtimeMajor === major && runtimeMinor >= minor));
-};
-// Node validates the option since nodejs/node de6eeece8f (v26.7.0): a number that is not a safe
-// integer throws, and so does a value that is not a number. An older Node reads NaN as 0 and
-// ignores a value that is not a number. Bun throws for the first and ignores the second.
-const rejectsNaN = isBun || nodeIsAtLeast(26, 7);
-const ignoresNonNumber = !nodeIsAtLeast(26, 7);
 
 // https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md#frame_header
 // magic(4) | frame header descriptor(1) | [window descriptor(1)] | [dictionary id] | [frame content size]
@@ -63,6 +55,27 @@ function compress(input: Input, options: unknown = noOptionsArgument): Promise<B
 async function contentSizeOf(input: Input, options?: unknown) {
   return frameContentSize(await compress(input, options));
 }
+
+// What Bun writes is fixed. A Node.js that pledges for the call has to write the decoded size.
+function assertContentSize(actual: number | null, inBun: number | null, decodedSize: number) {
+  if (isBun) assert.strictEqual(actual, inBun);
+  else assert.ok(actual === null || actual === decodedSize, `content size ${actual} for ${decodedSize} bytes`);
+}
+
+function constructorThrows(pledgedSrcSize: unknown) {
+  try {
+    zlib.createZstdCompress({ pledgedSrcSize } as zlib.ZstdOptions).destroy();
+    return false;
+  } catch {
+    return true;
+  }
+}
+// Node validates the option since nodejs/node#64604 (v24.20.0 and v26.7.0): a number that is not
+// a safe integer throws, and so does a value that is not a number. An older Node reads NaN as 0
+// and ignores a value that is not a number. Bun throws for the first and ignores the second
+// (#44278).
+const rejectsNaN = isBun || constructorThrows(NaN);
+const ignoresNonNumber = isBun || !constructorThrows("64");
 
 const input = Buffer.alloc(64, 0x61);
 const srcSizeWrong = { code: "ZSTD_error_srcSize_wrong" };
@@ -149,33 +162,6 @@ describe("zlib.zstdCompress", () => {
       assert.deepStrictEqual([await contentSizeOf(undefined), await contentSizeOf(null)], [0, 0]);
     });
 
-    for (const defaultEncoding of ["utf8", "utf-8"]) {
-      test(`pledges the UTF-8 size of a string with defaultEncoding ${defaultEncoding}`, async () => {
-        const text = "h\xe9llo w\xf6rld";
-        const frame = await compress(text, { defaultEncoding });
-        assert.deepStrictEqual(
-          { decompressed: zlib.zstdDecompressSync(frame).toString(), contentSize: frameContentSize(frame) },
-          { decompressed: text, contentSize: sizeByDefault(13) },
-        );
-      });
-    }
-
-    // The stream decodes the string, so the wrapper does not know the size.
-    for (const [defaultEncoding, text] of [
-      ["hex", "68656c6c6f"],
-      ["base64", "aGVsbG8="],
-      ["latin1", "h\xe9llo"],
-      ["utf16le", "hello"],
-    ] as const) {
-      test(`compresses a string with defaultEncoding ${defaultEncoding}, with no pledge`, async () => {
-        const frame = await compress(text, { defaultEncoding });
-        assert.deepStrictEqual(
-          { decompressed: zlib.zstdDecompressSync(frame), contentSize: frameContentSize(frame) },
-          { decompressed: Buffer.from(text, defaultEncoding), contentSize: null },
-        );
-      });
-    }
-
     (pledgesByDefault ? test : test.skip)("returns the same bytes as zstdCompressSync", async () => {
       // 1000 times a pattern of 19 bytes.
       const text = Buffer.alloc(19000, "h\xe9llo w\xf6rld \u{1f680} ").toString();
@@ -192,9 +178,64 @@ describe("zlib.zstdCompress", () => {
       for (const [index, value] of inputs.entries()) {
         assert.deepStrictEqual(await compress(value, options), zlib.zstdCompressSync(value, options), `input ${index}`);
       }
+      for (const defaultEncoding of ["utf8", "utf-8"]) {
+        const withEncoding = { ...options, defaultEncoding };
+        assert.deepStrictEqual(await compress(text, withEncoding), zlib.zstdCompressSync(text, withEncoding));
+      }
       // The wrapper adds the pledge to a copy.
       assert.deepStrictEqual(Object.keys(options), ["params"]);
     });
+  });
+
+  // The stream decodes a string with `defaultEncoding`. So the size of the input is the number
+  // of bytes in that encoding, and a pledge of another size makes zstd fail.
+  describe("a string with a defaultEncoding", () => {
+    const text = "h\xe9llo w\xf6rld";
+
+    for (const defaultEncoding of ["utf8", "utf-8"]) {
+      test(`${defaultEncoding}: pledges the UTF-8 size`, async () => {
+        const frame = await compress(text, { defaultEncoding });
+        assert.deepStrictEqual(
+          { decompressed: zlib.zstdDecompressSync(frame).toString(), contentSize: frameContentSize(frame) },
+          { decompressed: text, contentSize: sizeByDefault(13) },
+        );
+      });
+    }
+
+    // Node.js pledges only for "utf8" and "utf-8". Bun also pledges for their other spellings,
+    // and for each encoding in which a string has exactly one byte length.
+    const exactEncodings = ["UTF8", "UTF-8", "Utf8", "latin1", "LATIN1", "binary", "ascii"];
+    exactEncodings.push("utf16le", "utf-16le", "UTF16LE", "ucs2", "ucs-2");
+    for (const defaultEncoding of exactEncodings) {
+      test(`${defaultEncoding}: compresses the decoded bytes, and Bun pledges their size`, async () => {
+        const bytes = Buffer.from(text, defaultEncoding as BufferEncoding);
+        const frame = await compress(text, { defaultEncoding });
+        assert.deepStrictEqual(zlib.zstdDecompressSync(frame), bytes);
+        assertContentSize(frameContentSize(frame), bytes.length, bytes.length);
+      });
+    }
+
+    test("latin1: Bun pledges the size of an ASCII string too", async () => {
+      assertContentSize(await contentSizeOf("hello", { defaultEncoding: "latin1" }), 5, 5);
+    });
+
+    // Buffer.byteLength() also counts the characters that the hex and base64 decoders skip. So
+    // the size is not known before the stream decodes the string, and there is no pledge.
+    for (const [defaultEncoding, encoded] of [
+      ["hex", "68656c6c6f"],
+      ["hex", "68656c6c6fzz"],
+      ["base64", "aGVsbG8="],
+      ["base64", "aGV sbG8"],
+      ["base64url", "aGVsbG8"],
+    ] as const) {
+      test(`${defaultEncoding}: compresses ${JSON.stringify(encoded)} with no pledge`, async () => {
+        const bytes = Buffer.from(encoded, defaultEncoding);
+        assert.strictEqual(bytes.toString(), "hello");
+        const frame = await compress(encoded, { defaultEncoding });
+        assert.deepStrictEqual(zlib.zstdDecompressSync(frame), bytes);
+        assertContentSize(frameContentSize(frame), null, bytes.length);
+      });
+    }
   });
 });
 

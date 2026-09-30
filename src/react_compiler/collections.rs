@@ -400,10 +400,6 @@ impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     pub(crate) fn values(&self) -> slice::Iter<'_, V> {
         self.0.values()
     }
-    #[inline]
-    pub(crate) fn values_mut(&mut self) -> slice::IterMut<'_, V> {
-        self.0.values_mut()
-    }
 }
 
 impl<K, V> Default for IdMap<K, V> {

@@ -433,8 +433,12 @@ static void wsOnClose(void* ctx, unsigned short code)
             // terminator the pipe protocol needs.
             for (auto& cmd : pending) {
                 if (cmd.id && !t.m_pending.contains(cmd.id)) continue;
-                Bun::UTF8View view(cmd.body);
-                auto s = view.span();
+                auto view = Bun::UTF8View::tryCreate(cmd.body);
+                if (!view) [[unlikely]] {
+                    t.rejectAllAndMarkDead("Chrome command is too long to send"_s);
+                    return;
+                }
+                auto s = view->span();
                 t.writeRaw(s.data(), s.size());
                 t.writeRaw("\0", 1);
             }
@@ -798,7 +802,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan = byteCast<char>(ss.span());
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
@@ -808,7 +812,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Chain into Runtime.enable (for consoleAPICalled later) then
         // Page.navigate to the stashed url.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan = byteCast<char>(ss.span());
 
         // Runtime.enable — fire-and-forget, untracked. We don't need to
         // wait for its reply before navigating.
@@ -825,14 +829,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
-    case Method::RuntimeEnable:
-    case Method::TargetCloseTarget:
-        // Untracked fire-and-forget — close() sends TargetCloseTarget
-        // without adding to m_pending (the view is going away). Chrome's
-        // reply finds no entry, handleResponse's find()==end() drops it.
-        // This case arm is unreachable; present for switch completeness.
-        return;
-
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
         // errorText present → navigation failed synchronously (bad URL,
@@ -1022,7 +1018,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::InputDispatchMouseEvent:
     case Method::InputDispatchKeyEvent:
-    case Method::InputDispatchScrollEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
         // Input.* / Emulation.* reply with empty result on success. Sync-
@@ -1068,7 +1063,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sid(ss.data(), ss.length());
+        std::span<const char> sid = byteCast<char>(ss.span());
 
         auto btn = cdpButton(view->m_selButton);
         int32_t mods = cdpModifiers(view->m_selModifiers);

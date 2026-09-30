@@ -532,6 +532,10 @@ where
         // SAFETY: fn contract — the box `enqueue` posted.
         unsafe { Self::deinit(this) }
     }
+    /// Reloads the realm.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>

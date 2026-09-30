@@ -1644,7 +1644,7 @@ impl BlobExt for Blob {
                 s3.get_credentials().clone(),
                 path,
                 &global_this.js_thread(context),
-                Default::default(),
+                s3.options,
                 self.content_type_or_mime_type(),
                 None,
                 None,

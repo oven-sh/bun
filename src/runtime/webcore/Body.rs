@@ -144,13 +144,12 @@ impl Body {
             "{}",
             Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>bodyUsed<d>:<r> ")
         )?;
-        formatter
-            .print_as::<ENABLE_ANSI_COLORS>(
-                jsc::FormatAs::Boolean,
-                writer,
-                JSValue::from(matches!(self.value.get(), Value::Used)),
-                jsc::JSType::BooleanObject,
-            )?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            jsc::FormatAs::Boolean,
+            writer,
+            JSValue::from(matches!(self.value.get(), Value::Used)),
+            jsc::JSType::BooleanObject,
+        )?;
 
         match self.value_mut() {
             Value::Blob(blob) => {
@@ -178,13 +177,12 @@ impl Body {
                     formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    formatter
-                        .print_as::<ENABLE_ANSI_COLORS>(
-                            jsc::FormatAs::Object,
-                            writer,
-                            stream.value,
-                            stream.value.js_type(),
-                        )?;
+                    formatter.print_as::<ENABLE_ANSI_COLORS>(
+                        jsc::FormatAs::Object,
+                        writer,
+                        stream.value,
+                        stream.value.js_type(),
+                    )?;
                 }
             }
             _ => {}

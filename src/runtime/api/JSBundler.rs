@@ -2242,8 +2242,11 @@ impl BuildArtifact {
                     // SAFETY: `as_` returned a non-null wrapper-owned pointer;
                     // `write_format` is `&self` so a shared borrow of `sm_ptr`
                     // is sound even if it aliases `self`.
-                    unsafe { &*sm_ptr }
-                        .write_format::<ENABLE_ANSI_COLORS>(sm_value, &mut formatter, writer)?;
+                    unsafe { &*sm_ptr }.write_format::<ENABLE_ANSI_COLORS>(
+                        sm_value,
+                        &mut formatter,
+                        writer,
+                    )?;
                 } else {
                     write!(
                         writer,

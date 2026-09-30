@@ -133,6 +133,7 @@ macro_rules! throw_pretty_static {
 
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub(crate) mod bun_test;
+    #[path = "asymmetric_matcher_format.rs"] pub(crate) mod asymmetric_matcher_format;
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
@@ -140,7 +141,6 @@ cfg_jsc! {
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
     #[path = "Order.rs"]          pub(crate) mod order;
-    #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
     #[path = "snapshot.rs"]       pub(crate) mod snapshot;
 

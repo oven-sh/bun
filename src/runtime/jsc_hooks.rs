@@ -2071,7 +2071,9 @@ fn console_print_shared_runtime_object<const C: bool>(
         let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
-    crate::test_runner::pretty_format::print_asymmetric_matcher::<C>(formatter, writer_, value)
+    crate::test_runner::asymmetric_matcher_format::print_asymmetric_matcher::<C>(
+        formatter, writer_, value,
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════════

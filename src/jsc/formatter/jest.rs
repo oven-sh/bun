@@ -54,10 +54,9 @@ impl<'a> Formatter<'a> {
             Tag::JSON | Tag::ToJSON => self.print_jest_json(writer_, value, js_type),
             Tag::Event => self.print_event::<false>(entered, writer_, value),
             Tag::JSX => self.print_jsx::<false>(entered, writer_, value),
-            Tag::Object
-            | Tag::MapIterator
-            | Tag::SetIterator
-            | Tag::CustomFormattedObject => self.print_jest_object(entered, writer_, value, js_type),
+            Tag::Object | Tag::MapIterator | Tag::SetIterator | Tag::CustomFormattedObject => {
+                self.print_jest_object(entered, writer_, value, js_type)
+            }
             Tag::TypedArray => self.print_jest_typed_array(writer_, value, js_type),
             Tag::RevokedProxy => self.print_revoked_proxy::<false>(writer_),
             Tag::Proxy => self.print_proxy::<false>(entered, writer_, value),
@@ -283,7 +282,10 @@ impl<'a> Formatter<'a> {
                 self.put_jest_indent(writer_);
                 let element = value.get_index(self.global_this, i)?;
                 if element.is_undefined() {
-                    let holes = value.next_present_index(i).map_or(len, |next| next.min(len)) - i;
+                    let holes = value
+                        .next_present_index(i)
+                        .map_or(len, |next| next.min(len))
+                        - i;
                     if holes > MAX_HOLES_PRINTED_ONE_BY_ONE {
                         self.print_jest_holes(writer_, holes)?;
                         i += holes;
@@ -343,12 +345,7 @@ impl<'a> Formatter<'a> {
                 self.add_for_new_line("FormData (entries) ".len());
                 self.put(writer_, b"FormData (entries) ");
                 let entries = to_json.call(self.global_this, value, &[])?;
-                return self.print_as::<false>(
-                    Tag::Object,
-                    writer_,
-                    entries,
-                    jsc::JSType::Object,
-                );
+                return self.print_as::<false>(Tag::Object, writer_, entries, jsc::JSType::Object);
             }
         } else if js_type != jsc::JSType::DOMWrapper {
             if value.is_callable() {
@@ -567,9 +564,7 @@ impl<'a> Formatter<'a> {
         }
 
         if js_type == jsc::JSType::Uint8Array
-            && value
-                .get_class_name(self.global_this)?
-                .eq_ascii(b"Buffer")
+            && value.get_class_name(self.global_this)?.eq_ascii(b"Buffer")
         {
             if slice.is_empty() && self.indent == 0 {
                 self.put(writer_, b"\n");
@@ -766,7 +761,10 @@ impl JestProperties<'_, '_> {
             this.add_for_new_line(key.len + 2);
             this.putf(
                 self.writer,
-                format_args!("{}: ", bun_core::fmt::format_json_string_latin1(key.slice())),
+                format_args!(
+                    "{}: ",
+                    bun_core::fmt::format_json_string_latin1(key.slice())
+                ),
             );
         }
     }

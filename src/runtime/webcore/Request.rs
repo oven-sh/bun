@@ -579,13 +579,12 @@ impl Request {
                 writer.write_str(
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> ").as_ref(),
                 )?;
-                formatter
-                    .print_as::<ENABLE_ANSI_COLORS>(
-                        bun_jsc::FormatTag::Private,
-                        writer,
-                        params_object,
-                        bun_jsc::JSType::Object,
-                    )?;
+                formatter.print_as::<ENABLE_ANSI_COLORS>(
+                    bun_jsc::FormatTag::Private,
+                    writer,
+                    params_object,
+                    bun_jsc::JSType::Object,
+                )?;
                 formatter
                     .print_comma::<ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
@@ -597,13 +596,12 @@ impl Request {
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref(),
             )?;
             let headers_js = self.get_headers(formatter.global_this)?;
-            formatter
-                .print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatTag::Private,
-                    writer,
-                    headers_js,
-                    bun_jsc::JSType::DOMWrapper,
-                )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatTag::Private,
+                writer,
+                headers_js,
+                bun_jsc::JSType::DOMWrapper,
+            )?;
 
             match self.body_value_mut() {
                 BodyValue::Blob(blob) => {
@@ -630,13 +628,12 @@ impl Request {
                     if let Some(stream) = self.get_body_readable_stream() {
                         writer.write_str("\n")?;
                         formatter.write_indent(writer)?;
-                        formatter
-                            .print_as::<ENABLE_ANSI_COLORS>(
-                                bun_jsc::FormatTag::Object,
-                                writer,
-                                stream.value,
-                                stream.value.js_type(),
-                            )?;
+                        formatter.print_as::<ENABLE_ANSI_COLORS>(
+                            bun_jsc::FormatTag::Object,
+                            writer,
+                            stream.value,
+                            stream.value.js_type(),
+                        )?;
                     }
                 }
                 _ => {}

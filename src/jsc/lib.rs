@@ -842,7 +842,7 @@ pub enum BuiltinName {
 #[allow(non_upper_case_globals)]
 impl BuiltinName {
     // PascalCase aliases for downstream callers (Response.rs / Request.rs /
-    // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
+    // streams.rs / fetch.rs / TextDecoder.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
     pub const Url: Self = Self::url;

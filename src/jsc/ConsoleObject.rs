@@ -2075,9 +2075,8 @@ pub mod formatter {
     }
 
     /// Reverse of [`TagPayload::tag`]. The `CustomFormattedObject` arm gets a
-    /// default (zero) payload — used by the `ConsoleFormatter` trait bridge in
-    /// `lib.rs`, which never passes that tag (write_format hooks pick concrete
-    /// tags like `Double` / `Boolean` / `Object` / `Private`).
+    /// default (zero) payload: a printer that picks the tag itself picks a
+    /// concrete one like `Double` / `Boolean` / `Object` / `Private`.
     impl From<Tag> for TagPayload {
         fn from(t: Tag) -> Self {
             match t {
@@ -2817,7 +2816,11 @@ pub mod formatter {
         if number.is_nan() {
             b"NaN"
         } else if number.is_infinite() {
-            if number > 0.0 { b"Infinity" } else { b"-Infinity" }
+            if number > 0.0 {
+                b"Infinity"
+            } else {
+                b"-Infinity"
+            }
         } else {
             bun_core::fmt::FormatDouble::dtoa_with_negative_zero(buf, number)
         }
@@ -2958,12 +2961,9 @@ pub mod formatter {
                 let Ok(tag) = this.formatter.tag_of(key) else {
                     return;
                 };
-                let _ = this.formatter.format::<C>(
-                    tag,
-                    this.writer,
-                    key,
-                    this.formatter.global_this,
-                );
+                let _ =
+                    this.formatter
+                        .format::<C>(tag, this.writer, key, this.formatter.global_this);
             }
             this.count += 1;
             if !SINGLE_LINE {
@@ -3656,7 +3656,13 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.dispatch::<C>(entered, Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    self.dispatch::<C>(
+                        entered,
+                        Tag::JSON,
+                        writer_,
+                        value,
+                        jsc::JSType::StringObject,
+                    )?;
                     if C {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
                     }
@@ -3685,7 +3691,13 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.dispatch::<C>(entered, Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    self.dispatch::<C>(
+                        entered,
+                        Tag::JSON,
+                        writer_,
+                        value,
+                        jsc::JSType::StringObject,
+                    )?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -5013,8 +5025,7 @@ pub mod formatter {
                             pf!("<d>"),
                             pf!("<r>")
                         );
-                        let tag =
-                            self.tag_of(message_value)?;
+                        let tag = self.tag_of(message_value)?;
                         self.format::<C>(tag, writer_, message_value, self.global_this)?;
                         if self.failed {
                             return Ok(());
@@ -5035,9 +5046,8 @@ pub mod formatter {
                             pf!("<d>"),
                             pf!("<r>")
                         );
-                        let data =
-                            reader::event_field(self.global_this, value, EventField::Data)?
-                                .unwrap_or(JSValue::UNDEFINED);
+                        let data = reader::event_field(self.global_this, value, EventField::Data)?
+                            .unwrap_or(JSValue::UNDEFINED);
                         let tag = self.tag_of(data)?;
                         self.format::<C>(tag, writer_, data, self.global_this)?;
                         if self.failed {
@@ -5059,8 +5069,7 @@ pub mod formatter {
                                 pf!("<d>"),
                                 pf!("<r>")
                             );
-                            let tag =
-                                self.tag_of(error_value)?;
+                            let tag = self.tag_of(error_value)?;
                             self.format::<C>(tag, writer_, error_value, self.global_this)?;
                             if self.failed {
                                 return Ok(());
@@ -5504,7 +5513,14 @@ pub mod formatter {
                 return Ok(());
             }
 
-            self.print_object_tail::<C>(entered, writer_, value, js_type, iter_i, iter_always_newline)
+            self.print_object_tail::<C>(
+                entered,
+                writer_,
+                value,
+                js_type,
+                iter_i,
+                iter_always_newline,
+            )
         }
 
         #[inline(never)]

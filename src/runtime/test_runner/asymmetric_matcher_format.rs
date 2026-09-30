@@ -76,7 +76,13 @@ pub(crate) fn print_asymmetric_matcher<const ENABLE_ANSI_COLORS: bool>(
     value: JSValue,
 ) -> JsResult<bool> {
     if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-        put_prefix(formatter, writer, matcher.flags.get(), "Anything", "NotAnything");
+        put_prefix(
+            formatter,
+            writer,
+            matcher.flags.get(),
+            "Anything",
+            "NotAnything",
+        );
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
         let Some(constructor_value) = expect_js::any::constructor_value_get_cached(value) else {
             return Ok(true);
@@ -85,7 +91,11 @@ pub(crate) fn print_asymmetric_matcher<const ENABLE_ANSI_COLORS: bool>(
         let class_name = constructor_value.get_class_name(formatter.global_this)?;
         formatter.add_for_new_line(class_name.length());
         let _ = if ENABLE_ANSI_COLORS {
-            write!(writer, bun_core::pretty_fmt!("<cyan>{}<r>", true), class_name)
+            write!(
+                writer,
+                bun_core::pretty_fmt!("<cyan>{}<r>", true),
+                class_name
+            )
         } else {
             write!(writer, "{class_name}")
         };

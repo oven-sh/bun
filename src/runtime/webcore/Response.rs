@@ -7,8 +7,8 @@ use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsRef,
-    JsResult, StringJsc as _,
+    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsRef, JsResult,
+    StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
@@ -651,13 +651,12 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>ok<d>:<r> ")
             )?;
-            formatter
-                .print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Boolean,
-                    writer,
-                    JSValue::from(self.is_ok()),
-                    bun_jsc::JSType::BooleanObject,
-                )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Boolean,
+                writer,
+                JSValue::from(self.is_ok()),
+                bun_jsc::JSType::BooleanObject,
+            )?;
             formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
@@ -678,13 +677,12 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>status<d>:<r> ")
             )?;
-            formatter
-                .print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Double,
-                    writer,
-                    JSValue::js_number(self.init.get().status_code as f64),
-                    bun_jsc::JSType::NumberObject,
-                )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Double,
+                writer,
+                JSValue::js_number(self.init.get().status_code as f64),
+                bun_jsc::JSType::NumberObject,
+            )?;
             formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
@@ -710,13 +708,12 @@ impl Response {
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ")
             )?;
             let headers_js = Self::get_headers(self, formatter.global_this)?;
-            formatter
-                .print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Private,
-                    writer,
-                    headers_js,
-                    bun_jsc::JSType::DOMWrapper,
-                )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Private,
+                writer,
+                headers_js,
+                bun_jsc::JSType::DOMWrapper,
+            )?;
             formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
@@ -726,13 +723,12 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>redirected<d>:<r> ")
             )?;
-            formatter
-                .print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Boolean,
-                    writer,
-                    JSValue::from(self.redirected.get()),
-                    bun_jsc::JSType::BooleanObject,
-                )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                bun_jsc::FormatAs::Boolean,
+                writer,
+                JSValue::from(self.redirected.get()),
+                bun_jsc::JSType::BooleanObject,
+            )?;
             formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 

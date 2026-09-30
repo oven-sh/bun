@@ -200,38 +200,35 @@ pub(crate) fn write_format_credentials<const ENABLE_ANSI_COLORS: bool>(
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>partSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter
-            .print_as::<ENABLE_ANSI_COLORS>(
-                FormatTag::Double,
-                writer,
-                JSValue::js_number(options.part_size as f64),
-                JSType::NumberObject,
-            )?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            FormatTag::Double,
+            writer,
+            JSValue::js_number(options.part_size as f64),
+            JSType::NumberObject,
+        )?;
         formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
 
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>queueSize<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter
-            .print_as::<ENABLE_ANSI_COLORS>(
-                FormatTag::Double,
-                writer,
-                JSValue::js_number(options.queue_size as f64),
-                JSType::NumberObject,
-            )?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            FormatTag::Double,
+            writer,
+            JSValue::js_number(options.queue_size as f64),
+            JSType::NumberObject,
+        )?;
         formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>retry<d>:<r> ", ENABLE_ANSI_COLORS))?;
-        formatter
-            .print_as::<ENABLE_ANSI_COLORS>(
-                FormatTag::Double,
-                writer,
-                JSValue::js_number(options.retry as f64),
-                JSType::NumberObject,
-            )?;
+        formatter.print_as::<ENABLE_ANSI_COLORS>(
+            FormatTag::Double,
+            writer,
+            JSValue::js_number(options.retry as f64),
+            JSType::NumberObject,
+        )?;
         writer.write_str("\n")?;
     }
 

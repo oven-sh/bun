@@ -87,13 +87,12 @@ impl Archive {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>files<d>:<r> "),
             )?;
-            formatter
-                .print_as::<ENABLE_ANSI_COLORS>(
-                    jsc::FormatTag::Double,
-                    writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
-                    jsc::JSType::NumberObject,
-                )?;
+            formatter.print_as::<ENABLE_ANSI_COLORS>(
+                jsc::FormatTag::Double,
+                writer,
+                JSValue::js_number(f64::from(count_files_in_archive(data))),
+                jsc::JSType::NumberObject,
+            )?;
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

@@ -789,12 +789,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "a ? (b) => (c) : d => e": after parameters that could be an expression, the body is before the ":" too
                 let is_body_before_colon = Self::IS_TYPESCRIPT_ENABLED
                     && opts.is_after_question_and_before_colon
-                    && Self::arrow_parameters_could_be_expr(
-                        items,
-                        spread_range,
-                        type_colon_range,
-                        &errors,
-                    );
+                    && (p.paren_expr_has_type_parameters(loc, opts.is_async)
+                        || Self::arrow_parameters_could_be_expr(
+                            items,
+                            spread_range,
+                            type_colon_range,
+                            &errors,
+                        ));
                 let body_flags = if is_body_before_colon {
                     EFlags::AfterQuestionAndBeforeColon
                 } else {
@@ -886,6 +887,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // "(a: T)" and "(a?)" are certain: a type or a "?" after a later parameter is taken as one after the first
         type_colon_range.len == 0 && errors.invalid_expr_after_question.is_none()
+    }
+
+    /// Whether type parameters stand before the parentheses of `parse_paren_expr` at `loc`: the reference is not certain of an arrow function after them.
+    #[cold]
+    #[inline(never)]
+    fn paren_expr_has_type_parameters(&self, loc: bun_ast::Loc, is_async: bool) -> bool {
+        let mut rest = self.lexer.contents.get(loc.i()..).unwrap_or(&[]);
+        if is_async {
+            rest = rest
+                .strip_prefix(b"async")
+                .unwrap_or(&[])
+                .trim_ascii_start();
+        }
+        rest.first() == Some(&b'<')
     }
 
     pub(crate) fn parse_label_name(&mut self) -> Result<Option<js_ast::LocRef>, Error> {

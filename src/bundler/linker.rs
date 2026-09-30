@@ -431,8 +431,10 @@ impl Linker {
                             continue;
                         }
 
-                        // Resolve dynamic imports lazily for perf
-                        if import_record.kind == ImportKind::Dynamic {
+                        // import() and require() run onResolve at call time.
+                        if import_record.kind == ImportKind::Dynamic
+                            || import_record.kind.is_common_js()
+                        {
                             continue;
                         }
                     }

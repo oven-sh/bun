@@ -234,7 +234,27 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
 
+pub fn is_instantiated_module(a: Ast<'_>, node: NodeId, preserve_const_enums: bool) -> bool {
+    let module_state = get_module_instance_state_exported(a, node);
+    module_state == ModuleInstanceState::INSTANTIATED
+        || preserve_const_enums && module_state == ModuleInstanceState::CONST_ENUM_ONLY
+}
+
+pub fn get_first_non_ambient_class_or_function_declaration(a: Ast<'_>, symbol: SymbolId) -> NodeId {
+    for &declaration in a.sym(symbol).declarations.as_slice() {
+        if (is_class_declaration(a, declaration)
+            || is_function_declaration(a, declaration) && node_is_present(a, a.body(declaration)))
+            && !a.flags(declaration).intersects(NodeFlags::AMBIENT)
+        {
+            return declaration;
+        }
+    }
+    NodeId::NIL
+}
+
+impl<'a> Checker<'a> {
     pub fn get_isolated_modules_like_flag_name(&self) -> &'static [u8] {
         if self.compiler_options.verbatim_module_syntax.is_true() {
             b"verbatimModuleSyntax"
@@ -477,7 +497,23 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
 
+pub fn has_type_json_import_attribute(a: Ast<'_>, node: NodeId) -> bool {
+    let attributes = a.as_import_declaration(node).attributes;
+    !attributes.is_nil()
+        && a.nodes(a.as_import_attributes(attributes).attributes)
+            .as_slice()
+            .iter()
+            .any(|&attr| {
+                let value = a.as_import_attribute(attr).value;
+                a.text(a.name(attr)) == b"type"
+                    && is_string_literal_like(a, value)
+                    && a.text(value) == b"json"
+            })
+}
+
+impl<'a> Checker<'a> {
     pub fn check_import_attributes(&mut self, declaration: NodeId) {
         let a = self.ast;
         let node = get_import_attributes(a, declaration);
@@ -806,7 +842,17 @@ impl<'a> Checker<'a> {
             self.check_external_emit_helpers(node, ExternalEmitHelpers::IMPORT_DEFAULT);
         }
     }
+}
 
+pub fn is_contained_by_namespace(a: Ast<'_>, node: NodeId) -> bool {
+    let mut container = a.parent(node);
+    if !is_source_file(a, container) {
+        container = a.parent(container);
+    }
+    is_module_declaration(a, container) && !is_ambient_module(a, container)
+}
+
+impl<'a> Checker<'a> {
     pub fn check_export_assignment(&mut self, node: NodeId) {
         let a = self.ast;
         let is_export_equals = a.as_export_assignment(node).is_export_equals;
@@ -997,7 +1043,21 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
 
+pub fn get_verbatim_module_syntax_error_message(a: Ast<'_>, node: NodeId) -> MessageId {
+    let source_file = get_source_file_of_node(a, node);
+    let file_name = a.as_source_file(source_file).file_name();
+
+    // Check if the file is .cts or .cjs (CommonJS-specific extensions)
+    if file_extension_is_one_of(file_name, &[EXTENSION_CTS, EXTENSION_CJS]) {
+        return diagnostics::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBATIMMODULESYNTAX;
+    }
+    // For .ts, .tsx, .js, etc.
+    diagnostics::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBATIMMODULESYNTAX_ADJUST_THE_TYPE_FIELD_IN_THE_NEAREST_PACKAGE_JSON_TO_MAKE_THIS_FILE_AN_ECMASCRIPT_MODULE_OR_ADJUST_YOUR_VERBATIMMODULESYNTAX_MODULE_AND_MODULERESOLUTION_SETTINGS_IN_TYPESCRIPT
+}
+
+impl<'a> Checker<'a> {
     pub fn check_external_module_exports(&mut self, node: NodeId) {
         let a = self.ast;
         let module_symbol = self.get_symbol_of_declaration(node);
@@ -1109,64 +1169,14 @@ impl<'a> Checker<'a> {
         }
         false
     }
-
-    pub fn check_missing_declaration(&mut self, node: NodeId) {
-        self.check_decorators(node);
-    }
-}
-
-pub fn is_instantiated_module(a: Ast<'_>, node: NodeId, preserve_const_enums: bool) -> bool {
-    let module_state = get_module_instance_state_exported(a, node);
-    module_state == ModuleInstanceState::INSTANTIATED
-        || preserve_const_enums && module_state == ModuleInstanceState::CONST_ENUM_ONLY
-}
-
-pub fn get_first_non_ambient_class_or_function_declaration(a: Ast<'_>, symbol: SymbolId) -> NodeId {
-    for &declaration in a.sym(symbol).declarations.as_slice() {
-        if (is_class_declaration(a, declaration)
-            || is_function_declaration(a, declaration) && node_is_present(a, a.body(declaration)))
-            && !a.flags(declaration).intersects(NodeFlags::AMBIENT)
-        {
-            return declaration;
-        }
-    }
-    NodeId::NIL
-}
-
-pub fn has_type_json_import_attribute(a: Ast<'_>, node: NodeId) -> bool {
-    let attributes = a.as_import_declaration(node).attributes;
-    !attributes.is_nil()
-        && a.nodes(a.as_import_attributes(attributes).attributes)
-            .as_slice()
-            .iter()
-            .any(|&attr| {
-                let value = a.as_import_attribute(attr).value;
-                a.text(a.name(attr)) == b"type"
-                    && is_string_literal_like(a, value)
-                    && a.text(value) == b"json"
-            })
-}
-
-pub fn is_contained_by_namespace(a: Ast<'_>, node: NodeId) -> bool {
-    let mut container = a.parent(node);
-    if !is_source_file(a, container) {
-        container = a.parent(container);
-    }
-    is_module_declaration(a, container) && !is_ambient_module(a, container)
-}
-
-pub fn get_verbatim_module_syntax_error_message(a: Ast<'_>, node: NodeId) -> MessageId {
-    let source_file = get_source_file_of_node(a, node);
-    let file_name = a.as_source_file(source_file).file_name();
-
-    // Check if the file is .cts or .cjs (CommonJS-specific extensions)
-    if file_extension_is_one_of(file_name, &[EXTENSION_CTS, EXTENSION_CJS]) {
-        return diagnostics::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBATIMMODULESYNTAX;
-    }
-    // For .ts, .tsx, .js, etc.
-    diagnostics::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBATIMMODULESYNTAX_ADJUST_THE_TYPE_FIELD_IN_THE_NEAREST_PACKAGE_JSON_TO_MAKE_THIS_FILE_AN_ECMASCRIPT_MODULE_OR_ADJUST_YOUR_VERBATIMMODULESYNTAX_MODULE_AND_MODULERESOLUTION_SETTINGS_IN_TYPESCRIPT
 }
 
 pub fn is_not_overload(a: Ast<'_>, node: NodeId) -> bool {
     !is_function_declaration(a, node) && !is_method_declaration(a, node) || !a.body(node).is_nil()
+}
+
+impl<'a> Checker<'a> {
+    pub fn check_missing_declaration(&mut self, node: NodeId) {
+        self.check_decorators(node);
+    }
 }

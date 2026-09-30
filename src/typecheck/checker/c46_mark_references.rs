@@ -28,6 +28,50 @@ use crate::core::{JsxEmit, ModuleKind};
 use crate::diagnostics::{self, MessageId};
 
 impl<'a> Checker<'a> {
+    // checker.go:10171-10197 (layer D-HELPERS): kept with the other helper checks until the file of its upstream range exists.
+    pub fn check_class_expression_external_helpers(&mut self, node: NodeId) {
+        let a = self.ast;
+        if !a.name(node).is_nil() {
+            return;
+        }
+        let parent = walk_up_outer_expressions(a, node);
+        if !is_named_evaluation_source(a, parent) {
+            return;
+        }
+
+        let will_transform_es_decorators = !self.legacy_decorators
+            && self.language_version
+                < LANGUAGE_FEATURE_MINIMUM_TARGET.class_and_class_element_decorators;
+        let mut location;
+        if will_transform_es_decorators
+            && class_or_constructor_parameter_is_decorated(a, false, node)
+        {
+            location = node;
+            let first_decorator = a
+                .decorators(node)
+                .as_slice()
+                .first()
+                .copied()
+                .unwrap_or_default();
+            if !first_decorator.is_nil() {
+                location = first_decorator;
+            }
+        } else {
+            location = self.get_first_transformable_static_class_element(node);
+        }
+
+        if !location.is_nil() {
+            self.check_external_emit_helpers(location, ExternalEmitHelpers::SET_FUNCTION_NAME);
+            if (is_property_assignment(a, parent)
+                || is_property_declaration(a, parent)
+                || is_binding_element(a, parent))
+                && is_computed_property_name(a, a.name(parent))
+            {
+                self.check_external_emit_helpers(location, ExternalEmitHelpers::PROP_KEY);
+            }
+        }
+    }
+
     pub fn mark_linked_references(
         &mut self,
         location: NodeId,
@@ -238,7 +282,55 @@ impl<'a> Checker<'a> {
             _ => self.fail("Unhandled reference hint"),
         }
     }
+}
 
+pub fn is_export_or_export_expression(a: Ast<'_>, location: NodeId) -> bool {
+    !find_ancestor(a, location, |n| {
+        let parent = a.parent(n);
+        if !parent.is_nil() {
+            if is_any_export_assignment(a, parent) {
+                return a.expression(parent) == n && is_entity_name_expression(a, n);
+            }
+            if is_export_specifier(a, parent) {
+                return a.name(parent) == n || a.property_name(parent) == n;
+            }
+        }
+        false
+    })
+    .is_nil()
+}
+
+pub fn should_mark_identifier_alias_referenced(a: Ast<'_>, node: NodeId) -> bool {
+    let parent = a.parent(node);
+    if !parent.is_nil() {
+        // A property access expression LHS? checkPropertyAccessExpression will handle that.
+        if is_property_access_expression(a, parent) && a.expression(parent) == node {
+            return false;
+        }
+        // Next two check for an identifier inside a type only export.
+        if is_export_specifier(a, parent) && a.is_type_only(parent) {
+            return false;
+        }
+        if !a.parent(parent).is_nil() {
+            let great_grandparent = a.parent(a.parent(parent));
+            if !great_grandparent.is_nil()
+                && is_export_declaration(a, great_grandparent)
+                && a.is_type_only(great_grandparent)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn is_internal_module_import_equals_declaration(a: Ast<'_>, node: NodeId) -> bool {
+    a.kind(node) == Kind::ImportEqualsDeclaration
+        && a.kind(a.as_import_equals_declaration(node).module_reference)
+            != Kind::ExternalModuleReference
+}
+
+impl<'a> Checker<'a> {
     pub fn mark_identifier_alias_referenced(&mut self, location: NodeId) {
         if is_this_in_type_query(self.ast, location) {
             return;
@@ -328,7 +420,27 @@ impl<'a> Checker<'a> {
             self.mark_alias_referenced(parent_symbol, location);
         }
     }
+}
 
+pub fn is_part_of_import_equals_module_reference(a: Ast<'_>, location: NodeId) -> bool {
+    let import_equals = find_ancestor_kind(a, location, Kind::ImportEqualsDeclaration);
+    if import_equals.is_nil() {
+        return false;
+    }
+    let mut node = location;
+    while !node.is_nil() && node != import_equals {
+        if node
+            == a.as_import_equals_declaration(import_equals)
+                .module_reference
+        {
+            return true;
+        }
+        node = a.parent(node);
+    }
+    false
+}
+
+impl<'a> Checker<'a> {
     pub fn mark_export_assignment_alias_referenced(&mut self, location: NodeId) {
         let a = self.ast;
         let id = a.expression(location);
@@ -897,124 +1009,6 @@ impl<'a> Checker<'a> {
             }
         }
     }
-
-    // If a TypeNode can be resolved to a value symbol imported from an external module, it is marked as referenced to prevent import elision.
-    pub fn mark_type_node_as_referenced(&mut self, node: NodeId) {
-        if !node.is_nil() {
-            self.mark_entity_name_or_entity_expression_as_reference(
-                get_entity_name_from_type_node(self.ast, node),
-                false,
-            );
-        }
-    }
-
-    // checker.go:10171-10197 (layer D-HELPERS): kept with the other helper checks until the file of its upstream range exists.
-    pub fn check_class_expression_external_helpers(&mut self, node: NodeId) {
-        let a = self.ast;
-        if !a.name(node).is_nil() {
-            return;
-        }
-        let parent = walk_up_outer_expressions(a, node);
-        if !is_named_evaluation_source(a, parent) {
-            return;
-        }
-
-        let will_transform_es_decorators = !self.legacy_decorators
-            && self.language_version
-                < LANGUAGE_FEATURE_MINIMUM_TARGET.class_and_class_element_decorators;
-        let mut location;
-        if will_transform_es_decorators
-            && class_or_constructor_parameter_is_decorated(a, false, node)
-        {
-            location = node;
-            let first_decorator = a
-                .decorators(node)
-                .as_slice()
-                .first()
-                .copied()
-                .unwrap_or_default();
-            if !first_decorator.is_nil() {
-                location = first_decorator;
-            }
-        } else {
-            location = self.get_first_transformable_static_class_element(node);
-        }
-
-        if !location.is_nil() {
-            self.check_external_emit_helpers(location, ExternalEmitHelpers::SET_FUNCTION_NAME);
-            if (is_property_assignment(a, parent)
-                || is_property_declaration(a, parent)
-                || is_binding_element(a, parent))
-                && is_computed_property_name(a, a.name(parent))
-            {
-                self.check_external_emit_helpers(location, ExternalEmitHelpers::PROP_KEY);
-            }
-        }
-    }
-}
-
-pub fn is_export_or_export_expression(a: Ast<'_>, location: NodeId) -> bool {
-    !find_ancestor(a, location, |n| {
-        let parent = a.parent(n);
-        if !parent.is_nil() {
-            if is_any_export_assignment(a, parent) {
-                return a.expression(parent) == n && is_entity_name_expression(a, n);
-            }
-            if is_export_specifier(a, parent) {
-                return a.name(parent) == n || a.property_name(parent) == n;
-            }
-        }
-        false
-    })
-    .is_nil()
-}
-
-pub fn should_mark_identifier_alias_referenced(a: Ast<'_>, node: NodeId) -> bool {
-    let parent = a.parent(node);
-    if !parent.is_nil() {
-        // A property access expression LHS? checkPropertyAccessExpression will handle that.
-        if is_property_access_expression(a, parent) && a.expression(parent) == node {
-            return false;
-        }
-        // Next two check for an identifier inside a type only export.
-        if is_export_specifier(a, parent) && a.is_type_only(parent) {
-            return false;
-        }
-        if !a.parent(parent).is_nil() {
-            let great_grandparent = a.parent(a.parent(parent));
-            if !great_grandparent.is_nil()
-                && is_export_declaration(a, great_grandparent)
-                && a.is_type_only(great_grandparent)
-            {
-                return false;
-            }
-        }
-    }
-    true
-}
-
-pub fn is_internal_module_import_equals_declaration(a: Ast<'_>, node: NodeId) -> bool {
-    a.kind(node) == Kind::ImportEqualsDeclaration
-        && a.kind(a.as_import_equals_declaration(node).module_reference)
-            != Kind::ExternalModuleReference
-}
-
-pub fn is_part_of_import_equals_module_reference(a: Ast<'_>, location: NodeId) -> bool {
-    let import_equals = find_ancestor_kind(a, location, Kind::ImportEqualsDeclaration);
-    if import_equals.is_nil() {
-        return false;
-    }
-    let mut node = location;
-    while !node.is_nil() && node != import_equals {
-        if node
-            == a.as_import_equals_declaration(import_equals)
-                .module_reference
-        {
-            return true;
-        }
-        node = a.parent(node);
-    }
-    false
 }
 
 pub fn get_entity_name_from_type_node(a: Ast<'_>, node: NodeId) -> NodeId {
@@ -1029,5 +1023,17 @@ pub fn get_entity_name_from_type_node(a: Ast<'_>, node: NodeId) -> NodeId {
         // These aren't valid TypeNodes, but we treat them as such because of `isPartOfTypeNode`, which returns `true` for things that aren't `TypeNode`s.
         Kind::Identifier | Kind::QualifiedName => node,
         _ => NodeId::NIL,
+    }
+}
+
+impl<'a> Checker<'a> {
+    // If a TypeNode can be resolved to a value symbol imported from an external module, it is marked as referenced to prevent import elision.
+    pub fn mark_type_node_as_referenced(&mut self, node: NodeId) {
+        if !node.is_nil() {
+            self.mark_entity_name_or_entity_expression_as_reference(
+                get_entity_name_from_type_node(self.ast, node),
+                false,
+            );
+        }
     }
 }

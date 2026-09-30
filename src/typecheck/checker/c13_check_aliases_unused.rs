@@ -950,7 +950,21 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
 
+pub fn is_identifier_that_starts_with_underscore(a: Ast<'_>, node: NodeId) -> bool {
+    is_identifier(a, node) && a.text(node).first() == Some(&b'_')
+}
+
+pub fn import_clause_from_imported(a: Ast<'_>, node: NodeId) -> NodeId {
+    match a.kind(node) {
+        Kind::ImportClause => node,
+        Kind::NamespaceImport => a.parent(node),
+        _ => a.parent(a.parent(node)),
+    }
+}
+
+impl<'a> Checker<'a> {
     pub fn check_unused_infer_type_parameter(&mut self, node: NodeId) {
         let a = self.ast;
         let type_parameter = a.as_infer_type_node(node).type_parameter;
@@ -1046,17 +1060,5 @@ impl<'a> Checker<'a> {
                 self.add_diagnostic(diagnostic);
             }
         }
-    }
-}
-
-pub fn is_identifier_that_starts_with_underscore(a: Ast<'_>, node: NodeId) -> bool {
-    is_identifier(a, node) && a.text(node).first() == Some(&b'_')
-}
-
-pub fn import_clause_from_imported(a: Ast<'_>, node: NodeId) -> NodeId {
-    match a.kind(node) {
-        Kind::ImportClause => node,
-        Kind::NamespaceImport => a.parent(node),
-        _ => a.parent(a.parent(node)),
     }
 }

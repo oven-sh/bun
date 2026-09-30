@@ -405,7 +405,51 @@ impl<'a> Checker<'a> {
         visit(self, node, &mut super_call);
         super_call
     }
+}
 
+pub fn is_instance_property_with_initializer_or_private_identifier_property(
+    a: Ast<'_>,
+    n: NodeId,
+) -> bool {
+    is_private_identifier_class_element_declaration(a, n)
+        || is_property_declaration(a, n) && !is_static(a, n) && !a.initializer(n).is_nil()
+}
+
+pub fn super_call_is_root_level_in_constructor(
+    a: Ast<'_>,
+    super_call: NodeId,
+    body: NodeId,
+) -> bool {
+    let super_call_parent = walk_up_parenthesized_expressions(a, a.parent(super_call));
+    is_expression_statement(a, super_call_parent) && a.parent(super_call_parent) == body
+}
+
+pub fn node_immediately_references_super_or_this(a: Ast<'_>, node: NodeId) -> bool {
+    // Go stacks grow: the walk ends here with an internal diagnostic when the thread has no stack left.
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        a.fault(FaultKind::StackLimit, "stack limit reached", 0, node.0);
+        return false;
+    }
+    match a.kind(node) {
+        Kind::SuperKeyword | Kind::ThisKeyword => return true,
+        Kind::ArrowFunction
+        | Kind::FunctionDeclaration
+        | Kind::FunctionExpression
+        | Kind::PropertyDeclaration => return false,
+        Kind::Block => match a.kind(a.parent(node)) {
+            Kind::Constructor | Kind::MethodDeclaration | Kind::GetAccessor | Kind::SetAccessor => {
+                return false;
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+    a.for_each_child(node, &mut |child| {
+        node_immediately_references_super_or_this(a, child)
+    })
+}
+
+impl<'a> Checker<'a> {
     pub fn check_accessor_declaration(&mut self, node: NodeId) {
         let a = self.ast;
         // Grammar checking accessors
@@ -1189,46 +1233,4 @@ impl<'a> Checker<'a> {
             );
         }
     }
-}
-
-pub fn is_instance_property_with_initializer_or_private_identifier_property(
-    a: Ast<'_>,
-    n: NodeId,
-) -> bool {
-    is_private_identifier_class_element_declaration(a, n)
-        || is_property_declaration(a, n) && !is_static(a, n) && !a.initializer(n).is_nil()
-}
-
-pub fn super_call_is_root_level_in_constructor(
-    a: Ast<'_>,
-    super_call: NodeId,
-    body: NodeId,
-) -> bool {
-    let super_call_parent = walk_up_parenthesized_expressions(a, a.parent(super_call));
-    is_expression_statement(a, super_call_parent) && a.parent(super_call_parent) == body
-}
-
-pub fn node_immediately_references_super_or_this(a: Ast<'_>, node: NodeId) -> bool {
-    // Go stacks grow: the walk ends here with an internal diagnostic when the thread has no stack left.
-    if !bun_core::StackCheck::init().is_safe_to_recurse() {
-        a.fault(FaultKind::StackLimit, "stack limit reached", 0, node.0);
-        return false;
-    }
-    match a.kind(node) {
-        Kind::SuperKeyword | Kind::ThisKeyword => return true,
-        Kind::ArrowFunction
-        | Kind::FunctionDeclaration
-        | Kind::FunctionExpression
-        | Kind::PropertyDeclaration => return false,
-        Kind::Block => match a.kind(a.parent(node)) {
-            Kind::Constructor | Kind::MethodDeclaration | Kind::GetAccessor | Kind::SetAccessor => {
-                return false;
-            }
-            _ => {}
-        },
-        _ => {}
-    }
-    a.for_each_child(node, &mut |child| {
-        node_immediately_references_super_or_this(a, child)
-    })
 }

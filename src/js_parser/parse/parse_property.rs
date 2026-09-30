@@ -106,6 +106,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
                 is_constructor,
+                // A signature of an ambient class may end its arguments with a rest argument and a comma.
+                is_typescript_declare: p.fn_or_arrow_data_parse.is_typescript_declare,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
 
@@ -262,6 +264,144 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
+    /// isIndexSignature of a class element, after "[": the test that tells it from a computed name.
+    fn is_class_index_signature(&mut self) -> bool {
+        let p = self;
+        let is_modifier = match p.lexer.token {
+            T::TDotDotDot | T::TCloseBracket => return true,
+            T::TIdentifier => p.is_class_index_signature_modifier(),
+            _ => return false,
+        };
+        if !is_modifier && !p.is_class_index_signature_name() {
+            return false;
+        }
+
+        let old_lexer = p.lexer.snapshot();
+        p.lexer.is_log_disabled = true;
+        let is_index_signature = p.scan_class_index_signature(is_modifier).unwrap_or(false);
+        p.lexer.restore(&old_lexer);
+        is_index_signature
+    }
+
+    /// nextIsUnambiguouslyIndexSignature, from the first word after "[".
+    fn scan_class_index_signature(&mut self, is_modifier: bool) -> crate::CrateResult<bool> {
+        let p = self;
+        p.lexer.next()?;
+        if is_modifier && p.lexer.token == T::TIdentifier && p.is_class_index_signature_name() {
+            return Ok(true);
+        }
+        // "[id:" is an index signature, and "[id," is one that is not well formed
+        if p.lexer.token == T::TColon || p.lexer.token == T::TComma {
+            return Ok(true);
+        }
+        if p.lexer.token != T::TQuestion {
+            return Ok(false);
+        }
+        // After "?" these tokens cannot continue a conditional expression
+        p.lexer.next()?;
+        Ok(matches!(
+            p.lexer.token,
+            T::TColon | T::TComma | T::TCloseBracket
+        ))
+    }
+
+    /// IsModifierKind for a word: the reference reads "[public k" as the start of an index signature.
+    fn is_class_index_signature_modifier(&self) -> bool {
+        !matches!(
+            PropertyModifierKeyword::find(self.lexer.raw()),
+            None | Some(PropertyModifierKeyword::PGet | PropertyModifierKeyword::PSet)
+        )
+    }
+
+    /// isIdentifier for a word: "await" and "yield" are names where they are no operators.
+    fn is_class_index_signature_name(&self) -> bool {
+        let data = &self.fn_or_arrow_data_parse;
+        let name = self.lexer.identifier;
+        if name == b"await" {
+            data.allow_await == AwaitOrYield::AllowIdent
+                || (data.allow_await == AwaitOrYield::AllowExpr && data.is_top_level)
+        } else if name == b"yield" {
+            data.allow_yield == AwaitOrYield::AllowIdent
+        } else {
+            true
+        }
+    }
+
+    /// nextTokenIsOnSameLineAndCanFollowModifier for a modifier of a parameter; the lexer does not move.
+    fn class_index_signature_modifier_precedes_name(&mut self) -> bool {
+        self.next_token_matches(|p| {
+            !p.lexer.has_newline_before
+                && (p.lexer.is_identifier_or_keyword()
+                    || matches!(
+                        p.lexer.token,
+                        T::TOpenBracket
+                            | T::TOpenBrace
+                            | T::TAsterisk
+                            | T::TDotDotDot
+                            | T::TPrivateIdentifier
+                            | T::TStringLiteral
+                            | T::TNumericLiteral
+                            | T::TBigIntegerLiteral
+                    ))
+        })
+    }
+
+    /// parseIndexSignatureDeclaration of a class element, after "[". Nothing of it is kept.
+    fn skip_class_index_signature(&mut self) -> crate::CrateResult<()> {
+        let p = self;
+        while p.lexer.token != T::TCloseBracket {
+            // parseParameter: modifiers, "...", a name, "?", a type and an initializer
+            while p.lexer.token == T::TIdentifier
+                && p.is_class_index_signature_modifier()
+                && p.class_index_signature_modifier_precedes_name()
+            {
+                p.lexer.next()?;
+            }
+            if p.lexer.token == T::TDotDotDot {
+                p.lexer.next()?;
+            }
+            if p.lexer.token == T::TIdentifier {
+                // Storing the name marks an import of that name as used, as the expression that read it did.
+                let _ = p.store_name_in_ref(p.lexer.identifier);
+            }
+            p.skip_type_script_binding()?;
+            if p.lexer.token == T::TQuestion {
+                p.lexer.next()?;
+            }
+            if p.lexer.token == T::TColon {
+                p.lexer.next()?;
+                p.skip_type_script_type(Level::Lowest)?;
+            }
+            // Inside an attempt the "=" ends the attempt, as before.
+            if p.lexer.token == T::TEquals && !p.lexer.is_log_disabled {
+                let at_equals = p.lexer.snapshot();
+                p.lexer.next()?;
+                match p.parse_and_drop_in_class(Level::Comma) {
+                    Ok(()) => {}
+                    // Where no expression follows, the "=" is what the "]" below reports.
+                    Err(crate::Error::Backtrack) => p.lexer.restore(&at_equals),
+                    Err(err) => return Err(err),
+                }
+            }
+            if p.lexer.token != T::TComma {
+                break;
+            }
+            p.lexer.next()?;
+        }
+        p.lexer.expect(T::TCloseBracket)?;
+        if p.lexer.token == T::TColon {
+            p.lexer.next()?;
+            p.skip_type_script_type(Level::Lowest)?;
+        }
+        // parseTypeMemberSemicolon
+        if p.lexer.token == T::TComma {
+            p.lexer.next()?;
+        } else {
+            p.lexer.expect_or_insert_semicolon()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn parse_property(
         &mut self,
         kind_: PropertyKind,
@@ -317,6 +457,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_computed = true;
                     // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
                     p.lexer.next()?;
+
+                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+                    {
+                        p.skip_class_index_signature()?;
+
+                        // Skip this property entirely
+                        return Ok(None);
+                    }
+
                     let was_identifier = p.lexer.token == T::TIdentifier;
                     let expr = p.parse_expr(Level::Comma)?;
 
@@ -510,10 +659,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // "accessor" keyword for auto-accessor fields, with either kind of decorators
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {

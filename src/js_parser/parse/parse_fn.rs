@@ -229,6 +229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
         let mut rest_arg: bool = false;
+        let mut rest_comma = bun_ast::Range::NONE;
         let mut arg_has_decorators: bool = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
@@ -269,7 +270,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                if is_identifier && opts.is_constructor {
+                if is_identifier && (opts.is_constructor || !rest_arg) {
                     // Skip over TypeScript accessibility modifiers, which turn this argument
                     // into a class field when used inside a class constructor. This is known
                     // as a "parameter property" in TypeScript.
@@ -280,7 +281,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break;
                                 }
 
-                                is_typescript_ctor_field = true;
+                                // Outside a constructor a modifier stands before a name on its line and is dropped.
+                                if !opts.is_constructor
+                                    && (p.lexer.token != T::TIdentifier
+                                        || p.lexer.has_newline_before)
+                                {
+                                    break;
+                                }
+
+                                is_typescript_ctor_field = opts.is_constructor;
 
                                 // TypeScript requires an identifier binding
                                 if p.lexer.token != T::TIdentifier {
@@ -354,6 +363,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if opts.is_typescript_declare {
                     // TypeScript does allow a comma after a rest argument in a "declare" context
                     p.lexer.next()?;
+                } else if opts.allow_missing_body_for_type_script && p.next_token_is_close_paren() {
+                    // A member of a "declare class" or an overload: the comma is an error once a body follows
+                    rest_comma = p.lexer.range();
+                    p.lexer.next()?;
                 } else {
                     p.lexer.expect(T::TCloseParen)?;
                 }
@@ -419,6 +432,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             func.flags.insert(Flags::Function::IsForwardDeclaration);
             return Ok(func);
         }
+        if rest_comma.len > 0 {
+            p.log().add_range_error(
+                Some(p.source),
+                rest_comma,
+                b"Expected \")\" but found \",\"",
+            );
+        }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
         if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
@@ -431,6 +451,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(func)
+    }
+
+    /// Whether ")" is the token after the current one.
+    fn next_token_is_close_paren(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        self.lexer.is_log_disabled = true;
+        let is_close_paren = self.lexer.next().is_ok() && self.lexer.token == T::TCloseParen;
+        self.lexer.restore(&old_lexer);
+        self.lexer.is_log_disabled = old_log_disabled;
+        is_close_paren
     }
 
     pub(crate) fn parse_fn_expr(

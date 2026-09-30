@@ -144,6 +144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
         let mut has_auto_accessor: bool = false;
+        let mut auto_accessor_loc = bun_ast::Loc::EMPTY;
 
         if p.lexer.token == T::TExtends {
             p.lexer.next()?;
@@ -166,7 +167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
 
                 loop {
-                    p.skip_type_script_type(Level::Lowest)?;
+                    p.skip_class_implements_entry()?;
                     if p.lexer.token != T::TComma {
                         break;
                     }
@@ -184,6 +185,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_allow_private_identifiers = p.allow_private_identifiers;
         p.allow_in = true;
         p.allow_private_identifiers = true;
+
+        // The signatures of an ambient class read this: they may end with a rest argument and a comma.
+        let old_is_typescript_declare = p.fn_or_arrow_data_parse.is_typescript_declare;
+        if class_opts.is_type_script_declare {
+            p.fn_or_arrow_data_parse.is_typescript_declare = true;
+        }
 
         // A scope is needed for private identifiers
         let scope_index = p
@@ -235,8 +242,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 properties.push(property);
-                has_auto_accessor =
-                    has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
+                if prop_kind == js_ast::g::PropertyKind::AutoAccessor && !has_auto_accessor {
+                    has_auto_accessor = true;
+                    auto_accessor_loc = prop_key.map_or(first_decorator_loc, |key| key.loc);
+                }
 
                 // Forbid decorators on class constructors
                 if opts.ts_decorators.len() > 0 {
@@ -282,10 +291,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.allow_in = old_allow_in;
         p.allow_private_identifiers = old_allow_private_identifiers;
+        p.fn_or_arrow_data_parse.is_typescript_declare = old_is_typescript_declare;
         let close_brace_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
+        let standard_decorators = p.options.features.standard_decorators;
+        // Only the standard lowering knows an auto-accessor, and it calls no experimental decorator.
+        if has_auto_accessor
+            && has_any_decorators
+            && !standard_decorators
+            && !class_opts.is_type_script_declare
+            && !SCAN_ONLY
+        {
+            p.log().add_error(
+                Some(p.source),
+                auto_accessor_loc,
+                b"An \"accessor\" property is not supported in a class with experimental decorators",
+            );
+        }
         // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
         let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
         Ok(G::Class {
@@ -297,9 +321,132 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             body_loc,
             properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
             has_decorators: has_any_decorators,
-            should_lower_standard_decorators: p.options.features.standard_decorators
-                && (has_any_decorators || has_auto_accessor),
+            should_lower_standard_decorators: if standard_decorators {
+                has_any_decorators || has_auto_accessor
+            } else {
+                has_auto_accessor && !has_any_decorators
+            },
         })
+    }
+
+    /// parseTypeHeritageClauseElement of a class: a type as before, else an expression with type arguments.
+    fn skip_class_implements_entry(&mut self) -> Result<(), Error> {
+        let p = self;
+        let start = p.lexer.snapshot();
+        let logged = {
+            let log = p.log();
+            (log.msgs.len(), log.errors, log.warnings)
+        };
+        let as_type = p.skip_type_script_type(Level::Lowest);
+        // Inside an attempt only the type is read, so that no attempt ends differently than before.
+        if p.lexer.is_log_disabled
+            || (as_type.is_ok()
+                && p.log().errors == logged.1
+                && matches!(p.lexer.token, T::TComma | T::TOpenBrace))
+        {
+            return as_type;
+        }
+        p.reread_class_implements_entry(&start, logged, as_type)
+    }
+
+    /// parseExpressionWithTypeArguments for an entry that is no type or does not end with one.
+    #[cold]
+    #[inline(never)]
+    fn reread_class_implements_entry(
+        &mut self,
+        start: &crate::lexer::LexerSnapshot<'a>,
+        logged: (usize, u32, u32),
+        as_type: Result<(), Error>,
+    ) -> Result<(), Error> {
+        let p = self;
+        if let Err(Error::StackOverflow | Error::Alloc(_)) = as_type {
+            return as_type;
+        }
+        p.rewind_class_implements_entry(start, logged);
+        let mut as_expression = p.parse_and_drop_in_class(Level::New);
+        if as_expression.is_ok() {
+            as_expression = p
+                .skip_type_script_type_arguments::<false, false>()
+                .map(|_| ());
+        }
+        match as_expression {
+            Ok(())
+                if p.log().errors == logged.1
+                    && matches!(p.lexer.token, T::TComma | T::TOpenBrace) =>
+            {
+                Ok(())
+            }
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+            _ => {
+                // Neither reading fits: the type is read again and reports what it reported before.
+                p.rewind_class_implements_entry(start, logged);
+                p.skip_type_script_type(Level::Lowest)
+            }
+        }
+    }
+
+    /// Takes back what a reading of an entry read and logged: `logged` holds the messages, errors and warnings.
+    fn rewind_class_implements_entry(
+        &mut self,
+        start: &crate::lexer::LexerSnapshot<'a>,
+        logged: (usize, u32, u32),
+    ) {
+        self.lexer.restore(start);
+        let log = self.log();
+        log.msgs.truncate(logged.0);
+        log.errors = logged.1;
+        log.warnings = logged.2;
+    }
+
+    /// Reads an expression that a class keeps nothing of: the lexer ends behind it, all else is as before.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_and_drop_in_class(&mut self, level: Level) -> Result<(), Error> {
+        let p = self;
+        let errors = p.log().errors;
+        let has_import_meta = p.has_import_meta;
+        let has_with_scope = p.has_with_scope;
+        let has_es_module_syntax = p.has_es_module_syntax;
+        let needs_jsx_import = p.needs_jsx_import;
+        let top_level_await_keyword = p.top_level_await_keyword;
+        // A name in what is dropped is no use of an import.
+        let parse_pass_symbol_uses = p.parse_pass_symbol_uses.take();
+        let snapshot = p.parser_snapshot();
+
+        // With the log off a missing operand goes unnoticed: the count of errors decides.
+        p.lexer.is_log_disabled = false;
+        p.allow_in = true;
+        // The reference reads "super" and private names anywhere and leaves them to its checker.
+        p.allow_private_identifiers = true;
+        p.fn_or_arrow_data_parse.allow_super_call = true;
+        p.fn_or_arrow_data_parse.allow_super_property = true;
+        let result = p.parse_expr(level);
+        let has_failed = result.is_err() || p.log().errors != errors;
+        let mut end = p.lexer.snapshot();
+
+        // Scopes, symbols, import records and messages of what was read go away, and the lexer goes back.
+        p.restore_parser_snapshot(snapshot);
+        p.parse_pass_symbol_uses = parse_pass_symbol_uses;
+        p.has_import_meta = has_import_meta;
+        p.has_with_scope = has_with_scope;
+        p.has_es_module_syntax = has_es_module_syntax;
+        p.needs_jsx_import = needs_jsx_import;
+        p.top_level_await_keyword = top_level_await_keyword;
+
+        if has_failed {
+            return Err(match result {
+                Err(err @ (Error::StackOverflow | Error::Alloc(_))) => err,
+                _ => Error::Backtrack,
+            });
+        }
+
+        // Only the position moves: the comments inside what was read are dropped with it.
+        end.is_log_disabled = p.lexer.is_log_disabled;
+        end.prev_error_loc = p.lexer.prev_error_loc;
+        end.all_comments_len = p.lexer.all_comments.len();
+        end.comments_to_preserve_before_len = p.lexer.comments_to_preserve_before.len();
+        p.lexer.restore(&end);
+        Ok(())
     }
 
     pub(crate) fn parse_template_parts(

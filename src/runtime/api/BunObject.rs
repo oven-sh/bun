@@ -1997,6 +1997,16 @@ pub(crate) mod environment_variables {
     }
 
     #[unsafe(no_mangle)]
+    extern "C" fn Bun__getEnvValueAt<'a>(
+        global_object: &'a JSGlobalObject,
+        i: usize,
+        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
+    ) {
+        let env = global_object.bun_vm().env_loader();
+        value.write(EncodedSlice::from_bytes(&env.map.map.values()[i].value));
+    }
+
+    #[unsafe(no_mangle)]
     extern "C" fn Bun__getEnvValue<'a>(
         global_object: &'a JSGlobalObject,
         name: &EncodedSlice<'_>,

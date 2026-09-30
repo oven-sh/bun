@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -484,6 +484,30 @@ console.log("survived", require("./late.js"));`,
     expect(req.resolve("./node-module-module.test.js")).toBe(
       ospath(path.resolve(import.meta.dir, "./node-module-module.test.js")),
     );
+  });
+
+  // A directory gets "noop.js" joined to it. That join used two path buffers with no length
+  // test, so a legal directory within 7 bytes of the limit aborted the process.
+  test.each([
+    ["a legal directory near the path buffer size", Math.floor((MAX_PATH_BYTES - 8) / 2)],
+    ["a directory longer than a path buffer", MAX_PATH_BYTES],
+  ])("createRequire trailing slash, %s", async (_, segments) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const dir = "/" + Buffer.alloc(${segments} * 2, "d/").toString();
+         const req = require("node:module").createRequire(dir);
+         try { req.resolve("./x"); } catch (e) { console.log(dir.length, typeof req, e.code); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${1 + segments * 2} function MODULE_NOT_FOUND\n`);
+    expect(exitCode).toBe(0);
   });
 
   test("createRequire trailing slash file url", () => {

@@ -60,7 +60,7 @@ pub fn open_for_writing<P, C>(
     force_sync: bool,
     out_nonblocking: &mut bool,
     ctx: C,
-    on_force_sync_or_isa_tty: fn(C),
+    on_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
 ) -> bun_sys::Result<Fd>
 where
@@ -76,7 +76,7 @@ where
         force_sync,
         out_nonblocking,
         ctx,
-        on_force_sync_or_isa_tty,
+        on_tty,
         is_pollable,
         bun_sys::openat,
     )
@@ -92,7 +92,7 @@ pub fn open_for_writing_impl<P, C>(
     force_sync: bool,
     out_nonblocking: &mut bool,
     ctx: C,
-    on_force_sync_or_isa_tty: fn(C),
+    on_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
     openat: fn(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> bun_sys::Result<Fd>,
 ) -> bun_sys::Result<Fd>
@@ -126,6 +126,9 @@ where
 
                 *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
 
+                if isatty {
+                    on_tty(ctx);
+                }
                 if force_sync || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.
                     // As noted in the following reference, local TTYs tend to be quite fast and
@@ -134,9 +137,6 @@ where
                     // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
                     let _ = bun_sys::update_nonblocking(fd, false);
                     is_nonblocking = false;
-                    // this.force_sync = true;
-                    // this.writer.force_sync = true;
-                    on_force_sync_or_isa_tty(ctx);
                 } else if !is_nonblocking {
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
@@ -171,7 +171,7 @@ where
             force_sync,
             out_nonblocking,
             ctx,
-            on_force_sync_or_isa_tty,
+            on_tty,
             is_pollable,
             is_nonblocking,
         );

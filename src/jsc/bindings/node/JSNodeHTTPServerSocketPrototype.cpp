@@ -12,8 +12,6 @@
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" void us_socket_resume(us_socket_t*);
-extern "C" void us_socket_pause(us_socket_t*);
 extern "C" void us_socket_shutdown(us_socket_t*);
 extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 
@@ -311,22 +309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
         return JSValue::encode(JSC::jsUndefined());
     }
     if (bufferedSize == 0) {
-        // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-        // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
-        // re-add), without which macOS 26 does not deliver the peer's close.
-        // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
-        const bool cycleReads = !thisObject->upgraded && !thisObject->tunnelReadsPaused();
-        if (thisObject->socket && cycleReads) {
-            us_socket_pause(thisObject->socket);
-        }
-        auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, thisObject->hasUnsentResponseBytes(), thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        // Undo the pause above after the shutdown so the unread body drains
-        // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
-        // SHUT_WR) is not deleted by a W -> R|W -> R step.
-        if (thisObject->socket && cycleReads) {
-            us_socket_resume(thisObject->socket);
-        }
-        return result;
+        return thisObject->halfClose(globalObject);
     }
     return JSValue::encode(JSC::jsUndefined());
 }

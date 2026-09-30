@@ -71,6 +71,10 @@ impl DeferredTaskQueue {
         self.map.swap_remove(&ctx)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
     pub fn run(&mut self) {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and

@@ -2291,7 +2291,7 @@ pub struct NetworkSink {
 pub(crate) struct UploadFailure {
     code: Box<[u8]>,
     message: Box<[u8]>,
-    path: Option<Box<[u8]>>,
+    path: Box<[u8]>,
 }
 
 impl UploadFailure {
@@ -2302,7 +2302,7 @@ impl UploadFailure {
                 message: &self.message,
             },
             global,
-            self.path.as_deref(),
+            Some(&self.path),
         )
     }
 }
@@ -2469,11 +2469,15 @@ impl NetworkSink {
     }
 
     /// The `writer()` upload failed with neither `flush_promise` nor `end_promise` pending.
-    pub(crate) fn fail_unreported(&mut self, err: &bun_s3_signing::error::S3Error<'_>) {
+    pub(crate) fn fail_unreported(
+        &mut self,
+        err: &bun_s3_signing::error::S3Error<'_>,
+        path: &[u8],
+    ) {
         self.unreported_failure = Some(UploadFailure {
             code: Box::from(err.code),
             message: Box::from(err.message),
-            path: self.path().map(Box::from),
+            path: Box::from(path),
         });
         self.abort();
     }

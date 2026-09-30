@@ -462,7 +462,7 @@ pub(crate) fn writable_stream(
                 }
             }
         } else if let S3UploadResult::Failure(err) = &result {
-            sink.fail_unreported(err);
+            sink.fail_unreported(err, path);
         }
         sink.finalize();
         Ok(())

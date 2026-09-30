@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
-import { isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isDebug, withoutAggressiveGC } from "harness";
 import { type AddressInfo, connect, createServer } from "node:net";
 
 beforeAll(() => {
@@ -625,6 +625,44 @@ describe("Headers", () => {
             expect(() => void new Response(null, { headers: pairs })).toThrow(new RangeError("Out of memory"));
           });
         });
+
+        // Set-Cookie values are a list, and get() joins them on each call.
+        test("get() of Set-Cookie values throws a RangeError and keeps the values", () => {
+          withLimit(() => {
+            const headers = new Headers();
+            headers.append("set-cookie", big);
+            headers.append("set-cookie", "v");
+            expect(() => void headers.get("set-cookie")).toThrow(new RangeError("Out of memory"));
+            expect(headers.getSetCookie()).toEqual([big, "v"]);
+          });
+        });
+      });
+
+      // The join in get() reserved the length of the first Set-Cookie value
+      // times the count of values. That product passes the limit here, and the
+      // join itself is 180,221 characters. It is a child process because this
+      // call aborted.
+      test("get() joins Set-Cookie values when the first one is long and they are many", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const headers = new Headers();
+              headers.append("set-cookie", Buffer.alloc(2 ** 17, "a").toString());
+              for (let i = 1; i < 2 ** 14; i++) headers.append("set-cookie", "b");
+              const joined = headers.get("set-cookie");
+              console.log(JSON.stringify({ length: joined.length, end: joined.slice(-6) }));
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout || "{}")).toEqual({ length: 2 ** 17 + 3 * (2 ** 14 - 1), end: ", b, b" });
+        expect(exitCode).toBe(0);
       });
 
       // Also without a clock. Each name has a builder of its own, so names that

@@ -241,11 +241,21 @@ size_t FetchHeaders::memoryCost() const
 
 ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
-    auto result = m_headers.get(name);
-    if (result.isEmpty()) {
-        if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        if (headerName == HTTPHeaderName::SetCookie) {
+            auto joined = m_headers.tryJoinSetCookieHeaders();
+            if (!joined) [[unlikely]]
+                return Exception { OutOfMemoryError };
+            return WTF::move(*joined);
+        }
+        return m_headers.get(headerName);
     }
+
+    // A known header name is a valid token, so only this path checks the name.
+    auto result = m_headers.getUncommonHeader(name);
+    if (result.isEmpty() && !isValidHTTPToken(name))
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
 
     return result;
 }

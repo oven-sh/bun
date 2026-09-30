@@ -116,6 +116,12 @@ static void appendLatin1(StringBuilder& builder, ASCIILiteral delimiter, const S
         builder.append(delimiter, value);
 }
 
+// String::MaxLength, or the limit that a test lowered through bun:internal-for-testing.
+static bool passesStringLimit(uint64_t length)
+{
+    return length > std::min<uint64_t>(String::MaxLength, Bun__stringSyntheticAllocationLimit);
+}
+
 static unsigned grownCapacity(unsigned capacity, unsigned required)
 {
     return std::max<uint64_t>(required, std::min<uint64_t>(String::MaxLength, static_cast<uint64_t>(capacity) + capacity / 2));
@@ -136,7 +142,7 @@ ALWAYS_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combine(String& stored, AS
 NEVER_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combineLong(String& stored, ASCIILiteral delimiter, const String& value)
 {
     uint64_t combinedLength = static_cast<uint64_t>(stored.length()) + delimiter.length() + value.length();
-    if (combinedLength > std::min<uint64_t>(String::MaxLength, Bun__stringSyntheticAllocationLimit)) [[unlikely]]
+    if (passesStringLimit(combinedLength)) [[unlikely]]
         return AddResult::ValueTooLong;
 
     auto* builder = m_growing.builderOf(stored);
@@ -357,27 +363,33 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     });
 }
 
+std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
+{
+    unsigned count = m_setCookieHeaders.size();
+    if (!count)
+        return String();
+    if (count == 1)
+        return m_setCookieHeaders[0];
+
+    uint64_t length = 2 * static_cast<uint64_t>(count - 1);
+    for (auto& header : m_setCookieHeaders)
+        length += header.length();
+    if (passesStringLimit(length)) [[unlikely]]
+        return std::nullopt;
+
+    StringBuilder builder;
+    builder.reserveCapacity(static_cast<unsigned>(length));
+    appendLatin1(builder, ""_s, m_setCookieHeaders[0]);
+    for (unsigned i = 1; i < count; ++i)
+        appendLatin1(builder, ", "_s, m_setCookieHeaders[i]);
+    return builder.toString();
+}
+
 String HTTPHeaderMap::get(HTTPHeaderName name) const
 {
-    if (name == HTTPHeaderName::SetCookie) {
-        unsigned count = m_setCookieHeaders.size();
-        switch (count) {
-        case 0:
-            return String();
-        case 1:
-            return m_setCookieHeaders[0];
-        default: {
-            StringBuilder builder;
-            builder.reserveCapacity(m_setCookieHeaders[0].length() * count + (count - 1));
-            builder.append(m_setCookieHeaders[0]);
-            for (unsigned i = 1; i < count; ++i) {
-                builder.append(", "_s);
-                builder.append(m_setCookieHeaders[i]);
-            }
-            return builder.toString();
-        }
-        }
-    }
+    // A join that no String can hold reads as absent here. FetchHeaders::get() throws for it.
+    if (name == HTTPHeaderName::SetCookie)
+        return tryJoinSetCookieHeaders().value_or(String());
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;

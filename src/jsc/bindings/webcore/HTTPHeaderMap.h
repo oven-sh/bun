@@ -172,6 +172,8 @@ public:
     WEBCORE_EXPORT bool removeUncommonHeader(const StringView);
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
+    // The Set-Cookie values joined by ", ". nullopt when the join would pass String::MaxLength.
+    WEBCORE_EXPORT std::optional<String> tryJoinSetCookieHeaders() const;
     void set(HTTPHeaderName, const String& value);
     AddResult add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
@@ -240,10 +242,9 @@ public:
     void setUncommonHeader(const String& name, const String& value);
     AddResult addUncommonHeader(const String& name, const String& value);
     AddResult addUncommonHeaderCloneName(const StringView name, const String& value);
-
-private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
+private:
     // A join that gives a value under this length is one exact-fit string.
     static constexpr unsigned growThreshold = 4096;
     // A map makes this many exact-fit joins past growThreshold. After them a value grows in a builder: N joins copy O(N) bytes.

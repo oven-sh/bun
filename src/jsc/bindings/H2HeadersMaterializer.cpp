@@ -12,9 +12,9 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/OperationsInlines.h>
 #include <JavaScriptCore/Symbol.h>
 #include <wtf/text/SymbolImpl.h>
-#include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include "HTTPHeaderIdentifiers.h"
 #include "HTTPHeaderNames.h"
@@ -75,6 +75,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
     JSC::JSObject* obj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* sensitive = nullptr;
+    JSString* cookieDelimiter = nullptr;
+    JSString* listDelimiter = nullptr;
     auto& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     size_t offset = 0;
@@ -171,15 +173,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
                 arr->putDirectIndex(globalObject, arr->length(), fieldValue);
                 RETURN_IF_EXCEPTION(scope, {});
             } else {
-                // cookie joins with "; ", everything else with ", " (RFC 7230 §3.2.2).
-                auto existingString = existing.toWTFString(globalObject);
+                // cookie joins with "; ", everything else with ", " (RFC 7230 §3.2.2). As a rope: no copy, and past the string length limit it throws.
+                JSString*& delimiter = isCookie ? cookieDelimiter : listDelimiter;
+                if (!delimiter)
+                    delimiter = jsNontrivialString(vm, isCookie ? "; "_s : ", "_s);
+                JSString* joined = jsString(globalObject, asString(existing), delimiter, valueStr);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto valueString = valueStr->getString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                auto joined = isCookie
-                    ? WTF::makeString(existingString, "; "_s, valueString)
-                    : WTF::makeString(existingString, ", "_s, valueString);
-                obj->putDirect(vm, ident, jsString(vm, WTF::move(joined)), 0);
+                obj->putDirect(vm, ident, joined, 0);
             }
         }
     }

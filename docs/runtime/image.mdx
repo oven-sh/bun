@@ -80,7 +80,9 @@ img.resize(800, 600, { filter: "mitchell" });
 | `"box"`                   | Area-average; good for large integer downscales  |
 | `"nearest"`               | Pixel art / hard edges                           |
 
-When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer.
+Bun resolves the output size from the size of the source. A JPEG gives the same output size as a PNG or a WebP of the same dimensions.
+
+When a resize shrinks a JPEG, Bun can decode it at a reduced M/8 IDCT scale. It picks the smallest scale whose frame covers the output and the requested box. A width-only request counts as a `width × width` box. If no reduced scale covers them, Bun decodes at full size. For example, `resize(400, 400, { fit: "inside" })` of a 24 MP JPEG does not allocate the full-resolution buffer.
 
 ## Rotate · flip
 

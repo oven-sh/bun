@@ -161,6 +161,13 @@ pub(crate) struct Opened<'a> {
     src_h: u32,
 }
 
+impl Opened<'_> {
+    /// The size in the header, in stored axes.
+    pub(crate) fn size(&self) -> (u32, u32) {
+        (self.src_w, self.src_h)
+    }
+}
+
 pub(crate) fn open(bytes: &[u8], max_pixels: u64) -> Result<Opened<'_>, codecs::Error> {
     let handle = Handle::init(1).ok_or(codecs::Error::OutOfMemory)?;
     let h = handle.as_ptr();
@@ -179,10 +186,10 @@ pub(crate) fn open(bytes: &[u8], max_pixels: u64) -> Result<Opened<'_>, codecs::
     })
 }
 
-/// `hint`: the size the pipeline will resize to, in stored axes. `None` decodes at full size.
+/// `floor`: the smallest frame the pipeline can use, in stored axes. `None` decodes at full size.
 pub(crate) fn decode(
     jpeg: Opened<'_>,
-    hint: Option<(u32, u32)>,
+    floor: Option<(u32, u32)>,
 ) -> Result<codecs::Decoded, codecs::Error> {
     let Opened {
         handle,
@@ -201,12 +208,12 @@ pub(crate) fn decode(
     let mut w = src_w;
     let mut ht = src_h;
     // DCT-domain scaling: if the pipeline will downscale, ask libjpeg-turbo
-    // for the smallest M/8 IDCT that still ≥ target. The IDCT is where the
+    // for the smallest M/8 IDCT that still ≥ the floor. The IDCT is where the
     // decode time goes, so this is roughly (8/M)² faster AND the RGBA
     // buffer shrinks by the same factor — both speed and RSS win in one
     // place. The subsequent resize pass takes it the rest of the way.
-    if let Some((target_w, target_h)) = hint
-        && (target_w < src_w || target_h < src_h)
+    if let Some((floor_w, floor_h)) = floor
+        && (floor_w < src_w || floor_h < src_h)
     {
         let mut n: c_int = 0;
         // SAFETY: FFI — writes a count into `n` and returns a pointer to a
@@ -224,9 +231,9 @@ pub(crate) fn decode(
                 }
                 let sw = scaled(src_w, sf);
                 let sh = scaled(src_h, sf);
-                // Never go BELOW target — that would force upscale and
+                // Never go BELOW the floor: that would force upscale and
                 // throw away detail the user asked for.
-                if sw < target_w || sh < target_h {
+                if sw < floor_w || sh < floor_h {
                     continue;
                 }
                 // Pick the smallest output (= largest reduction).

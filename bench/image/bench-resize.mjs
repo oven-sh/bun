@@ -71,6 +71,8 @@ process.stderr.write(`building 3840×2160 + 4032×3024 JPEG fixtures… `);
 const jpeg4k = await new Bun.Image(makePng(3840, 2160)).jpeg({ quality: 92 }).bytes();
 const jpegPhone = await new Bun.Image(makePng(4032, 3024)).jpeg({ quality: 92 }).bytes();
 process.stderr.write(`${(jpeg4k.length / 1024).toFixed(0)} KB / ${(jpegPhone.length / 1024).toFixed(0)} KB\n`);
+// A portrait whose sides are not multiples of 8: a width-only request derives its height.
+const jpegPortrait = await new Bun.Image(makePng(1179, 2556)).jpeg({ quality: 92 }).bytes();
 
 // ─── runners ────────────────────────────────────────────────────────────────
 
@@ -144,6 +146,16 @@ const ops = {
     fixture: jpegPhone,
     bun: buf => new Bun.Image(buf).resize(1024, 768, { fit: "inside" }).webp({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).resize(1024, 768, { fit: "inside" }).webp({ quality: 80 }).toBuffer(),
+  },
+  "Portrait JPEG 1179×2556 → width 590 → jpeg": {
+    fixture: jpegPortrait,
+    bun: buf => new Bun.Image(buf).resize(590).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(590).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "Portrait JPEG 1179×2556 → width 400 → jpeg": {
+    fixture: jpegPortrait,
+    bun: buf => new Bun.Image(buf).resize(400).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(400).jpeg({ quality: 80 }).toBuffer(),
   },
 };
 

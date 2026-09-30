@@ -33,7 +33,8 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
 1. Add a field to `Pipeline` in `Image.rs` (one slot per op — setters
    overwrite, there is no op list) and a stage in `PipelineTask.applyPipeline`
    at the right point in the fixed `rotate → flip/flop → resize → modulate`
-   order.
+   order. An op that changes the frame size before the resize stage must also
+   be part of `PipelineTask::sizing`.
 2. Add a `do<Name>` method that parses args, writes the slot, returns
    `callframe.this()`.
 3. Add it to `proto:` in `Image.classes.ts`.
@@ -59,6 +60,11 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
+- The **output size** depends on the source size and the request, never on the
+  decode scale. A JPEG can decode at a reduced IDCT scale, so
+  `PipelineTask::sizing` resolves the resize target and the placeholder box
+  from the header size before the scale is picked. The decode is never below
+  them.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —
   highway's `foreach_target.h` has a TU-wide include guard that breaks with
   two highway TUs in one bundle.

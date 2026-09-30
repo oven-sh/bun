@@ -2985,7 +2985,11 @@ pub(crate) fn parse_into_binary_lockfile(
                     // keep the path-traversal guard intact at every version.
                     let enforce_safe_tag =
                         tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
-                    if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
+                    let too_long = bun_tag_str.len() > crate::repository::MAX_RESOLVED_TAG_LEN;
+                    if too_long
+                        || (enforce_safe_tag
+                            && !crate::repository::is_safe_resolved_tag(bun_tag_str))
+                    {
                         log.add_error(
                             Some(source),
                             item_loc(source, key_loc, bun_tag_idx),

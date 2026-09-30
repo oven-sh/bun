@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { exists } from "fs/promises";
-import { bunExe, bunEnv as env, tempDir } from "harness";
+import { bunExe, bunEnv as env, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 // These tests cover the text lockfile bump to version 2 and the parse-time
@@ -301,6 +301,32 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
     // v1 parses cleanly and `--lockfile-only` skips the install, so it exits 0.
     expect(exitCode).toBe(0);
   }
+});
+
+// The tag is printed into a cache folder name before `Repository::checkout` looks at it, so
+// its length is bounded at every version. A longer one used to abort the process.
+it.each([0, 1, 2])("git .bun-tag longer than a path buffer is rejected at version %d", async lockfileVersion => {
+  const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
+  using dir = tempDir("lockfile-long-gittag", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion,
+      configVersion: 1,
+      workspaces: { "": { name: "root", dependencies: { dep: gitUrl } } },
+      packages: { dep: [`dep@${gitUrl}`, {}, Buffer.alloc(MAX_PATH_BYTES + 4, "a").toString()] },
+    }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: String(dir),
+    // No transport is allowed, so nothing is cloned if the lockfile were accepted.
+    env: { ...env, GIT_ALLOW_PROTOCOL: "file" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Invalid git dependency tag");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
 });
 
 // A `github` dependency resolves via the tarball-download path, not

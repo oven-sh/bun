@@ -212,6 +212,9 @@ fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     HOST_TLDS.get(host).copied()
 }
 
+/// Longest `.bun-tag` any lockfile version may carry: it is printed into a cache folder name.
+pub(crate) const MAX_RESOLVED_TAG_LEN: usize = 256;
+
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
 /// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
 /// directory name and passed to `git checkout`, so it must be a single safe path
@@ -219,7 +222,7 @@ fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
 /// option.
 pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
     !resolved.is_empty()
-        && resolved.len() <= 256
+        && resolved.len() <= MAX_RESOLVED_TAG_LEN
         && resolved[0] != b'-'
         && resolved != b"."
         && resolved != b".."

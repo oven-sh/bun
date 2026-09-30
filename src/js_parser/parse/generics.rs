@@ -215,6 +215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let logged = self.lint_logged();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.restore(less_than);
+        let recorded = self.sidecar_mark();
         self.lexer.is_log_disabled = true;
         let read = self.build_type_script_type_parameters();
         self.lexer.is_log_disabled = old_log_disabled;
@@ -223,6 +224,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && self.log().errors == logged.1
         {
             return Some(type_parameters);
+        }
+        if let Some(mark) = recorded {
+            self.rewind_sidecar(mark);
         }
         self.lint_skip_type_parameters_again(less_than, logged);
         None
@@ -239,6 +243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let logged = self.lint_logged();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.restore(less_than);
+        let recorded = self.sidecar_mark();
         self.lexer.is_log_disabled = true;
         let read = self.build_type_script_type_arguments::<false, true>();
         self.lexer.is_log_disabled = old_log_disabled;
@@ -247,6 +252,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && self.log().errors == logged.1
         {
             return Some(type_arguments);
+        }
+        if let Some(mark) = recorded {
+            self.rewind_sidecar(mark);
         }
         self.lint_skip_type_parameters_again(less_than, logged);
         None
@@ -423,6 +431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn lint_class_implements_entry(&mut self) -> Result<ts::Type, Error> {
         let start = self.lexer.snapshot();
         let logged = self.lint_logged();
+        let recorded = self.sidecar_mark();
         self.lexer.is_log_disabled = true;
         let as_type = self.build_type_script_type(Level::Lowest);
         self.lexer.is_log_disabled = start.is_log_disabled;
@@ -438,8 +447,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
-        // No type reference stands there: what the reading logged goes, and the entry is read as the reference reads it.
+        // No type reference stands there: what the reading logged and recorded goes, and the entry is read as the reference reads it.
         self.lexer.restore(&start);
+        if let Some(mark) = recorded {
+            self.rewind_sidecar(mark);
+        }
         let log = self.log();
         log.msgs.truncate(logged.0);
         log.errors = logged.1;

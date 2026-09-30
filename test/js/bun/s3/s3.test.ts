@@ -2212,6 +2212,8 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
     path: "obj",
   };
 
+  // A fixture takes under a second, most of it the start of the child. The timeout is a
+  // ceiling for a loaded machine, where an ASAN build needs several seconds to start.
   it.each([
     [
       // The second end() sees an ended writer. close() after that is cleanup, as in a finally block.
@@ -2321,35 +2323,39 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
        const end = await settle(writer.end());`,
       { flush: invalidPath, end: "resolved 0", requests: [] },
     ],
-  ])("%s", async (_, body, expected) => {
-    const results = Object.keys(expected).join(", ");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `${prelude} ${body} server.stop(true); console.log(JSON.stringify({ ${results} }));`],
-      env: {
-        ...bunEnv,
-        // The S3 client honors the proxy environment; the stub is on loopback.
-        HTTP_PROXY: undefined,
-        HTTPS_PROXY: undefined,
-        ALL_PROXY: undefined,
-        http_proxy: undefined,
-        https_proxy: undefined,
-        all_proxy: undefined,
-        // A client with no credentials in its options reads them from the environment.
-        S3_ACCESS_KEY_ID: undefined,
-        S3_SECRET_ACCESS_KEY: undefined,
-        AWS_ACCESS_KEY_ID: undefined,
-        AWS_SECRET_ACCESS_KEY: undefined,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify(expected),
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  ])(
+    "%s",
+    async (_, body, expected) => {
+      const results = Object.keys(expected).join(", ");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `${prelude} ${body} server.stop(true); console.log(JSON.stringify({ ${results} }));`],
+        env: {
+          ...bunEnv,
+          // The S3 client honors the proxy environment; the stub is on loopback.
+          HTTP_PROXY: undefined,
+          HTTPS_PROXY: undefined,
+          ALL_PROXY: undefined,
+          http_proxy: undefined,
+          https_proxy: undefined,
+          all_proxy: undefined,
+          // A client with no credentials in its options reads them from the environment.
+          S3_ACCESS_KEY_ID: undefined,
+          S3_SECRET_ACCESS_KEY: undefined,
+          AWS_ACCESS_KEY_ID: undefined,
+          AWS_SECRET_ACCESS_KEY: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
 });
 
 describe("presigned url signature", () => {

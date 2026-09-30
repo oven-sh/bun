@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { totalmem } from "node:os";
 
 // Consuming a stream as text must reject with a catchable error when the accumulated
@@ -21,10 +21,13 @@ function consumeToText(streamSource: string): string {
   `;
 }
 
-async function run(script: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function run(
+  script: string,
+  env: Record<string, string | undefined> = bunEnv,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -182,6 +185,84 @@ test.skipIf(!enoughMemory)("arrayBuffer() and bytes() reject mixed chunks summin
     stderr: "",
     exitCode: 0,
   });
+});
+
+// The text of a stream whose chunks are all strings is one string of the sum of their lengths.
+// The consumer joined them in a WTF::StringBuilder that aborts the process when it cannot grow:
+// when the allocator refuses its buffer, and when it doubles the buffer for the first 16-bit
+// chunk and the double is longer than a 16-bit string can be.
+describe("the text of string chunks is one allocation of its length", () => {
+  const outOfMemory = "RangeError: Out of memory";
+  // "aaabbc" is "a3 b2 c1".
+  const runs = `text => text.replace(/(.)\\1*/gs, (run, character) => character + run.length + " ").trim()`;
+  const consume = (chunks: string, text: string, describeText = runs) => `
+    const megabyte = letter => Buffer.alloc(1024 * 1024, letter).toString("latin1");
+    const chunks = ${chunks};
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const describeText = ${describeText};
+    const settled = await ${text}.then(text => ({ text: describeText(text) }), e => ({ rejected: e.name + ": " + e.message }));
+    console.log(JSON.stringify(settled));
+  `;
+
+  // With Malloc=1 WebKit allocates through the system allocator, so ASAN's cap of 4 MiB for one
+  // allocation covers the text. ASAN logs every allocation that it refuses to stderr.
+  describe.skipIf(!isASAN)("under a cap of 4 MiB for one allocation", () => {
+    const MIB = 1024 * 1024;
+    const env = {
+      ...bunEnv,
+      Malloc: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4", "detect_leaks=0"]
+        .filter(Boolean)
+        .join(":"),
+    };
+    const megabytes = (letters: string) => `[...${JSON.stringify(letters)}].map(megabyte)`;
+
+    test.concurrent.each([
+      ["three megabytes", megabytes("abc"), { text: `a${MIB} b${MIB} c${MIB}` }],
+      ["four megabytes", megabytes("abcd"), { rejected: outOfMemory }],
+      // A megabyte of 16-bit characters is 2 MiB.
+      ["one megabyte, then a 16-bit character", `[megabyte("a"), "\\u20AC"]`, { text: `a${MIB} \u20AC1` }],
+      ["three megabytes, then a 16-bit character", `[...${megabytes("abc")}, "\\u20AC"]`, { rejected: outOfMemory }],
+      ["a 16-bit character, then three megabytes", `["\\u20AC", ...${megabytes("abc")}]`, { rejected: outOfMemory }],
+    ])("%s", async (_name, chunks, expected) => {
+      const { stdout, exitCode } = await run(consume(chunks, "Bun.readableStreamToText(stream)"), env);
+      expect({ stdout: JSON.parse(stdout || "null"), exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+    });
+
+    test.concurrent.each([
+      "stream.text()",
+      "new Response(stream).text()",
+      "stream.json()",
+      "new Response(stream).json()",
+    ])("%s of four megabytes", async text => {
+      const { stdout, exitCode } = await run(consume(megabytes("abcd"), text), env);
+      expect({ stdout: JSON.parse(stdout || "null"), exitCode }).toEqual({
+        stdout: { rejected: outOfMemory },
+        exitCode: 0,
+      });
+    });
+  });
+
+  // This text fits in a string. It is 2 GiB in 16 bits, beside the gigabyte of the chunk.
+  test.skipIf(totalmem() < 12 * 1024 ** 3)(
+    "a 16-bit character after a gigabyte of Latin-1",
+    async () => {
+      const chunks = `[Buffer.alloc(2 ** 30, "x").toString("latin1"), "\\u20AC"]`;
+      const ends = `text => ({ length: text.length, start: text.slice(0, 3), end: text.slice(-3) })`;
+      const { stdout, stderr, exitCode } = await run(consume(chunks, "Bun.readableStreamToText(stream)", ends));
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: { text: { length: 2 ** 30 + 1, start: "xxx", end: "xx\u20AC" } },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    60_000,
+  );
 });
 
 // TextDecoderStream joins a chunk with the bytes it carried over from an incomplete UTF-8

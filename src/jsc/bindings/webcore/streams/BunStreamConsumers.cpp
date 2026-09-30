@@ -540,6 +540,24 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&, JSValue chunk);
 static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&);
 
+// The string chunks as one string of `length` code units, from one allocation. Null when that allocation fails.
+template<typename CharacterType>
+static WTF::String tryJoinStringChunks(JSGlobalObject* globalObject, const MarkedArgumentBuffer& chunks, unsigned length)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    std::span<CharacterType> characters;
+    WTF::String joined = WTF::String::tryCreateUninitialized(length, characters);
+    if (joined.isNull()) [[unlikely]]
+        return joined;
+    for (unsigned i = 0; i < chunks.size(); i++) {
+        auto chunk = asString(chunks.at(i))->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        chunk->getCharacters(characters);
+        characters = characters.subspan(chunk->length());
+    }
+    return joined;
+}
+
 // The chunk-array -> text conversion: pure-string arrays join once (no UTF-8 round trip);
 // mixed/binary chunk arrays run through the shared text accumulator.
 static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksValue)
@@ -585,6 +603,7 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
     // MarkedArgumentBuffer for the conversion below.
     MarkedArgumentBuffer values;
     bool allStrings = true;
+    bool all8Bit = true;
     WTF::CheckedUint32 codeUnits = 0;
     for (unsigned i = 0; i < length; i++) {
         JSValue chunk = chunks->getIndex(globalObject, i);
@@ -592,8 +611,10 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
         values.append(chunk);
         if (!chunk.isString())
             allStrings = false;
-        else if (allStrings)
+        else if (allStrings) {
             codeUnits += asString(chunk)->length();
+            all8Bit = all8Bit && asString(chunk)->is8Bit();
+        }
     }
     if (values.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -604,18 +625,15 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        WTF::StringBuilder rope;
-        rope.reserveCapacity(codeUnits.value());
-        for (unsigned i = 0; i < length; i++) {
-            WTF::String string = asString(values.at(i))->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            rope.append(string);
-        }
-        if (rope.hasOverflowed()) [[unlikely]] {
+        WTF::String joined = all8Bit
+            ? tryJoinStringChunks<Latin1Character>(globalObject, values, codeUnits.value())
+            : tryJoinStringChunks<char16_t>(globalObject, values, codeUnits.value());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (joined.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        RELEASE_AND_RETURN(scope, jsString(vm, stripTextResultBOM(rope.toString())));
+        RELEASE_AND_RETURN(scope, jsString(vm, stripTextResultBOM(joined)));
     }
 
     // Mixed string/binary chunks: drive the shared accumulator so adjacent-string rope

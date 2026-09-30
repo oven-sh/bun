@@ -2320,6 +2320,7 @@ fn parse_build_command_options(
             Output::err_generic("--compile-exec-argv requires --compile", ());
             Global::crash();
         }
+        cli::lint_command::refuse_in_exec_argv(compile_exec_argv);
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
     }
 

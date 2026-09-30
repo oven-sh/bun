@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { bun, lintEnv, markerExists, markerSource } from "./lint-helpers";
@@ -101,6 +101,26 @@ describe("--lint among the flags that bunx reads before the package name", () =>
     expect(after.exitCode).toBe(0);
     expect(await markerExists(cwd)).toBe(true);
   });
+});
+
+describe("--lint in the value of --compile-exec-argv", () => {
+  const refused = { stdout: "", stderr: "error: --lint cannot be set in --compile-exec-argv\n", exitCode: 1 };
+  // The refusal does not depend on the variable that turns `--lint` on.
+  const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+
+  test.concurrent.each(["--lint", "--lint=value", "--smol --lint", "--lint\t--smol"])(
+    "a value of %j is refused and nothing is compiled",
+    async value => {
+      using dir = tempDir("lint-compile-exec-argv", { "x.ts": 'console.log("compiled");\n' });
+      const cwd = String(dir);
+      const args = ["build", "--compile", `--compile-exec-argv=${value}`, "x.ts", "--outfile", "app"];
+      const [set, unset] = await Promise.all([bun(cwd, args, lintEnv), bun(cwd, args, withoutVariable)]);
+      expect(set).toEqual(refused);
+      expect(unset).toEqual(refused);
+      // A build that is not refused leaves the executable beside its entry point.
+      expect(await readdirSorted(cwd)).toEqual(["x.ts"]);
+    },
+  );
 });
 
 describe("--lint among the options that a compiled executable parses", () => {

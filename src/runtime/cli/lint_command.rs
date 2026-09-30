@@ -71,6 +71,15 @@ pub(crate) fn refuse_in_compiled_executable(argv: &[&'static ZStr]) {
     }
 }
 
+/// Refuses `--lint` among the blank-separated words of a `--compile-exec-argv` value, which become options of the compiled executable.
+#[inline(never)]
+pub(crate) fn refuse_in_exec_argv(value: &[u8]) {
+    if bun_core::strings::tokenize_any(value, b" \t\n\r").any(is_lint_token) {
+        bun_core::err_generic!("--lint cannot be set in --compile-exec-argv");
+        Global::exit(1);
+    }
+}
+
 /// Checks every operand and runs none. Exits with 1 without an operand or with one after the first that starts with `-`, with 2 when a diagnostic is an error, else with 0.
 #[cold]
 #[inline(never)]

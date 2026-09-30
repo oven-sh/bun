@@ -1,20 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { tempDir } from "harness";
+import { bun, markerExists, markerSource } from "./lint-helpers";
 
-const lintEnv = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1" };
-
-async function bun(cwd: string, args: string[]) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
-    env: lintEnv,
-    cwd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+describe("a file that writes a marker when it is run", () => {
+  test.concurrent.each(["--lint file.ts", "run --lint file.ts"])("is not run by `bun %s`", async command => {
+    using dir = tempDir("lint-marker", { "file.ts": markerSource });
+    const cwd = String(dir);
+    expect(await bun(cwd, command.split(" "))).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(await markerExists(cwd)).toBe(false);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
+});
 
 // Every place stderr reports, as `file:line:column`. A code frame has `at bad.ts:1:9`, a plain line starts `bad.ts(1,9)`.
 function positions(stderr: string) {

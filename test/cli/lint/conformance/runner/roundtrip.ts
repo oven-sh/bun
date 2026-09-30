@@ -1,6 +1,5 @@
 // Every error baseline read and written again from its parsed form: the bytes must be the same.
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { type Rules, tscRules, tsgoRules, WriterPanic } from "./diagnosticwriter";
 import { getErrorBaseline } from "./error_baseline";
 import { compareStrings } from "./gostrings";
@@ -87,16 +86,19 @@ export interface BaselineFile {
   origin: Origin;
 }
 
-function compareBaselines(a: BaselineFile, b: BaselineFile): number {
-  return compareStrings(a.name, b.name) || compareStrings(a.origin, b.origin);
+// From U+D800 on the order of the code units of two strings is not the order of their bytes.
+const beyondCodeUnitOrder = /[\ud800-\uffff]/;
+
+// Sorts in the order of the bytes; the sort of the engine without a comparer gives that order below U+D800 and costs a debug build a fraction of a comparer.
+function sortNames(names: string[]): string[] {
+  return names.some(name => beyondCodeUnitOrder.test(name)) ? names.sort(compareStrings) : names.sort();
 }
 
 // The error baselines that are directly in a directory, in the order of their names.
 export function listErrorBaselines(directory: string, origin: Origin): BaselineFile[] {
-  return readdirSync(directory)
-    .filter(name => name.endsWith(".errors.txt"))
-    .sort(compareStrings)
-    .map(name => ({ path: join(directory, name), name, origin }));
+  const names = readdirSync(directory).filter(name => name.endsWith(".errors.txt"));
+  // The path is put together here: path.join for every name of the corpus costs a debug build a second.
+  return sortNames(names).map(name => ({ path: `${directory}/${name}`, name, origin }));
 }
 
 export interface SampleOptions {
@@ -116,7 +118,7 @@ export function sampleErrorBaselines(
   count: number,
   options: SampleOptions = {},
 ): SampledBaseline[] {
-  const order = [...files].sort(compareBaselines);
+  const order = [...files].sort((a, b) => compareStrings(a.name, b.name) || compareStrings(a.origin, b.origin));
   const always = new Set(options.always ?? []);
   const maxBytes = options.maxBytes ?? Infinity;
   const sizes = new Map<number, number>();

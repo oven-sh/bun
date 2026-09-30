@@ -141,6 +141,8 @@ pub struct PostgresSQLConnection {
 
     pub(crate) backend_parameters: JsCell<StringMap>,
     pub(crate) backend_key_data: JsCell<protocol::BackendKeyData>,
+    /// The query that a cancel connection stops, until it writes the CancelRequest.
+    cancel_target: JsCell<Option<RefPtr<PostgresSQLQuery>>>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
     // into `options_buf` (built by `ConnectionStrings::new`). Struct is Box-allocated
@@ -845,7 +847,12 @@ impl PostgresSQLConnection {
         debug!("sendStartupMessage");
         self.status.set(Status::SentStartupMessage);
         if self.is_cancel_request() {
-            let packet = self.backend_key_data.get().cancel_request();
+            let target = self.cancel_target.with_mut(Option::take);
+            // The query can end during the dial, and a CancelRequest then stops the next query.
+            let Some(packet) = target.and_then(|request| Self::cancel_request_for(&request)) else {
+                self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+                return;
+            };
             if let Err(err) = self.writer().write(&packet) {
                 self.fail(b"Failed to write cancel request", err);
             }
@@ -1234,8 +1241,8 @@ pub(crate) struct ConnectParams<'a> {
     pub use_unnamed_prepared_statements: bool,
     pub on_connect: JSValue,
     pub on_close: JSValue,
-    /// Set for a connection that only delivers a CancelRequest for this backend.
-    pub cancel: Option<protocol::BackendKeyData>,
+    /// Set for a connection that only delivers the CancelRequest for this query.
+    pub cancel: Option<RefPtr<PostgresSQLQuery>>,
 }
 
 impl PostgresSQLConnection {
@@ -1300,7 +1307,8 @@ impl PostgresSQLConnection {
                 pending_activity_count: AtomicU32::new(0),
                 js_value: JsCell::new(crate::jsc::JsRef::empty()),
                 backend_parameters: JsCell::new(StringMap::init(true)),
-                backend_key_data: JsCell::new(cancel.unwrap_or_default()),
+                backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
+                cancel_target: JsCell::new(cancel),
                 database,
                 user: username,
                 password,
@@ -1647,11 +1655,28 @@ impl PostgresSQLConnection {
             .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
     }
 
-    /// Asks the server, on a second connection like this one, to cancel what this backend runs.
-    pub(crate) fn send_cancel_request(&self) {
-        let key = self.backend_key_data.get();
+    /// Whether `request` is the FIFO head and the backend has not finished it.
+    fn is_running(&self, request: &PostgresSQLQuery) -> bool {
+        self.is_current_request(request)
+            && matches!(
+                request.status.get(),
+                QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse
+            )
+    }
+
+    /// The CancelRequest for `request`, while the backend of its session still runs it.
+    fn cancel_request_for(request: &PostgresSQLQuery) -> Option<[u8; 16]> {
+        let query = request.this_value.get().try_get()?;
+        let session = js::from_js_ref(postgres_sql_query::js::connection_get_cached(query)?)?;
+        session
+            .is_running(request)
+            .then(|| session.backend_key_data.get().cancel_request())
+    }
+
+    /// Asks the server, on a second connection like this one, to cancel `request`, which this backend runs.
+    pub(crate) fn send_cancel_request(&self, request: &PostgresSQLQuery) {
         // No BackendKeyData was ever received, so the server cannot be asked.
-        if key.process_id == 0 {
+        if self.backend_key_data.get().process_id == 0 {
             return;
         }
         let socket = self.socket.get();
@@ -1720,10 +1745,7 @@ impl PostgresSQLConnection {
                 use_unnamed_prepared_statements: false,
                 on_connect: JSValue::ZERO,
                 on_close: JSValue::ZERO,
-                cancel: Some(protocol::BackendKeyData {
-                    process_id: key.process_id,
-                    secret_key: key.secret_key,
-                }),
+                cancel: Some(request.ref_guard()),
             },
         );
         // Best effort: a cancel that cannot be dialed leaves the query running.

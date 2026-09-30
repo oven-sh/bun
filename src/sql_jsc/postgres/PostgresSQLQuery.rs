@@ -894,7 +894,7 @@ impl PostgresSQLQuery {
             return Ok(JSValue::UNDEFINED);
         }
 
-        connection.send_cancel_request();
+        connection.send_cancel_request(this);
         Ok(JSValue::UNDEFINED)
     }
 }

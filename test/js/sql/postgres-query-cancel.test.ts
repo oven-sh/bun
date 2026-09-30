@@ -10,7 +10,17 @@
 // cancelled before it was dispatched never settled at all.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, expiredTls, isIPv6, isMusl, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  describeWithContainer,
+  expiredTls,
+  isIPv6,
+  isMusl,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -61,7 +71,8 @@ const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]);
  *
  * `cancelConnection` makes the second connection meet a server no real backend is:
  * one that answers a CancelRequest like the start of a session and does not hang
- * up, one that declines TLS, or one whose certificate the session's CA did not sign.
+ * up, one that declines TLS, one whose certificate the session's CA did not sign,
+ * or one that answers the SSLRequest only when the test calls `answerCancelConnection()`.
  */
 async function backend(
   options: {
@@ -69,13 +80,14 @@ async function backend(
     certificate?: { cert: string; key: string };
     host?: string;
     socketPath?: string;
-    cancelConnection?: "answers" | "declines-tls" | "other-certificate";
+    cancelConnection?: "answers" | "declines-tls" | "other-certificate" | "waits";
   } = {},
 ) {
   const host = options.host ?? "127.0.0.1";
   const plaintext: Buffer[] = [];
   const cancelPacket = Promise.withResolvers<Buffer>();
   const cancelConnectionClosed = Promise.withResolvers<void>();
+  const cancelConnectionWaiting = Promise.withResolvers<() => void>();
   const queryConnectionClosed = Promise.withResolvers<void>();
   const sockets = new Set<net.Socket>();
   const waiters = new Map<number, () => void>();
@@ -130,11 +142,15 @@ async function backend(
       rawSocket.pause();
       const leftover = buffered.subarray(SSL_REQUEST.length);
       if (leftover.length) rawSocket.unshift(leftover);
-      rawSocket.write("S");
-      const certificate = cancel === "other-certificate" ? expiredTls : (options.certificate ?? tlsCert);
-      const secure = new tls.TLSSocket(rawSocket, { isServer: true, ...certificate });
-      secure.on("error", () => {});
-      serve(connection, secure);
+      const answer = () => {
+        rawSocket.write("S");
+        const certificate = cancel === "other-certificate" ? expiredTls : (options.certificate ?? tlsCert);
+        const secure = new tls.TLSSocket(rawSocket, { isServer: true, ...certificate });
+        secure.on("error", () => {});
+        serve(connection, secure);
+      };
+      if (cancel === "waits") cancelConnectionWaiting.resolve(answer);
+      else answer();
     };
     rawSocket.on("data", onPlaintext);
   });
@@ -187,6 +203,12 @@ async function backend(
     cancelPacket: cancelPacket.promise,
     /** Resolves once the second connection is closed. */
     cancelConnectionClosed: cancelConnectionClosed.promise,
+    /** With `waits`: resolves once the second connection has sent its SSLRequest, which is not answered yet. */
+    cancelConnectionWaiting: cancelConnectionWaiting.promise.then(() => {}),
+    /** With `waits`: answers that SSLRequest with `S`, so that the TLS handshake can run. */
+    async answerCancelConnection() {
+      (await cancelConnectionWaiting.promise)();
+    },
     get cancelPacketSeen() {
       return cancelPacketSeen;
     },
@@ -462,6 +484,37 @@ test("the cancel connection closes when the server answers it", async () => {
   expect((await settled).errno).toBe("57014");
 });
 
+// The dial of the cancel connection is a TCP handshake and, for a TLS session, an
+// SSLRequest and a TLS handshake. The query can end in that time, and a
+// CancelRequest that is sent then stops the query that the backend runs next. So
+// the cancel connection looks at its query again when it is ready to write.
+test("the cancel connection sends nothing when its query ended during the dial", async () => {
+  await using server = await backend({ tls: true, cancelConnection: "waits" });
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, tls: { ca: tlsCert.cert }, max: 1, connectionTimeout: 5 });
+
+  const query = sql`select pg_sleep(10)`.execute();
+  await server.untilQueryUnits(1);
+  query.cancel();
+  await server.cancelConnectionWaiting;
+
+  // The query ends by itself while the cancel connection waits for its `S`.
+  server.reply(
+    pgParseComplete(),
+    pgParameterDescription([]),
+    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+    pgBindComplete(),
+    pgDataRow([Buffer.from("done")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery(),
+  );
+  expect(await query).toEqual([{ v: "done" }]);
+
+  await server.answerCancelConnection();
+  await server.cancelConnectionClosed;
+  expect(server.cancelPacketSeen).toBe(false);
+});
+
 // A dial to an IP literal is a socket before it is open, and uSockets reports
 // nothing when the timeout of the cancel connection closes it. The connection
 // has to release the event loop itself, or the process never exits.
@@ -691,4 +744,34 @@ test("cancel() on a pipelined query does not cancel the one the backend is runni
   expect(await sql`select 'c'`).toEqual([{ v: "ok" }]);
   // Two round trips after the cancel, a cancel connection would have arrived.
   expect(server.connections).toBe(1);
+});
+
+// The scripted backend compares the packet with `pgCancelRequest`, which this
+// change also wrote. Here a real server is the judge of the bytes.
+describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  test("cancel() stops a query that a real server is running", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    await using sql = new SQL({ url, max: 1, connectionTimeout: 5 });
+    await using observer = new SQL({ url, max: 1, connectionTimeout: 5 });
+
+    const query = sql`select pg_sleep(30) as cancel_running_query`.execute();
+    const settled = query.then(
+      rows => rows,
+      err => err,
+    );
+    // The backend is inside pg_sleep, so the server runs the query and does not only hold its bytes.
+    while (true) {
+      const [{ sleeping }] = await observer`
+        select count(*)::int as sleeping from pg_stat_activity
+        where wait_event = 'PgSleep' and query like '%cancel_running_query%' and pid <> pg_backend_pid()`;
+      if (sleeping) break;
+    }
+    query.cancel();
+
+    const err = await settled;
+    expect({ code: err.code, errno: err.errno }).toEqual({ code: "ERR_POSTGRES_SERVER_ERROR", errno: "57014" });
+    // The connection is in sync: the next query runs on it.
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+  });
 });

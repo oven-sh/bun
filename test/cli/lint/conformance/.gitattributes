@@ -1,0 +1,2 @@
+# The corpus is upstream's bytes, CR LF in most files: the root's "*.ts text eol=lf" and core.autocrlf must not convert them.
+corpus/** -text linguist-vendored

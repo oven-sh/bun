@@ -169,8 +169,7 @@ static inline bool validFieldName(const char *p, unsigned n) {
 /* The methods Bun.serve can represent: the HTTP/1 parser's strict set, in
  * their RFC 9110 case-sensitive wire form. */
 static inline bool isKnownMethod(std::string_view method) {
-    for (unsigned char c : method) if (!((c >= 'A' && c <= 'Z') || c == '-')) return false;
-    return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
+    return methodIdFromWire(method) != HTTP_METHOD_NONE;
 }
 
 /* The request fields validation cares about. lshpack reports the HPACK

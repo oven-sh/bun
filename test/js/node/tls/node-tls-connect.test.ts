@@ -920,12 +920,18 @@ it("a server TLSSocket over a duplex reports a first record that is not TLS as E
     },
   });
   const server = new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
-  const failed = once(server, "error");
+  const { promise, resolve } = Promise.withResolvers<{ event: string; code?: string; library?: string }>();
+  server.on("error", (err: NodeJS.ErrnoException & { library?: string }) =>
+    resolve({ event: "error", code: err.code, library: err.library }),
+  );
+  server.on("secure", () => resolve({ event: "secure" }));
+  server.on("close", () => resolve({ event: "close" }));
   transport.push("not a TLS record\r\n\r\n");
 
-  const [err] = await failed;
+  const outcome = await promise;
   transport.destroy();
-  expect({ code: err.code, library: err.library }).toEqual({
+  expect(outcome).toEqual({
+    event: "error",
     code: "ERR_SSL_WRONG_VERSION_NUMBER",
     library: "SSL routines",
   });

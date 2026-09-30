@@ -1,18 +1,20 @@
-// checker.go:5854-6110 (layer D-VAR): variable statements, declaration lists and variable-like declarations.
+// checker.go:5854-6183 (layers D-VAR, D-DECOR): variable statements, declaration lists, variable-like declarations and the checks of decorators.
 use crate::ast::{
-    Arg, Kind, NodeFlags, NodeId, SymbolFlags, find_ancestor_kind, get_combined_node_flags,
-    get_containing_function, get_name_of_declaration, is_array_binding_pattern, is_big_int_literal,
-    is_binding_element, is_binding_pattern, is_block, is_computed_property_name,
-    is_for_in_statement, is_function_like, is_identifier, is_module_block, is_module_declaration,
-    is_object_binding_pattern, is_part_of_parameter_declaration, is_property_declaration,
-    is_property_signature_declaration, is_source_file, is_variable_declaration,
-    is_variable_declaration_initialized_to_require, is_variable_like, is_variable_statement,
-    node_is_missing,
+    Arg, Kind, NodeFlags, NodeId, SymbolFlags, SymbolId, can_have_decorators, find_ancestor_kind,
+    get_combined_node_flags, get_containing_function, get_name_of_declaration, has_decorators,
+    is_accessor, is_array_binding_pattern, is_auto_accessor_property_declaration,
+    is_big_int_literal, is_binding_element, is_binding_pattern, is_block, is_class_declaration,
+    is_class_expression, is_computed_property_name, is_decorator, is_for_in_statement,
+    is_function_like, is_identifier, is_method_declaration, is_module_block, is_module_declaration,
+    is_object_binding_pattern, is_parameter_declaration, is_part_of_parameter_declaration,
+    is_private_identifier, is_property_declaration, is_property_signature_declaration,
+    is_source_file, is_variable_declaration, is_variable_declaration_initialized_to_require,
+    is_variable_like, is_variable_statement, node_can_be_decorated, node_is_missing,
 };
 use crate::checker::{
-    CheckMode, Checker, ExternalEmitHelpers, IterationUse, LANGUAGE_FEATURE_MINIMUM_TARGET, TypeId,
-    get_property_name_from_type, has_dot_dot_dot_token, is_in_ambient_or_type_node,
-    is_type_usable_as_property_name,
+    CheckMode, Checker, ExternalEmitHelpers, IterationUse, LANGUAGE_FEATURE_MINIMUM_TARGET,
+    ReferenceHint, TypeFlags, TypeId, get_property_name_from_type, has_dot_dot_dot_token,
+    is_in_ambient_or_type_node, is_type_usable_as_property_name,
 };
 use crate::diagnostics::{self, MessageId};
 use crate::scanner::declaration_name_to_string;
@@ -423,5 +425,123 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+    }
+
+    pub fn check_decorators(&mut self, node: NodeId) {
+        let a = self.ast;
+        // skip this check for nodes that cannot have decorators. These should have already had an error reported by checkGrammarModifiers.
+        if !can_have_decorators(a, node)
+            || !has_decorators(a, node)
+            || !node_can_be_decorated(
+                a,
+                self.legacy_decorators,
+                node,
+                a.parent(node),
+                a.parent(a.parent(node)),
+            )
+        {
+            return;
+        }
+        let first_decorator = a
+            .modifier_nodes(node)
+            .as_slice()
+            .iter()
+            .copied()
+            .find(|&modifier| is_decorator(a, modifier))
+            .unwrap_or(NodeId::NIL);
+        if first_decorator.is_nil() {
+            return;
+        }
+        if self.legacy_decorators {
+            self.check_external_emit_helpers(first_decorator, ExternalEmitHelpers::DECORATE);
+            if is_parameter_declaration(a, node) {
+                self.check_external_emit_helpers(first_decorator, ExternalEmitHelpers::PARAM);
+            }
+        } else if self.language_version
+            < LANGUAGE_FEATURE_MINIMUM_TARGET.class_and_class_element_decorators
+        {
+            self.check_external_emit_helpers(
+                first_decorator,
+                ExternalEmitHelpers::ES_DECORATE_AND_RUN_INITIALIZERS,
+            );
+            if is_class_declaration(a, node) {
+                if a.name(node).is_nil()
+                    || !self
+                        .get_first_transformable_static_class_element(node)
+                        .is_nil()
+                {
+                    self.check_external_emit_helpers(
+                        first_decorator,
+                        ExternalEmitHelpers::SET_FUNCTION_NAME,
+                    );
+                }
+            } else if !is_class_expression(a, node) {
+                let name = a.name(node);
+                if is_private_identifier(a, name)
+                    && (is_method_declaration(a, node)
+                        || is_accessor(a, node)
+                        || is_auto_accessor_property_declaration(a, node))
+                {
+                    self.check_external_emit_helpers(
+                        first_decorator,
+                        ExternalEmitHelpers::SET_FUNCTION_NAME,
+                    );
+                }
+                if is_computed_property_name(a, name) {
+                    self.check_external_emit_helpers(
+                        first_decorator,
+                        ExternalEmitHelpers::PROP_KEY,
+                    );
+                }
+            }
+        }
+        self.mark_linked_references(node, ReferenceHint::DECORATOR, SymbolId::NIL, TypeId::NIL);
+        for &modifier in a.modifier_nodes(node).as_slice() {
+            if is_decorator(a, modifier) {
+                self.check_decorator(modifier);
+            }
+        }
+    }
+
+    pub fn check_decorator(&mut self, node: NodeId) {
+        let a = self.ast;
+        self.check_grammar_decorator(node);
+        let signature = self.get_resolved_signature(node, None, CheckMode::NORMAL);
+        self.check_deprecated_signature(signature, node);
+        let return_type = self.get_return_type_of_signature(signature);
+        if self.types[return_type].flags.intersects(TypeFlags::ANY) {
+            return;
+        }
+        // if we fail to get a signature and return type here, we will have already reported a grammar error in `checkDecorators`.
+        let decorator_signature = self.get_decorator_call_signature(node);
+        if decorator_signature.is_nil()
+            || self.signatures[decorator_signature]
+                .resolved_return_type
+                .is_nil()
+        {
+            return;
+        }
+        let expected_return_type = self.signatures[decorator_signature].resolved_return_type;
+        let head_message = match a.kind(a.parent(node)) {
+            Kind::ClassDeclaration | Kind::ClassExpression => {
+                diagnostics::DECORATOR_FUNCTION_RETURN_TYPE_0_IS_NOT_ASSIGNABLE_TO_TYPE_1
+            }
+            Kind::PropertyDeclaration if !self.legacy_decorators => {
+                diagnostics::DECORATOR_FUNCTION_RETURN_TYPE_0_IS_NOT_ASSIGNABLE_TO_TYPE_1
+            }
+            Kind::PropertyDeclaration | Kind::Parameter => {
+                diagnostics::DECORATOR_FUNCTION_RETURN_TYPE_IS_0_BUT_IS_EXPECTED_TO_BE_VOID_OR_ANY
+            }
+            Kind::MethodDeclaration | Kind::GetAccessor | Kind::SetAccessor => {
+                diagnostics::DECORATOR_FUNCTION_RETURN_TYPE_0_IS_NOT_ASSIGNABLE_TO_TYPE_1
+            }
+            _ => return self.fail("Unhandled case in checkDecorator"),
+        };
+        self.check_type_assignable_to(
+            return_type,
+            expected_return_type,
+            a.expression(node),
+            head_message,
+        );
     }
 }

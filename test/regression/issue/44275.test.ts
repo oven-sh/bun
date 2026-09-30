@@ -44,3 +44,40 @@ test("util.promisify.custom stays per timer once the property read is warm", asy
   });
   expect(exitCode).toBe(0);
 });
+
+// util.promisify() reads the property at one place for the whole program. Calls on any
+// functions warm that read, and then one call for each of two timers is enough.
+test.concurrent.each(["setImmediate", "setInterval"])(
+  "util.promisify(setTimeout) is the promise form of setTimeout after util.promisify(%s)",
+  async first => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         const timers = require("node:timers");
+         const timersPromises = require("node:timers/promises");
+         for (let i = 0; i < 300; i++) util.promisify(function (callback) { callback(null, i); });
+         const name = fn => Object.keys(timersPromises).find(key => timersPromises[key] === fn);
+         const firstName = name(util.promisify(timers[${JSON.stringify(first)}]));
+         const sleep = util.promisify(timers.setTimeout);
+         // The promise form of setTimeout resolves with its second argument.
+         Promise.resolve(sleep(1, "value"))
+           .then(value => ({ value: typeof value === "string" ? value : typeof value }), error => ({ error: error.code }))
+           .then(result => {
+             console.log(JSON.stringify({ first: firstName, sleep: name(sleep), ...result }));
+             // The promise form of setInterval starts an interval, which keeps the process alive.
+             process.exit(0);
+           });`,
+      ],
+      // Synchronous JIT, as above: the read is warm after a fixed number of calls.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ first, sleep: "setTimeout", value: "value" });
+    expect(exitCode).toBe(0);
+  },
+);

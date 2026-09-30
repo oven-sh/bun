@@ -823,7 +823,14 @@ fn files_that_leave_entry_chunk<'a>(
             // A chunk of another class runs before both, and so does what it imports.
             match when_chunk_runs(file)? {
                 Runs::WithEntry => {}
-                Runs::WithOtherEntry if parent_gains_no_import => return Ok(0),
+                // The runtime and an unwrapped file that only declares run nothing, so the walk goes on to what they import. A wrapped file can hold an external `import`, which loads with its chunk.
+                Runs::WithOtherEntry if parent_gains_no_import => {
+                    if flags[file as usize].wrap != WrapKind::None
+                        || !this.loading_file_only_declares(file)
+                    {
+                        return Ok(0);
+                    }
+                }
                 _ => continue,
             }
         } else if live(file) && file != entry_source {

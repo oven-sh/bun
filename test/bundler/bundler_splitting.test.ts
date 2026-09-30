@@ -1175,6 +1175,91 @@ describe("bundler", () => {
       run: { file: "/out/index.js", stdout },
     });
   }
+  // The runtime and helper.js run nothing and import nothing, so the chunk that other.js shares has no order with the shared code.
+  for (const [name, index, other] of [
+    ["Runtime", `import dep from "./dep.cjs";`, `import other from "./other.cjs"; console.log("other", other);`],
+    [
+      "Declarations",
+      `import { helper } from "./helper.js"; const dep = helper();`,
+      `import { helper } from "./helper.js"; console.log("other", helper());`,
+    ],
+  ] as const) {
+    itBundled("splitting/EntryWithExportsFilesMoveWhenOtherEntrySharesOnlyDeclarations/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          import "./setup.js";
+          import { Store } from "./store.js";
+          ${index}
+          export const version = 1;
+          console.log("index", new Store().name, dep);
+          import("./settings.js");
+        `,
+        "/other.js": other,
+        "/setup.js": `console.log("setup"); globalThis.APP = { name: "app" };`,
+        "/store.js": `const NAME = globalThis.APP.name; export class Store { name = NAME; }`,
+        "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+        "/dep.cjs": `module.exports = "dep";`,
+        "/other.cjs": `module.exports = "other";`,
+        "/helper.js": `export function helper() { return "dep"; }`,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "setup\nindex app dep\nsettings app" },
+    });
+  }
+  // A `require()` wraps api.js. Its external import is outside of the wrapper and loads with its chunk, so that chunk still ends the move, also when a file that only declares leads to it.
+  for (const [name, index, other, files] of [
+    [
+      "Direct",
+      `import { api } from "./api.js"; const get = () => api;`,
+      `const { api } = require("./api.js"); console.log("other", api);`,
+      {},
+    ],
+    [
+      "BehindDeclarations",
+      `import "./setup.js"; import { helper as get } from "./helper.js";`,
+      `import { helper } from "./helper.js"; console.log("other", helper());`,
+      {
+        "/setup.js": `import { helper } from "./helper.js"; globalThis.getApi = helper;`,
+        "/helper.js": `export function helper() { return require("./api.js").api; }`,
+      },
+    ],
+  ] as const) {
+    itBundled("splitting/EntryWithExportsKeepsOrderWithWrappedFileThatImportsExternal/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          import { config } from "./config.js";
+          ${index}
+          import { LIST } from "./list.js";
+          export const version = 1;
+          console.log("index", config.name, get(), LIST.length);
+          import("./settings.js");
+        `,
+        "/other.js": other,
+        "/config.js": `globalThis.APP = { name: "app" }; console.log("config"); export const config = globalThis.APP;`,
+        "/api.js": `import { plugin } from "ext-plugin"; export const api = plugin;`,
+        "/list.js": `globalThis.LISTED = true; export const LIST = ["a"];`,
+        "/settings.js": /* js */ `
+          import { config } from "./config.js";
+          import { LIST } from "./list.js";
+          console.log("settings", config.name, LIST.length);
+        `,
+        ...files,
+      },
+      external: ["ext-plugin"],
+      runtimeFiles: {
+        "/node_modules/ext-plugin/package.json": `{ "name": "ext-plugin", "type": "module", "main": "index.js" }`,
+        "/node_modules/ext-plugin/index.js": `console.log("ext"); export const plugin = "plugin for " + globalThis.APP.name;`,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "config\next\nindex app plugin for app 1\nsettings app 1" },
+    });
+  }
   // styles.js prints nothing, so no chunk has its key, and the imports of index.js have no other chunk to run in.
   itBundled("splitting/EntryImportsStayWhenSharedFilePrintsNothing", {
     ...extSetup,

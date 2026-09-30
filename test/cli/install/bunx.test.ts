@@ -1020,7 +1020,8 @@ describe("bunx cache", () => {
     expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
 
     // The package keeps its package.json, so an install without `--force`
-    // skips it. A second install with `--force` puts the file back.
+    // skips it and removes the `.bin` entry that points at the missing file.
+    // A second install with `--force` puts the file back.
     const tree = bunx.tree("tool@latest");
     rmSync(join(tree, "node_modules", "tool", "cli.js"));
     const markers = await plantMarkers(tree, "tool", "dep");

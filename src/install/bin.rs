@@ -901,8 +901,10 @@ impl<'a> Linker<'a> {
         }
 
         // Skip if the target does not exist. This is important because placing a dangling
-        // shim in path might break a postinstall
+        // shim in path might break a postinstall. An entry from an earlier install
+        // that points at the missing file runs nothing either, so remove it.
         if !sys::exists(abs_target) {
+            Self::unlink_bin_or_shim(abs_dest);
             self.skipped_due_to_missing_bin = true;
             return;
         }

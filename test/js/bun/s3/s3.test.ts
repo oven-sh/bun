@@ -1566,7 +1566,7 @@ describe("fetch with acl, storageClass and requestPayer", () => {
 
   for (const method of ["PUT", "POST"]) {
     for (const [name, body] of Object.entries(bodies)) {
-      it(`${method} with a ${name} body sends the three options`, async () => {
+      it.concurrent(`${method} with a ${name} body sends the three options`, async () => {
         using dir = tempDir("s3-fetch-options", { "body.txt": "Hello Bun!" });
         const key = `${method}-${name}`;
         const response = await fetch(`s3://${bucket}/${key}`, { method, body: body(String(dir)), s3: s3Options() });

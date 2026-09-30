@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import { once } from "events";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -22,10 +22,15 @@ async function runMulti(
   return { stdout, stderr, exitCode };
 }
 
-/** Resolves once the processes whose ids `files` hold, separated by spaces, are all gone. */
-async function processesGone(files: string[]) {
+/** Resolves once the processes whose ids `files` hold, separated by spaces, are all gone. `run` starts what writes them. */
+async function processesGone(files: string[], run: ChildProcess) {
   for (const file of files) {
-    while (!existsSync(file)) await Bun.sleep(5);
+    while (!existsSync(file)) {
+      if (run.exitCode !== null || run.signalCode !== null) {
+        throw new Error(`the run ended (${run.exitCode ?? run.signalCode}) and ${file} was not written`);
+      }
+      await Bun.sleep(5);
+    }
     for (const pid of readFileSync(file, "utf8").split(" ").map(Number)) {
       for (;;) {
         try {
@@ -1634,7 +1639,10 @@ describe.concurrent("unusual output", () => {
       stdio: ["ignore", "pipe", "inherit"],
     });
     const exited = once(proc, "exit");
-    await processesGone(names.map(name => path.join(String(dir), name + ".pids")));
+    await processesGone(
+      names.map(name => path.join(String(dir), name + ".pids")),
+      proc,
+    );
     let stdout = "";
     for await (const chunk of proc.stdout) stdout += chunk;
     expect(names.filter(name => !stdout.includes("last of " + name))).toEqual([]);

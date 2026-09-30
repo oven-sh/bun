@@ -8627,7 +8627,8 @@ describe.skipIf(!isWindows).concurrent("what was written is in the file when pro
           GetCurrentProcess: { args: [], returns: "ptr" },
           SetProcessAffinityMask: { args: ["ptr", "usize"], returns: "i32" },
         }).symbols;
-        if (!SetProcessAffinityMask(GetCurrentProcess(), 3)) throw new Error("SetProcessAffinityMask");
+        // Refused where this process may not run on both of them: the writes are then made on what it has.
+        SetProcessAffinityMask(GetCurrentProcess(), 3);
         const codes = await Promise.all(
           Array.from({ length: ${processes} }, (_, i) =>
             Bun.spawn({ cmd: [process.execPath, "burst.js", i + ".txt"], stdio: ["ignore", "inherit", "inherit"] }).exited,

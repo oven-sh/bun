@@ -1229,7 +1229,12 @@ describe("output timing", () => {
     const exited = once(proc, "exit");
     for (const name of names) {
       const file = join(String(dir), "packages", name, name + ".pids");
-      while (!existsSync(file)) await sleep(5);
+      while (!existsSync(file)) {
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          throw new Error(`the run ended (${proc.exitCode ?? proc.signalCode}) and ${file} was not written`);
+        }
+        await sleep(5);
+      }
       for (const pid of readFileSync(file, "utf8").split(" ").map(Number)) {
         for (;;) {
           try {

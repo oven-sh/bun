@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, forEachLine, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,55 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// With a watcher installed the process never exits, so the run loop parks and
+// wakes up again for things that are not a drain of the event loop (its bounded
+// wait, a signal). 'beforeExit' is only for a drain: once after the entry is
+// evaluated and once more after a reload. A signal listener runs without keeping
+// the loop alive, which makes it a wakeup that must not re-emit; it is also why
+// this is POSIX-only, the run loop itself is the same on every platform.
+it.skipIf(isWindows).each(["--hot", "--watch"])(
+  "%s emits beforeExit once per generation, not once per event loop wakeup",
+  async flag => {
+    const source = `console.log("start");
+// Under --hot a reload re-evaluates this file on the same process object.
+if (!globalThis.listening) {
+  globalThis.listening = true;
+  process.on("beforeExit", () => console.log("beforeExit"));
+  process.on("SIGUSR2", () => console.log("signal"));
+}
+`;
+    using dir = tempDir("hot-before-exit", { "entry.js": source });
+    const entry = join(String(dir), "entry.js");
+    await using runner = spawn({
+      cmd: [bunExe(), flag, entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const lines = forEachLine(runner.stdout);
+    const nextLine = async () => (await lines.next()).value;
+
+    expect(await nextLine()).toBe("start");
+    expect(await nextLine()).toBe("beforeExit");
+
+    for (let i = 0; i < 3; i++) {
+      runner.kill("SIGUSR2");
+      expect(await nextLine()).toBe("signal");
+    }
+
+    // A reload is a new generation (re-evaluated in-process under --hot,
+    // re-executed under --watch), so it drains, and announces it, once more.
+    // One save can reach the watcher as more than one event; a second reload
+    // that runs before the first one's drain is announced drains with it.
+    writeHotFileAtomicSync(entry, `${source}// reloaded\n`);
+    expect(await nextLine()).toBe("start");
+    let line = await nextLine();
+    while (line === "start") line = await nextLine();
+    expect(line).toBe("beforeExit");
+  },
+  timeout,
 );

@@ -901,10 +901,10 @@ impl<'a> Linker<'a> {
         }
 
         // Skip if the target does not exist. This is important because placing a dangling
-        // shim in path might break a postinstall. An existing entry stays: a build
-        // script can still create its target. In a bunx tree nothing builds, so
-        // a stale entry there only hides the missing file from bunx's bin lookup.
+        // shim in path might break a postinstall
         if !sys::exists(abs_target) {
+            // A project build script can still create the target. A bunx tree has
+            // no build step, and a stale entry there hides the missing file from bunx.
             if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true) {
                 Self::unlink_bin_or_shim(abs_dest);
             }

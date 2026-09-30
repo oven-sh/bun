@@ -1998,6 +1998,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
+                                // In a JSX file these type parameters prove an arrow function, as in the reference
+                                let is_before_colon = flags == EFlags::AfterQuestionAndBeforeColon
+                                    && !p.is_jsx_enabled();
                                 return p.parse_paren_expr(
                                     async_range.loc,
                                     level,
@@ -2005,8 +2008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_async: true,
                                         force_arrow_fn: result
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                        is_after_question_and_before_colon: flags
-                                            == EFlags::AfterQuestionAndBeforeColon,
+                                        is_after_question_and_before_colon: is_before_colon,
                                         ..Default::default()
                                     },
                                 );

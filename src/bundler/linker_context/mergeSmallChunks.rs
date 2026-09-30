@@ -1451,7 +1451,14 @@ pub(crate) fn merge_small_chunks(
                 && let Some(repeated) =
                     entry_imports_in_parent.get_mut(class.find_first_set().expect("one bit set"))
             {
-                repeated.1 = groups.values()[target_index].first_source;
+                let parent = &mut groups.values_mut()[target_index];
+                repeated.1 = parent.first_source;
+                // The parent runs these at its top level, so rule 2 must not move it into a chunk that more entry points load.
+                this.for_each_import_that_runs(
+                    entry_source_indices[class.find_first_set().expect("one bit set")],
+                    0..repeated.0,
+                    |_, _, _| parent.pure = false,
+                );
             }
         }
         for &member in members {
@@ -1569,6 +1576,14 @@ pub(crate) fn merge_small_chunks(
     const EXTRA_LOAD_DIVISOR: u64 = 64;
     let mut folded_pure = 0usize;
     let groups = groups.values_mut();
+    // How many entry points load each recorded parent before rule 2.
+    let parent_loaders: Vec<usize> = entry_imports_in_parent
+        .iter()
+        .map(|repeated| match repeated.0 {
+            0 => 0,
+            _ => groups[group_of_file[repeated.1 as usize]].loaded.count(),
+        })
+        .collect();
     for g in 0..group_count {
         if groups[g].merged_into.is_some() {
             continue;
@@ -1888,6 +1903,15 @@ pub(crate) fn merge_small_chunks(
             }
         }
         this.inits_already_done = Some(done);
+    }
+    // Rule 2 folded a parent that repeats nothing into a chunk that more entry points load, or made more entry points load it. That chunk is no parent.
+    for (repeated, &loaders) in entry_imports_in_parent.iter_mut().zip(&parent_loaders) {
+        if repeated.0 > 0 {
+            let parent = &groups[group_of_file[repeated.1 as usize]];
+            if parent.merged_into.is_some() || parent.loaded.count() != loaders {
+                repeated.0 = 0;
+            }
+        }
     }
 
     rekey_files(this, group_of_file, groups, entry_imports_in_parent)?;

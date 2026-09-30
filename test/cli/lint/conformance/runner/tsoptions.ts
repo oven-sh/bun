@@ -1,4 +1,4 @@
-// Port of the option tables of internal/tsoptions of typescript-go 89d5d5b (declscompiler.go, commandlineoption.go, enummaps.go), with the fields that the test harness reads.
+// Port of the option tables of internal/tsoptions of typescript-go 89d5d5b (declscompiler.go, commandlineoption.go, enummaps.go), with the fields that the test harness reads, and of the two tables that internal/testutil/harnessutil/harnessutil.go adds to them.
 
 // commandlineoption.go:9
 export type CommandLineOptionKind = "string" | "number" | "boolean" | "object" | "list" | "listOrElement" | "enum";
@@ -271,6 +271,32 @@ export const optionsDeclarations: readonly CommandLineOption[] = [
   { name: "ignoreDeprecations", kind: "string" },
 ];
 
+// harnessutil.go:319: the declarations, then the four options of the harness; noErrorTruncation and noCheck are declarations too, and a search by name finds those first.
+export const compilerOptions: readonly CommandLineOption[] = [
+  ...optionsDeclarations,
+  { name: "allowNonTsExtensions", kind: "boolean" },
+  { name: "noErrorTruncation", kind: "boolean" },
+  { name: "suppressOutputPathCheck", kind: "boolean" },
+  { name: "noCheck", kind: "boolean" },
+];
+
+// harnessutil.go:341
+export const harnessCommandLineOptions: readonly CommandLineOption[] = [
+  { name: "useCaseSensitiveFileNames", kind: "boolean" },
+  { name: "baselineFile", kind: "string" },
+  { name: "includeBuiltFile", kind: "string" },
+  { name: "fileName", kind: "string" },
+  { name: "libFiles", kind: "list" },
+  { name: "noImplicitReferences", kind: "boolean" },
+  { name: "currentDirectory", kind: "string" },
+  { name: "symlink", kind: "string" },
+  { name: "link", kind: "string" },
+  { name: "noTypesAndSymbols", kind: "boolean" },
+  { name: "fullEmitPaths", kind: "boolean" },
+  { name: "reportDiagnostics", kind: "boolean" },
+  { name: "captureSuggestions", kind: "boolean" },
+];
+
 // enummaps.go:11; a value is the name of a lib file.
 export const libMap: ReadonlyMap<string, string> = new Map([
   ["es5", "lib.es5.d.ts"],
@@ -450,7 +476,33 @@ export const newLineOptionMap: ReadonlyMap<string, number> = new Map([
   ["lf", 2],
 ]);
 
-// commandlineoption.go:183, without the maps of the watch options.
+// enummaps.go:234; the values of this map and of the two after it are those of core/watchoptions.go.
+export const watchFileEnumMap: ReadonlyMap<string, number> = new Map([
+  ["fixedpollinginterval", 1],
+  ["prioritypollinginterval", 2],
+  ["dynamicprioritypolling", 3],
+  ["fixedchunksizepolling", 4],
+  ["usefsevents", 5],
+  ["usefseventsonparentdirectory", 6],
+]);
+
+// enummaps.go:243
+export const watchDirectoryEnumMap: ReadonlyMap<string, number> = new Map([
+  ["usefsevents", 1],
+  ["fixedpollinginterval", 2],
+  ["dynamicprioritypolling", 3],
+  ["fixedchunksizepolling", 4],
+]);
+
+// enummaps.go:250
+export const fallbackEnumMap: ReadonlyMap<string, number> = new Map([
+  ["fixedinterval", 1],
+  ["priorityinterval", 2],
+  ["dynamicpriority", 3],
+  ["fixedchunksize", 4],
+]);
+
+// commandlineoption.go:183; the last three are the maps of the watch options (declswatch.go), which no table of this file declares.
 const commandLineOptionEnumMap = new Map<string, ReadonlyMap<string, number | string>>([
   ["lib", libMap],
   ["moduleResolution", moduleResolutionOptionMap],
@@ -459,6 +511,9 @@ const commandLineOptionEnumMap = new Map<string, ReadonlyMap<string, number | st
   ["moduleDetection", moduleDetectionOptionMap],
   ["jsx", jsxOptionMap],
   ["newLine", newLineOptionMap],
+  ["watchFile", watchFileEnumMap],
+  ["watchDirectory", watchDirectoryEnumMap],
+  ["fallbackPolling", fallbackEnumMap],
 ]);
 
 // commandlineoption.go:105: the entries of the list options that a test directive or the compilerOptions of a config names.

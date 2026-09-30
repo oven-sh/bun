@@ -788,7 +788,8 @@ pub fn relative_platform_buf_checked<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     // two `&mut` borrows below are disjoint.
     let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
     let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
-    let normalized_from = normalize_relative_input::<P>(&mut relative_from_buf[..], buf, from)?;
+    let normalized_from =
+        normalize_relative_input::<P>(&mut relative_from_buf[..], &mut relative_to_buf[..], from)?;
     let normalized_to = normalize_relative_input::<P>(&mut relative_to_buf[..], buf, to)?;
     relative_normalized_buf_checked::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
 }
@@ -812,9 +813,26 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
 ) -> &'static [u8] {
     // SAFETY: thread-local scratch; single live borrow per thread.
     let common_buf = RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf);
-    match relative_platform_buf_checked::<P, ALWAYS_COPY>(&mut common_buf[..], from, to) {
+    let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
+    let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
+    let Some(normalized_from) =
+        normalize_relative_input::<P>(&mut relative_from_buf[..], &mut relative_to_buf[..], from)
+    else {
+        return relative_platform_spilled::<P>(from, to);
+    };
+    let Some(normalized_to) =
+        normalize_relative_input::<P>(&mut relative_to_buf[..], &mut common_buf[..], to)
+    else {
+        // `from` may be a previous result in a buffer this attempt wrote. Its normalized copy is not.
+        return relative_platform_spilled::<P>(normalized_from, to);
+    };
+    match relative_normalized_buf_checked::<P, ALWAYS_COPY>(
+        &mut common_buf[..],
+        normalized_from,
+        normalized_to,
+    ) {
         Some(rel) => rel,
-        None => relative_platform_spilled::<P>(from, to),
+        None => relative_normalized_spilled::<P>(normalized_from, normalized_to),
     }
 }
 
@@ -3741,6 +3759,40 @@ mod tests {
         assert_eq!(
             join_abs_string::<platform::Posix>(b"/work", &[b"y"]),
             b"/work/y"
+        );
+    }
+
+    // Too slow under Miri, like the test below.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_spilling_relative_reads_an_input_that_is_the_previous_result() {
+        Fs::FileSystem::init(b"/work");
+        let mut big = vec![0u8; MAX_PATH_BYTES * 8];
+        let previous_result =
+            || relative_platform::<platform::Posix, true>(b"/work/a", b"/deep/dir");
+
+        // The result does not fit: the attempt has written part of it over `previous`.
+        let mut to = b"/x/".to_vec();
+        to.resize(MAX_PATH_BYTES - 2, b't');
+        let expected = relative_into(&mut big, b"/deep/dir", &to).unwrap();
+        assert!(expected.len() > MAX_PATH_BYTES);
+        let previous = previous_result();
+        assert_eq!(previous, b"../../deep/dir");
+        assert_eq!(
+            relative_platform::<platform::Posix, true>(previous, &to),
+            &expected[..]
+        );
+
+        // `to` does not fit once it is joined to the cwd: the attempt has normalized it over `previous`.
+        let mut to = b"r/".to_vec();
+        to.resize(MAX_PATH_BYTES - 2, b'r');
+        let mut absolute_to = b"/work/".to_vec();
+        absolute_to.extend_from_slice(&to);
+        let expected = relative_into(&mut big, b"/deep/dir", &absolute_to).unwrap();
+        let previous = previous_result();
+        assert_eq!(
+            relative_platform::<platform::Posix, true>(previous, &to),
+            &expected[..]
         );
     }
 

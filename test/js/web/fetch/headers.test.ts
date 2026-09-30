@@ -636,6 +636,34 @@ describe("Headers", () => {
             expect(headers.getSetCookie()).toEqual([big, "v"]);
           });
         });
+
+        // A response off the wire has no call that can throw. At the real limit
+        // the process aborts, as it did before. Under this limit the value keeps
+        // the fields that fit: 10 of the 12.
+        test("fields of a response that pass the limit keep the ones that fit", async () => {
+          const field = `x-repeated: ${Buffer.alloc(100_000, "v").toString()}\r\n`;
+          const response = Buffer.concat([
+            Buffer.from("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n"),
+            Buffer.alloc(12 * field.length, field),
+            Buffer.from("\r\n"),
+          ]);
+          const server = createServer(socket => {
+            socket.on("error", () => {});
+            socket.once("data", () => socket.end(response));
+          });
+          const { promise: listening, resolve, reject } = Promise.withResolvers<void>();
+          server.on("error", reject);
+          server.listen(0, "127.0.0.1", () => resolve());
+          const previous = internalForTesting.setSyntheticAllocationLimitForTesting(limit);
+          try {
+            await listening;
+            const { headers } = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+            expect(headers.get("x-repeated")!.length).toBe(10 * 100_000 + 9 * 2);
+          } finally {
+            internalForTesting.setSyntheticAllocationLimitForTesting(previous);
+            server.close();
+          }
+        });
       });
 
       // The join in get() reserved the length of the first Set-Cookie value

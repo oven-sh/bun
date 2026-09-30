@@ -2497,10 +2497,10 @@ typedef struct PicoHTTPHeaders {
     size_t len;
 } PicoHTTPHeaders;
 
-// A wire producer has no way to report ValueTooLong, which needs a header size limit of 2 GiB or more. It aborts there, as the join did before.
+// A wire producer has no way to report ValueTooLong. Past String::MaxLength it aborts, as the join did before. Past a lower limit that a test set, the value keeps the fields that fit.
 static ALWAYS_INLINE void crashIfValueTooLong(HTTPHeaderMap::AddResult result)
 {
-    RELEASE_ASSERT(result == HTTPHeaderMap::AddResult::Stored);
+    RELEASE_ASSERT(result == HTTPHeaderMap::AddResult::Stored || Bun__stringSyntheticAllocationLimit < WTF::String::MaxLength);
 }
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)

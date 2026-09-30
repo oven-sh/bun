@@ -1,18 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isArm64,
-  isASAN,
-  isDebug,
-  isLinux,
-  isMacOS,
-  isPosix,
-  isWindows,
-  mergeWindowEnvs,
-  tempDir,
-} from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -217,14 +205,14 @@ describe.if(isPosix)("cwd deleted before startup", () => {
 describe.if(isPosix && !isASAN)("crash while initializing JavaScriptCore", () => {
   const outOfAddressSpace = "Bun ran out of virtual address space while initializing JavaScriptCore";
 
-  // Linux only: macOS does not enforce RLIMIT_AS. The limit at which JSC's
-  // reservation is the thing that no longer fits depends on the size of the
-  // binary and on what bun's own allocator reserved before it, so walk the
-  // limit up until a run ends that way. Such a run must end with the error
-  // message, not with a crash report.
-  test.if(isLinux)("under a small ulimit -v, exits with an error instead of a crash report", async () => {
+  // Linux only: macOS does not enforce RLIMIT_AS. Below some limit JSC's
+  // reservations do not fit. Where that is depends on the size of the binary
+  // and on what was reserved before them, so walk the limit up from just above
+  // the binary until bun starts. On the way a run must end with the error
+  // message and exit code 1, where it used to end with a crash report.
+  test.concurrent.if(isLinux)("under a small ulimit -v, exits with an error instead of a crash report", async () => {
     const outcomes: string[] = [];
-    for (let limitMiB = 256; limitMiB <= 4096; limitMiB += 64) {
+    for (let limitMiB = 96; limitMiB <= 4096; limitMiB += 32) {
       await using proc = Bun.spawn({
         cmd: [
           "/bin/sh",
@@ -235,13 +223,13 @@ describe.if(isPosix && !isASAN)("crash while initializing JavaScriptCore", () =>
           bunExe(),
         ],
         env: noReportEnv,
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       if (exitCode === 0) {
         outcomes.push(`${limitMiB} MiB: started`);
-        continue;
+        break;
       }
       if (!stderr.includes(outOfAddressSpace)) {
         const summary = stderr.split("\n").find(line => line.includes("panic") || line.includes("error")) ?? "";
@@ -249,30 +237,26 @@ describe.if(isPosix && !isASAN)("crash while initializing JavaScriptCore", () =>
         continue;
       }
 
-      expect(stderr).toContain(`Current limit: ${limitMiB * 1024} KB (ulimit -v)`);
-      expect(stderr).toContain("ulimit -v unlimited");
-      expect(stderr).not.toContain("panic");
-      expect(stderr).not.toContain("Bun has crashed");
-      expect(exitCode).toBe(1);
+      expect(stderr).toContain(
+        `Current limit: ${limitMiB * 1024} KB (ulimit -v)\n\nTo fix this, raise or remove the limit:\n\n  ulimit -v unlimited\n`,
+      );
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
       return;
     }
-    throw new Error(`no limit between 256 MiB and 4 GiB ended with the address space error:\n${outcomes.join("\n")}`);
+    throw new Error(
+      `no limit below the first one bun starts under ended with the address space error:\n${outcomes.join("\n")}`,
+    );
   });
 
   // A crash during initialization that the address space does not explain is
   // a bug. Its report says where it happened. structureHeapSizeInKB must be a
   // power of two: 3072 trips a RELEASE_ASSERT in the constructor that reserves
   // the heap, before the reservation.
-  //
-  // Not on Apple Silicon: a release RELEASE_ASSERT there is `brk #0xbb08`, and
-  // macOS 26 kills the process with SIGKILL on that instruction before any
-  // SIGTRAP handler runs (a plain C program with a SIGTRAP handler dies the
-  // same way), so this crash is not observable by the crash handler at all.
-  test.if(!(isMacOS && isArm64))("a crash that the address space does not explain is reported", async () => {
+  test.concurrent("a crash that the address space does not explain is reported", async () => {
     await using proc = Bun.spawn({
       cmd: noCoreCmd([bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"]),
       env: { ...noReportEnv, BUN_JSC_structureHeapSizeInKB: "3072" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

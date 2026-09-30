@@ -1114,6 +1114,8 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
+// The loader resolves a path that import() has resolved twice more, so onResolve is fed its own results: a → b → c → d.
+// That leaves d.mjs registered under a key other than the one it was asked for by, which is what this is about.
 it.concurrent(
   "import() after delete require.cache of a module that onResolve redirected a resolved path to",
   async () => {
@@ -1121,7 +1123,7 @@ it.concurrent(
       "a.mjs": `export const from = "a.mjs";`,
       "b.mjs": `export const from = "b.mjs";`,
       "c.mjs": `export const from = "c.mjs";`,
-      "d.mjs": `export const from = "d.mjs";`,
+      "d.mjs": `export const from = "d.mjs, evaluation " + (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
       "entry.ts": `
       import { basename, join } from "node:path";
       const next = { "a.mjs": "b.mjs", "b.mjs": "c.mjs", "c.mjs": "d.mjs" };
@@ -1147,7 +1149,7 @@ it.concurrent(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "first: d.mjs\ndeleted: true\nagain: d.mjs\n",
+      stdout: "first: d.mjs, evaluation 1\ndeleted: true\nagain: d.mjs, evaluation 2\n",
       stderr: "",
       exitCode: 0,
     });

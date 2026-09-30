@@ -781,7 +781,7 @@ it(
   "should import a module again after a hot reload while its import() was still loading its dependencies",
   async () => {
     using dir = tempDir("hot-reload-import-in-flight", {
-      "a.mjs": `import "./dependency.mjs"; export const from = "a.mjs";`,
+      "a.mjs": `import "./dependency.mjs"; export const evaluation = (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
       "dependency.mjs": `export {};`,
       "entry.mjs": `
         import { readFileSync, writeFileSync } from "node:fs";
@@ -803,8 +803,8 @@ it(
           globalThis.inFlight = import("./a.mjs");
         } else {
           globalThis.dependencyMayLoad();
-          console.log("in flight:", (await globalThis.inFlight).from);
-          console.log("next:", (await import("./a.mjs")).from);
+          console.log("in flight: evaluation", (await globalThis.inFlight).evaluation);
+          console.log("next: evaluation", (await import("./a.mjs")).evaluation);
           process.exit(0);
         }
       `,
@@ -817,7 +817,7 @@ it(
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("in flight: a.mjs\nnext: a.mjs\n");
+    expect(stdout).toBe("in flight: evaluation 1\nnext: evaluation 2\n");
     expect(exitCode).toBe(0);
   },
   timeout,

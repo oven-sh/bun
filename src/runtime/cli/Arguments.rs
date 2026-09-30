@@ -1760,7 +1760,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     Ok(opts)
 }
 
-/// Marks `ctx` as a lint run and gives it the working directory and the operands, all that such a run reads.
+/// Reads `BUN_FEATURE_FLAG_EXPERIMENTAL_LINT` by the truth rule of `env_var::feature_flag`, whose macro declares a flag inside `bun_core` only.
+fn lint_is_enabled() -> bool {
+    bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_EXPERIMENTAL_LINT")).is_some_and(|value| {
+        !strings::eql_any_case_insensitive_ascii(value, &[b"", b"0", b"false", b"no", b"off"])
+    })
+}
+
+/// Exits with 1 unless a lint run may start. Else marks `ctx` as one and gives it the working directory and the operands, all that such a run reads.
 #[cold]
 #[inline(never)]
 fn accept_lint(
@@ -1768,6 +1775,14 @@ fn accept_lint(
     ctx: Context<'_>,
     cwd: Box<[u8]>,
 ) -> api::TransformOptions {
+    // Checked first: this is refused whether or not BUN_FEATURE_FLAG_EXPERIMENTAL_LINT is set.
+    cli::lint_command::refuse_in_bun_options();
+    if !lint_is_enabled() {
+        bun_core::err_generic!(
+            "--lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it"
+        );
+        Global::exit(1);
+    }
     ctx.lint = true;
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());

@@ -13,6 +13,45 @@ describe("a file that writes a marker when it is run", () => {
   });
 });
 
+describe("BUN_FEATURE_FLAG_EXPERIMENTAL_LINT, the variable that turns --lint on", () => {
+  const refused = {
+    stdout: "",
+    stderr:
+      "error: --lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it\n",
+    exitCode: 1,
+  };
+  /** `bunEnv` with the variable set to `value`, and without the variable when no value is given. */
+  const envWith = (value?: string): NodeJS.Dict<string> => ({ ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: value });
+
+  test.concurrent.each(["--lint file.ts", "run --lint file.ts"])(
+    "without it `bun %s` is refused and the file is not run",
+    async command => {
+      using dir = tempDir("lint-gate-unset", { "file.ts": markerSource });
+      const cwd = String(dir);
+      expect(await bun(cwd, command.split(" "), envWith())).toEqual(refused);
+      expect(await markerExists(cwd)).toBe(false);
+    },
+  );
+
+  // What a feature flag of Bun reads as off, whatever the case of the letters.
+  test.concurrent.each(["", "0", "false", "no", "off", "FALSE", "Off"])(
+    "set to %j it is off: `bun --lint` is refused and the file is not run",
+    async value => {
+      using dir = tempDir("lint-gate-off", { "file.ts": markerSource });
+      const cwd = String(dir);
+      expect(await bun(cwd, ["--lint", "file.ts"], envWith(value))).toEqual(refused);
+      expect(await markerExists(cwd)).toBe(false);
+    },
+  );
+
+  test.concurrent("set to true it is on, as it is set to 1", async () => {
+    using dir = tempDir("lint-gate-on", { "file.ts": markerSource });
+    const cwd = String(dir);
+    expect(await bun(cwd, ["--lint", "file.ts"], envWith("true"))).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(await markerExists(cwd)).toBe(false);
+  });
+});
+
 describe("--lint among the flags that bunx reads before the package name", () => {
   const refused = { stdout: "", stderr: "error: --lint cannot be used with bunx\n", exitCode: 1 };
   // The refusal does not depend on the variable that turns `--lint` on.

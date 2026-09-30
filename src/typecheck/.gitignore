@@ -1,0 +1,2 @@
+# The root .gitignore ignores `core` (core dumps): the directory of the package internal/core is tracked.
+!/core/

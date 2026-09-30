@@ -1,0 +1,29 @@
+// internal/core: one module per upstream file, re-exported as the package's namespace.
+pub mod arena;
+pub mod binarysearch;
+pub mod compileroptions;
+pub mod core;
+pub mod languagevariant;
+pub mod languagevariant_stringer_generated;
+pub mod linkstore;
+pub mod modulekind_stringer_generated;
+pub mod pattern;
+pub mod scriptkind;
+pub mod scriptkind_stringer_generated;
+pub mod scripttarget_stringer_generated;
+pub mod stack;
+pub mod text;
+pub mod tristate;
+pub mod tristate_stringer_generated;
+
+pub use self::core::*;
+pub use arena::*;
+pub use binarysearch::*;
+pub use compileroptions::*;
+pub use languagevariant::*;
+pub use linkstore::*;
+pub use pattern::*;
+pub use scriptkind::*;
+pub use stack::*;
+pub use text::*;
+pub use tristate::*;

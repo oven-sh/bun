@@ -211,6 +211,36 @@ impl Body {
 // PendingValue
 // ────────────────────────────────────────────────────────────────────────────
 
+/// The only handle that can stop a pending body's producer, until [`take`](Self::take) or [`release`](Self::release).
+#[derive(Default)]
+pub struct PendingProducer(streams::SourceHandle);
+
+impl PendingProducer {
+    pub fn new(handle: streams::SourceHandle) -> Self {
+        Self(handle)
+    }
+
+    /// The caller now holds the handle: a stream keeps it, a discarded body cancels it.
+    #[must_use]
+    pub fn take(&mut self) -> streams::SourceHandle {
+        core::mem::take(&mut self.0)
+    }
+
+    /// The producer settled the body or stopped by itself.
+    pub fn release(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl Drop for PendingProducer {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.0.is_dead(),
+            "a pending body was dropped with its producer attached: nothing can stop the producer now"
+        );
+    }
+}
+
 pub struct PendingValue {
     pub(crate) promise: Option<JSValue>,
     pub(crate) readable: webcore::readable_stream::Strong,
@@ -239,7 +269,7 @@ pub struct PendingValue {
         Option<fn(ctx: NonNull<c_void>, global_this: &JSGlobalObject, readable: ReadableStream)>,
     /// Upstream producer to notify on cancel/drain/consumer-attach; forwarded
     /// to the `NewSource` when the locked body is realised as a native stream.
-    pub producer: streams::SourceHandle,
+    pub producer: PendingProducer,
     pub(crate) size_hint: blob::SizeType,
 
     pub(crate) deinit: bool,
@@ -268,7 +298,7 @@ impl Default for PendingValue {
             on_start_buffering: None,
             on_start_streaming: None,
             on_readable_stream_available: None,
-            producer: streams::SourceHandle::None,
+            producer: PendingProducer::default(),
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -288,7 +318,7 @@ impl PendingValue {
             // ctx (overwriting the producer), read by `resolve()`.
             self.task = None;
         }
-        self.producer = streams::SourceHandle::None;
+        self.producer.release();
     }
 
     /// `.text()` and friends, `Bun.write`, or a server's render-wait already reads this body.
@@ -899,6 +929,7 @@ impl Value {
         }
 
         if matches!(drain_result, DrainResult::Aborted) {
+            locked.producer.release();
             *self = Value::Null;
             return ReadableStream::empty(cx.global());
         }
@@ -915,7 +946,7 @@ impl Value {
             },
         );
 
-        reader.producer.set(locked.producer);
+        reader.producer.set(locked.producer.take());
 
         reader.context.setup();
         reader.context.apply_drain_result(drain_result);
@@ -1070,6 +1101,7 @@ impl Value {
     ) -> jsc::JsResult<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
+            locked.producer.release();
             if let Some(readable) = locked.readable.get() {
                 // Feed the already-created stream (instead of closing it empty)
                 // only when it is the sole consumer of this pending body.
@@ -1336,6 +1368,7 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
+            locked.producer.release();
             let was_disturbed = !locked.action.is_none()
                 || locked.promise.is_some()
                 || locked.readable.is_disturbed(global);
@@ -1396,7 +1429,7 @@ impl Value {
     #[must_use]
     pub(crate) fn discard(&mut self) -> streams::SourceHandle {
         match &mut core::mem::replace(self, Value::Used) {
-            Value::Locked(locked) => core::mem::take(&mut locked.producer),
+            Value::Locked(locked) => locked.producer.take(),
             _ => streams::SourceHandle::None,
         }
     }
@@ -1497,6 +1530,7 @@ impl Value {
         }
 
         if matches!(drain_result, DrainResult::Aborted) {
+            locked.producer.release();
             *self = Value::Null;
             return Ok(Value::Null);
         }
@@ -1520,7 +1554,7 @@ impl Value {
             unreachable!()
         };
 
-        reader.producer.set(locked.producer);
+        reader.producer.set(locked.producer.take());
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(

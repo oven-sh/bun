@@ -1122,7 +1122,7 @@ impl RewriterPipe {
                 pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
-                pv.producer = SourceHandle::HTMLRewriter(this);
+                pv.producer = webcore::body::PendingProducer::new(SourceHandle::HTMLRewriter(this));
                 webcore::body::Value::Locked(pv)
             }),
             BunString::EMPTY,
@@ -1872,14 +1872,12 @@ impl RewriterPipe {
             self.detach_output();
         } else if let Some(response) = self.response.get().as_deref() {
             let body_value = response.get_body_value();
-            let has_readable = match body_value {
-                webcore::body::Value::Locked(l) => l.readable.has(),
-                _ => false,
-            };
-            if !has_readable
-                && matches!(body_value, webcore::body::Value::Locked(l)
-                    if l.promise.is_none() && l.on_receive_value.is_none())
+            if let webcore::body::Value::Locked(l) = body_value
+                && !l.readable.has()
+                && l.promise.is_none()
+                && l.on_receive_value.is_none()
             {
+                l.producer.release();
                 *body_value = webcore::body::Value::Empty;
             }
             let _ = body_value.to_error_instance(err, &self.global);

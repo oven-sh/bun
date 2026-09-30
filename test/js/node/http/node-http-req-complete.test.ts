@@ -399,7 +399,7 @@ for (const expectation of ["100-continue", "something-else"]) {
 }
 
 // The stream destroyer destroys the request and keeps its connection, so the parser still completes the message.
-describe("req.complete of a request that the stream destroyer destroyed", () => {
+describe("a request that the stream destroyer destroyed", () => {
   const consumers: [name: string, consume: (req: http.IncomingMessage) => Promise<unknown>][] = [
     [
       "a for await loop that breaks",
@@ -422,12 +422,28 @@ describe("req.complete of a request that the stream destroyer destroyed", () => 
     ["chunked", "Transfer-Encoding: chunked\r\n", "5\r\nhello\r\n", "5\r\nworld\r\n0\r\n\r\n"],
   ];
 
+  // until() rejects when the connection fails or closes before `text` came.
+  function open(port: number, payload: string) {
+    const { promise: gone, reject } = Promise.withResolvers<never>();
+    // The connection also closes at the end of a test, when nothing waits.
+    gone.catch(() => {});
+    const socket = send(port, payload, reject);
+    socket.on("close", () => reject(new Error("the connection closed")));
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    return {
+      socket,
+      async until(text: string) {
+        while (!received.endsWith(text)) await Promise.race([once(socket, "data"), gone]);
+      },
+    };
+  }
+
   for (const [name, consume] of consumers) {
     for (const [framing, headers, start, rest] of bodies) {
-      test(`is true once the ${framing} body ends, after ${name}`, async () => {
+      test(`req.complete is true once the ${framing} body ends, after ${name}`, async () => {
         const seen: Seen = {};
         let first: http.IncomingMessage | undefined;
-        const { promise: failed, reject } = Promise.withResolvers<never>();
         const server = http.createServer(async (req, res) => {
           if (req.url === "/second") {
             // The parser is past the body of the first request here.
@@ -441,21 +457,41 @@ describe("req.complete of a request that the stream destroyer destroyed", () => 
           res.end("first");
         });
         await withServer(server, async port => {
-          const socket = send(port, `POST /first HTTP/1.1\r\nHost: x\r\n${headers}\r\n${start}`, reject);
-          let received = "";
-          socket.on("data", chunk => (received += chunk));
-          while (!received.endsWith("first")) await Promise.race([once(socket, "data"), failed]);
+          const client = open(port, `POST /first HTTP/1.1\r\nHost: x\r\n${headers}\r\n${start}`);
+          await client.until("first");
           seen.atResponse = first!.complete;
-          socket.write(rest + "GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
-          while (!received.endsWith("second")) await Promise.race([once(socket, "data"), failed]);
+          client.socket.write(rest + "GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+          await client.until("second");
         });
         assert.deepStrictEqual(seen, { destroyed: true, atResponse: false, afterBody: true });
       });
     }
 
-    test(`stays false when the client goes away before the body ends, after ${name}`, async () => {
+    test(`has the trailers of its chunked body once the body ends, after ${name}`, async () => {
       let first: http.IncomingMessage | undefined;
-      const { promise: failed, reject } = Promise.withResolvers<never>();
+      let seen: unknown;
+      const server = http.createServer(async (req, res) => {
+        if (req.url === "/second") {
+          seen = { trailers: { ...first!.trailers }, rawTrailers: first!.rawTrailers };
+          res.end("second");
+          return;
+        }
+        first = req;
+        await consume(req);
+        res.end("first");
+      });
+      await withServer(server, async port => {
+        const head = "POST /first HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTrailer: X-Checksum\r\n\r\n";
+        const client = open(port, head + "5\r\nhello\r\n");
+        await client.until("first");
+        client.socket.write("5\r\nworld\r\n0\r\nX-Checksum: abc\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+        await client.until("second");
+      });
+      assert.deepStrictEqual(seen, { trailers: { "x-checksum": "abc" }, rawTrailers: ["X-Checksum", "abc"] });
+    });
+
+    test(`req.complete stays false when the client goes away before the body ends, after ${name}`, async () => {
+      let first: http.IncomingMessage | undefined;
       const { promise: connectionClosed, resolve: onConnectionClose } = Promise.withResolvers<void>();
       const server = http.createServer(async (req, res) => {
         first = req;
@@ -464,11 +500,9 @@ describe("req.complete of a request that the stream destroyer destroyed", () => 
       });
       server.on("connection", connection => connection.on("close", () => onConnectionClose()));
       await withServer(server, async port => {
-        const socket = send(port, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello", reject);
-        let received = "";
-        socket.on("data", chunk => (received += chunk));
-        while (!received.endsWith("first")) await Promise.race([once(socket, "data"), failed]);
-        socket.destroy();
+        const client = open(port, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello");
+        await client.until("first");
+        client.socket.destroy();
         await connectionClosed;
       });
       assert.deepStrictEqual(

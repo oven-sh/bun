@@ -10,12 +10,12 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Cat {
+pub(crate) struct Cat {
     pub(crate) state: CatState,
 }
 
 #[derive(Default)]
-pub enum CatState {
+pub(crate) enum CatState {
     #[default]
     Idle,
     ExecStdin {
@@ -47,6 +47,16 @@ pub(crate) enum Step {
     Suspend,
     Done(ExitCode),
     Next,
+}
+
+impl Step {
+    fn run(self, interp: &Interpreter, cmd: NodeId) -> Yield {
+        match self {
+            Step::Suspend => Yield::suspended(),
+            Step::Done(code) => Builtin::done(interp, cmd, code),
+            Step::Next => Cat::next(interp, cmd),
+        }
+    }
 }
 
 impl CatState {
@@ -287,7 +297,7 @@ impl Cat {
                 }
                 Self::start_reader(interp, cmd, &reader)
             }
-            Branch::WaitingErr => Yield::failed(),
+            Branch::WaitingErr => Yield::suspended(),
         }
     }
 
@@ -305,7 +315,7 @@ impl Cat {
 
     fn finish_input(interp: &Interpreter, cmd: NodeId, errno: ExitCode) -> Yield {
         let step = Self::state_mut(interp, cmd).state.reader_done(errno);
-        Self::take_step(interp, cmd, step)
+        step.run(interp, cmd)
     }
 
     pub(crate) fn on_io_writer_chunk(
@@ -349,15 +359,7 @@ impl Cat {
         }
 
         let step = Self::state_mut(interp, cmd).state.chunk_done();
-        Self::take_step(interp, cmd, step)
-    }
-
-    fn take_step(interp: &Interpreter, cmd: NodeId, step: Step) -> Yield {
-        match step {
-            Step::Suspend => Yield::suspended(),
-            Step::Done(code) => Builtin::done(interp, cmd, code),
-            Step::Next => Self::next(interp, cmd),
-        }
+        step.run(interp, cmd)
     }
 
     pub(crate) fn on_io_reader_chunk(
@@ -396,7 +398,7 @@ impl Cat {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

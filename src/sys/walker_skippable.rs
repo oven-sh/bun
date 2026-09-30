@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use crate::{self as sys, Fd, FdExt, dir_iterator};
+use crate::{self as sys, Dir, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
 use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
@@ -16,6 +16,7 @@ type WrappedIterator = dir_iterator::WrappedIterator;
 type NameBufferList = Vec<OSPathChar>;
 
 pub struct Walker {
+    root: Root,
     stack: Vec<StackItem>,
     name_buffer: NameBufferList,
     // `skip_filenames`/`skip_dirnames` are index ranges into `skip_all` rather
@@ -26,6 +27,23 @@ pub struct Walker {
     skip_all: Box<[u64]>,
     seed: u64,
     pub resolve_unknown_entry_types: bool,
+}
+
+/// The directory a walk starts from. The walker never closes a borrowed
+/// root (callers share one across several walks); an owned one closes with
+/// the walker.
+enum Root {
+    Borrowed(Fd),
+    Owned(Dir),
+}
+
+impl Root {
+    fn fd(&self) -> Fd {
+        match self {
+            Root::Borrowed(fd) => *fd,
+            Root::Owned(dir) => dir.fd(),
+        }
+    }
 }
 
 pub struct WalkerEntry<'a> {
@@ -44,6 +62,11 @@ struct StackItem {
 }
 
 impl Walker {
+    /// The directory the walk started from; open for as long as the walker is.
+    pub fn root(&self) -> Fd {
+        self.root.fd()
+    }
+
     /// After each call to this function, and on deinit(), the memory returned
     /// from this function becomes invalid. A copy must be made in order to keep
     /// a reference to the path.
@@ -188,7 +211,8 @@ impl Drop for Walker {
             // `self.stack` Vec drops itself.
         }
 
-        // `self.skip_all` (Box<[u64]>) and `self.name_buffer` (Vec) drop themselves.
+        // `self.root` (closing an owned root), `self.skip_all` and `self.name_buffer`
+        // drop themselves.
     }
 }
 
@@ -196,9 +220,26 @@ impl Drop for Walker {
 /// `self` must have been opened with `OpenDirOptions{.iterate = true}`.
 /// Must call `Walker.deinit` when done.
 /// The order of returned file system entries is undefined.
-/// `self` will not be closed after walking it.
+/// Walk `self_`, which the caller keeps open for the walker's lifetime.
 pub fn walk(
     self_: Fd,
+    skip_filenames: &[&OSPathSlice],
+    skip_dirnames: &[&OSPathSlice],
+) -> Result<Walker, AllocError> {
+    walk_root(Root::Borrowed(self_), skip_filenames, skip_dirnames)
+}
+
+/// Walk `dir`, which the walker takes over and closes when it is dropped.
+pub fn walk_owned(
+    dir: Dir,
+    skip_filenames: &[&OSPathSlice],
+    skip_dirnames: &[&OSPathSlice],
+) -> Result<Walker, AllocError> {
+    walk_root(Root::Owned(dir), skip_filenames, skip_dirnames)
+}
+
+fn walk_root(
+    root: Root,
     skip_filenames: &[&OSPathSlice],
     skip_dirnames: &[&OSPathSlice],
 ) -> Result<Walker, AllocError> {
@@ -222,11 +263,12 @@ pub fn walk(
     }
 
     stack.push(StackItem {
-        iter: dir_iterator::iterate(self_),
+        iter: dir_iterator::iterate(root.fd()),
         dirname_len: 0,
     });
 
     Ok(Walker {
+        root,
         stack,
         name_buffer,
         skip_all: skip_names,

@@ -1,6 +1,6 @@
 //! Patch file parser and applier.
 
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 pub mod error;
@@ -11,7 +11,9 @@ use core::mem;
 use bun_collections::bit_set::ArrayBitSet;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
+#[cfg(windows)]
+use bun_paths::PathBuffer;
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
@@ -44,21 +46,21 @@ pub struct PatchFile<'a> {
     pub(crate) parts: Vec<PatchFilePart<'a>>,
 }
 
-#[cfg_attr(unix, allow(dead_code))]
+#[cfg(windows)]
 struct ApplyState {
     pathbuf: PathBuffer,
     patch_dir_abs_path: Option<usize>,
 }
 
+#[cfg(windows)]
 impl ApplyState {
     fn new() -> Self {
         Self {
-            pathbuf: PathBuffer::uninit(),
+            pathbuf: PathBuffer::ZEROED,
             patch_dir_abs_path: None,
         }
     }
 
-    #[cfg_attr(unix, allow(dead_code))]
     fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
         if let Some(len) = self.patch_dir_abs_path {
             // pathbuf[len] == 0 was written below on a previous call.
@@ -83,6 +85,7 @@ impl ApplyState {
 
 impl<'a> PatchFile<'a> {
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
+        #[cfg(windows)]
         let mut state = ApplyState::new();
 
         for part in &self.parts {
@@ -203,7 +206,12 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
+                    if let sys::Result::Err(e) = apply_patch(
+                        file_patch,
+                        patch_dir,
+                        #[cfg(windows)]
+                        &mut state,
+                    ) {
                         return Some(e.without_path());
                     }
                 }
@@ -228,7 +236,7 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Ok(p) => p,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
-                        let mut buf = PathBuffer::uninit();
+                        let mut buf = bun_paths::path_buffer_pool::get();
                         let joined_absfilepath =
                             paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                                 &mut buf[..],
@@ -259,7 +267,11 @@ impl<'a> PatchFile<'a> {
 /// we can speed it up by:
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
+fn apply_patch(
+    patch: &FilePatch<'_>,
+    patch_dir: Fd,
+    #[cfg(windows)] state: &mut ApplyState,
+) -> sys::Result<()> {
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file
@@ -267,7 +279,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let stat = {
         #[cfg(unix)]
         let r = sys::fstatat(patch_dir, &file_path);
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         let r = {
             let p = match state.patch_dir_abs_path(patch_dir) {
                 sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
@@ -283,8 +295,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
             sys::Result::Ok(stat) => stat,
         }
     };
-    #[cfg(unix)]
-    let _ = state; // suppress unused on posix
 
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
@@ -578,12 +588,8 @@ impl<'a> Hunk<'a> {
             }
         }
 
-        if original_length != self.header.original.len as usize
-            || patched_length != self.header.patched.len as usize
-        {
-            return false;
-        }
-        true
+        original_length == self.header.original.len as usize
+            && patched_length == self.header.patched.len as usize
     }
 }
 
@@ -1758,7 +1764,7 @@ pub fn git_diff_internal(
 
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = PathBuffer::uninit();
+    let mut gitbuf = bun_paths::path_buffer_pool::get();
     let git = bun_which::which(
         &mut gitbuf,
         bun_core::env_var::PATH.get().unwrap_or(b""),

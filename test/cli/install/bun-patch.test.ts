@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { lstatSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1232,5 +1232,99 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// A patched package carries an empty `.bun-tag-<hash>` marker file. `bun install` checks
+// that marker to decide whether node_modules/<pkg> already has the patch applied, so
+// every copy of a patched package has one. `bun patch --commit` diffs node_modules/<pkg>
+// against the pristine package, and the marker must stay out of that diff.
+describe.concurrent("bun patch --commit on an already patched package", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr, `bun ${args.join(" ")} failed: ${stderr}`).not.toContain("error:");
+    expect(exitCode, `bun ${args.join(" ")} failed: ${stderr}`).toBe(0);
+    return stdout;
+  }
+
+  async function gitApplyCheck(cwd: string, patchPath: string) {
+    await using proc = Bun.spawn({
+      cmd: ["git", "apply", "--check", patchPath],
+      cwd,
+      env: { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(cwd, "no-gitconfig") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  async function createProject(linker: "hoisted" | "isolated") {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { "package.json": JSON.stringify({ name: "foo", dependencies: { "basic-1": "1.0.0" } }) },
+    });
+    await runBun(packageDir, "install");
+    return packageDir;
+  }
+
+  async function commitEdit(packageDir: string, line: string) {
+    await runBun(packageDir, "patch", "basic-1");
+    const indexJs = join(packageDir, "node_modules", "basic-1", "index.js");
+    await Bun.write(indexJs, (await Bun.file(indexJs).text()) + line + "\n");
+    await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
+    return join(packageDir, "patches", "basic-1@1.0.0.patch");
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    test(`the second patch holds only the package files (${linker} linker)`, async () => {
+      const packageDir = await createProject(linker);
+
+      await commitEdit(packageDir, "// edit1");
+      const patchPath = await commitEdit(packageDir, "// edit2");
+      const patch = await Bun.file(patchPath).text();
+
+      expect(patch).not.toContain(".bun-tag-");
+      expect(patch).toContain("+// edit1\n+// edit2\n");
+      expect(await gitApplyCheck(packageDir, patchPath)).toEqual({ stderr: "", exitCode: 0 });
+
+      // the commit reinstalls the package with the patch applied, marker included
+      const installed = readdirSync(join(packageDir, "node_modules", "basic-1")).sort();
+      expect(installed.filter(name => !name.startsWith(".bun-tag-"))).toEqual(["index.js", "package.json"]);
+      expect(installed.filter(name => name.startsWith(".bun-tag-"))).toHaveLength(1);
+      expect(await Bun.file(join(packageDir, "node_modules", "basic-1", "index.js")).text()).toEndWith(
+        "// edit1\n// edit2\n",
+      );
+    });
+  }
+
+  // https://github.com/oven-sh/bun/issues/19327
+  test("committing again without new edits leaves the patch file as it is", async () => {
+    const packageDir = await createProject("hoisted");
+
+    const patchPath = await commitEdit(packageDir, "// edit1");
+    const first = await Bun.file(patchPath).text();
+    expect(first).not.toContain(".bun-tag-");
+
+    await runBun(packageDir, "patch", "--commit", "node_modules/basic-1");
+    expect(await Bun.file(patchPath).text()).toBe(first);
+    expect(await gitApplyCheck(packageDir, patchPath)).toEqual({ stderr: "", exitCode: 0 });
   });
 });

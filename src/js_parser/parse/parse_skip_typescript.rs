@@ -1704,9 +1704,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.parse_import_type::<S>(opts, out);
         }
 
-        // "typeof x" and "typeof #x": the first name is an identifier name, which a private name is. Inside an attempt it ends the attempt, as before
+        // "typeof x". A lint parse also reads "typeof #x": the reference parses it and its checker reports it
         if !self.lexer.is_identifier_or_keyword()
-            && (self.lexer.token != T::TPrivateIdentifier || self.lexer.is_log_disabled)
+            && (!S::STRICT
+                || self.lexer.token != T::TPrivateIdentifier
+                || self.lexer.is_log_disabled)
         {
             self.lexer.expected(T::TIdentifier)?;
         }

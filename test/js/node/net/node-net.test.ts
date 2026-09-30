@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -3443,5 +3444,87 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stdout).not.toContain("socket-error:");
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
+  });
+});
+
+// A stalled write queue is the condition socket.setTimeout() exists to surface,
+// and suppressing on any non-empty queue silenced it permanently because the
+// timer is one-shot. node compares against the previous tick's queue size, and
+// on write completion both refreshes the timer and resets the recorded size.
+//
+// No write is issued after setTimeout(): Socket#_write calls _unrefTimer(), so a
+// pump would keep refreshing the timer. Writes continue until write() returns
+// false so the queue is backed up on every platform (winsock can take a small
+// send whole). The peer stays paused until the test resumes it, which places the
+// drain before or after the timer's first tick deterministically.
+describe("socket.setTimeout() and the write queue", () => {
+  const IDLE = 600;
+  const servers: Server[] = [];
+  const sockets: Socket[] = [];
+
+  afterEach(() => {
+    for (const socket of sockets.splice(0)) socket.destroy();
+    for (const server of servers.splice(0)) server.close();
+  });
+
+  async function connectToPausedPeer() {
+    const { promise: accepted, resolve } = Promise.withResolvers<Socket>();
+    const server = createServer(peer => {
+      peer.on("error", () => {});
+      peer.pause();
+      sockets.push(peer);
+      resolve(peer);
+    }).listen(0, "127.0.0.1");
+    servers.push(server);
+    await once(server, "listening");
+    const socket = connect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port });
+    sockets.push(socket);
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    const peer = await accepted;
+
+    const chunk = Buffer.alloc(32 << 20, "x");
+    while (socket.write(chunk)) {}
+    expect(socket.bufferSize).toBeGreaterThan(0);
+    return { socket, peer };
+  }
+
+  it("fires when the peer stops reading and the queue stops draining", async () => {
+    const { socket } = await connectToPausedPeer();
+    socket.setTimeout(IDLE);
+
+    const outcome = await Promise.race([
+      once(socket, "timeout").then(() => ({ fired: "timeout", stalled: socket.bufferSize > 0 })),
+      Bun.sleep(IDLE * 10).then(() => ({ fired: "none", stalled: socket.bufferSize > 0 })),
+    ]);
+    expect(outcome).toEqual({ fired: "timeout", stalled: true });
+  });
+
+  it.each([
+    ["before the first tick", 0.25],
+    ["after one tick has sampled the queue", 1.25],
+  ])("fires one idle period after the queue drains %s", async (_, resumeAfterPeriods) => {
+    const { socket, peer } = await connectToPausedPeer();
+    socket.setTimeout(IDLE);
+
+    let timedOutAt: number | undefined;
+    const timedOut = new Promise<void>(resolve =>
+      socket.once("timeout", () => {
+        timedOutAt = performance.now();
+        resolve();
+      }),
+    );
+    await Bun.sleep(IDLE * resumeAfterPeriods);
+    const drained = once(socket, "drain");
+    peer.resume();
+    await drained;
+    const drainedAt = performance.now();
+    await Promise.race([timedOut, Bun.sleep(IDLE * 3)]);
+
+    const afterDrain = timedOutAt === undefined ? undefined : timedOutAt - drainedAt;
+    expect({
+      firedBeforeDrain: afterDrain !== undefined && afterDrain < 0,
+      oneIdlePeriodAfterDrain: afterDrain !== undefined && afterDrain >= IDLE * 0.9 && afterDrain < IDLE * 1.5,
+    }).toEqual({ firedBeforeDrain: false, oneIdlePeriodAfterDrain: true });
   });
 });

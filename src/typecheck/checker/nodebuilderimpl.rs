@@ -2097,3 +2097,1461 @@ impl NodeBuilderImpl {
             && self.is_mapped_type_homomorphic(c, target)
     }
 }
+
+impl NodeBuilderImpl {
+    pub(crate) fn create_mapped_type_node_from_type(
+        self,
+        c: &mut Checker<'_>,
+        t: TypeId,
+    ) -> NodeId {
+        let a = c.ast;
+        c.assert(
+            c.types[t].flags.intersects(TypeFlags::OBJECT),
+            "t.Flags()&TypeFlagsObject != 0",
+        );
+        let declaration = c.as_mapped_type(t).declaration;
+        let mapped_declaration = a.as_mapped_type_node(declaration);
+        let mut readonly_token = NodeId::NIL;
+        if !mapped_declaration.readonly_token.is_nil() {
+            readonly_token = self
+                .f(c)
+                .new_token(a.kind(mapped_declaration.readonly_token));
+        }
+        let mut question_token = NodeId::NIL;
+        if !mapped_declaration.question_token.is_nil() {
+            question_token = self
+                .f(c)
+                .new_token(a.kind(mapped_declaration.question_token));
+        }
+        let appropriate_constraint_type_node: NodeId;
+        let mut new_type_variable = NodeId::NIL;
+        let mut template_type = c.get_template_type_from_mapped_type(t);
+        let type_parameter = c.get_type_parameter_from_mapped_type(t);
+        let generate_names = self
+            .ctx(c)
+            .flags
+            .intersects(Flags::GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS);
+        let modifiers_type = c.get_modifiers_type_from_mapped_type(t);
+        let constraint_type = c.get_constraint_type_from_mapped_type(t);
+        let needs_modifier_preserving_wrapper = !c
+            .is_mapped_type_with_keyof_constraint_declaration(t)
+            && !c.types[modifiers_type].flags.intersects(TypeFlags::UNKNOWN)
+            && generate_names
+            && !(c.types[constraint_type]
+                .flags
+                .intersects(TypeFlags::TYPE_PARAMETER)
+                && {
+                    let constraint = c.get_constraint_of_type_parameter(constraint_type);
+                    !constraint.is_nil() && c.types[constraint].flags.intersects(TypeFlags::INDEX)
+                });
+        if c.is_mapped_type_with_keyof_constraint_declaration(t) {
+            if generate_names
+                && self.is_homomorphic_mapped_type_with_non_homomorphic_instantiation(c, t)
+            {
+                let new_symbol = c.new_symbol(SymbolFlags::TYPE_PARAMETER, b"T");
+                let new_constraint_param = c.new_type_parameter(new_symbol);
+                let name = self.type_parameter_to_name(c, new_constraint_param);
+                let target = c.as_mapped_type(t).target;
+                new_type_variable = self.f(c).new_type_reference_node(name, NodeListId::NIL);
+                let target_template = c.get_template_type_from_mapped_type(target);
+                let sources = [
+                    c.get_type_parameter_from_mapped_type(target),
+                    c.get_modifiers_type_from_mapped_type(target),
+                ];
+                let mapper = c.new_type_mapper(&sources, &[type_parameter, new_constraint_param]);
+                template_type = c.instantiate_type(target_template, mapper);
+            }
+            let mut index_target = new_type_variable;
+            if index_target.is_nil() {
+                let modifiers_type = c.get_modifiers_type_from_mapped_type(t);
+                index_target = self.type_to_type_node(c, modifiers_type);
+            }
+            appropriate_constraint_type_node = self
+                .f(c)
+                .new_type_operator_node(Kind::KeyOfKeyword, index_target);
+        } else if needs_modifier_preserving_wrapper {
+            let new_symbol = c.new_symbol(SymbolFlags::TYPE_PARAMETER, b"T");
+            let new_param = c.new_type_parameter(new_symbol);
+            let name = self.type_parameter_to_name(c, new_param);
+            new_type_variable = self.f(c).new_type_reference_node(name, NodeListId::NIL);
+            appropriate_constraint_type_node = new_type_variable;
+        } else {
+            let constraint_type = c.get_constraint_type_from_mapped_type(t);
+            appropriate_constraint_type_node = self.type_to_type_node(c, constraint_type);
+        }
+        // typeParameterToDeclarationWithConstraint and the template and name types are built in the scope of the mapped type's own parameter.
+        let scope_type_parameter = c.get_type_parameter_from_mapped_type(t);
+        let cleanup = self.enter_new_scope(
+            c,
+            declaration,
+            None,
+            &[scope_type_parameter],
+            &[],
+            TypeMapperId::NIL,
+        );
+        let type_parameter_declaration_node = self.type_parameter_to_declaration_with_constraint(
+            c,
+            type_parameter,
+            appropriate_constraint_type_node,
+        );
+        let mut name_type_node = NodeId::NIL;
+        if !mapped_declaration.name_type.is_nil() {
+            let name_type = c.get_name_type_from_mapped_type(t);
+            name_type_node = self.type_to_type_node(c, name_type);
+        }
+        let include_optional =
+            get_mapped_type_modifiers(c, t).intersects(MappedTypeModifiers::INCLUDE_OPTIONAL);
+        let template_without_missing = c.remove_missing_type(template_type, include_optional);
+        let template_type_node = self.type_to_type_node(c, template_without_missing);
+        self.exit_new_scope(c, cleanup);
+
+        let result = self.f(c).new_mapped_type_node(
+            readonly_token,
+            type_parameter_declaration_node,
+            name_type_node,
+            question_token,
+            template_type_node,
+            NodeListId::NIL,
+        );
+        self.ctx_mut(c).approximate_length += 10;
+        c.node_builder
+            .impl_
+            .e
+            .add_emit_flags(result, EmitFlags::SINGLE_LINE);
+        if generate_names
+            && self.is_homomorphic_mapped_type_with_non_homomorphic_instantiation(c, t)
+        {
+            // homomorphic mapped type with a non-homomorphic naive inlining: wrap it with a conditional like `SomeModifiersType extends infer U ? {..the mapped type...} : never` to ensure the resulting type has the intended modifiers.
+            let declared_constraint = a
+                .as_type_parameter_declaration(mapped_declaration.type_parameter)
+                .constraint;
+            let mut raw_constraint_type_from_declaration =
+                self.get_type_from_type_node(c, a.type_node(declared_constraint), false);
+            if !raw_constraint_type_from_declaration.is_nil() {
+                raw_constraint_type_from_declaration =
+                    c.get_constraint_of_type_parameter(raw_constraint_type_from_declaration);
+            }
+            if raw_constraint_type_from_declaration.is_nil() {
+                raw_constraint_type_from_declaration = c.unknown_type;
+            }
+            let mapper = c.as_mapped_type(t).mapper;
+            let original_constraint =
+                c.instantiate_type(raw_constraint_type_from_declaration, mapper);
+            let mut original_constraint_node = NodeId::NIL;
+            if !c.types[original_constraint]
+                .flags
+                .intersects(TypeFlags::UNKNOWN)
+            {
+                original_constraint_node = self.type_to_type_node(c, original_constraint);
+            }
+            let modifiers_type = c.get_modifiers_type_from_mapped_type(t);
+            let check_type = self.type_to_type_node(c, modifiers_type);
+            let variable_name = a.as_type_reference_node(new_type_variable).type_name;
+            let name = self.f(c).clone_node(variable_name);
+            let infer_parameter = self.f(c).new_type_parameter_declaration(
+                ModifierListId::NIL,
+                name,
+                original_constraint_node,
+                NodeId::NIL,
+                NodeId::NIL,
+            );
+            let extends_type = self.f(c).new_infer_type_node(infer_parameter);
+            let never = self.f(c).new_keyword_type_node(Kind::NeverKeyword);
+            return self
+                .f(c)
+                .new_conditional_type_node(check_type, extends_type, result, never);
+        } else if needs_modifier_preserving_wrapper {
+            // a mapped type over a generic constraint can become homomorphic when the constraint is a `keyof` type: wrap it with a conditional like `Constraint extends infer T extends keyof ModifiersType ? {..the mapped type...} : never`.
+            let constraint_type = c.get_constraint_type_from_mapped_type(t);
+            let check_type = self.type_to_type_node(c, constraint_type);
+            let variable_name = a.as_type_reference_node(new_type_variable).type_name;
+            let name = self.f(c).clone_node(variable_name);
+            let modifiers_type = c.get_modifiers_type_from_mapped_type(t);
+            let modifiers_type_node = self.type_to_type_node(c, modifiers_type);
+            let keyof_modifiers = self
+                .f(c)
+                .new_type_operator_node(Kind::KeyOfKeyword, modifiers_type_node);
+            let infer_parameter = self.f(c).new_type_parameter_declaration(
+                ModifierListId::NIL,
+                name,
+                keyof_modifiers,
+                NodeId::NIL,
+                NodeId::NIL,
+            );
+            let extends_type = self.f(c).new_infer_type_node(infer_parameter);
+            let never = self.f(c).new_keyword_type_node(Kind::NeverKeyword);
+            return self
+                .f(c)
+                .new_conditional_type_node(check_type, extends_type, result, never);
+        }
+        result
+    }
+
+    pub(crate) fn type_predicate_to_type_predicate_node(
+        self,
+        c: &mut Checker<'_>,
+        predicate: TypePredicateId,
+    ) -> NodeId {
+        let kind = c.type_predicates[predicate].kind;
+        let parameter_name_text = c.type_predicates[predicate].parameter_name;
+        let predicate_type = c.type_predicates[predicate].t;
+        let mut asserts_modifier = NodeId::NIL;
+        if kind == TypePredicateKind::AssertsIdentifier || kind == TypePredicateKind::AssertsThis {
+            asserts_modifier = self.f(c).new_token(Kind::AssertsKeyword);
+        }
+        let parameter_name;
+        if kind == TypePredicateKind::Identifier || kind == TypePredicateKind::AssertsIdentifier {
+            parameter_name = self.f(c).new_identifier(parameter_name_text);
+            c.node_builder
+                .impl_
+                .e
+                .add_emit_flags(parameter_name, EmitFlags::NO_ASCII_ESCAPING);
+        } else {
+            parameter_name = self.f(c).new_this_type_node();
+        }
+        let mut type_node = NodeId::NIL;
+        if !predicate_type.is_nil() {
+            type_node = self.type_to_type_node(c, predicate_type);
+        }
+        self.f(c)
+            .new_type_predicate_node(asserts_modifier, parameter_name, type_node)
+    }
+
+    pub(crate) fn type_to_type_node_helper_with_possible_reusable_type_node(
+        self,
+        c: &mut Checker<'_>,
+        t: TypeId,
+        type_node: NodeId,
+    ) -> NodeId {
+        if t.is_nil() {
+            return self.f(c).new_keyword_type_node(Kind::AnyKeyword);
+        }
+        if !self.is_actively_expanding(c)
+            && !type_node.is_nil()
+            && self.get_type_from_type_node(c, type_node, false) == t
+        {
+            let reused = self.try_reuse_existing_node_helper(c, type_node);
+            if !reused.is_nil() {
+                self.check_type_expandability(c, t);
+                return reused;
+            }
+        }
+        self.type_to_type_node(c, t)
+    }
+
+    pub(crate) fn type_parameter_to_declaration(
+        self,
+        c: &mut Checker<'_>,
+        parameter: TypeId,
+    ) -> NodeId {
+        let constraint = c.get_constraint_of_type_parameter(parameter);
+        let mut constraint_node = NodeId::NIL;
+        if !constraint.is_nil() {
+            let constraint_declaration = c.get_constraint_declaration(parameter);
+            constraint_node = self.type_to_type_node_helper_with_possible_reusable_type_node(
+                c,
+                constraint,
+                constraint_declaration,
+            );
+        }
+        self.type_parameter_to_declaration_with_constraint(c, parameter, constraint_node)
+    }
+
+    pub(crate) fn type_parameters_to_type_parameter_declarations(
+        self,
+        c: &mut Checker<'_>,
+        symbol: SymbolId,
+    ) -> Vec<NodeId> {
+        let a = c.ast;
+        let target_symbol = c.get_target_symbol(symbol);
+        let target_flags = a.sym(target_symbol).flags;
+        if target_flags.intersects(SymbolFlags::CLASS | SymbolFlags::INTERFACE | SymbolFlags::ALIAS)
+        {
+            let mut results: Vec<NodeId> = Vec::new();
+            let params = c.get_local_type_parameters_of_class_or_interface_or_type_alias(symbol);
+            for param in params.as_slice() {
+                results.push(self.type_parameter_to_declaration(c, *param));
+            }
+            return results;
+        } else if target_flags.intersects(SymbolFlags::FUNCTION) {
+            let mut results: Vec<NodeId> = Vec::new();
+            let params = c.get_type_parameters_from_declaration(a.sym(symbol).value_declaration);
+            for param in params.as_slice() {
+                results.push(self.type_parameter_to_declaration(c, *param));
+            }
+            return results;
+        }
+        Vec::new()
+    }
+}
+
+pub(crate) fn get_effective_parameter_declaration(a: Ast<'_>, symbol: SymbolId) -> NodeId {
+    let parameter_declaration = get_declaration_of_kind(a, symbol, Kind::Parameter);
+    if !parameter_declaration.is_nil() {
+        return parameter_declaration;
+    }
+    if !a.sym(symbol).flags.intersects(SymbolFlags::TRANSIENT) {
+        return get_declaration_of_kind(a, symbol, Kind::JSDocParameterTag);
+    }
+    NodeId::NIL
+}
+
+impl NodeBuilderImpl {
+    pub(crate) fn symbol_to_parameter_declaration(
+        self,
+        c: &mut Checker<'_>,
+        parameter_symbol: SymbolId,
+        preserve_modifier_flags: bool,
+    ) -> NodeId {
+        let a = c.ast;
+        let parameter_declaration = get_effective_parameter_declaration(a, parameter_symbol);
+        let parameter_type = c.get_type_of_symbol(parameter_symbol);
+        let parameter_type_node = self.serialize_type_for_declaration(
+            c,
+            parameter_declaration,
+            parameter_type,
+            parameter_symbol,
+            true,
+        );
+        let mut modifiers = ModifierListId::NIL;
+        if !self
+            .ctx(c)
+            .flags
+            .intersects(Flags::OMIT_PARAMETER_MODIFIERS)
+            && preserve_modifier_flags
+            && !parameter_declaration.is_nil()
+            && can_have_modifiers(a, parameter_declaration)
+        {
+            let mut clones: Vec<NodeId> = Vec::new();
+            for node in a.modifier_nodes(parameter_declaration).as_slice() {
+                if is_modifier(a, *node) {
+                    clones.push(self.f(c).clone_node(*node));
+                }
+            }
+            if !clones.is_empty() {
+                modifiers = self.f(c).new_modifier_list(&clones);
+            }
+        }
+        let parameter_check_flags = a.sym(parameter_symbol).check_flags;
+        let is_rest = !parameter_declaration.is_nil()
+            && is_rest_parameter(a, parameter_declaration)
+            || parameter_check_flags.intersects(CheckFlags::REST_PARAMETER);
+        let mut dot_dot_dot_token = NodeId::NIL;
+        if is_rest {
+            dot_dot_dot_token = self.f(c).new_token(Kind::DotDotDotToken);
+        }
+        let name = self.parameter_to_parameter_declaration_name(
+            c,
+            parameter_symbol,
+            parameter_declaration,
+        );
+        let is_optional = !parameter_declaration.is_nil()
+            && c.is_optional_parameter(parameter_declaration)
+            || parameter_check_flags.intersects(CheckFlags::OPTIONAL_PARAMETER);
+        let mut question_token = NodeId::NIL;
+        if is_optional {
+            question_token = self.f(c).new_token(Kind::QuestionToken);
+        }
+        let parameter_node = self.f(c).new_parameter_declaration(
+            modifiers,
+            dot_dot_dot_token,
+            name,
+            question_token,
+            parameter_type_node,
+            NodeId::NIL,
+        );
+        self.ctx_mut(c).approximate_length += a.sym(parameter_symbol).name.len() as isize + 3;
+        parameter_node
+    }
+
+    pub(crate) fn parameter_to_parameter_declaration_name(
+        self,
+        c: &mut Checker<'_>,
+        parameter_symbol: SymbolId,
+        parameter_declaration: NodeId,
+    ) -> NodeId {
+        let a = c.ast;
+        if parameter_declaration.is_nil() || a.name(parameter_declaration).is_nil() {
+            return self.new_identifier(c, a.sym(parameter_symbol).name, parameter_symbol);
+        }
+        let name = a.name(parameter_declaration);
+        match a.kind(name) {
+            Kind::Identifier => {
+                let cloned = self.f(c).deep_clone_node(name);
+                c.node_builder
+                    .impl_
+                    .e
+                    .set_emit_flags(cloned, EmitFlags::NO_ASCII_ESCAPING);
+                c.node_builder
+                    .impl_
+                    .id_to_symbol
+                    .insert(cloned, parameter_symbol);
+                cloned
+            }
+            Kind::QualifiedName => {
+                let cloned = self.f(c).deep_clone_node(a.as_qualified_name(name).right);
+                c.node_builder
+                    .impl_
+                    .e
+                    .set_emit_flags(cloned, EmitFlags::NO_ASCII_ESCAPING);
+                c.node_builder
+                    .impl_
+                    .id_to_symbol
+                    .insert(cloned, parameter_symbol);
+                cloned
+            }
+            _ => self.clone_binding_name(c, name),
+        }
+    }
+
+    pub(crate) fn clone_binding_name(self, c: &mut Checker<'_>, node: NodeId) -> NodeId {
+        if !c.stack_check.is_safe_to_recurse() {
+            return c.stack_limit();
+        }
+        let a = c.ast;
+        if is_computed_property_name(a, node) && c.is_late_bindable_name(node) {
+            let enclosing_declaration = self.ctx(c).enclosing_declaration;
+            self.track_computed_name(c, a.expression(node), enclosing_declaration);
+        }
+        // `b.cloneBindingNameVisitor.VisitEachChild(node)`: the visitor calls cloneBindingName on every child and makes the nodes with `b.f`.
+        let mut visited = visit_each_child(
+            c,
+            node,
+            |c, child| NodeBuilderImpl.clone_binding_name(c, child),
+            |c| NodeBuilderImpl.f(c),
+        );
+        if is_binding_element(a, visited) {
+            let binding_element = a.as_binding_element(visited);
+            // remove initializer
+            visited = self.f(c).update_binding_element(
+                visited,
+                binding_element.dot_dot_dot_token,
+                binding_element.property_name,
+                a.name(visited),
+                NodeId::NIL,
+            );
+        }
+        if !node_is_synthesized(a, visited) {
+            visited = self.f(c).deep_clone_node(visited);
+        }
+        c.node_builder.impl_.e.set_emit_flags(
+            visited,
+            EmitFlags::SINGLE_LINE | EmitFlags::NO_ASCII_ESCAPING,
+        );
+        visited
+    }
+
+    pub(crate) fn serialize_inferred_return_type_for_signature(
+        self,
+        c: &mut Checker<'_>,
+        signature: SignatureId,
+        return_type: TypeId,
+    ) -> NodeId {
+        let old_suppress_report_inference_fallback = self.ctx(c).suppress_report_inference_fallback;
+        self.ctx_mut(c).suppress_report_inference_fallback = true;
+        let type_predicate = c.get_type_predicate_of_signature(signature);
+        let return_type_node;
+        if !type_predicate.is_nil() {
+            let mapper = self.ctx(c).mapper;
+            let predicate = if !mapper.is_nil() {
+                c.instantiate_type_predicate(type_predicate, mapper)
+            } else {
+                type_predicate
+            };
+            return_type_node = self.type_predicate_to_type_predicate_node_helper(c, predicate);
+        } else {
+            return_type_node = self.type_to_type_node(c, return_type);
+        }
+        self.ctx_mut(c).suppress_report_inference_fallback = old_suppress_report_inference_fallback;
+        return_type_node
+    }
+
+    pub(crate) fn type_predicate_to_type_predicate_node_helper(
+        self,
+        c: &mut Checker<'_>,
+        type_predicate: TypePredicateId,
+    ) -> NodeId {
+        let kind = c.type_predicates[type_predicate].kind;
+        let parameter_name_text = c.type_predicates[type_predicate].parameter_name;
+        let predicate_type = c.type_predicates[type_predicate].t;
+        let mut asserts_modifier = NodeId::NIL;
+        if kind == TypePredicateKind::AssertsThis || kind == TypePredicateKind::AssertsIdentifier {
+            asserts_modifier = self.f(c).new_token(Kind::AssertsKeyword);
+        }
+        let parameter_name;
+        if kind == TypePredicateKind::Identifier || kind == TypePredicateKind::AssertsIdentifier {
+            parameter_name = self.new_identifier(c, parameter_name_text, SymbolId::NIL);
+            c.node_builder
+                .impl_
+                .e
+                .set_emit_flags(parameter_name, EmitFlags::NO_ASCII_ESCAPING);
+        } else {
+            parameter_name = self.f(c).new_this_type_node();
+        }
+        let mut type_node = NodeId::NIL;
+        if !predicate_type.is_nil() {
+            type_node = self.type_to_type_node(c, predicate_type);
+        }
+        self.f(c)
+            .new_type_predicate_node(asserts_modifier, parameter_name, type_node)
+    }
+}
+
+#[derive(Default)]
+pub struct SignatureToSignatureDeclarationOptions {
+    pub modifiers: Vec<NodeId>,
+    pub name: NodeId,
+    pub question_token: NodeId,
+}
+
+impl NodeBuilderImpl {
+    pub(crate) fn signature_to_signature_declaration_helper(
+        self,
+        c: &mut Checker<'_>,
+        signature: SignatureId,
+        kind: Kind,
+        options: Option<&SignatureToSignatureDeclarationOptions>,
+    ) -> NodeId {
+        let a = c.ast;
+        let mut type_parameters: Vec<NodeId> = Vec::new();
+        let (expanded_params, cleanup) = self.enter_signature_scope(c, signature);
+        self.ctx_mut(c).approximate_length += 3;
+        let target = c.signatures[signature].target;
+        let mapper = c.signatures[signature].mapper;
+        let signature_flags = c.signatures[signature].flags;
+        if self
+            .ctx(c)
+            .flags
+            .intersects(Flags::WRITE_TYPE_ARGUMENTS_OF_SIGNATURE)
+            && !target.is_nil()
+            && !mapper.is_nil()
+            && !c.signatures[target].type_parameters.as_slice().is_empty()
+        {
+            let target_type_parameters = c.signatures[target].type_parameters;
+            for parameter in target_type_parameters.as_slice() {
+                let instantiated = c.instantiate_type(*parameter, mapper);
+                type_parameters.push(self.type_to_type_node(c, instantiated));
+            }
+        } else {
+            let own_type_parameters = c.signatures[signature].type_parameters;
+            for parameter in own_type_parameters.as_slice() {
+                type_parameters.push(self.type_parameter_to_declaration(c, *parameter));
+            }
+        }
+        let restore_flags = self.save_restore_flags(c);
+        let ctx = self.ctx_mut(c);
+        ctx.flags = ctx.flags.without(Flags::SUPPRESS_ANY_RETURN_TYPE);
+        // If the expanded parameter list had a variadic in a non-trailing position, don't expand it
+        let last_expanded = expanded_params.last().copied();
+        let has_non_trailing_rest = expanded_params.iter().any(|p| {
+            Some(*p) != last_expanded
+                && a.sym(*p).check_flags.intersects(CheckFlags::REST_PARAMETER)
+        });
+        let parameter_symbols: Vec<SymbolId> = if has_non_trailing_rest {
+            c.signatures[signature].parameters.as_slice().to_vec()
+        } else {
+            expanded_params
+        };
+        let mut parameters: Vec<NodeId> = Vec::with_capacity(parameter_symbols.len() + 1);
+        for parameter in parameter_symbols {
+            parameters.push(self.symbol_to_parameter_declaration(
+                c,
+                parameter,
+                kind == Kind::Constructor,
+            ));
+        }
+        let this_parameter = if self.ctx(c).flags.intersects(Flags::OMIT_THIS_PARAMETER) {
+            NodeId::NIL
+        } else {
+            self.try_get_this_parameter_declaration(c, signature)
+        };
+        if !this_parameter.is_nil() {
+            parameters.insert(0, this_parameter);
+        }
+        self.restore_flags(c, restore_flags);
+
+        let mut return_type_node = self.serialize_return_type_for_signature(c, signature, true);
+
+        let mut modifiers: Vec<NodeId> = Vec::new();
+        if let Some(options) = options {
+            modifiers = options.modifiers.clone();
+        }
+        if kind == Kind::ConstructorType && signature_flags.intersects(SignatureFlags::ABSTRACT) {
+            let flags = modifiers_to_flags(a, &modifiers);
+            modifiers = create_modifiers_from_modifier_flags(
+                flags | ModifierFlags::ABSTRACT,
+                &mut |kind| self.f(c).new_modifier(kind),
+            );
+        }
+        let param_list = self.f(c).new_node_list(&parameters);
+        let mut type_param_list = NodeListId::NIL;
+        if !type_parameters.is_empty() {
+            type_param_list = self.f(c).new_node_list(&type_parameters);
+        }
+        let mut modifier_list = ModifierListId::NIL;
+        if !modifiers.is_empty() {
+            modifier_list = self.f(c).new_modifier_list(&modifiers);
+        }
+        let mut name = NodeId::NIL;
+        if let Some(options) = options {
+            name = options.name;
+        }
+        if name.is_nil() {
+            name = self.f(c).new_identifier(b"");
+        }
+
+        let node = match kind {
+            Kind::CallSignature => self.f(c).new_call_signature_declaration(
+                type_param_list,
+                param_list,
+                return_type_node,
+            ),
+            Kind::ConstructSignature => self.f(c).new_construct_signature_declaration(
+                type_param_list,
+                param_list,
+                return_type_node,
+            ),
+            Kind::MethodSignature => {
+                let mut question_token = NodeId::NIL;
+                if let Some(options) = options {
+                    question_token = options.question_token;
+                }
+                self.f(c).new_method_signature_declaration(
+                    modifier_list,
+                    name,
+                    question_token,
+                    type_param_list,
+                    param_list,
+                    return_type_node,
+                )
+            }
+            Kind::MethodDeclaration => self.f(c).new_method_declaration(
+                modifier_list,
+                NodeId::NIL,
+                name,
+                NodeId::NIL,
+                type_param_list,
+                param_list,
+                return_type_node,
+                NodeId::NIL,
+                NodeId::NIL,
+            ),
+            Kind::Constructor => self.f(c).new_constructor_declaration(
+                modifier_list,
+                NodeListId::NIL,
+                param_list,
+                NodeId::NIL,
+                NodeId::NIL,
+                NodeId::NIL,
+            ),
+            Kind::GetAccessor => self.f(c).new_get_accessor_declaration(
+                modifier_list,
+                name,
+                NodeListId::NIL,
+                param_list,
+                return_type_node,
+                NodeId::NIL,
+                NodeId::NIL,
+            ),
+            Kind::SetAccessor => self.f(c).new_set_accessor_declaration(
+                modifier_list,
+                name,
+                NodeListId::NIL,
+                param_list,
+                NodeId::NIL,
+                NodeId::NIL,
+                NodeId::NIL,
+            ),
+            Kind::IndexSignature => self.f(c).new_index_signature_declaration(
+                modifier_list,
+                param_list,
+                return_type_node,
+            ),
+            Kind::FunctionType => {
+                if return_type_node.is_nil() {
+                    let empty = self.f(c).new_identifier(b"");
+                    return_type_node = self.f(c).new_type_reference_node(empty, NodeListId::NIL);
+                }
+                self.f(c)
+                    .new_function_type_node(type_param_list, param_list, return_type_node)
+            }
+            Kind::ConstructorType => {
+                if return_type_node.is_nil() {
+                    let empty = self.f(c).new_identifier(b"");
+                    return_type_node = self.f(c).new_type_reference_node(empty, NodeListId::NIL);
+                }
+                self.f(c).new_constructor_type_node(
+                    modifier_list,
+                    type_param_list,
+                    param_list,
+                    return_type_node,
+                )
+            }
+            Kind::FunctionDeclaration => self.f(c).new_function_declaration(
+                modifier_list,
+                NodeId::NIL,
+                name,
+                type_param_list,
+                param_list,
+                return_type_node,
+                NodeId::NIL,
+                NodeId::NIL,
+            ),
+            Kind::FunctionExpression => {
+                let statements = self.f(c).new_node_list(&[]);
+                let body = self.f(c).new_block(statements, false);
+                self.f(c).new_function_expression(
+                    modifier_list,
+                    NodeId::NIL,
+                    name,
+                    type_param_list,
+                    param_list,
+                    return_type_node,
+                    NodeId::NIL,
+                    body,
+                )
+            }
+            Kind::ArrowFunction => {
+                let statements = self.f(c).new_node_list(&[]);
+                let body = self.f(c).new_block(statements, false);
+                self.f(c).new_arrow_function(
+                    modifier_list,
+                    type_param_list,
+                    param_list,
+                    return_type_node,
+                    NodeId::NIL,
+                    NodeId::NIL,
+                    body,
+                )
+            }
+            _ => c.fail("Unhandled kind in signatureToSignatureDeclarationHelper"),
+        };
+        self.exit_new_scope(c, cleanup);
+        node
+    }
+}
+
+impl Checker<'_> {
+    fn get_uniq_associated_names_from_tuple_type(
+        &mut self,
+        t: TypeId,
+        rest_symbol: SymbolId,
+    ) -> Vec<Vec<u8>> {
+        let target = self.as_type_reference(t).target;
+        let element_infos = self.as_tuple_type(target).element_infos;
+        let mut names: Vec<Vec<u8>> = Vec::with_capacity(element_infos.as_slice().len());
+        for (i, info) in element_infos.as_slice().iter().enumerate() {
+            names.push(self.get_tuple_element_label(*info, rest_symbol, i as isize));
+        }
+        if !names.is_empty() {
+            let mut duplicates: Vec<usize> = Vec::new();
+            let mut unique_names: HashMap<Vec<u8>, bool> = HashMap::default();
+            for (i, name) in names.iter().enumerate() {
+                if unique_names.contains_key(name) {
+                    duplicates.push(i);
+                } else {
+                    unique_names.insert(name.clone(), true);
+                }
+            }
+            let mut counters: HashMap<Vec<u8>, isize> = HashMap::default();
+            for i in duplicates {
+                let Some(base) = names.get(i).cloned() else {
+                    continue;
+                };
+                let mut counter = counters.get(&base).copied().unwrap_or(1);
+                let mut name;
+                loop {
+                    name = [base.as_slice(), b"_", counter.to_string().as_bytes()].concat();
+                    if unique_names.contains_key(&name) {
+                        counter += 1;
+                        continue;
+                    }
+                    unique_names.insert(name.clone(), true);
+                    break;
+                }
+                // Upstream stores the counter under the new name: `names[i]` is already replaced when `counters` is written.
+                counters.insert(name.clone(), counter + 1);
+                if let Some(slot) = names.get_mut(i) {
+                    *slot = name;
+                }
+            }
+        }
+        names
+    }
+
+    fn expand_signature_parameters_with_tuple_members(
+        &mut self,
+        sig: SignatureId,
+        rest_type: TypeId,
+        rest_index: usize,
+        rest_symbol: SymbolId,
+    ) -> Vec<SymbolId> {
+        let element_types = self.get_type_arguments(rest_type);
+        let associated_names =
+            self.get_uniq_associated_names_from_tuple_type(rest_type, rest_symbol);
+        let target = self.as_type_reference(rest_type).target;
+        let element_infos = self.as_tuple_type(target).element_infos;
+        let mut result: Vec<SymbolId> = self.signatures[sig]
+            .parameters
+            .as_slice()
+            .get(..rest_index)
+            .unwrap_or(&[])
+            .to_vec();
+        for (i, t) in element_types.as_slice().iter().copied().enumerate() {
+            let name = associated_names.get(i).cloned().unwrap_or_default();
+            let flags = element_infos
+                .as_slice()
+                .get(i)
+                .map_or(ElementFlags::NONE, |info| info.flags);
+            let mut check_flags = CheckFlags::NONE;
+            if flags.intersects(ElementFlags::VARIABLE) {
+                check_flags = CheckFlags::REST_PARAMETER;
+            } else if flags.intersects(ElementFlags::OPTIONAL) {
+                check_flags = CheckFlags::OPTIONAL_PARAMETER;
+            }
+            let symbol =
+                self.new_symbol_ex(SymbolFlags::FUNCTION_SCOPED_VARIABLE, &name, check_flags);
+            let resolved_type = if flags.intersects(ElementFlags::REST) {
+                self.create_array_type(t)
+            } else {
+                t
+            };
+            self.value_symbol_links.get(symbol).resolved_type = resolved_type;
+            result.push(symbol);
+        }
+        result
+    }
+
+    pub fn get_expanded_parameters(
+        &mut self,
+        sig: SignatureId,
+        skip_union_expanding: bool,
+    ) -> Vec<Vec<SymbolId>> {
+        if self.signatures[sig].has_rest_parameter() {
+            let parameters = self.signatures[sig].parameters;
+            let rest_index = parameters.as_slice().len().saturating_sub(1);
+            let rest_symbol = parameters
+                .as_slice()
+                .get(rest_index)
+                .copied()
+                .unwrap_or(SymbolId::NIL);
+            let rest_type = self.get_type_of_symbol(rest_symbol);
+            if is_tuple_type(self, rest_type) {
+                return vec![self.expand_signature_parameters_with_tuple_members(
+                    sig,
+                    rest_type,
+                    rest_index,
+                    rest_symbol,
+                )];
+            } else if !skip_union_expanding
+                && self.types[rest_type].flags.intersects(TypeFlags::UNION)
+            {
+                let union_types = self.as_union_type(rest_type).types;
+                if union_types
+                    .as_slice()
+                    .iter()
+                    .all(|t| is_tuple_type(self, *t))
+                {
+                    let mut result: Vec<Vec<SymbolId>> = Vec::new();
+                    for t in union_types.as_slice() {
+                        result.push(self.expand_signature_parameters_with_tuple_members(
+                            sig,
+                            *t,
+                            rest_index,
+                            rest_symbol,
+                        ));
+                    }
+                    return result;
+                }
+            }
+        }
+        vec![self.signatures[sig].parameters.as_slice().to_vec()]
+    }
+}
+
+impl NodeBuilderImpl {
+    pub(crate) fn try_get_this_parameter_declaration(
+        self,
+        c: &mut Checker<'_>,
+        signature: SignatureId,
+    ) -> NodeId {
+        let this_parameter = c.signatures[signature].this_parameter;
+        if !this_parameter.is_nil() {
+            return self.symbol_to_parameter_declaration(c, this_parameter, false);
+        }
+        NodeId::NIL
+    }
+
+    // Serializes the return type of the signature by first trying to use the syntactic printer if possible and falling back to the checker type if not.
+    pub(crate) fn serialize_return_type_for_signature(
+        self,
+        c: &mut Checker<'_>,
+        signature: SignatureId,
+        try_reuse: bool,
+    ) -> NodeId {
+        let a = c.ast;
+        let suppress_any = self
+            .ctx(c)
+            .flags
+            .intersects(Flags::SUPPRESS_ANY_RETURN_TYPE);
+        let restore_flags = self.save_restore_flags(c);
+        if suppress_any {
+            // suppress only toplevel `any`s
+            let ctx = self.ctx_mut(c);
+            ctx.flags = ctx.flags.without(Flags::SUPPRESS_ANY_RETURN_TYPE);
+        }
+        let mut return_type_node = NodeId::NIL;
+        let declaration = c.signatures[signature].declaration;
+        let mut return_type;
+        if !declaration.is_nil() && !node_is_synthesized(a, declaration) {
+            let symbol = c.get_symbol_of_declaration(declaration);
+            return_type = self
+                .ctx(c)
+                .enclosing_symbol_types
+                .get(&symbol)
+                .copied()
+                .unwrap_or(TypeId::NIL);
+            if return_type.is_nil() {
+                let signature_return_type = c.get_return_type_of_signature(signature);
+                let mapper = self.ctx(c).mapper;
+                return_type = c.instantiate_type(signature_return_type, mapper);
+            }
+        } else {
+            return_type = c.get_return_type_of_signature(signature);
+        }
+        if !(suppress_any && is_type_any(c, return_type)) {
+            if !self.is_actively_expanding(c)
+                && try_reuse
+                && !self.ctx(c).enclosing_declaration.is_nil()
+                && !declaration.is_nil()
+                && !node_is_synthesized(a, declaration)
+            {
+                let declaration_symbol = c.get_symbol_of_declaration(declaration);
+                let restore = self.add_symbol_type_to_context(c, declaration_symbol, return_type);
+                let mut pt = c
+                    .node_builder
+                    .impl_
+                    .pc
+                    .get_return_type_of_signature(a, declaration);
+                let report = !self.ctx(c).suppress_report_inference_fallback;
+                if self.pseudo_type_equivalent_to_type(c, pt.as_deref(), return_type, false, report)
+                {
+                    let type_predicate = c.get_type_predicate_of_signature(signature);
+                    if !type_predicate.is_nil()
+                        && !self.pseudo_return_type_matches_predicate(
+                            c,
+                            pt.as_deref(),
+                            type_predicate,
+                        )
+                    {
+                        if !self.ctx(c).suppress_report_inference_fallback {
+                            SymbolTrackerImpl::report_inference_fallback(
+                                self.ctx_mut(c),
+                                declaration,
+                            );
+                        }
+                        pt = None;
+                    }
+                    if let Some(pt) = pt.as_deref() {
+                        return_type_node =
+                            self.pseudo_type_to_node_with_checker_fallback(c, pt, return_type);
+                    }
+                }
+                self.restore_symbol_type_in_context(c, restore);
+            }
+            if return_type_node.is_nil() {
+                return_type_node =
+                    self.serialize_inferred_return_type_for_signature(c, signature, return_type);
+            }
+        }
+        if return_type_node.is_nil() && !suppress_any {
+            return_type_node = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
+        }
+        self.restore_flags(c, restore_flags);
+        return_type_node
+    }
+}
+
+impl NodeBuilderImpl {
+    pub(crate) fn is_trivially_serializable_computed_name(
+        self,
+        c: &mut Checker<'_>,
+        e: NodeId,
+    ) -> bool {
+        let a = c.ast;
+        let shape_good = !e.is_nil()
+            && !a.name(e).is_nil()
+            && is_computed_property_name(a, a.name(e))
+            && is_entity_name_expression(a, a.expression(a.name(e)));
+        if !shape_good {
+            return false;
+        }
+        let enclosing_declaration = self.ctx(c).enclosing_declaration;
+        EmitResolver
+            .is_entity_name_visible(c, a.expression(a.name(e)), enclosing_declaration, false)
+            .accessibility
+            == SymbolAccessibility::Accessible
+    }
+
+    pub(crate) fn index_info_to_object_computed_names_or_signature_declaration(
+        self,
+        c: &mut Checker<'_>,
+        index_info: IndexInfoId,
+        type_node: NodeId,
+    ) -> Vec<NodeId> {
+        let a = c.ast;
+        let components = c.index_infos[index_info].components;
+        let is_readonly = c.index_infos[index_info].is_readonly;
+        if !components.as_slice().is_empty() {
+            // Index info is derived from object or class computed property names (plus explicit named members): those may be expanded at the top level of the object or class.
+            let mut all_component_computed_names_serializable =
+                !self.ctx(c).enclosing_declaration.is_nil();
+            if all_component_computed_names_serializable {
+                for component in components.as_slice() {
+                    if !self.is_trivially_serializable_computed_name(c, *component) {
+                        all_component_computed_names_serializable = false;
+                        break;
+                    }
+                }
+            }
+            if all_component_computed_names_serializable {
+                // Only use computed name serialization form if all components are visible and take the `a.b.c` form
+                let mut new_components: Vec<NodeId> = Vec::new();
+                for component in components.as_slice() {
+                    // skip late bound props that contribute to the index signature - they'll be created by property creation anyway
+                    if !c.has_late_bindable_name(*component) {
+                        new_components.push(*component);
+                    }
+                }
+                let mut bailed = false;
+                let mut results: Vec<NodeId> = Vec::with_capacity(new_components.len());
+                for e in new_components {
+                    let name = self.reuse_node(c, a.name(e));
+                    if name.is_nil() {
+                        bailed = true;
+                        results.push(NodeId::NIL);
+                        continue;
+                    }
+                    let enclosing_declaration = self.ctx(c).enclosing_declaration;
+                    self.track_computed_name(c, a.expression(a.name(e)), enclosing_declaration);
+                    let mut mods = ModifierListId::NIL;
+                    if is_readonly {
+                        let readonly = self.f(c).new_modifier(Kind::ReadonlyKeyword);
+                        mods = self.f(c).new_modifier_list(&[readonly]);
+                    }
+                    let mut postfix_token = NodeId::NIL;
+                    if !a.postfix_token(e).is_nil() {
+                        postfix_token = self.f(c).clone_node(a.postfix_token(e));
+                    }
+                    let current_type_node = if !type_node.is_nil() {
+                        self.f(c).deep_clone_node(type_node)
+                    } else {
+                        let component_type = c.get_type_of_symbol(a.symbol(e));
+                        self.type_to_type_node(c, component_type)
+                    };
+                    let sig = self.f(c).new_property_signature_declaration(
+                        mods,
+                        name,
+                        postfix_token,
+                        current_type_node,
+                        NodeId::NIL,
+                    );
+                    a.set_loc(sig, a.loc(e));
+                    results.push(sig);
+                }
+                if !bailed {
+                    return results;
+                }
+            }
+        }
+        vec![self.index_info_to_index_signature_declaration_helper(c, index_info, type_node)]
+    }
+
+    pub(crate) fn index_info_to_index_signature_declaration_helper(
+        self,
+        c: &mut Checker<'_>,
+        index_info: IndexInfoId,
+        type_node: NodeId,
+    ) -> NodeId {
+        let name = get_name_from_index_info(c, index_info);
+        let key_type = c.index_infos[index_info].key_type;
+        let value_type = c.index_infos[index_info].value_type;
+        let is_readonly = c.index_infos[index_info].is_readonly;
+        let indexer_type_node = self.type_to_type_node(c, key_type);
+        let parameter_name = self.new_identifier(c, &name, SymbolId::NIL);
+        let indexing_parameter = self.f(c).new_parameter_declaration(
+            ModifierListId::NIL,
+            NodeId::NIL,
+            parameter_name,
+            NodeId::NIL,
+            indexer_type_node,
+            NodeId::NIL,
+        );
+        let mut type_node = type_node;
+        if type_node.is_nil() {
+            if value_type.is_nil() {
+                type_node = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
+            } else {
+                type_node = self.type_to_type_node(c, value_type);
+            }
+        }
+        let ctx = self.ctx_mut(c);
+        if value_type.is_nil() && !ctx.flags.intersects(Flags::ALLOW_EMPTY_INDEX_INFO_TYPE) {
+            ctx.encountered_error = true;
+        }
+        ctx.approximate_length += name.len() as isize + 4;
+        let mut modifiers = ModifierListId::NIL;
+        if is_readonly {
+            self.ctx_mut(c).approximate_length += 9;
+            let readonly = self.f(c).new_modifier(Kind::ReadonlyKeyword);
+            modifiers = self.f(c).new_modifier_list(&[readonly]);
+        }
+        let parameters = self.f(c).new_node_list(&[indexing_parameter]);
+        self.f(c)
+            .new_index_signature_declaration(modifiers, parameters, type_node)
+    }
+}
+
+// hasTypeAnnotation reports whether declaration has a type annotation: a type alias is not a type annotation of the aliased value.
+pub(crate) fn has_type_annotation(a: Ast<'_>, declaration: NodeId) -> bool {
+    if declaration.is_nil() || a.type_node(declaration).is_nil() {
+        return false;
+    }
+    if is_type_alias_declaration(a, declaration) || is_js_type_alias_declaration(a, declaration) {
+        return false;
+    }
+    true
+}
+
+impl NodeBuilderImpl {
+    // Unlike `typeToTypeNodeHelper` this sets up the `AllowUniqueESSymbolType` flag, so `unique symbol` is returned when appropriate for the input symbol rather than `typeof sym`.
+    pub(crate) fn serialize_type_for_declaration(
+        self,
+        c: &mut Checker<'_>,
+        declaration: NodeId,
+        t: TypeId,
+        symbol: SymbolId,
+        try_reuse: bool,
+    ) -> NodeId {
+        let a = c.ast;
+        let mut declaration = declaration;
+        let mut t = t;
+        let mut symbol = symbol;
+        if declaration.is_nil() && !symbol.is_nil() {
+            declaration = a.sym(symbol).value_declaration;
+            if declaration.is_nil() {
+                declaration = a
+                    .sym(symbol)
+                    .declarations
+                    .as_slice()
+                    .first()
+                    .copied()
+                    .unwrap_or(NodeId::NIL);
+            }
+        }
+        if symbol.is_nil() {
+            symbol = c.get_symbol_of_declaration(declaration);
+        }
+        if t.is_nil() {
+            if symbol.is_nil() {
+                if is_variable_like(a, declaration) {
+                    t = c.get_type_for_variable_like_declaration(
+                        declaration,
+                        false,
+                        CheckMode::NORMAL,
+                    );
+                } else {
+                    t = c.error_type;
+                }
+            } else {
+                t = self
+                    .ctx(c)
+                    .enclosing_symbol_types
+                    .get(&symbol)
+                    .copied()
+                    .unwrap_or(TypeId::NIL);
+                if t.is_nil() {
+                    let symbol_flags = a.sym(symbol).flags;
+                    let mapper = self.ctx(c).mapper;
+                    if symbol_flags.intersects(SymbolFlags::ACCESSOR)
+                        && a.kind(declaration) == Kind::SetAccessor
+                    {
+                        let write_type = c.get_write_type_of_symbol(symbol);
+                        t = c.instantiate_type(write_type, mapper);
+                    } else if !symbol_flags
+                        .intersects(SymbolFlags::TYPE_LITERAL | SymbolFlags::SIGNATURE)
+                    {
+                        let symbol_type = c.get_type_of_symbol(symbol);
+                        let widened = c.get_widened_literal_type(symbol_type);
+                        t = c.instantiate_type(widened, mapper);
+                    } else {
+                        t = c.error_type;
+                    }
+                }
+            }
+        }
+        let is_parameter_or_property = !declaration.is_nil()
+            && (is_parameter_declaration(a, declaration)
+                || is_property_signature_declaration(a, declaration)
+                || is_property_declaration(a, declaration));
+        let enclosing_declaration = self.ctx(c).enclosing_declaration;
+        let requires_adding_undefined = is_parameter_or_property
+            && EmitResolver.requires_adding_implicit_undefined(
+                c,
+                declaration,
+                symbol,
+                enclosing_declaration,
+            );
+        let add_undefined_for_parameter =
+            requires_adding_undefined && is_parameter_declaration(a, declaration);
+        if add_undefined_for_parameter {
+            t = c.get_optional_type(t, false);
+        }
+
+        let restore_flags = self.save_restore_flags(c);
+        let enclosing_file = self.ctx(c).enclosing_file;
+        if c.types[t].flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL)
+            && c.types[t].symbol == symbol
+            && (enclosing_declaration.is_nil()
+                || a.sym(symbol)
+                    .declarations
+                    .as_slice()
+                    .iter()
+                    .any(|d| get_source_file_of_node(a, *d) == enclosing_file))
+        {
+            self.ctx_mut(c).flags |= Flags::ALLOW_UNIQUE_ES_SYMBOL_TYPE;
+        }
+        let mut result = NodeId::NIL;
+        let mut reported_inference_fallback = false;
+        if !self.is_actively_expanding(c)
+            && try_reuse
+            && !enclosing_declaration.is_nil()
+            && !declaration.is_nil()
+            && (is_accessor(a, declaration)
+                || (has_inferred_type(a, declaration)
+                    && !node_is_synthesized(a, declaration)
+                    && !c.types[t]
+                        .object_flags
+                        .intersects(ObjectFlags::REQUIRES_WIDENING)))
+        {
+            let mut remove = None;
+            if !symbol.is_nil() {
+                remove = Some(self.add_symbol_type_to_context(c, symbol, t));
+            }
+            let mut pt = if is_accessor(a, declaration) {
+                c.node_builder.impl_.pc.get_type_of_accessor(a, declaration)
+            } else {
+                c.node_builder
+                    .impl_
+                    .pc
+                    .get_type_of_declaration(a, declaration)
+            };
+            if pt
+                .as_deref()
+                .is_none_or(|pt| pt.kind == PseudoTypeKind::NoResult)
+                && is_binary_expression(a, declaration)
+                && !symbol.is_nil()
+            {
+                let decl = a
+                    .sym(symbol)
+                    .declarations
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .find(|d| has_type_annotation(a, *d));
+                if let Some(decl) = decl {
+                    pt = c.node_builder.impl_.pc.get_type_of_declaration(a, decl);
+                }
+            }
+            let report_errors = !self.ctx(c).suppress_report_inference_fallback;
+            let is_optional = !requires_adding_undefined
+                && is_parameter_or_property
+                && is_optional_declaration(a, declaration);
+            if self.pseudo_type_equivalent_to_type(c, pt.as_deref(), t, is_optional, report_errors)
+            {
+                let ptt = self.pseudo_type_to_type(c, pt.as_deref());
+                if !ptt.is_nil()
+                    && requires_adding_undefined
+                    && contains_non_missing_undefined_type(c, t)
+                    && !contains_non_missing_undefined_type(c, ptt)
+                {
+                    pt = Some(new_pseudo_type_union(vec![
+                        pt,
+                        Some(pseudo_type_undefined()),
+                    ]));
+                }
+                result = self.pseudo_type_to_node_with_checker_fallback_opt(c, pt.as_deref(), t);
+            } else {
+                reported_inference_fallback = report_errors
+                    && pt.as_deref().is_some_and(|pt| {
+                        pt.kind == PseudoTypeKind::Inferred
+                            && !pt.as_pseudo_type_inferred().error_nodes.is_empty()
+                    });
+                let mut should_add_undefined = false;
+                if requires_adding_undefined {
+                    let ptt = self.pseudo_type_to_type(c, pt.as_deref());
+                    if !ptt.is_nil() {
+                        should_add_undefined = !contains_non_missing_undefined_type(c, ptt);
+                    } else {
+                        should_add_undefined =
+                            !could_already_refer_to_undefined_type(a, pt.as_deref());
+                    }
+                }
+                if should_add_undefined {
+                    pt = Some(new_pseudo_type_union(vec![
+                        pt,
+                        Some(pseudo_type_undefined()),
+                    ]));
+                    if self.pseudo_type_equivalent_to_type(
+                        c,
+                        pt.as_deref(),
+                        t,
+                        false,
+                        report_errors,
+                    ) {
+                        result =
+                            self.pseudo_type_to_node_with_checker_fallback_opt(c, pt.as_deref(), t);
+                        reported_inference_fallback = false;
+                    }
+                }
+            }
+            if let Some(remove) = remove {
+                self.restore_symbol_type_in_context(c, remove);
+            }
+        }
+        if result.is_nil() {
+            if reported_inference_fallback {
+                // The inference fallback was already reported for this type: suppress nested reports while it is serialized.
+                let old_suppress = self.ctx(c).suppress_report_inference_fallback;
+                self.ctx_mut(c).suppress_report_inference_fallback = true;
+                result = self.type_to_type_node(c, t);
+                self.ctx_mut(c).suppress_report_inference_fallback = old_suppress;
+            } else {
+                result = self.type_to_type_node(c, t);
+            }
+        }
+        self.restore_flags(c, restore_flags);
+        if result.is_nil() {
+            return self.f(c).new_keyword_type_node(Kind::AnyKeyword);
+        }
+        result
+    }
+
+    // `pt` can be nil upstream only where the pseudochecker returned nil: the checker type is serialized then.
+    fn pseudo_type_to_node_with_checker_fallback_opt(
+        self,
+        c: &mut Checker<'_>,
+        pt: Option<&PseudoType>,
+        t: TypeId,
+    ) -> NodeId {
+        match pt {
+            Some(pt) => self.pseudo_type_to_node_with_checker_fallback(c, pt, t),
+            None => c.fail("nil pseudo type in serializeTypeForDeclaration"),
+        }
+    }
+}
+
+pub const MAX_REVERSE_MAPPED_NESTING_INSPECTION_DEPTH: usize = 3;
+
+impl NodeBuilderImpl {
+    pub(crate) fn should_use_placeholder_for_property(
+        self,
+        c: &mut Checker<'_>,
+        property_symbol: SymbolId,
+    ) -> bool {
+        // Use placeholders for reverse mapped types inferred from unresolved nested type or for excessively nested reverse mapped types.
+        if !c
+            .ast
+            .sym(property_symbol)
+            .check_flags
+            .intersects(CheckFlags::REVERSE_MAPPED)
+        {
+            return false;
+        }
+        // inferred from an unresolved nested type
+        if self
+            .ctx(c)
+            .reverse_mapped_stack
+            .iter()
+            .any(|s| *s == property_symbol)
+        {
+            return true;
+        }
+        if let Some(&last) = self.ctx(c).reverse_mapped_stack.last() {
+            if let Some(links) = c.reverse_mapped_symbol_links.try_get(last) {
+                let property_type = links.property_type;
+                if !property_type.is_nil()
+                    && !c.types[property_type]
+                        .object_flags
+                        .intersects(ObjectFlags::ANONYMOUS)
+                {
+                    return true;
+                }
+            }
+        }
+        // deeply nested reverse mapped types of the same type
+        if self.ctx(c).reverse_mapped_stack.len() < MAX_REVERSE_MAPPED_NESTING_INSPECTION_DEPTH {
+            return false;
+        }
+        let Some(property_links) = c.reverse_mapped_symbol_links.try_get(property_symbol) else {
+            return false;
+        };
+        let prop_mapped_type = property_links.mapped_type;
+        if prop_mapped_type.is_nil() || c.types[prop_mapped_type].symbol.is_nil() {
+            return false;
+        }
+        let prop_mapped_symbol = c.types[prop_mapped_type].symbol;
+        let stack = &self.ctx(c).reverse_mapped_stack;
+        for i in 0..stack.len() {
+            if i > MAX_REVERSE_MAPPED_NESTING_INSPECTION_DEPTH {
+                break;
+            }
+            let Some(&prop) = stack.get(stack.len() - 1 - i) else {
+                break;
+            };
+            if let Some(links) = c.reverse_mapped_symbol_links.try_get(prop) {
+                let mapped_type = links.mapped_type;
+                if !mapped_type.is_nil() && c.types[mapped_type].symbol == prop_mapped_symbol {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn track_computed_name(
+        self,
+        c: &mut Checker<'_>,
+        access_expression: NodeId,
+        enclosing_declaration: NodeId,
+    ) {
+        let a = c.ast;
+        // get symbol of the first identifier of the entityName
+        let first_identifier = get_first_identifier(a, access_expression);
+        let text = a.text(first_identifier);
+        let name = c.resolve_name(
+            enclosing_declaration,
+            text,
+            SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
+            None,
+            true,
+            false,
+        );
+        if !name.is_nil() {
+            self.track_symbol(c, name, enclosing_declaration, SymbolFlags::VALUE);
+        } else {
+            // Name does not resolve at target location, track symbol at dest location (should be inaccessible)
+            let fallback = c.resolve_name(
+                first_identifier,
+                text,
+                SymbolFlags::VALUE | SymbolFlags::EXPORT_VALUE,
+                None,
+                true,
+                false,
+            );
+            if !fallback.is_nil() {
+                self.track_symbol(c, fallback, enclosing_declaration, SymbolFlags::VALUE);
+            }
+        }
+    }
+}

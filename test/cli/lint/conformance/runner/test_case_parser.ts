@@ -1,4 +1,5 @@
 // Port of internal/testrunner/test_case_parser.go of typescript-go 89d5d5b: the directive grammar of a test case.
+// makeUnitsFromTest (test_case_parser.go:51) is parseTestFilesAndSymlinks, then makeTestCaseContent of materialise.ts: the config host and the config parse.
 import { RE2, toLower, trimSpace, trimSuffix, utf8ToByteString } from "./gostrings";
 import { skipTrivia } from "./scanner";
 import { getBaseFileName } from "./tspath";
@@ -12,15 +13,6 @@ export type RawCompilerSettings = Map<string, string>;
 export interface TestUnit {
   content: string;
   name: string;
-}
-
-export interface TestCaseContent {
-  testUnitData: TestUnit[];
-  tsConfigFileUnitData: TestUnit | undefined;
-  symlinks: Map<string, string>;
-  // The reference parses the config file here: the current directory and the global options are what that parse reads.
-  currentDirectory: string;
-  globalOptions: Map<string, string>;
 }
 
 // Regex for parsing options in the format "@Alpha: Value of any sort"; RE2 has the line start and the classes of Go.
@@ -39,9 +31,6 @@ const linkRegex = new RegExp(
 // File-specific directives used by fourslash tests
 const fourslashDirectives = ["emitthisfile", "noopen"];
 
-// compiler_runner.go:34
-export const srcFolder = "/.src";
-
 // harnessutil.go:1228
 export function getConfigNameFromFileName(filename: string): string {
   const basenameLower = toLower(getBaseFileName(filename));
@@ -49,49 +38,6 @@ export function getConfigNameFromFileName(filename: string): string {
     return basenameLower;
   }
   return "";
-}
-
-// The content of a case, or the text of the panic that ends the reference on it.
-export type MakeUnitsResult = { ok: true; value: TestCaseContent } | { ok: false; reason: string };
-
-// Given a test file containing // @FileName directives, return the named units of code of a compiler instance.
-export function makeUnitsFromTest(code: string, fileName: string): MakeUnitsResult {
-  const parsed = parseTestFilesAndSymlinks<TestUnit>(code, fileName, (filename, content) => ({
-    value: { content, name: filename },
-    error: undefined,
-  }));
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const testUnits = parsed.units;
-  let currentDirectory = parsed.currentDirectory;
-  if (currentDirectory === "") {
-    currentDirectory = srcFolder;
-  }
-
-  // check if project has tsconfig.json in the list of files
-  let tsConfigFileUnitData: TestUnit | undefined;
-  for (let i = 0; i < testUnits.length; i++) {
-    const data = testUnits[i];
-    if (getConfigNameFromFileName(data.name) !== "") {
-      tsConfigFileUnitData = data;
-
-      // delete tsconfig file entry from the list
-      testUnits.splice(i, 1);
-      break;
-    }
-  }
-
-  return {
-    ok: true,
-    value: {
-      testUnitData: testUnits,
-      tsConfigFileUnitData,
-      symlinks: parsed.symlinks,
-      currentDirectory,
-      globalOptions: parsed.globalOptions,
-    },
-  };
 }
 
 export interface ParseTestFilesOptions {

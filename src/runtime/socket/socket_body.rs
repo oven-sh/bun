@@ -81,6 +81,31 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// The error that the `close` handler gets: the read error of `close_code`, the errno of a
+/// failed write, or `undefined`.
+///
+/// `close_code` is overloaded: when WE closed the socket it's a libus
+/// CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
+/// close was driven by a recv() failure or a poll error (loop.c's
+/// EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
+/// error code. Neither producer can yield EPERM(1)/ENOENT(2) — recv
+/// never returns them and the poll-error branch clamps them away — so
+/// values >2 are real read errors and 0/1/2 are self-initiated closes
+/// that must not surface as a JS read error (matching Node's
+/// onStreamRead, which only sees errors that came from uv_read_cb).
+fn close_error_to_js(close_code: c_int, write_errno: u16, global: &JSGlobalObject) -> JSValue {
+    if close_code > 2 {
+        <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(close_code), global)
+    } else if write_errno != 0 {
+        <sys::Error as jsc::SysErrorJsc>::to_js(
+            &sys::Error::from_code_int(i32::from(write_errno), sys::Tag::write),
+            global,
+        )
+    } else {
+        JSValue::UNDEFINED
+    }
+}
+
 /// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
@@ -2290,25 +2315,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        let mut js_error: JSValue = JSValue::UNDEFINED;
-        // `err` is overloaded: when WE closed the socket it's a libus
-        // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
-        // close was driven by a recv() failure or a poll error (loop.c's
-        // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
-        // error code. Neither producer can yield EPERM(1)/ENOENT(2) — recv
-        // never returns them and the poll-error branch clamps them away — so
-        // values >2 are real read errors and 0/1/2 are self-initiated closes
-        // that must not surface as a JS read error (matching Node's
-        // onStreamRead, which only sees errors that came from uv_read_cb).
-        if err > 2 {
-            js_error =
-                <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
-        } else if write_errno != 0 {
-            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(i32::from(write_errno), sys::Tag::write),
-                &global,
-            );
-        }
+        let js_error = close_error_to_js(err, write_errno, &global);
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(e)])?;

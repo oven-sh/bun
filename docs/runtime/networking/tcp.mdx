@@ -192,6 +192,15 @@ socket.reload({
 
 `socket.end(data)` accepts the whole chunk. Bun queues the part that the socket did not accept. Bun sends the queued part when the socket is writable again, then closes the socket.
 
+When the connection closes while a part of the chunk is still queued, that part is lost. The report depends on how the connection closed:
+
+- A read error closed the connection, for example the other end reset it. The `close` handler gets that error (`syscall: "read"`) as its second argument. Bun does not call the `error` handler.
+- The connection closed with no read error. Bun reports a write error (`syscall: "write"`). The `error` handler gets it. Without an `error` handler, the `close` handler gets it as its second argument.
+
+Only a `close` handler learns of every lost part. `socket.terminate()`, `socket.close()` and `listener.stop(true)` discard the queued part and report nothing. A TLS handshake that fails is reported to the `handshake` handler only, and a Windows named pipe reports nothing.
+
+The report covers only the part that Bun has queued. The operating system and the TLS layer can lose data that they already accepted, so a `close` without an error does not prove that the other end received everything.
+
 Performance-sensitive code should buffer writes itself. For example, this:
 
 ```ts

@@ -74,6 +74,10 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
  * (the original LSAN was only the *accepted* sockets, not the listener). */
 void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+    /* A close handler can call this again for the same group: the outer call keeps the mark. */
+    unsigned char was_closing_all = group->closing_all;
+    group->closing_all = 1;
+
     if (also_listeners) {
         /* Listeners first — stops new sockets from being accepted into
          * head_sockets while we're draining it. */
@@ -156,6 +160,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         }
         US_ASSERT(group->low_prio_count == 0);
     }
+
+    group->closing_all = was_closing_all;
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {

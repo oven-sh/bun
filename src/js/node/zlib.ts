@@ -14,6 +14,7 @@ const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
@@ -729,7 +730,7 @@ function createConvenienceMethod(ctor, sync, methodName, prepareOpts?) {
 // Buffer.from() skips.
 function hasExactByteLength(encoding) {
   if (typeof encoding !== "string") return false;
-  switch (encoding.toLowerCase()) {
+  switch (StringPrototypeToLowerCase.$call(encoding)) {
     case "utf8":
     case "utf-8":
     case "ucs2":

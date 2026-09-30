@@ -1,6 +1,7 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * here, and the last test runs this same file under Node.js. So the file uses
+ * `node:test` and `node:assert`, not `bun:test`.
  *
  * zstd writes the size of the input to the frame header (Frame_Content_Size)
  * only if it knows the size before it writes the first block. For
@@ -236,6 +237,19 @@ describe("zlib.zstdCompress", () => {
         assertContentSize(frameContentSize(frame), null, bytes.length);
       });
     }
+
+    test("does not read the encoding with a replaced String.prototype.toLowerCase", async () => {
+      const { toLowerCase } = String.prototype;
+      let pending: Promise<Buffer>;
+      String.prototype.toLowerCase = () => "latin1";
+      try {
+        // zstdCompress() reads its options before it returns.
+        pending = compress("68656c6c6fzz", { defaultEncoding: "hex" });
+      } finally {
+        String.prototype.toLowerCase = toLowerCase;
+      }
+      assert.deepStrictEqual(zlib.zstdDecompressSync(await pending), Buffer.from("hello"));
+    });
   });
 });
 

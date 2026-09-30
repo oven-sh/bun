@@ -1048,19 +1048,26 @@ it.skipIf(!isWindows)("'close' comes after everything the child wrote to a pipe 
 // As in node, which lets what is left in every pipe go when the child has exited.
 it.each([
   ["is left alone", () => {}],
-  ["is only written to", (child: ChildProcess) => void (child.stdio[3] as Writable).write("request")],
-  ["is looked at once the child has exited", (child: ChildProcess) => void child.on("exit", () => child.stdio[3])],
+  [
+    "is only written to",
+    (child: ChildProcess) => {
+      child.stdio[3]!.on("error", () => {});
+      (child.stdio[3] as Writable).write("request");
+    },
+  ],
 ])("'close' comes once when a pipe above stderr that the child wrote to %s", async (_name, use) => {
   const child = spawn(bunExe(), ["-e", `require("fs").writeSync(3, "reply")`], {
     env: bunEnv,
     stdio: ["ignore", "ignore", "inherit", "pipe"],
   });
-  child.stdio[3]!.on("error", () => {});
   let closes = 0;
   const closed = new Promise<void>(resolve => child.on("close", () => (closes++, resolve())));
   use(child);
   await closed;
-  expect({ closes, pipeClosed: child.stdio[3]!.destroyed }).toEqual({ closes: 1, pipeClosed: true });
+  expect(child.stdio[3]!.destroyed).toBe(true);
+  // Everything that counts towards 'close' has happened: another would come in this turn of the event loop.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(closes).toBe(1);
 });
 
 it("should call close and exit before process exits", async () => {

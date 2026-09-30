@@ -65,7 +65,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
-import { dlopen, FFIType } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
@@ -3348,7 +3348,7 @@ describe.each(realpathImplementations)("realpath %s POSIX paths", (_name, realpa
     const compile = spawnSync({ cmd: [posixCc!, "-dynamiclib", "-o", libraryPath, join(root, "path.c")], env: bunEnv });
     expect(compile.stderr.toString()).toBe("");
     expect(compile.exitCode).toBe(0);
-    const library = dlopen(libraryPath, { fd_path: { args: [FFIType.i32, FFIType.buffer], returns: FFIType.i32 } });
+    const library = dlopen(libraryPath, { fd_path: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 } });
     try {
       const file = join(root, "file.txt");
       const first = join(root, "first");
@@ -3360,7 +3360,7 @@ describe.each(realpathImplementations)("realpath %s POSIX paths", (_name, realpa
         const fd = openSync(input, "r");
         try {
           const output = Buffer.alloc(1024);
-          expect(library.symbols.fd_path(fd, output)).toBe(0);
+          expect(library.symbols.fd_path(fd, ptr(output))).toBe(0);
           const expected = output.subarray(0, output.indexOf(0)).toString();
           expect(await realpath(input)).toBe(expected);
           expect(await realpath(Buffer.from(input), { encoding: "buffer" })).toEqual(Buffer.from(expected));

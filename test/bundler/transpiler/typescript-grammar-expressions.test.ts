@@ -83,6 +83,18 @@ describe("a colon after parentheses between the question mark and the colon of a
   });
 
   test.each([
+    ["x = a ? <T>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+    ["x = a ? <T>() => (b) : c => d;", "x = a ? () => b : (c) => d;\n"],
+    ["x = a ? <T>(y: T) => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
+    ["x = a ? <T extends U>(y: T) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
+    ["x = a ? <T>(...y: T[]) => (b) : c => d;", "x = a ? (...y) => b : (c) => d;\n"],
+    ["x = a ? async <T>(y: T) => (b) : c => d;", "x = a ? async (y) => b : (c) => d;\n"],
+    ["x = a ? async <T>() => (b) : c => d;", "x = a ? async () => b : (c) => d;\n"],
+  ])("in the body after type parameters, whatever the parameters are: %s", (source, expected) => {
+    expect(ts.transformSync(source)).toBe(expected);
+  });
+
+  test.each([
     ["x = a ? y => ({ y }) : z => ({ z });", "x = a ? (y) => ({ y }) : (z) => ({ z });\n"],
     ["x = a ? (y) => (b) : c => d;", "x = a ? (y) => b : (c) => d;\n"],
   ])("the same with the tsx loader: %s", (source, expected) => {

@@ -4,17 +4,17 @@ use crate::core::UTF16Offset;
 use crate::printer::emittextwriter::EmitTextWriter;
 
 pub struct TrailingSemicolonDeferringWriter<'w> {
-    inner: &'w mut dyn EmitTextWriter,
+    inner: Box<dyn EmitTextWriter + 'w>,
     has_pending_semicolon: bool,
 }
 
-pub fn get_trailing_semicolon_deferring_writer(
-    writer: &mut dyn EmitTextWriter,
-) -> TrailingSemicolonDeferringWriter<'_> {
-    TrailingSemicolonDeferringWriter {
+pub fn get_trailing_semicolon_deferring_writer<'w>(
+    writer: Box<dyn EmitTextWriter + 'w>,
+) -> Box<dyn EmitTextWriter + 'w> {
+    Box::new(TrailingSemicolonDeferringWriter {
         inner: writer,
         has_pending_semicolon: false,
-    }
+    })
 }
 
 impl TrailingSemicolonDeferringWriter<'_> {

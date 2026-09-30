@@ -252,16 +252,18 @@ impl<'a> Checker<'a> {
                 None,
             )
         };
-        let emit_context = node_builder.emit_context(self);
-        let mut printer_ = if never_ascii_escape {
-            create_printer_with_remove_comments_omit_trailing_semicolon_never_ascii_escape(
-                a,
-                emit_context,
-            )
-        } else {
-            create_printer_with_remove_comments_omit_trailing_semicolon(a, emit_context)
-        };
-        printer_.write(entity, source_file, &mut *writer);
+        {
+            let emit_context = node_builder.emit_context(self);
+            let mut printer_ = if never_ascii_escape {
+                create_printer_with_remove_comments_omit_trailing_semicolon_never_ascii_escape(
+                    a,
+                    emit_context,
+                )
+            } else {
+                create_printer_with_remove_comments_omit_trailing_semicolon(a, emit_context)
+            };
+            printer_.write(entity, source_file, &mut *writer);
+        }
         writer.string().to_vec()
     }
 
@@ -315,18 +317,21 @@ impl<'a> Checker<'a> {
         if !enclosing_declaration.is_nil() {
             source_file = get_source_file_of_node(a, enclosing_declaration);
         }
-        let emit_context = node_builder.emit_context(self);
-        let mut p = create_printer_with_remove_comments_omit_trailing_semicolon_never_ascii_escape(
-            a,
-            emit_context,
-        );
-        if flags.intersects(TypeFormatFlags::MULTILINE_OBJECT_LITERALS) {
-            let mut writer = new_text_writer(b"\n", 0);
+        // Upstream makes the printer before it picks the writer: the writer outlives the printer here.
+        let mut writer = if flags.intersects(TypeFormatFlags::MULTILINE_OBJECT_LITERALS) {
+            new_text_writer(b"\n", 0)
+        } else {
+            get_single_line_string_writer()
+        };
+        {
+            let emit_context = node_builder.emit_context(self);
+            let mut p =
+                create_printer_with_remove_comments_omit_trailing_semicolon_never_ascii_escape(
+                    a,
+                    emit_context,
+                );
             p.write(sig, source_file, &mut *writer);
-            return writer.string().to_vec();
         }
-        let mut writer = get_single_line_string_writer();
-        p.write(sig, source_file, &mut *writer);
         writer.string().to_vec()
     }
 
@@ -362,9 +367,11 @@ impl<'a> Checker<'a> {
         if !enclosing_declaration.is_nil() {
             source_file = get_source_file_of_node(a, enclosing_declaration);
         }
-        let emit_context = node_builder.emit_context(self);
-        let mut printer_ = create_printer_with_remove_comments(a, emit_context);
-        printer_.write(predicate, source_file, &mut *writer);
+        {
+            let emit_context = node_builder.emit_context(self);
+            let mut printer_ = create_printer_with_remove_comments(a, emit_context);
+            printer_.write(predicate, source_file, &mut *writer);
+        }
         writer.string().to_vec()
     }
 

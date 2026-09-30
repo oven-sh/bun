@@ -183,6 +183,17 @@ pub(crate) fn escape_non_ascii_string(s: &[u8], quote_char: QuoteChar) -> Vec<u8
     b
 }
 
+pub(crate) fn escape_jsx_attribute_string(s: &[u8], quote_char: QuoteChar) -> Vec<u8> {
+    let mut b: Vec<u8> = Vec::with_capacity(s.len() + 2);
+    escape_string_worker(
+        s,
+        quote_char,
+        GetLiteralTextFlags::JSX_ATTRIBUTE_ESCAPE | GetLiteralTextFlags::NEVER_ASCII_ESCAPE,
+        &mut b,
+    );
+    b
+}
+
 fn can_use_original_text(a: Ast<'_>, node: NodeId, flags: GetLiteralTextFlags) -> bool {
     // A synthetic node has no original text, nor does a node without a parent: the containing SourceFile could not be found. An unterminated literal is not used either when the caller asked for proper termination.
     if node_is_synthesized(a, node)
@@ -217,7 +228,7 @@ pub(crate) fn get_literal_text(
 ) -> Vec<u8> {
     // If we don't need to downlevel and we can reach the original source text using the node's parent reference, then simply get the text as it was originally written.
     if !source_file.is_nil() && can_use_original_text(a, node, flags) {
-        return get_source_text_of_node_from_source_file(a, source_file, node, false).to_vec();
+        return get_source_text_of_node_from_source_file(a, source_file, node, false);
     }
 
     // If we can't reach the original source text, use the canonical form if it's a number, or a (possibly escaped) quoted form of the original text if it's string-like.
@@ -317,7 +328,7 @@ pub(crate) fn range_end_positions_are_on_same_line(
     range2: TextRange,
     source_file: NodeId,
 ) -> bool {
-    positions_are_on_same_line(a, range1.end() as isize, range2.end() as isize, source_file)
+    positions_are_on_same_line(a, range1.end(), range2.end(), source_file)
 }
 
 pub(crate) fn range_start_is_on_same_line_as_range_end(
@@ -329,7 +340,7 @@ pub(crate) fn range_start_is_on_same_line_as_range_end(
     positions_are_on_same_line(
         a,
         get_start_position_of_range(a, range1, source_file, false),
-        range2.end() as isize,
+        range2.end(),
         source_file,
     )
 }
@@ -342,7 +353,7 @@ pub(crate) fn range_end_is_on_same_line_as_range_start(
 ) -> bool {
     positions_are_on_same_line(
         a,
-        range1.end() as isize,
+        range1.end(),
         get_start_position_of_range(a, range2, source_file, false),
         source_file,
     )
@@ -353,39 +364,30 @@ pub(crate) fn get_start_position_of_range(
     r: TextRange,
     source_file: NodeId,
     include_comments: bool,
-) -> isize {
-    if position_is_synthesized(r.pos() as isize) {
+) -> i32 {
+    if position_is_synthesized(r.pos()) {
         return -1;
     }
     skip_trivia_ex(
         a.as_source_file(source_file).text(),
-        r.pos() as isize,
-        &SkipTriviaOptions {
+        r.pos(),
+        Some(&SkipTriviaOptions {
             stop_at_comments: include_comments,
             ..SkipTriviaOptions::default()
-        },
+        }),
     )
 }
 
-pub fn positions_are_on_same_line(
-    a: Ast<'_>,
-    pos1: isize,
-    pos2: isize,
-    source_file: NodeId,
-) -> bool {
+pub fn positions_are_on_same_line(a: Ast<'_>, pos1: i32, pos2: i32, source_file: NodeId) -> bool {
     get_lines_between_positions(a, source_file, pos1, pos2) == 0
 }
 
-pub fn get_lines_between_positions(
-    a: Ast<'_>,
-    source_file: NodeId,
-    pos1: isize,
-    pos2: isize,
-) -> isize {
+pub fn get_lines_between_positions(a: Ast<'_>, source_file: NodeId, pos1: i32, pos2: i32) -> isize {
     if pos1 == pos2 {
         return 0;
     }
-    let line_starts = get_ecma_line_starts(a, source_file);
+    let file = a.as_source_file(source_file);
+    let line_starts = get_ecma_line_starts(&file);
     let lower = if pos1 < pos2 { pos1 } else { pos2 };
     let is_negative = lower == pos2;
     let upper = if is_negative { pos1 } else { pos2 };
@@ -426,29 +428,29 @@ pub(crate) enum EndOf {
     Range(TextRange),
 }
 
-pub(crate) fn try_get_end(a: Ast<'_>, node: EndOf) -> Option<isize> {
+pub(crate) fn try_get_end(a: Ast<'_>, node: EndOf) -> Option<i32> {
     match node {
         EndOf::Node(v) => {
             if !v.is_nil() {
-                return Some(a.end(v) as isize);
+                return Some(a.end(v));
             }
         }
         EndOf::NodeList(v) => {
             if !v.is_nil() {
-                return Some(a.list_loc(v).end() as isize);
+                return Some(a.list_loc(v).end());
             }
         }
         EndOf::ModifierList(v) => {
             if !v.is_nil() {
-                return Some(a.modifier_list_loc(v).end() as isize);
+                return Some(a.modifier_list_loc(v).end());
             }
         }
-        EndOf::Range(v) => return Some(v.end() as isize),
+        EndOf::Range(v) => return Some(v.end()),
     }
     None
 }
 
-pub(crate) fn greatest_end(a: Ast<'_>, end: isize, nodes: &[EndOf]) -> isize {
+pub(crate) fn greatest_end(a: Ast<'_>, end: i32, nodes: &[EndOf]) -> i32 {
     let mut end = end;
     for node in nodes.iter().rev() {
         if let Some(node_end) = try_get_end(a, *node) {

@@ -36,7 +36,10 @@ use crate::checker::{
     pseudo_big_int_to_string,
 };
 use crate::collections::{CopyOnWriteMap, CopyOnWriteSet, Set};
-use crate::core::{LanguageVariant, ModuleKind, ModuleResolutionKind, new_text_range};
+use crate::core::{
+    LanguageVariant, ModuleKind, ModuleResolutionKind, RESOLUTION_MODE_ESM, RESOLUTION_MODE_NONE,
+    ResolutionMode, new_text_range,
+};
 use crate::modulespecifiers::{
     ImportModuleSpecifierEndingPreference, ImportModuleSpecifierPreference, ModuleSpecifierOptions,
     UserPreferences, count_path_components, get_module_specifiers,
@@ -93,7 +96,7 @@ pub struct NodeBuilderLinks {
 // `specifierCache` is a module.ModeAwareCache upstream: a map keyed by the name and the resolution mode.
 #[derive(Default)]
 pub struct NodeBuilderSymbolLinks {
-    pub specifier_cache: HashMap<(Vec<u8>, ModuleKind), Vec<u8>>,
+    pub specifier_cache: HashMap<(Vec<u8>, ResolutionMode), Vec<u8>>,
 }
 
 // `host` is the program of the checker and has no field here.
@@ -687,10 +690,11 @@ impl NodeBuilderImpl {
         }
         // call to ensure symbol is resolved
         c.get_type_from_type_node(node);
-        match c.symbol_node_links.try_get(node) {
-            Some(links) => links.resolved_symbol,
-            None => SymbolId::NIL,
+        let links = c.symbol_node_links.try_get(node);
+        if links.is_nil() {
+            return SymbolId::NIL;
         }
+        c.symbol_node_links[links].resolved_symbol
     }
 
     pub(crate) fn existing_type_node_is_not_reference_or_is_reference_with_compatible_type_argument_count(
@@ -819,8 +823,11 @@ impl NodeBuilderImpl {
                     return name;
                 }
             }
-            if c.value_symbol_links.has(symbol) {
-                let name_type = c.value_symbol_links.get(symbol).name_type;
+            if c.value_symbol_links_has(symbol) {
+                let name_type = {
+                    let links = c.value_symbol_links_get(symbol);
+                    c.value_symbol_links[links].name_type
+                };
                 if !name_type.is_nil()
                     && c.types[name_type]
                         .flags
@@ -967,22 +974,22 @@ impl NodeBuilderImpl {
             let mut specifier: Vec<u8> = Vec::new();
             let mut attributes = NodeId::NIL;
             let module_resolution_kind = c.compiler_options.get_module_resolution_kind();
-            let is_node_resolution = module_resolution_kind == ModuleResolutionKind::Node16
-                || module_resolution_kind == ModuleResolutionKind::NodeNext;
+            let is_node_resolution = module_resolution_kind == ModuleResolutionKind::NODE16
+                || module_resolution_kind == ModuleResolutionKind::NODE_NEXT;
             if is_node_resolution {
                 // An `import` type directed at an esm format file is only going to resolve in esm mode - set the esm mode assertion
                 if !target_file.is_nil()
                     && !context_file.is_nil()
-                    && c.program.get_emit_module_format_of_file(target_file) == ModuleKind::ESNext
+                    && c.program.get_emit_module_format_of_file(target_file) == ModuleKind::ES_NEXT
                     && c.program.get_emit_module_format_of_file(target_file)
                         != c.program.get_emit_module_format_of_file(context_file)
                 {
-                    specifier = self.get_specifier_for_module_symbol(c, root, ModuleKind::ESNext);
+                    specifier = self.get_specifier_for_module_symbol(c, root, ModuleKind::ES_NEXT);
                     attributes = self.new_resolution_mode_attributes(c, b"import");
                 }
             }
             if specifier.is_empty() {
-                specifier = self.get_specifier_for_module_symbol(c, root, ModuleKind::None);
+                specifier = self.get_specifier_for_module_symbol(c, root, RESOLUTION_MODE_NONE);
             }
             if !self
                 .ctx(c)
@@ -993,10 +1000,10 @@ impl NodeBuilderImpl {
                 let old_specifier = specifier.clone();
                 if is_node_resolution {
                     // We might be able to write a portable import type using a mode override; try specifier generation again, but with a different mode set
-                    let mut swapped_mode = ModuleKind::ESNext;
-                    if c.program.get_emit_module_format_of_file(context_file) == ModuleKind::ESNext
+                    let mut swapped_mode = ModuleKind::ES_NEXT;
+                    if c.program.get_emit_module_format_of_file(context_file) == ModuleKind::ES_NEXT
                     {
-                        swapped_mode = ModuleKind::CommonJS;
+                        swapped_mode = ModuleKind::COMMON_JS;
                     }
                     specifier = self.get_specifier_for_module_symbol(c, root, swapped_mode);
                     if bun_core::strings::contains(&specifier, b"/node_modules/") {
@@ -1004,7 +1011,7 @@ impl NodeBuilderImpl {
                         specifier = old_specifier.clone();
                     } else {
                         let mut mode_str: &[u8] = b"require";
-                        if swapped_mode == ModuleKind::ESNext {
+                        if swapped_mode == ModuleKind::ES_NEXT {
                             mode_str = b"import";
                         }
                         attributes = self.new_resolution_mode_attributes(c, mode_str);
@@ -1307,7 +1314,7 @@ impl NodeBuilderImpl {
                 .iter()
                 .any(|d| has_non_global_augmentation_external_module_symbol(a, *d))
         {
-            let specifier = self.get_specifier_for_module_symbol(c, symbol, ModuleKind::None);
+            let specifier = self.get_specifier_for_module_symbol(c, symbol, RESOLUTION_MODE_NONE);
             self.ctx_mut(c).approximate_length += 2 + specifier.len() as isize;
             return self.new_string_literal(c, &specifier);
         }
@@ -1381,9 +1388,9 @@ pub(crate) fn can_use_property_access(name: &[u8]) -> bool {
     }
     // Upstream notes that Strada only tested the first character with isIdentifierStart here.
     if let Some(rest) = name.strip_prefix(b"#") {
-        return name.len() > 1 && is_identifier_text(rest, LanguageVariant::Standard);
+        return name.len() > 1 && is_identifier_text(rest, LanguageVariant::STANDARD);
     }
-    is_identifier_text(name, LanguageVariant::Standard)
+    is_identifier_text(name, LanguageVariant::STANDARD)
 }
 
 pub(crate) fn starts_with_single_or_double_quote(str: &[u8]) -> bool {
@@ -1404,8 +1411,11 @@ impl NodeBuilderImpl {
         c: &mut Checker<'_>,
         symbol: SymbolId,
     ) -> Vec<u8> {
-        if c.value_symbol_links.has(symbol) {
-            let name_type = c.value_symbol_links.get(symbol).name_type;
+        if c.value_symbol_links_has(symbol) {
+            let name_type = {
+                let links = c.value_symbol_links_get(symbol);
+                c.value_symbol_links[links].name_type
+            };
             if name_type.is_nil() {
                 return Vec::new();
             }
@@ -1417,7 +1427,7 @@ impl NodeBuilderImpl {
                     LiteralValue::Number(v) => crate::jsnum::Number(v).string(),
                     _ => Vec::new(),
                 };
-                if !is_identifier_text(&name, LanguageVariant::Standard)
+                if !is_identifier_text(&name, LanguageVariant::STANDARD)
                     && !is_numeric_literal_name(&name)
                 {
                     return c.value_to_string(&value);
@@ -1481,8 +1491,11 @@ impl NodeBuilderImpl {
                 if is_computed_property_name(a, name)
                     && !sym.check_flags.intersects(CheckFlags::LATE)
                 {
-                    if c.value_symbol_links.has(symbol) {
-                        let name_type = c.value_symbol_links.get(symbol).name_type;
+                    if c.value_symbol_links_has(symbol) {
+                        let name_type = {
+                            let links = c.value_symbol_links_get(symbol);
+                            c.value_symbol_links[links].name_type
+                        };
                         if !name_type.is_nil()
                             && c.types[name_type]
                                 .flags
@@ -1677,7 +1690,7 @@ impl NodeBuilderImpl {
                         .iter()
                         .any(|d| has_non_global_augmentation_external_module_symbol(a, *d));
                     let name = if is_module {
-                        self.get_specifier_for_module_symbol(c, parent, ModuleKind::None)
+                        self.get_specifier_for_module_symbol(c, parent, RESOLUTION_MODE_NONE)
                     } else {
                         Vec::new()
                     };
@@ -1848,7 +1861,7 @@ impl NodeBuilderImpl {
         self,
         c: &mut Checker<'_>,
         symbol: SymbolId,
-        override_import_mode: ModuleKind,
+        override_import_mode: ResolutionMode,
     ) -> Vec<u8> {
         let a = c.ast;
         let symbol_name = a.sym(symbol).name;
@@ -1867,12 +1880,12 @@ impl NodeBuilderImpl {
             }
         }
         if file.is_nil() && is_ambient_module_symbol_name(symbol_name) {
-            return strip_quotes(symbol_name);
+            return strip_quotes(symbol_name).to_vec();
         }
         let context_file = self.ctx(c).enclosing_file;
         if context_file.is_nil() {
             if is_ambient_module_symbol_name(symbol_name) {
-                return strip_quotes(symbol_name);
+                return strip_quotes(symbol_name).to_vec();
             }
             let module_file = get_source_file_of_module(a, symbol);
             return a.as_source_file(module_file).file_name().to_vec();
@@ -1888,11 +1901,11 @@ impl NodeBuilderImpl {
                 try_get_module_specifier_from_declaration(a, enclosing_declaration);
         }
         let mut resolution_mode = override_import_mode;
-        if resolution_mode == ModuleKind::None && !original_module_specifier.is_nil() {
+        if resolution_mode == RESOLUTION_MODE_NONE && !original_module_specifier.is_nil() {
             resolution_mode = c
                 .program
                 .get_mode_for_usage_location(context_file, original_module_specifier);
-        } else if resolution_mode == ModuleKind::None {
+        } else if resolution_mode == RESOLUTION_MODE_NONE {
             resolution_mode = c.program.get_default_resolution_mode_for_file(context_file);
         }
         let cache_key = (
@@ -1913,7 +1926,7 @@ impl NodeBuilderImpl {
         // For declaration bundles the specifier is generated relative to the common source dir, as the declaration emitter does for ambient module declarations: a non-relative specifier preference does that.
         let specifier_pref = ImportModuleSpecifierPreference::ProjectRelative;
         let mut ending_pref = ImportModuleSpecifierEndingPreference::None;
-        if resolution_mode == ModuleKind::ESNext {
+        if resolution_mode == RESOLUTION_MODE_ESM {
             ending_pref = ImportModuleSpecifierEndingPreference::Js;
         }
         let all_specifiers = get_module_specifiers(
@@ -2067,7 +2080,12 @@ impl NodeBuilderImpl {
             .flags
             .intersects(Flags::GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS);
         if generate_names {
-            if let Some(cached) = self.ctx(c).type_parameter_names.get(&type_parameter) {
+            if let Some(cached) = self
+                .ctx(c)
+                .type_parameter_names
+                .get(&type_parameter)
+                .copied()
+            {
                 return cached;
             }
         }
@@ -2089,6 +2107,7 @@ impl NodeBuilderImpl {
                 .ctx(c)
                 .type_parameter_names_by_text_next_name_count
                 .get(&raw_text)
+                .copied()
                 .unwrap_or(0);
             let mut text = raw_text.clone();
             loop {
@@ -2951,7 +2970,8 @@ impl Checker<'_> {
             } else {
                 t
             };
-            self.value_symbol_links.get(symbol).resolved_type = resolved_type;
+            let links = self.value_symbol_links_get(symbol);
+            self.value_symbol_links[links].resolved_type = resolved_type;
             result.push(symbol);
         }
         result
@@ -3513,8 +3533,9 @@ impl NodeBuilderImpl {
             return true;
         }
         if let Some(&last) = self.ctx(c).reverse_mapped_stack.last() {
-            if let Some(links) = c.reverse_mapped_symbol_links.try_get(last) {
-                let property_type = links.property_type;
+            let links = c.reverse_mapped_symbol_links.try_get(last);
+            if !links.is_nil() {
+                let property_type = c.reverse_mapped_symbol_links[links].property_type;
                 if !property_type.is_nil()
                     && !c.types[property_type]
                         .object_flags
@@ -3528,10 +3549,11 @@ impl NodeBuilderImpl {
         if self.ctx(c).reverse_mapped_stack.len() < MAX_REVERSE_MAPPED_NESTING_INSPECTION_DEPTH {
             return false;
         }
-        let Some(property_links) = c.reverse_mapped_symbol_links.try_get(property_symbol) else {
+        let property_links = c.reverse_mapped_symbol_links.try_get(property_symbol);
+        if property_links.is_nil() {
             return false;
-        };
-        let prop_mapped_type = property_links.mapped_type;
+        }
+        let prop_mapped_type = c.reverse_mapped_symbol_links[property_links].mapped_type;
         if prop_mapped_type.is_nil() || c.types[prop_mapped_type].symbol.is_nil() {
             return false;
         }
@@ -3544,8 +3566,9 @@ impl NodeBuilderImpl {
             let Some(&prop) = stack.get(stack.len() - 1 - i) else {
                 break;
             };
-            if let Some(links) = c.reverse_mapped_symbol_links.try_get(prop) {
-                let mapped_type = links.mapped_type;
+            let links = c.reverse_mapped_symbol_links.try_get(prop);
+            if !links.is_nil() {
+                let mapped_type = c.reverse_mapped_symbol_links[links].mapped_type;
                 if !mapped_type.is_nil() && c.types[mapped_type].symbol == prop_mapped_symbol {
                     return true;
                 }
@@ -3607,7 +3630,7 @@ fn classify_property_name(
     if is_method && name == b"new" {
         return PropertyNameNodeKind::StringLiteral;
     }
-    if is_identifier_text(name, LanguageVariant::Standard) {
+    if is_identifier_text(name, LanguageVariant::STANDARD) {
         return PropertyNameNodeKind::Identifier;
     }
     if !string_named && is_numeric_literal_name(name) && crate::jsnum::from_string(name).0 >= 0.0 {
@@ -3736,10 +3759,11 @@ impl NodeBuilderImpl {
         is_method: bool,
     ) -> NodeId {
         let a = c.ast;
-        let Some(links) = c.value_symbol_links.try_get(symbol) else {
+        let links = c.value_symbol_links_try_get(symbol);
+        if links.is_nil() {
             return NodeId::NIL;
-        };
-        let name_type = links.name_type;
+        }
+        let name_type = c.value_symbol_links[links].name_type;
         if name_type.is_nil() {
             return NodeId::NIL;
         }
@@ -3775,7 +3799,7 @@ impl NodeBuilderImpl {
                 LiteralValue::String(v) => v.to_vec(),
                 _ => Vec::new(),
             };
-            if !is_identifier_text(&name, LanguageVariant::Standard)
+            if !is_identifier_text(&name, LanguageVariant::STANDARD)
                 && (string_named || !is_numeric_literal_name(&name))
             {
                 return self.f(c).new_string_literal(
@@ -3875,7 +3899,10 @@ impl NodeBuilderImpl {
                 let prop_declaration =
                     get_declaration_of_kind(a, property_symbol, Kind::PropertyDeclaration);
                 if property_type != write_type || parent_is_class && prop_declaration.is_nil() {
-                    let symbol_mapper = c.value_symbol_links.get(property_symbol).mapper;
+                    let symbol_mapper = {
+                        let links = c.value_symbol_links_get(property_symbol);
+                        c.value_symbol_links[links].mapper
+                    };
                     let getter_declaration =
                         get_declaration_of_kind(a, property_symbol, Kind::GetAccessor);
                     if !getter_declaration.is_nil() {
@@ -3949,7 +3976,8 @@ impl NodeBuilderImpl {
                     type_elements.push(fake_getter_declaration);
 
                     let setter_param = c.new_symbol(SymbolFlags::FUNCTION_SCOPED_VARIABLE, b"arg");
-                    c.value_symbol_links.get(setter_param).resolved_type = write_type;
+                    let links = c.value_symbol_links_get(setter_param);
+                    c.value_symbol_links[links].resolved_type = write_type;
                     let void_type = c.void_type;
                     let fake_setter_signature = c.new_signature(
                         SignatureFlags::NONE,
@@ -5170,7 +5198,7 @@ impl NodeBuilderImpl {
                     return parent_name;
                 }
                 let member_name = symbol_name(a, t_symbol);
-                if is_identifier_text(&member_name, LanguageVariant::Standard) {
+                if is_identifier_text(&member_name, LanguageVariant::STANDARD) {
                     let member_identifier = self.f(c).new_identifier(&member_name);
                     let member_reference = self
                         .f(c)
@@ -5705,7 +5733,10 @@ impl NodeBuilderImpl {
                 return NodeListId::NIL;
             }
             let mut params = self.get_type_parameters_of_class_or_interface(c, target_symbol);
-            let target_mapper = c.value_symbol_links.get(next_symbol).mapper;
+            let target_mapper = {
+                let links = c.value_symbol_links_get(next_symbol);
+                c.value_symbol_links[links].mapper
+            };
             if !target_mapper.is_nil() {
                 for param in &mut params {
                     *param = c.map(target_mapper, *param);

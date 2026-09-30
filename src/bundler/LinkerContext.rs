@@ -458,6 +458,16 @@ impl<'a> LinkerContext<'a> {
         parts: core::ops::Range<u32>,
         mut each: impl FnMut(u32, u32, Option<u32>),
     ) {
+        self.imports_that_run(source_index, parts, &mut each);
+    }
+
+    /// `for_each_import_that_runs`, compiled once for all of its callers.
+    fn imports_that_run(
+        &self,
+        source_index: u32,
+        parts: core::ops::Range<u32>,
+        each: &mut dyn FnMut(u32, u32, Option<u32>),
+    ) {
         use bun_ast::ImportRecordFlags as Flags;
         let flags = self.graph.meta.items_flags();
         let records = &self.graph.ast.items_import_records()[source_index as usize];

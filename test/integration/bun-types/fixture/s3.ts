@@ -30,5 +30,5 @@ doFileOps(
   }),
 );
 
-s3.list({ prefix: "uploads/" }, { requestPayer: true });
-Bun.S3Client.list(null, { bucket: "my-bucket", requestPayer: true });
+s3.list({ prefix: "uploads/" }, { requestPayer: true, virtualHostedStyle: true });
+Bun.S3Client.list(null, { bucket: "my-bucket", requestPayer: true, virtualHostedStyle: true });

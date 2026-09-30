@@ -1437,7 +1437,14 @@ declare module "bun" {
       input?: S3ListObjectsOptions | null,
       options?: Pick<
         S3Options,
-        "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint" | "requestPayer"
+        | "accessKeyId"
+        | "secretAccessKey"
+        | "sessionToken"
+        | "region"
+        | "bucket"
+        | "endpoint"
+        | "virtualHostedStyle"
+        | "requestPayer"
       >,
     ): Promise<S3ListObjectsResponse>;
 
@@ -1478,7 +1485,14 @@ declare module "bun" {
       input?: S3ListObjectsOptions | null,
       options?: Pick<
         S3Options,
-        "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint" | "requestPayer"
+        | "accessKeyId"
+        | "secretAccessKey"
+        | "sessionToken"
+        | "region"
+        | "bucket"
+        | "endpoint"
+        | "virtualHostedStyle"
+        | "requestPayer"
       >,
     ): Promise<S3ListObjectsResponse>;
   }

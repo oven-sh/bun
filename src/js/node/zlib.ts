@@ -726,8 +726,7 @@ function createConvenienceMethod(ctor, sync, methodName, prepareOpts?) {
   }
 }
 
-// For hex and base64, Buffer.byteLength() also counts the characters that
-// Buffer.from() skips.
+// Not hex or base64: Buffer.byteLength() also counts the characters that Buffer.from() skips.
 function hasExactByteLength(encoding) {
   if (typeof encoding !== "string") return false;
   switch (StringPrototypeToLowerCase.$call(encoding)) {
@@ -745,23 +744,14 @@ function hasExactByteLength(encoding) {
   return false;
 }
 
-// zstdCompress() writes the input and ends the frame in separate calls, so
-// unlike zstdCompressSync() zstd cannot infer the input size: the frame header
-// gets no content size, and zstd sizes its tables for an unbounded stream.
-// Pledge the size, which is known up front.
-//
-// Port of withPledgedSrcSize() in Node, which is not in v26.10.0 or earlier:
-// https://github.com/nodejs/node/blob/fa4af164144545f15dbc46bc5fe72fef80da278a/lib/zlib.js#L813-L833
+// Port of https://github.com/nodejs/node/blob/fa4af164144545f15dbc46bc5fe72fef80da278a/lib/zlib.js#L813-L833
 function withPledgedSrcSize(buffer, opts) {
   if (opts?.pledgedSrcSize !== undefined) {
     return opts;
   }
   let pledgedSrcSize;
   if (typeof buffer === "string") {
-    // The stream encodes strings with defaultEncoding. Node pledges only for
-    // "utf8" and "utf-8", and leaves the other encodings for a later change:
-    // https://github.com/nodejs/node/pull/66358#discussion_r4123476025
-    // Bun also pledges for each encoding in which Buffer.byteLength() is exact.
+    // Node pledges only for "utf8" and "utf-8". Bun also pledges for each encoding with an exact byte length.
     const encoding = opts?.defaultEncoding;
     if (encoding == null || encoding === "utf8" || encoding === "utf-8") {
       pledgedSrcSize = Buffer.byteLength(buffer);

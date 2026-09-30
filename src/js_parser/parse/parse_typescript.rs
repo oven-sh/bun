@@ -80,8 +80,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // @(Expression) — parenthesized, any expression allowed
         if p.lexer.token == T::TOpenParen {
+            let open = p.lexer.loc();
             p.lexer.next()?;
             let expr = p.parse_expr(Level::Lowest)?;
+            if let Some(starts) = &mut p.starts_for_parse_only
+                && starts.is_lint
+            {
+                starts.wrappers.parenthesized(expr, open, p.lexer.loc());
+            }
             p.lexer.expect(T::TCloseParen)?;
             return Ok(expr);
         }
@@ -114,6 +120,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !Self::IS_TYPESCRIPT_ENABLED {
                         p.lexer.unexpected()?;
                         return Err(crate::Error::SyntaxError);
+                    }
+                    if let Some(starts) = &mut p.starts_for_parse_only {
+                        starts.wrappers.non_null(expr, p.lexer.loc());
                     }
                     p.lexer.next()?;
                 }

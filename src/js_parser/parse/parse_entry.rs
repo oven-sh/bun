@@ -553,7 +553,7 @@ impl<'a> Parser<'a> {
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
-        p.starts_for_parse_only = Some(Box::default());
+        p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }

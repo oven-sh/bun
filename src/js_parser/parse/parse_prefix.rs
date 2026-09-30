@@ -47,6 +47,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
+        if !SCAN_ONLY && p.is_lint_parse() {
+            return Self::pfx_t_open_paren_for_lint(p, loc, level, flags);
+        }
+
         // Arrow functions aren't allowed in the middle of expressions
         if level.gt(Level::Assign) {
             // Allow "in" inside parentheses
@@ -69,6 +73,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         )
+    }
+
+    /// `(` of a lint parse, after it: what the parentheses hold is recorded, the parameters of an arrow function are not.
+    #[cold]
+    #[inline(never)]
+    fn pfx_t_open_paren_for_lint(
+        p: &mut Self,
+        loc: bun_ast::Loc,
+        level: Level,
+        flags: EFlags,
+    ) -> PResult<Expr> {
+        if level.gt(Level::Assign) {
+            let old_allow_in = p.allow_in;
+            p.allow_in = true;
+
+            let mut value = p.parse_expr(Level::Lowest)?;
+            p.mark_expr_as_parenthesized(&mut value);
+            let close = p.lexer.loc();
+            p.lexer.expect(T::TCloseParen)?;
+
+            p.allow_in = old_allow_in;
+            if let Some(starts) = &mut p.starts_for_parse_only {
+                starts.wrappers.parenthesized(value, loc, close);
+            }
+            return Ok(value);
+        }
+
+        let value = p.parse_paren_expr(
+            loc,
+            level,
+            ParenExprOpts {
+                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                ..Default::default()
+            },
+        )?;
+        // An arrow function starts at the "(", and what parentheses hold starts after it.
+        if value.loc.start != loc.start
+            && let Some(starts) = &mut p.starts_for_parse_only
+        {
+            starts.wrappers.parenthesized_before(value, loc, &p.lexer);
+        }
+        Ok(value)
     }
 
     #[inline]
@@ -958,6 +1004,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if Self::IS_TYPESCRIPT_ENABLED {
+            if p.starts_for_parse_only.is_some() {
+                return Self::pfx_t_less_than_for_lint(p, loc, level, errors, flags);
+            }
+
             // This is either an old-style type cast or a generic lambda function
 
             // "<T>(x)"
@@ -987,6 +1037,134 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.unexpected()?;
         Err(crate::Error::SyntaxError)
+    }
+
+    /// `<T>x`, `<T>(x)` and `<T>(x) => {}` of a lint parse, at the `<`: an assertion is recorded around its whole operand.
+    #[cold]
+    #[inline(never)]
+    fn pfx_t_less_than_for_lint(
+        p: &mut Self,
+        loc: bun_ast::Loc,
+        level: Level,
+        mut errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> PResult<Expr> {
+        let had_pure_comment_before =
+            p.lexer.has_pure_comment_before && !p.options.ignore_dce_annotations;
+        let less_than = p.lexer.snapshot();
+        let result = p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking();
+        if result == SkipTypeParameterResult::DefinitelyTypeParameters {
+            p.lexer.expect(T::TOpenParen)?;
+            return p.parse_paren_expr(
+                loc,
+                level,
+                ParenExprOpts {
+                    force_arrow_fn: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let (type_node, greater_than, mut value) =
+            if result == SkipTypeParameterResult::CouldBeTypeCast {
+                // "<T>(x)" or "<T>(x) => {}": only the first has a type between "<" and ">".
+                let open = p.lexer.loc();
+                let assertion = Self::pfx_type_before_paren_for_lint(p, &less_than, open);
+                p.lexer.expect(T::TOpenParen)?;
+                let value = p.parse_paren_expr(loc, level, ParenExprOpts::default())?;
+                // An arrow function starts at the "<", and what parentheses hold starts after them.
+                if value.loc.start == loc.start {
+                    return Ok(value);
+                }
+                let (type_node, greater_than) = match assertion {
+                    Ok(assertion) => assertion,
+                    Err(rejected) => {
+                        if !p.lexer.is_log_disabled {
+                            let found = p
+                                .lexer
+                                .contents
+                                .get(rejected.loc.i()..rejected.end_i())
+                                .unwrap_or(&[]);
+                            p.log().add_range_error_fmt(
+                                Some(p.source),
+                                rejected,
+                                format_args!("Unexpected {}", bstr::BStr::new(found)),
+                            );
+                        }
+                        return Err(crate::Error::SyntaxError);
+                    }
+                };
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    starts.wrappers.parenthesized_before(value, open, &p.lexer);
+                }
+                (type_node, greater_than, value)
+            } else {
+                // "<T>x"
+                p.lexer.next()?;
+                let type_node = p.build_type_script_type(Level::Lowest)?;
+                let greater_than = p.lexer.loc();
+                p.lexer.expect_greater_than::<false>()?;
+                let value = p.parse_prefix(level, errors.as_deref_mut(), flags)?;
+                (type_node, greater_than, value)
+            };
+
+        // After a pure comment the caller marks the call that its own reading ends at: the operand ends there too.
+        let unary = if had_pure_comment_before {
+            Level::Postfix
+        } else {
+            Level::Prefix
+        };
+        let operand_level = if level.lt(unary) { unary } else { level };
+        p.parse_suffix(&mut value, operand_level, errors, flags)?;
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .wrappers
+                .type_assertion(value, loc, greater_than, type_node);
+        }
+        Ok(value)
+    }
+
+    /// Reads `<T>` as a type again from the "<" of `less_than`, up to the "(" at `open`, where the lexer ends: the type and where the ">" is, or the token that no type has there.
+    #[cold]
+    #[inline(never)]
+    fn pfx_type_before_paren_for_lint(
+        p: &mut Self,
+        less_than: &crate::lexer::LexerSnapshot<'a>,
+        open: bun_ast::Loc,
+    ) -> Result<(bun_ast::ts::Type, bun_ast::Loc), bun_ast::Range> {
+        let (msgs_len, errors, warnings) = {
+            let log = p.log();
+            (log.msgs.len(), log.errors, log.warnings)
+        };
+        let old_log_disabled = p.lexer.is_log_disabled;
+        p.lexer.restore(less_than);
+        p.lexer.is_log_disabled = true;
+        let read: PResult<(bun_ast::ts::Type, bun_ast::Loc)> = (|| {
+            p.lexer.next()?;
+            let type_node = p.build_type_script_type(Level::Lowest)?;
+            let greater_than = p.lexer.loc();
+            p.lexer.expect_greater_than::<false>()?;
+            if p.lexer.loc() != open {
+                return Err(crate::Error::Backtrack);
+            }
+            Ok((type_node, greater_than))
+        })();
+        let rejected = p.lexer.range();
+        p.lexer.is_log_disabled = old_log_disabled;
+        if let Ok(read) = read
+            && p.log().errors == errors
+        {
+            return Ok(read);
+        }
+
+        // No type stands there: what the reading logged goes, and the type parameters are read again up to the "(".
+        p.lexer.restore(less_than);
+        let _ = p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking();
+        let log = p.log();
+        log.msgs.truncate(msgs_len);
+        log.errors = errors;
+        log.warnings = warnings;
+        Err(rejected)
     }
 
     #[inline]

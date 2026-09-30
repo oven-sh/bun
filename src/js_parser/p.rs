@@ -223,6 +223,20 @@ pub struct StartsForParseOnly {
     pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
     /// What a lint parse keeps of the statements and class members that leave no node.
     pub erased: crate::parse::erased::ErasedTables,
+    /// What a lint parse keeps of the syntax around an expression that leaves no node.
+    pub wrappers: crate::parse::wrappers::Wrappers,
+    /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
+    pub(crate) is_lint: bool,
+}
+
+impl StartsForParseOnly {
+    /// The side table of `Parser::parse_for_lint`.
+    pub(crate) fn for_lint() -> Box<StartsForParseOnly> {
+        Box::new(StartsForParseOnly {
+            is_lint: true,
+            ..Default::default()
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -5469,6 +5483,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Whether `Parser::parse_for_lint` runs this parse.
+    #[inline]
+    pub(crate) fn is_lint_parse(&self) -> bool {
+        matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+    }
+
     #[cold]
     pub(crate) fn panic(&mut self, fmt: &'static str, args: core::fmt::Arguments) -> ! {
         self.panic_loc(fmt, args, None)
@@ -8401,6 +8421,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_records.truncate(snapshot.import_records_len);
         if let (Some(starts), Some(mark)) = (&mut self.starts_for_parse_only, snapshot.erased) {
             starts.erased.rewind(mark);
+        }
+        if let Some(starts) = &mut self.starts_for_parse_only {
+            starts.wrappers.rewind_to(snapshot.lexer.start);
         }
     }
 

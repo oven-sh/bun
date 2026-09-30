@@ -13,6 +13,7 @@ pub(crate) mod parse_stmt;
 pub mod parse_suffix;
 pub(crate) mod parse_typescript;
 pub(crate) mod type_sink;
+pub mod wrappers;
 
 use bun_collections::VecExt;
 

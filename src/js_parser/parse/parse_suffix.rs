@@ -20,14 +20,18 @@ enum Continuation {
 type CResult = core::result::Result<Continuation, Error>;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
+    fn sfx_handle_typescript_as(p: &mut Self, level: Level, left: &Expr) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
-            p.lexer.next()?;
-            p.skip_type_script_type(Level::Lowest)?;
+            if p.starts_for_parse_only.is_some() {
+                Self::sfx_typescript_as_for_lint(p, *left)?;
+            } else {
+                p.lexer.next()?;
+                p.skip_type_script_type(Level::Lowest)?;
+            }
 
             // These tokens are not allowed to follow a cast expression. This isn't
             // an outright error because it may be on a new line, in which case it's
@@ -57,6 +61,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Continuation::Next);
         }
         Ok(Continuation::Done)
+    }
+
+    /// `as T` or `satisfies T` of a lint parse, at the word: the type is built and recorded around `operand`.
+    #[cold]
+    #[inline(never)]
+    fn sfx_typescript_as_for_lint(p: &mut Self, operand: Expr) -> Result<(), Error> {
+        let keyword = p.lexer.loc();
+        let is_satisfies = p.lexer.raw() == b"satisfies";
+        p.lexer.next()?;
+        let type_node = p.build_type_script_type(Level::Lowest)?;
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .wrappers
+                .as_or_satisfies(operand, keyword, is_satisfies, type_node);
+        }
+        Ok(())
     }
 
     fn sfx_t_dot(
@@ -486,6 +506,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
+        left: &Expr,
     ) -> CResult {
         // Skip over TypeScript non-null assertions
         if p.lexer.has_newline_before {
@@ -497,6 +518,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts.wrappers.non_null(*left, p.lexer.loc());
+        }
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
 
@@ -1555,7 +1579,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TSlash => Self::sfx_t_slash(p, level, left),
                 T::TSlashEquals => Self::sfx_t_slash_equals(p, level, left),
                 T::TExclamation => {
-                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain)
+                    Self::sfx_t_exclamation(p, &mut optional_chain, old_optional_chain, left)
                 }
                 T::TBarBar => Self::sfx_t_bar_bar(p, level, left, flags),
                 T::TAmpersandAmpersand => Self::sfx_t_ampersand_ampersand(p, level, left, flags),
@@ -1596,7 +1620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     old_optional_chain,
                     left,
                 ),
-                _ => Self::sfx_handle_typescript_as(p, level),
+                _ => Self::sfx_handle_typescript_as(p, level, left),
             };
 
             match continuation? {

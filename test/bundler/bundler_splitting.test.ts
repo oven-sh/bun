@@ -1351,6 +1351,50 @@ describe("bundler", () => {
       { file: "/out/admin.js", stdout: "admin u" },
     ],
   });
+  // A fold puts go(), which holds import("./d.js"), into a chunk that admin.js loads. d.js then ranks before e.js. The chunk that e.js shares with d.js still repeats the import of e.js.
+  itBundled("splitting/MinChunkSizeChunkThatRepeatsImportIsLaidOutByItsEntryPoint", {
+    files: {
+      "/admin.js": `import { t } from "./t.js"; import { go } from "fpkg"; console.log("admin", t());`,
+      "/main.js": `console.log("main"); import("./e.js").then(m => console.log(m.name));`,
+      "/e.js": /* js */ `
+        import "./setup.cjs";
+        import { r } from "reader";
+        console.log("e", r());
+        export const name = "e";
+        import("./d.js").then(m => console.log(m.name));
+      `,
+      "/d.js": /* js */ `
+        import { r } from "reader";
+        import { t } from "./t.js";
+        import { go, v } from "fpkg";
+        console.log("d", r(), t(), v(), typeof go);
+        export const name = "d";
+        import("./d2.js");
+      `,
+      "/d2.js": `import { go, v } from "fpkg"; console.log("d2", v(), typeof go);`,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/t.js": `export function t() { return "t"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+      "/node_modules/reader/package.json": `{ "name": "reader", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/reader/index.js": /* js */ `
+        const cache = new Map([["app", globalThis.APP?.name]]);
+        export function r() { return "r " + cache.get("app"); }
+      `,
+      "/node_modules/fpkg/package.json": `{ "name": "fpkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/fpkg/index.js": /* js */ `
+        export function v() { return "v"; }
+        export function go() { return import("../../d.js"); }
+      `,
+    },
+    entryPoints: ["/admin.js", "/main.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main\nsetup\ne r app\ne\nd r app t v function\nd\nd2 v function" },
+      { file: "/out/admin.js", stdout: "admin t" },
+    ],
+  });
 
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {

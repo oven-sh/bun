@@ -109,9 +109,7 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
-// Counts the calls of then(), catch() and finally() on one query. The client must learn that a query
-// settled without them: a program can replace them, and finally() of a query is far more work than
-// one reaction.
+// Counts the then(), catch() and finally() calls on one query: the client must not call them to learn that it settled.
 function countReactionCalls(query: any) {
   const calls = { then: 0, catch: 0, finally: 0 };
   for (const name of ["then", "catch", "finally"] as const) {

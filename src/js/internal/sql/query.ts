@@ -324,13 +324,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 }
 
-/**
- * Calls `callback` when `query` settles, in the order that `query.finally(callback)` has. `finally()`
- * calls `then()` of `Query`, which starts an async function and makes closures and promises for each
- * query. User code can also replace both methods.
- */
+// Not `query.finally()`: it calls the replaceable `then()` of `Query`, which starts an async function for each query.
 function onQuerySettled(query: Query<any, any>, callback: () => void) {
-  // The promise that `$then()` returns rejects when `callback` throws, and nothing reads it.
   $pokePromiseAsHandled(query.$then(callback, callback));
 }
 

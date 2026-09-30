@@ -2922,6 +2922,12 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
 
+void GlobalObject::addBuiltinGlobal(const Identifier& privateName, JSValue value, unsigned attributes)
+{
+    GlobalPropertyInfo global { privateName, value, attributes | PropertyAttribute::DontDelete };
+    addStaticGlobals({ &global, 1 });
+}
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

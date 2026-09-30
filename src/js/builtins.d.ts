@@ -277,6 +277,17 @@ declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
 declare function $makeGetterTypeError(className: string, prop: string): Error;
 declare function $method(): TODO;
+// node:events. NodeEventEmitterPrototype.cpp defines these global variables when it creates EventEmitter.prototype.
+declare const $nodeEventsAddListener: typeof import("./builtins/EventEmitterPrototype").internalAddListener;
+declare const $nodeEventsApplyHandlers: typeof import("./builtins/EventEmitterPrototype").applyHandlers;
+declare const $nodeEventsCopyWithInserted: typeof import("./builtins/EventEmitterPrototype").copyWithInserted;
+declare const $nodeEventsCreateEmit: typeof import("./builtins/EventEmitterPrototype").createEmit;
+declare var $nodeEventsDefaultMaxListeners: number;
+declare const $nodeEventsEmitError: typeof import("./builtins/EventEmitterPrototype").emitError;
+declare const $nodeEventsKErrorMonitor: unique symbol;
+declare const $nodeEventsKShapeMode: unique symbol;
+declare const $nodeEventsOnceWrap: typeof import("./builtins/EventEmitterPrototype").internalOnceWrap;
+declare const $nodeEventsOverflowWarning: typeof import("./builtins/EventEmitterPrototype").overflowWarning;
 declare function $normalize(): TODO;
 declare function $parse(): TODO;
 declare function $path(): TODO;
@@ -327,6 +338,9 @@ declare function $evaluateCommonJSModule(
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
+
+/** JSC's `ownKeys` link-time constant: what `Reflect.ownKeys` does, also after a program replaces it. */
+declare function $ownKeys(target: object): (string | symbol)[];
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

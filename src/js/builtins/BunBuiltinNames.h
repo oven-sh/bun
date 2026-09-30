@@ -133,6 +133,17 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(nodeEventsAddListener) \
+    macro(nodeEventsApplyHandlers) \
+    macro(nodeEventsCopyWithInserted) \
+    macro(nodeEventsCreateEmit) \
+    macro(nodeEventsDefaultMaxListeners) \
+    macro(nodeEventsEmitError) \
+    macro(nodeEventsKErrorMonitor) \
+    macro(nodeEventsKShapeMode) \
+    macro(nodeEventsOnceWrap) \
+    macro(nodeEventsOverflowWarning) \
+    macro(nodeEventsPrototype) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \

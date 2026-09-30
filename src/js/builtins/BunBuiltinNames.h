@@ -136,15 +136,14 @@ using namespace JSC;
     macro(nodeEventsAddListener) \
     macro(nodeEventsApplyHandlers) \
     macro(nodeEventsCopyWithInserted) \
+    macro(nodeEventsCreateEmit) \
     macro(nodeEventsDefaultMaxListeners) \
     macro(nodeEventsEmitError) \
-    macro(nodeEventsEmitWithRejectionCapture) \
-    macro(nodeEventsKCapture) \
     macro(nodeEventsKErrorMonitor) \
-    macro(nodeEventsKRejection) \
     macro(nodeEventsKShapeMode) \
     macro(nodeEventsOnceWrap) \
     macro(nodeEventsOverflowWarning) \
+    macro(nodeEventsPrototype) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \

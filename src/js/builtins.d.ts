@@ -277,19 +277,14 @@ declare function $main(): TODO;
 declare function $makeDOMException(): TODO;
 declare function $makeGetterTypeError(className: string, prop: string): Error;
 declare function $method(): TODO;
-// node:events: the state that no emitter holds and the helpers of ./builtins/EventEmitterPrototype.ts. They are
-// own properties of the global object, which NodeEventEmitterPrototype.cpp defines.
+// node:events. NodeEventEmitterPrototype.cpp defines these on the global object when it creates EventEmitter.prototype.
 declare const $nodeEventsAddListener: typeof import("./builtins/EventEmitterPrototype").internalAddListener;
 declare const $nodeEventsApplyHandlers: typeof import("./builtins/EventEmitterPrototype").applyHandlers;
 declare const $nodeEventsCopyWithInserted: typeof import("./builtins/EventEmitterPrototype").copyWithInserted;
+declare const $nodeEventsCreateEmit: typeof import("./builtins/EventEmitterPrototype").createEmit;
 declare var $nodeEventsDefaultMaxListeners: number;
 declare const $nodeEventsEmitError: typeof import("./builtins/EventEmitterPrototype").emitError;
-declare const $nodeEventsEmitWithRejectionCapture: ReturnType<
-  typeof import("./builtins/EventEmitterPrototype").createEmitWithRejectionCapture
->;
-declare const $nodeEventsKCapture: unique symbol;
 declare const $nodeEventsKErrorMonitor: unique symbol;
-declare const $nodeEventsKRejection: unique symbol;
 declare const $nodeEventsKShapeMode: unique symbol;
 declare const $nodeEventsOnceWrap: typeof import("./builtins/EventEmitterPrototype").internalOnceWrap;
 declare const $nodeEventsOverflowWarning: typeof import("./builtins/EventEmitterPrototype").overflowWarning;

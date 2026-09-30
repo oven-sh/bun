@@ -462,52 +462,23 @@ let cachedInternalChildProcess;
 // in test/js/node/test/common/index.js). Static requires only — the builtin
 // bundler cannot rewrite variable-path requires. Extend the map as more
 // vendored tests need more internals.
-//
-// A module is behind a getter, so loading this file evaluates none of them:
-// between them they evaluate node:events, internal/validators and
-// internal/util/inspect, which a test of what its own code evaluates (see
-// nodeEventEmitterPrototype) must not find already loaded.
 export const exposedInternals = {
-  get "internal/streams/add-abort-signal"() {
-    return require("internal/streams/add-abort-signal");
-  },
-  get "internal/util/debuglog"() {
-    return require("internal/util/debuglog");
-  },
-  get "internal/async_context_frame"() {
-    return require("internal/async_context_frame");
-  },
-  get "internal/async_hooks"() {
-    return require("internal/async_hooks");
-  },
-  get "internal/webstreams/adapters"() {
-    return require("internal/webstreams_adapters");
-  },
-  get "internal/dgram"() {
-    return require("internal/dgram");
-  },
+  "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
+  "internal/util/debuglog": require("internal/util/debuglog"),
+  "internal/async_context_frame": require("internal/async_context_frame"),
+  "internal/async_hooks": require("internal/async_hooks"),
+  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
+  "internal/dgram": require("internal/dgram"),
   // Bun's real implementations, under the names node's tests import them by.
-  get "internal/validators"() {
-    return require("internal/validators");
-  },
-  get "internal/util/inspect"() {
-    return require("internal/util/inspect");
-  },
-  get "internal/freelist"() {
-    return require("internal/freelist");
-  },
+  "internal/validators": require("internal/validators"),
+  "internal/util/inspect": require("internal/util/inspect"),
+  "internal/freelist": require("internal/freelist"),
   // Node's internal/fixed_queue module IS the FixedQueue class.
-  get "internal/fixed_queue"() {
-    return require("internal/fixed_queue").FixedQueue;
-  },
-  get "internal/assert/myers_diff"() {
-    return require("internal/assert/myers_diff");
-  },
+  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/assert/myers_diff": require("internal/assert/myers_diff"),
   // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
   // is native, not a JS `codes` table, so nothing else is exposed here.
-  get "internal/errors"() {
-    return require("internal/errors");
-  },
+  "internal/errors": require("internal/errors"),
   // normalizeEncoding wraps the same Rust binding node:crypto and the
   // webstream adapters call; the rest are node's own JS helpers, ported
   // verbatim from lib/internal/util.js where Bun has no native equivalent.
@@ -603,17 +574,6 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   1,
 ) as (scenario: number) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
-
-/**
- * `EventEmitter.prototype` of node:events as native code gets it. Neither the call nor loading this module
- * evaluates node:events: a process in which nothing else has evaluated it gets the object before events.ts has
- * defined the methods on it. With `fresh`, a new object of the same class: one that nothing has read a method from.
- */
-export const nodeEventEmitterPrototype: (fresh?: boolean) => import("node:events").EventEmitter = $newCppFunction(
-  "InternalForTesting.cpp",
-  "jsFunction_nodeEventEmitterPrototype",
-  1,
-);
 
 interface setSocketOptionsFn {
   (socket: Bun.Socket, sendBuffer: 1, size: number): void;

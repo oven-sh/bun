@@ -80,9 +80,6 @@ enum class DOMStructureSlot : uint8_t {
     DOMFormDataIterator,
     FetchHeadersIterator,
     URLSearchParamsIterator,
-    // Not a wrapper class: Bun::nodeEventEmitterPrototype() keeps node:events' EventEmitter.prototype here, as the
-    // storedPrototype() of a plain-object Structure. JSEventEmitter above is the native emitter that `process` is.
-    NodeEventEmitter,
     Count,
 };
 

@@ -151,6 +151,7 @@ impl<'ast> Visitor<'ast> for Linter<'_, '_> {
     }
 
     fn visit_s_import(&mut self, node: &'ast S::Import, _: Loc) {
+        // A macro import and `bun:bundle` are not in the tree, not even as `S::Empty`: nothing declares their names.
         if let Some(name) = &node.default_name {
             self.context.declare(name.ref_);
         }

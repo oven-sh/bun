@@ -545,8 +545,10 @@ impl<'a> Checker<'a> {
 
     pub fn is_type_parameter_possibly_referenced(&mut self, tp: TypeId, node: NodeId) -> bool {
         fn contains_reference(c: &mut Checker<'_>, tp: TypeId, node: NodeId) -> bool {
+            // A walk that cannot go on proves nothing: the type parameter counts as possibly referenced.
             if !c.stack_check.is_safe_to_recurse() {
-                return c.stack_limit();
+                c.stack_limit::<()>();
+                return true;
             }
             let a = c.ast;
             match a.kind(node) {

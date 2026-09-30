@@ -17,13 +17,13 @@ pub fn write_code_frames<const ENABLE_ANSI_COLORS: bool>(
     diagnostics: &[Diagnostic],
     format_opts: &FormattingOptions<'_>,
 ) {
-    // The log lends its line tracker: diagnostics in the order of their positions cost one scan of each file.
-    let mut log = Log::init();
+    // The log of a file lends its line tracker: diagnostics in the order of their positions cost one scan of the file.
+    let mut logs: Vec<Log> = files.iter().map(|_| Log::init()).collect();
     for (i, diagnostic) in diagnostics.iter().enumerate() {
         if i > 0 {
             output.extend_from_slice(b"\n\n");
         }
-        let msg = to_msg(&mut log, files, diagnostic, format_opts);
+        let msg = to_msg(&mut logs, files, diagnostic, format_opts);
         let _ = msg.write_format::<ENABLE_ANSI_COLORS>(&mut VecWriter(output));
     }
     if !diagnostics.is_empty() {
@@ -33,7 +33,7 @@ pub fn write_code_frames<const ENABLE_ANSI_COLORS: bool>(
 
 /// A diagnostic as a message of Bun's log: its code starts the text, its related information becomes the notes.
 fn to_msg(
-    log: &mut Log,
+    logs: &mut [Log],
     files: &[SourceFile],
     diagnostic: &Diagnostic,
     format_opts: &FormattingOptions<'_>,
@@ -46,11 +46,11 @@ fn to_msg(
             Category::Warning => Kind::Warn,
             Category::Suggestion | Category::Message => Kind::Note,
         },
-        data: to_data(log, files, diagnostic, text, format_opts),
+        data: to_data(logs, files, diagnostic, text, format_opts),
         notes: diagnostic
             .related
             .iter()
-            .map(|related| to_data(log, files, related, Vec::new(), format_opts))
+            .map(|related| to_data(logs, files, related, Vec::new(), format_opts))
             .collect(),
         ..Default::default()
     }
@@ -58,7 +58,7 @@ fn to_msg(
 
 /// `text` holds what is printed in front of the message.
 fn to_data(
-    log: &mut Log,
+    logs: &mut [Log],
     files: &[SourceFile],
     diagnostic: &Diagnostic,
     mut text: Vec<u8>,
@@ -67,25 +67,26 @@ fn to_data(
     write_flattened_diagnostic_message(&mut text, &diagnostic.text, &diagnostic.chain, b"\n");
     Data {
         text: Cow::Owned(text),
-        location: to_location(log, files, diagnostic, format_opts),
+        location: to_location(logs, files, diagnostic, format_opts),
     }
 }
 
 /// Bun's location of where a diagnostic starts, under the file name that the plain format prints.
 fn to_location(
-    log: &mut Log,
+    logs: &mut [Log],
     files: &[SourceFile],
     diagnostic: &Diagnostic,
     format_opts: &FormattingOptions<'_>,
 ) -> Option<Location> {
-    let file = files.get(diagnostic.file?.0 as usize)?;
+    let index = diagnostic.file?.0 as usize;
+    let file = files.get(index)?;
     let range = Range {
         loc: Loc {
             start: i32::try_from(diagnostic.start).unwrap_or(i32::MAX),
         },
         len: i32::try_from(diagnostic.length).unwrap_or(i32::MAX),
     };
-    let mut location = tracked_location(log, file.source(), range)?;
+    let mut location = tracked_location(logs.get_mut(index)?, file.source(), range)?;
     location.file = Cow::Owned(tspath::convert_to_relative_path(
         file.file_name(),
         format_opts.compare_paths_options,

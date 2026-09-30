@@ -393,10 +393,8 @@ impl EventLoopCtx {
         // SAFETY: the thread's loop; same contract as `loop_mut`.
         unsafe { &mut *bun_uws_sys::Loop::get() }
     }
-    /// Refs the current loop. Returns whether that loop is `Bun.spawnSync`'s
-    /// isolated loop, which is the bit [`Self::loop_unref_for`] takes.
-    // Out of line, like `loop_unref_for`: `KeepAlive` inlines into several hundred callers.
-    #[inline(never)]
+    /// Refs the current loop and returns the bit for [`Self::loop_unref_for`].
+    #[inline(never)] // `KeepAlive::ref_` is inlined into several hundred callers.
     #[must_use]
     pub fn loop_ref(&self) -> bool {
         let spawn_sync_loop = self.is_spawn_sync_loop();

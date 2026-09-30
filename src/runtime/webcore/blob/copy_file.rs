@@ -167,6 +167,27 @@ impl CopyFile {
         )
     }
 
+    /// Empties a regular destination. Returns `true`, and empties nothing, when it is `source`'s file.
+    fn empty_destination(&mut self, source: &Stat) -> bun_sys::Result<bool> {
+        let dest = bun_sys::fstat(self.destination_fd)?;
+        if !bun_sys::S::ISREG(dest.st_mode as _) {
+            return Ok(false);
+        }
+        // An inode number of 0 means the file system reports no identity.
+        if dest.st_ino != 0 && dest.st_dev == source.st_dev && dest.st_ino == source.st_ino {
+            // `max_length` may be a stale cached size: never cut the file here.
+            self.read_len = SizeType::try_from(dest.st_size).expect("int cast");
+            return Ok(true);
+        }
+        if dest.st_size != 0 {
+            bun_sys::ftruncate(self.destination_fd, 0)?;
+        } else if source.st_size == 0 {
+            // An empty source writes nothing, so this is what updates the times.
+            let _ = bun_sys::ftruncate(self.destination_fd, 0);
+        }
+        Ok(false)
+    }
+
     pub(crate) fn do_close(&mut self) {
         let close_input = !matches!(
             self.destination_file_store.pathlike,
@@ -732,6 +753,15 @@ impl CopyFile {
             if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
                 return;
             }
+            // The caller closed its source fd, and the open above reused the number.
+            if self.destination_fd == self.source_fd {
+                self.system_error = Some(
+                    bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::fstat)
+                        .to_system_error(),
+                );
+                self.do_close();
+                return;
+            }
             // Do we need to open only one file?
         } else if self.source_fd == Fd::INVALID {
             self.destination_fd = self.destination_file_store.pathlike.fd();
@@ -755,6 +785,7 @@ impl CopyFile {
             // nothing to do for the Fd case
         }
 
+        // From the opened fd: the source path can name another file by now.
         let stat: Stat = match bun_sys::fstat(self.source_fd) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
@@ -775,25 +806,17 @@ impl CopyFile {
             self.destination_file_store.pathlike,
             PathOrFileDescriptor::Path(_)
         ) {
-            let dest_stat = match bun_sys::fstat(self.destination_fd) {
-                bun_sys::Result::Ok(result) => result,
+            match self.empty_destination(&stat) {
+                bun_sys::Result::Ok(false) => {}
+                bun_sys::Result::Ok(true) => {
+                    self.do_close();
+                    return;
+                }
                 bun_sys::Result::Err(err) => {
-                    self.system_error = Some(err.to_system_error());
-                    self.do_close();
-                    return;
-                }
-            };
-            if bun_sys::S::ISREG(dest_stat.st_mode as _) {
-                if dest_stat.st_dev == stat.st_dev && dest_stat.st_ino == stat.st_ino {
-                    // `max_length` may be a stale cached size: never cut the file here.
-                    self.read_len = SizeType::try_from(dest_stat.st_size).expect("int cast");
-                    self.do_close();
-                    return;
-                }
-                if dest_stat.st_size != 0
-                    && let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, 0)
-                {
-                    self.system_error = Some(err.to_system_error());
+                    self.system_error = Some(
+                        err.with_path(self.destination_file_store.pathlike.path().slice())
+                            .to_system_error(),
+                    );
                     self.do_close();
                     return;
                 }

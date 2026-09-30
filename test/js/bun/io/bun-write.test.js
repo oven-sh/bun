@@ -1,3 +1,4 @@
+import { dlopen } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
@@ -7,7 +8,9 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
+  libcPathForDlopen,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
@@ -331,7 +334,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
           }
         },
       ],
-      ["a slice of the file as the source", ({ file }) => Bun.write(file, Bun.file(file).slice(10, 20))],
       ["a Response around the file as the source", ({ file }) => Bun.write(file, new Response(Bun.file(file)))],
     ])("%s leaves the file intact", async (_, write) => {
       using dir = tempDir("bun-write-same-file", { "file.txt": content });
@@ -348,6 +350,26 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    // Compared with another destination, so the row holds once the copy honours a source slice().
+    it.skipIf(IS_UV_FS_COPYFILE_DISABLED)(
+      "a slice of the file as the source gives the same result as for another destination",
+      async () => {
+        using dir = tempDir("bun-write-same-file-slice", { "file.txt": content });
+        const file = join(String(dir), "file.txt");
+        const other = join(String(dir), "other.txt");
+
+        const onOther = await Bun.write(other, Bun.file(file).slice(10, 20));
+        const expected = fs.readFileSync(other, "utf8");
+        const onItself = await Bun.write(file, Bun.file(file).slice(10, 20));
+        const actual = fs.readFileSync(file, "utf8");
+        expect({ written: onItself, length: actual.length, same: actual === expected }).toEqual({
+          written: onOther,
+          length: expected.length,
+          same: true,
+        });
+      },
+    );
+
     // Windows still cuts the file to the size the destination BunFile cached.
     it.todoIf(isWindows)("a destination that cached its size before the file grew does not cut the file", async () => {
       using dir = tempDir("bun-write-same-file-stale-size", { "file.txt": "0123456789" });
@@ -363,16 +385,113 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
-    it("a longer existing destination is still replaced", async () => {
+    it.skipIf(!isLinux)("one character device as the source and the destination is still copied", async () => {
+      expect(fs.statSync("/dev/full").isCharacterDevice()).toBe(true);
+      await expect(Bun.write("/dev/full", Bun.file("/dev/full"))).rejects.toThrow(
+        expect.objectContaining({ code: "ENOSPC" }),
+      );
+    });
+  });
+
+  describe("Bun.write(dest, Bun.file(src)) onto an existing dest", () => {
+    const content = Buffer.alloc(100_000, "0123456789").toString();
+
+    it("a longer destination is replaced", async () => {
       using dir = tempDir("bun-write-shorter-source", { "src.txt": "short", "dest.txt": content });
       const dest = join(String(dir), "dest.txt");
       const written = await Bun.write(dest, Bun.file(join(String(dir), "src.txt")));
       expect({ written, content: fs.readFileSync(dest, "utf8") }).toEqual({ written: 5, content: "short" });
     });
 
-    it.skipIf(isWindows)("a destination path that is not a regular file is still written", async () => {
+    it.skipIf(isWindows)("a destination path that is not a regular file is written", async () => {
+      expect(fs.statSync("/dev/null").isCharacterDevice()).toBe(true);
       using dir = tempDir("bun-write-dev-null", { "src.txt": "short" });
       expect(await Bun.write("/dev/null", Bun.file(join(String(dir), "src.txt")))).toBe(5);
+    });
+
+    it.skipIf(!isLinux)("an empty source updates the times of an empty destination", async () => {
+      using dir = tempDir("bun-write-empty-onto-empty", { "src.txt": "", "dest.txt": "" });
+      const dest = join(String(dir), "dest.txt");
+      const old = new Date("2001-01-01T00:00:00Z");
+      fs.utimesSync(dest, old, old);
+
+      const written = await Bun.write(dest, Bun.file(join(String(dir), "src.txt")));
+      expect({ written, updated: fs.statSync(dest).mtimeMs > old.getTime() }).toEqual({ written: 0, updated: true });
+    });
+
+    it.skipIf(isWindows).each(["path", "fd"])(
+      "a directory %s as the source rejects and leaves the destination intact",
+      async kind => {
+        using dir = tempDir("bun-write-directory-source", { "dest.txt": content });
+        const dest = join(String(dir), "dest.txt");
+        const fd = kind === "fd" ? fs.openSync(String(dir), "r") : undefined;
+        try {
+          await expect(Bun.write(dest, Bun.file(fd ?? String(dir)))).rejects.toThrow("That doesn't work on folders");
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd);
+        }
+        expect(fs.readFileSync(dest, "utf8") === content).toBe(true);
+      },
+    );
+
+    // In a child process: the closed fd number is free, and another test in this process could take it.
+    it.skipIf(!isLinux)("a source fd that is already closed rejects and leaves the destination intact", async () => {
+      using dir = tempDir("bun-write-closed-source-fd", { "src.txt": "source", "dest.txt": content });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const fs = require("fs");
+            const fd = fs.openSync("src.txt", "r");
+            fs.closeSync(fd);
+            Bun.write("dest.txt", Bun.file(fd)).then(
+              written => console.log(JSON.stringify({ written })),
+              error => console.log(JSON.stringify({ code: error.code, size: fs.statSync("dest.txt").size })),
+            );
+          `,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: exitCode === 0 ? JSON.parse(stdout) : { stdout, stderr }, exitCode }).toEqual({
+        result: { code: "EBADF", size: content.length },
+        exitCode: 0,
+      });
+    });
+
+    // A memfd sealed with F_SEAL_SHRINK opens for writing, and every ftruncate on it fails with EPERM.
+    it.skipIf(!isLinux)("a destination that cannot be emptied rejects, names it, and keeps its bytes", async () => {
+      const MFD_ALLOW_SEALING = 2;
+      const F_ADD_SEALS = 1033;
+      const F_SEAL_SHRINK = 2;
+      const libc = dlopen(libcPathForDlopen(), {
+        memfd_create: { args: ["ptr", "u32"], returns: "i32" },
+        fcntl: { args: ["i32", "i32", "i32"], returns: "i32" },
+      });
+      using dir = tempDir("bun-write-sealed-destination", { "src.txt": "short" });
+      const fd = libc.symbols.memfd_create(Buffer.from("sealed\0"), MFD_ALLOW_SEALING);
+      try {
+        expect(fd).toBeGreaterThan(2);
+        fs.writeSync(fd, content);
+        expect(libc.symbols.fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK)).toBe(0);
+        const dest = `/proc/self/fd/${fd}`;
+
+        const outcome = await Bun.write(dest, Bun.file(join(String(dir), "src.txt"))).then(
+          written => ({ written }),
+          error => ({ code: error.code, syscall: error.syscall, path: error.path }),
+        );
+        expect({ outcome, intact: fs.readFileSync(dest, "utf8") === content }).toEqual({
+          outcome: { code: "EPERM", syscall: "ftruncate", path: dest },
+          intact: true,
+        });
+      } finally {
+        if (fd > 2) fs.closeSync(fd);
+        libc.close();
+      }
     });
   });
 

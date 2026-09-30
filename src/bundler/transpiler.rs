@@ -605,8 +605,8 @@ impl<'a> Transpiler<'a> {
                         .any(|k| &**k == options::default_user_defines::node_env::KEY)
                 });
 
-        // `parse_env_json` needs a thread-local AST store to build
-        // `E::String` nodes in. That work
+        // `parse_env_json` needs a thread-local AST store to parse
+        // through. That work
         // is now done lazily inside `DefineData::parse`, only on the JSON-parse
         // slow path — the common case (`bun run` with no user `--define`)
         // resolves every define through the literal fast path and never

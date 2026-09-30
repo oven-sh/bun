@@ -233,7 +233,7 @@ pub fn set_active_spill_heap(heap: *mut mimalloc::Heap) {
 /// RAII guard: for its lifetime, [`AstAlloc`] allocates on **global** mimalloc
 /// instead of the active per-parse state. Use when constructing
 /// `AstVec`/`StoreRef` data that must outlive the current parse arena
-/// (e.g. `Expr::deep_clone` for `WorkspacePackageJSONCache`). Without this,
+/// (e.g. the package.json roots of `WorkspacePackageJSONCache`). Without this,
 /// the next `ASTMemoryAllocator::reset()` frees buffers the cache still holds.
 ///
 /// Restores the prior state on drop, so it nests correctly inside an
@@ -520,8 +520,9 @@ impl AstAlloc {
     }
 
     /// An empty `AstVec` whose first buffer, room for `cap` elements, is a
-    /// block of `arena`. The arena's owner frees it with the arena, so the
-    /// list lives exactly as long as arena-allocated nodes that embed it.
+    /// block of `arena`, freed with the arena. A list that grows past `cap`
+    /// moves to a buffer from [`AstAlloc`] (the active state or the global
+    /// heap), so only a list that never grows shares the arena's lifetime.
     #[inline]
     pub fn vec_with_capacity_in_arena<T>(cap: usize, arena: &MimallocArena) -> AstVec<T> {
         if cap == 0 || core::mem::size_of::<T>() == 0 {

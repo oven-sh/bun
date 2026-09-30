@@ -80,11 +80,13 @@ trait Dest {
     }
 }
 
-/// Nodes in the thread-local AST store. The tree lives until the store resets.
+/// Nodes through `Expr::init`: the thread-local AST store, or the
+/// `ASTMemoryAllocator` in scope. The tree lives until that resets.
 struct InStore;
 
-/// Nodes and lists in the caller's arena. The tree lives as long as the arena,
-/// so an owner that keeps the arena keeps the tree without a copy.
+/// Nodes and lists in the caller's arena. An owner that keeps the arena and
+/// `source.contents` (strings without escapes borrow it) keeps the tree
+/// without a copy.
 struct InArena;
 
 /// Nodes in the caller's arena, lists from `AstAlloc`. For an owner with one
@@ -572,9 +574,9 @@ pub fn parse_package_json_utf8_with_opts(
 }
 
 /// [`parse_package_json_utf8_with_opts`] with the nodes built in `arena`, for
-/// an owner that caches the root beside the arena. The lists go to the global
-/// heap, which nothing frees, so an editor of the root can keep a list past
-/// the arena.
+/// an owner that caches the root beside the arena and `source.contents`. The
+/// lists go to the global heap, which nothing frees, so an editor of the root
+/// can keep a list past the arena.
 pub fn parse_package_json_utf8_with_opts_into_arena(
     opts: JSONOptions,
     source: &bun_ast::Source,
@@ -620,7 +622,7 @@ pub fn parse_ts_config(
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
-/// The tree is built in `bump`, so it lives as long as that arena.
+/// The tree is built in `bump` and borrows `source.contents`.
 pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

@@ -485,24 +485,28 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // The YAML parser allocates `Expr::Data` nodes into the thread-local
-    // `Store` (via `Expr::init`). Later `workspace_package_json_cache.get_with_path`
-    // calls (with default `init_reset_store: true`) invoke `initialize_store()`,
-    // which `Store::reset()`s — invalidating every `StoreRef` in the parsed
-    // YAML tree. Clone the tree out of the Store into `yaml_arena` (which
-    // lives for the whole function) so `root` survives those resets.
+    // The YAML parser builds its nodes with `Expr::init`. Later
+    // `workspace_package_json_cache.get_with_path` calls (with default
+    // `init_reset_store: true`) reset the thread-local `Store`, so the parse
+    // runs in a scope that puts the nodes in `yaml_arena`, which lives for the
+    // whole function. `yaml_ast` holds the list buffers of the tree and must
+    // live as long as `root` is read.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
-    let _root: Expr = match bun_parsers::yaml::YAML::parse(
-        &yaml_source,
-        log,
-        &yaml_arena,
-        bun_parsers::yaml::CyclicAliases::Reject,
-    ) {
+    let mut yaml_ast = bun_ast::ASTMemoryAllocator::borrowing(&yaml_arena);
+    let parsed = {
+        let _scope = yaml_ast.enter();
+        bun_parsers::yaml::YAML::parse(
+            &yaml_source,
+            log,
+            &yaml_arena,
+            bun_parsers::yaml::CyclicAliases::Reject,
+        )
+    };
+    let mut root: Expr = match parsed {
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
-    let mut root: Expr = bun_core::handle_oom(_root.deep_clone(&yaml_arena));
 
     // pnpm 11 writes `---<env lockfile>---<lockfile>`; the last document is the lockfile.
     if let Some(mut documents) = root.as_array() {

@@ -434,8 +434,8 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        // `parse_env_json` builds the value in `bump`, so it outlives the
-        // thread-local AST store that `configure_defines` resets on return.
+        // The value is built in `bump`: the next parse resets the thread-local
+        // AST store, and every later parse reads the define table.
         let data: ExprData = bun_parsers::json_parser::parse_env_json(&source, log, bump)?.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {

@@ -1096,6 +1096,8 @@ pub(crate) struct ReadWriteLoop {
     pub(crate) read_pos: i64,
     /// Bytes left in the source view. `MAX_SIZE` is "to EOF".
     pub(crate) remaining: SizeType,
+    /// The destination is the source file, so the loop moves the window to the start of that file.
+    pub(crate) same_file: bool,
     pub(crate) read_buf: Vec<u8>,
     pub(crate) uv_buf: libuv::uv_buf_t,
 }
@@ -1111,6 +1113,7 @@ impl Default for ReadWriteLoop {
             written: 0,
             read_pos: -1,
             remaining: MAX_SIZE,
+            same_file: false,
             read_buf: Vec::new(),
             uv_buf: libuv::uv_buf_t {
                 len: 0,
@@ -1184,6 +1187,17 @@ impl<'a> CopyFileWindows<'a> {
         {
             self.read_write_loop.read_pos = i64::try_from(self.source_offset).expect("int cast");
         }
+    }
+}
+
+/// Two descriptors of one file have the volume and the file index in common.
+#[cfg(windows)]
+fn is_same_file(a: Fd, b: Fd) -> bool {
+    match (bun_sys::fstat(a), bun_sys::fstat(b)) {
+        (bun_sys::Result::Ok(a), bun_sys::Result::Ok(b)) => {
+            a.st_ino != 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino
+        }
+        _ => false,
     }
 }
 
@@ -1387,6 +1401,15 @@ impl<'a> CopyFileWindows<'a> {
         }
 
         let written = self.read_write_loop.written;
+        if self.read_write_loop.same_file {
+            // The reads stayed ahead of the writes. The file now starts with the window, so cut the rest.
+            if let bun_sys::Result::Err(err) =
+                bun_sys::ftruncate(self.read_write_loop.destination_fd, written as i64)
+            {
+                self.throw(err);
+                return;
+            }
+        }
         self.on_complete(written);
     }
 
@@ -1447,7 +1470,8 @@ impl<'a> CopyFileWindows<'a> {
                 if is_reading {
                     bun_sys::O::RDONLY
                 } else {
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
+                    // No `O_TRUNC`: the destination can be the file that the loop reads.
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT
                 },
                 0,
             ) {
@@ -1513,6 +1537,21 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.apply_source_view(self.read_write_loop.source_fd);
+        if self.read_write_loop.must_close_destination_fd {
+            let same_file = is_same_file(
+                self.read_write_loop.source_fd,
+                self.read_write_loop.destination_fd,
+            );
+            self.read_write_loop.same_file = same_file;
+            if !same_file || self.read_write_loop.remaining == 0 {
+                if let bun_sys::Result::Err(err) =
+                    bun_sys::ftruncate(self.read_write_loop.destination_fd, 0)
+                {
+                    self.throw(err);
+                    return;
+                }
+            }
+        }
         if self.read_write_loop.remaining == 0 {
             // An empty window: the destination is already truncated.
             self.on_complete(0);

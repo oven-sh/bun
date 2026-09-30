@@ -874,6 +874,23 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
 
+    // POSIX empties a file that is copied onto itself (#20462). Windows does not, so the window of the file stays readable there.
+    it.skipIf(!isWindows).each([
+      ["slice(0, 5)", f => f.slice(0, 5), "abcde"],
+      ["slice(10, 20)", f => f.slice(10, 20), "klmnopqrst"],
+      ["slice(5, 5)", f => f.slice(5, 5), ""],
+      ["slice(3)", f => f.slice(3), content.slice(3)],
+    ])("%s of the destination itself", async (_, window, expected) => {
+      using dir = tempDir("bun-write-src-slice-same-file", { "file.txt": content });
+      const file = join(String(dir), "file.txt");
+
+      const written = await Bun.write(file, window(Bun.file(file)));
+      expect({ written, copied: fs.readFileSync(file, "utf8") }).toEqual({
+        written: expected.length,
+        copied: expected,
+      });
+    });
+
     it("a window of a file descriptor", async () => {
       using dir = tempDir("bun-write-src-slice-fd", { "src.txt": content });
       const dst = join(String(dir), "dst.txt");

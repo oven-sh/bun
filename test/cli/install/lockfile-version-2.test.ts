@@ -323,7 +323,7 @@ describe.each([0, 1, 2])("git .bun-tag length at lockfile version %d", lockfileV
       cwd: String(dir),
       // No transport is allowed, so nothing is cloned.
       env: { ...env, GIT_ALLOW_PROTOCOL: "file" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

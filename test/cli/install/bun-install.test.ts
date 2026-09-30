@@ -12099,7 +12099,7 @@ describe.concurrent("a registry manifest string longer than a path buffer", () =
       "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { evil: "1.0.0" } }),
       "bunfig.toml": `[install]\ncache = false\nregistry = "${registry}"\n`,
     });
-    await using proc = spawn({ cmd: [bunExe(), "install"], cwd: String(dir), stdout: "pipe", stderr: "pipe", env });
+    await using proc = spawn({ cmd: [bunExe(), "install"], cwd: String(dir), stdout: "ignore", stderr: "pipe", env });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     return { err, exitCode, signalCode: proc.signalCode };
   }
@@ -12154,7 +12154,7 @@ it.concurrent.each([
     "bunfig.toml": `[install]\ncache = false\nregistry = "http://127.0.0.1:9/"\n`,
   });
 
-  await using proc = spawn({ cmd: [bunExe(), ...args], cwd: String(dir), stdout: "pipe", stderr: "pipe", env });
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd: String(dir), stdout: "ignore", stderr: "pipe", env });
   const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(err).toContain("error: Invalid package name");

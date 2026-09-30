@@ -281,11 +281,8 @@ impl FileRoute {
             return;
         };
 
-        // Every non-streaming outcome — null-body status codes
-        // (1xx/204/205/304), HEAD, non-streamable files, and the JS-exception
-        // early returns — is `Serve::Done`, so neither the fd nor the route ref
-        // (or the server's pending_requests counter) can leak regardless of
-        // which branch ran.
+        // Every non-streaming branch returns `Serve::Done`, which releases
+        // the fd and the route ref here.
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
@@ -403,21 +400,14 @@ impl FileRoute {
         resp.write_mark();
         self.write_headers(resp);
 
-        // Null-body statuses end before the range switch so a 304 emits no
-        // Content-Range. FileResponseStream ships via sendfile/write(), so a
-        // null-body status must never start it. 307/308 are ordinary
-        // body-bearing statuses (RFC 9110 §15.4) and fall through to stream
-        // the file, same as StaticRoute and the fetch-handler path.
-        if HTTPStatusText::is_null_body(status_code) {
-            // 205 is the one null-body status RFC 9112 §6.3 does NOT
-            // self-terminate, so a keep-alive client needs Content-Length.
-            if status_code == 205 && !resp.state().has_written_content_length_header() {
-                resp.write_header_int(b"content-length", 0);
-            }
+        // Bodiless responses end before the range switch so a 304 carries no
+        // Content-Range. 1xx/204/304 end at the blank line (RFC 9112 §6.3).
+        // 205 and 412 need `Content-Length: 0`.
+        if HTTPStatusText::is_null_body(status_code) && status_code != 205 {
             resp.end_without_body(resp.should_close_connection());
             return Serve::Done;
         }
-        if status_code == 412 {
+        if matches!(status_code, 205 | 412) {
             resp.end(b"", resp.should_close_connection());
             return Serve::Done;
         }

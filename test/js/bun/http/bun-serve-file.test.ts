@@ -1907,12 +1907,9 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   expect(body.compare(data)).toBe(0);
 });
 
-// FileRoute used to end 205/307/308 via end_without_body, which writes no
-// Content-Length; RFC 9112 §6.3 does not self-terminate those, so HTTP/1.1
-// keep-alive clients blocked waiting for body framing. 307/308 now stream the
-// file body like StaticRoute and the fetch-handler path do (RFC 9110 §15.4
-// permits a redirect body); 205 stays bodiless per RFC 9110 §15.3.6 and
-// writes Content-Length: 0.
+// A 205/307/308 response with no Content-Length is close-delimited (RFC 9112 §6.3),
+// so a keep-alive client waits for the body until the server's idleTimeout closes
+// the socket.
 test("file route 205/307/308 responses are framed on HTTP/1.1 keep-alive", async () => {
   using dir = tempDir("serve-file-bodiless-status", {
     "f.txt": "hello",
@@ -1980,26 +1977,40 @@ test("file route 205/307/308 responses are framed on HTTP/1.1 keep-alive", async
     });
   }
 
-  // Two back-to-back 307s on a keep-alive connection: the second resolving
-  // proves the first's framing was complete. Skipped on Windows: pipelining
-  // a Bun.file() route there hits a pre-existing bug (connection closes with
-  // zero bytes, independent of status; reproduces on main with status 200).
+  // Two pipelined 307s on one keep-alive connection. Each response is parsed by
+  // its Content-Length, so the second one is only found if the first one was
+  // framed. Skipped on Windows: pipelining a Bun.file() route there closes the
+  // connection with zero bytes for any status, including 200 on main.
   if (!isWindows) {
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<{ status: string; body: string }[]>();
     const sock = connect(server.port, "127.0.0.1", () => {
       sock.write("GET /307 HTTP/1.1\r\nHost: x\r\n\r\nGET /307 HTTP/1.1\r\nHost: x\r\n\r\n");
     });
     let buf = "";
+    const responses: { status: string; body: string }[] = [];
     sock.on("data", d => {
       buf += d.toString("latin1");
-      if ((buf.match(/HTTP\/1\.1 307/g) || []).length === 2) {
+      for (;;) {
+        const headEnd = buf.indexOf("\r\n\r\n");
+        if (headEnd === -1) break;
+        const head = buf.slice(0, headEnd);
+        const len = Number(/^content-length:\s*(\d+)/im.exec(head)?.[1] ?? NaN);
+        const bodyStart = headEnd + 4;
+        if (Number.isNaN(len) || buf.length < bodyStart + len) break;
+        responses.push({ status: head.split("\r\n")[0], body: buf.slice(bodyStart, bodyStart + len) });
+        buf = buf.slice(bodyStart + len);
+      }
+      if (responses.length === 2) {
         sock.end();
-        resolve(buf);
+        resolve(responses);
       }
     });
-    sock.on("close", () => resolve(buf));
+    sock.on("close", () => resolve(responses));
     sock.on("error", reject);
-    expect((await promise).match(/HTTP\/1\.1 307/g)?.length).toBe(2);
+    expect(await promise).toEqual([
+      { status: "HTTP/1.1 307 Temporary Redirect", body: "hello" },
+      { status: "HTTP/1.1 307 Temporary Redirect", body: "hello" },
+    ]);
   }
 
   // And fetch (redirect:"manual") must complete rather than time out.

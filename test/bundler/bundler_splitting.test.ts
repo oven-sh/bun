@@ -1036,6 +1036,123 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "p1\ns1\ns2\np2\nt\np3\nindex\nroute" },
   });
+  // The chunk beside index.js calls require_x(). x.cjs runs nothing when its chunk loads, so it is kept apart from config.js, which other.js shares too and which runs.
+  const wrapperBesideFileThatRuns = (files: Record<string, string>) => ({
+    files: {
+      "/index.js": /* js */ `
+        import x from "./x.cjs";
+        import "./setup.js";
+        import { Store } from "./store.js";
+        import "./config.js";
+        console.log("index", new Store().name, x);
+        import("./route.js");
+      `,
+      "/other.js": `import x from "./x.cjs"; import "./config.js"; console.log("other", x);`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+      ...files,
+    },
+    entryPoints: ["/index.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+  });
+  for (const [name, files, stdout] of [
+    [
+      "FileThatRunsReadsSharedCode",
+      {
+        "/x.cjs": `module.exports = 1;`,
+        "/setup.js": `console.log("setup");`,
+        "/store.js": `globalThis.STORE = 1; export class Store { name = "s"; }`,
+        "/config.js": `console.log("config", globalThis.STORE);`,
+      },
+      "setup\nconfig 1\nindex s 1\nroute s",
+    ],
+    [
+      "SharedCodeReadsWrapper",
+      {
+        "/x.cjs": `globalThis.POLYFILL = 1; module.exports = 1;`,
+        "/setup.js": `globalThis.APP = { name: "app" + globalThis.POLYFILL }; console.log("setup");`,
+        "/store.js": `const NAME = globalThis.APP.name; export class Store { name = NAME; }`,
+        "/config.js": `console.log("config");`,
+      },
+      "setup\nconfig\nindex app1 1\nroute app1",
+    ],
+  ] as const) {
+    itBundled("splitting/WrapperThatSharedChunkCallsIsKeptApartFromFileThatRuns/" + name, {
+      ...wrapperBesideFileThatRuns(files),
+      onAfterBundle(api) {
+        expect(chunkContaining(api, "module.exports = 1")).not.toBe(chunkContaining(api, `"config"`));
+      },
+      run: { file: "/out/index.js", stdout },
+    });
+  }
+  // dep.cjs and other.cjs use __commonJS, so the runtime is in a chunk that other.js shares, like config.js. The chunk of store.js imports the helper.
+  itBundled("splitting/RuntimeThatSharedChunkUsesIsKeptApartFromFileThatRuns", {
+    files: {
+      "/index.js": /* js */ `
+        import { Store } from "./store.js";
+        import "./config.js";
+        console.log("index", new Store().name);
+        import("./route.js");
+      `,
+      "/other.js": `import other from "./other.cjs"; import "./config.js"; console.log("other", other);`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+      "/store.js": `import dep from "./dep.cjs"; globalThis.STORE = dep; export class Store { name = dep; }`,
+      "/dep.cjs": `module.exports = "d";`,
+      "/other.cjs": `module.exports = "o";`,
+      "/config.js": `console.log("config", globalThis.STORE);`,
+    },
+    entryPoints: ["/index.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "config d\nindex d\nroute d" },
+      { file: "/out/other.js", stdout: "config undefined\nother o" },
+    ],
+  });
+  // No cut without need: no file of the chunk of x.cjs runs, that chunk has loaded before, or only index.js itself imports from it.
+  for (const [name, index, config, count] of [
+    ["NoFileRuns", `import x from "./x.cjs"; import "./setup.js";`, `export const config = 1;`, 5],
+    [
+      "ChunkHasLoaded",
+      `import "./config.js"; import x from "./x.cjs"; import "./setup.js";`,
+      `console.log("config");`,
+      5,
+    ],
+    [
+      "OnlyEntryFileImports",
+      `import { x } from "./declares.js"; import "./setup.js";`,
+      `import { x } from "./declares.js"; console.log("config", x());`,
+      5,
+    ],
+  ] as const) {
+    itBundled("splitting/FilesOfChunkOfOtherEntryStayTogether/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          ${index}
+          import { Store } from "./store.js";
+          import "./config.js";
+          console.log("index", new Store().name, typeof x);
+          import("./route.js");
+        `,
+        "/other.js": `import x from "./x.cjs"; import "./config.js"; import { x as y } from "./declares.js"; console.log("other", x, y());`,
+        "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+        "/x.cjs": `module.exports = 1;`,
+        "/declares.js": `export function x() { return 1; }`,
+        "/setup.js": `globalThis.APP = { name: "app" };`,
+        "/store.js": `const NAME = globalThis.APP.name; export class Store { name = NAME; }`,
+        "/config.js": config,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toHaveLength(count);
+      },
+    });
+  }
   // Syntax decides what runs, so a piece with only files of a "sideEffects": false package has its place among the imports too.
   itBundled("splitting/PieceOfSharedChunkWithoutSideEffectsKeepsItsPlace", {
     files: {

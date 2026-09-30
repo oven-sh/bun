@@ -756,6 +756,8 @@ struct EntryChunkWalks<'a> {
     classes_with_bit: Vec<usize>,
     /// See `classes_that_run_below`.
     run_below: &'a mut [u64],
+    /// Per file: the `classes` of the calls of `keep_apart_from_files_that_run` that went through it.
+    kept_apart_for: &'a mut [u64],
     /// Per file: the entry point whose walk last entered it.
     entered: &'a mut [u32],
     /// The own files that must run before a file of the parent.
@@ -787,8 +789,8 @@ impl<'a> EntryChunkWalks<'a> {
         })
     }
 
-    /// One bit for each of the first 62 classes that ask. 0 for the others: their chunks cut no parent.
-    fn bit_of_class(&mut self, key: usize) -> u64 {
+    /// One bit for each of the first 62 classes with a file with side effects (`has_one`). 0 for the others: their chunks cut nothing.
+    fn bit_of_class(&mut self, key: usize, has_one: bool) -> u64 {
         if self.class_bits[key] == u64::MAX {
             let classes = self.class_by_key.values();
             let bit = self
@@ -797,6 +799,7 @@ impl<'a> EntryChunkWalks<'a> {
                 .position(|&other| classes[other].eql(&classes[key]));
             self.class_bits[key] = match bit {
                 Some(bit) => 1 << bit,
+                None if !has_one => return 0,
                 None if self.classes_with_bit.len() < 62 => {
                     self.classes_with_bit.push(key);
                     1 << (self.classes_with_bit.len() - 1)
@@ -806,6 +809,40 @@ impl<'a> EntryChunkWalks<'a> {
         }
         self.class_bits[key]
     }
+}
+
+/// The load of `root` evaluates no file with side effects, and a parent imports from it before the chunks of `classes` load. The files below `root` in those classes go into a chunk of their own, so that the import does not load the files that run.
+fn keep_apart_from_files_that_run<'a>(
+    this: &'a LinkerContext,
+    walks: &mut EntryChunkWalks<'a>,
+    load_class: LoadClass,
+    root: u32,
+    classes: u64,
+) -> crate::Result<()> {
+    let entry_points_len = this.graph.entry_points.len();
+    let bits = this.graph.files.items_entry_bits();
+    let mut stack = vec![root];
+    while let Some(file) = stack.pop() {
+        if classes & !walks.kept_apart_for[file as usize] == 0
+            || this.graph.ast.items_css()[file as usize].is_some()
+        {
+            continue;
+        }
+        walks.kept_apart_for[file as usize] |= classes;
+        let live = this.graph.files_live.is_set(file as usize);
+        if live {
+            let key = walks.key_index(&bits[file as usize], entry_points_len, load_class)?;
+            if walks.bit_of_class(key, false) & classes != 0 {
+                walks.segment_of_file[file as usize] = 1;
+            }
+        }
+        for_each_edge(this, file, live, |_, edge| {
+            if let Edge::Import(other) = edge {
+                stack.push(other);
+            }
+        });
+    }
+    Ok(())
 }
 
 /// The classes (`bit_of_class`) of the files with side effects that the load of `root` evaluates. `root` is in a class of several entry points, so the answer is the same for each of them: `run_below` keeps it.
@@ -864,7 +901,7 @@ fn classes_that_run_below<'a>(
         // As in `reached_chunks_in_order`: a file with side effects ranks its chunk.
         let classes = if live && !this.loading_file_has_no_side_effects(file) {
             let key = walks.key_index(&bits[file as usize], entry_points_len, load_class)?;
-            walks.bit_of_class(key)
+            walks.bit_of_class(key, true)
         } else {
             0
         };
@@ -925,6 +962,9 @@ fn files_that_leave_entry_chunk<'a>(
     let (mut open, mut no_cut_from) = (0, u32::MAX);
     // The other classes (`bit_of_class`) whose chunk has loaded.
     let mut met = 0;
+    // The files of other classes whose load evaluates nothing with side effects, with `met` there. The parent imports from the first `inert_for_parent`.
+    let mut inert: Vec<(u32, u64)> = Vec::new();
+    let mut inert_for_parent = 0;
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
         let file = match frame {
@@ -948,6 +988,7 @@ fn files_that_leave_entry_chunk<'a>(
                         (last_part, cut, depth_at_cut) = (part, candidates.len(), depth);
                         (last_segment, segment_runs) = (segment, true);
                         unconfirmed.clear();
+                        inert_for_parent = inert.len();
                     }
                     continue;
                 }
@@ -1011,6 +1052,10 @@ fn files_that_leave_entry_chunk<'a>(
                         walks.cuts.push(part);
                     }
                     met |= loads;
+                    // The entry point's file keeps its bindings. The parent only repeats its call of a wrapper.
+                    if loads == 0 && (open > 0 || flags[file as usize].wrap != WrapKind::None) {
+                        inert.push((file, met));
+                    }
                     continue;
                 }
                 // Its chunk runs before both, and so does what it imports.
@@ -1044,6 +1089,9 @@ fn files_that_leave_entry_chunk<'a>(
         walks.segment_of_file[file as usize] = last_segment;
     }
     walks.cuts.truncate(last_segment as usize);
+    for &(file, met_there) in &inert[..inert_for_parent] {
+        keep_apart_from_files_that_run(this, walks, load_class, file, met & !met_there)?;
+    }
     let leaves = &mut walks.leaves;
 
     // What one `import` of the entry point's file loads goes or stays as a whole, with what it imports. No chunk may import a pinned chunk, so a file that leads back there ends the list.
@@ -1422,6 +1470,7 @@ pub(crate) fn merge_small_chunks(
             class_bits: Vec::new(),
             classes_with_bit: Vec::new(),
             run_below: temp.alloc_slice_fill_copy(files_len, 0),
+            kept_apart_for: temp.alloc_slice_fill_copy(files_len, 0),
             entered: temp.alloc_slice_fill_copy(files_len, u32::MAX),
             leaves: AutoBitSet::init_empty(files_len)?,
             segment_of_file: temp.alloc_slice_fill_copy(files_len, 0),
@@ -1972,6 +2021,8 @@ pub(crate) fn merge_small_chunks(
                     || t.merged_into.is_some()
                     || t.pin != Pin::None
                     || t.target != c.target
+                    // It was cut off from files that run.
+                    || (c.segment > 0 && !t.pure)
                     || !c.loaded.subset_of(&t.loaded)
                     || t.loads_entry_of(&c.loaded)
                     || c.loads_entry_of(&t.loaded)

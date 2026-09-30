@@ -10,6 +10,8 @@ pub mod program;
 mod rule;
 mod rules;
 pub mod scanner;
+#[cfg(test)]
+mod tests;
 mod tokens;
 pub mod tspath;
 

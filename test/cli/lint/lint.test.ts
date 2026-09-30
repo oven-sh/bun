@@ -264,6 +264,53 @@ describe("--lint among the options that a compiled executable parses", () => {
   );
 });
 
+describe("--lint among the flags of bun test", () => {
+  const refused = { stdout: "", stderr: "error: --lint cannot be used with bun test\n", exitCode: 1 };
+  // The refusal does not depend on the variable that turns `--lint` on.
+  const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+  // Run by `bun test`, this file writes the marker. The name of its test has `--lint` in it.
+  const files = {
+    "marker.test.ts": `${markerSource}import { test } from "bun:test";\ntest("a name with --lint in it", () => {});\n`,
+  };
+
+  test.concurrent.each(["test --lint", "--lint test", "test --lint marker.test.ts", "test marker.test.ts --lint"])(
+    "`bun %s` is refused and no test file is run",
+    async command => {
+      using dir = tempDir("lint-test", files);
+      const cwd = String(dir);
+      const args = command.split(" ");
+      const [set, unset] = await Promise.all([bun(cwd, args, lintEnv), bun(cwd, args, withoutVariable)]);
+      expect(set).toEqual(refused);
+      expect(unset).toEqual(refused);
+      expect(await markerExists(cwd)).toBe(false);
+    },
+  );
+
+  test.concurrent("`bun test --lint=value` is refused by the argument parser and no test file is run", async () => {
+    using dir = tempDir("lint-test-value", files);
+    const cwd = String(dir);
+    // The argument parser also writes the help of `bun test` to stdout.
+    const { stderr, exitCode } = await bun(cwd, ["test", "--lint=value"]);
+    expect(stderr).toBe("error: The argument '--lint' does not take a value.\n");
+    expect(exitCode).toBe(1);
+    expect(await markerExists(cwd)).toBe(false);
+  });
+
+  // This one starts the test runner, which a debug build does slowly.
+  test.concurrent(
+    "`bun test -t --lint` takes it as the pattern of the test names, and the test file is run",
+    async () => {
+      using dir = tempDir("lint-test-pattern", files);
+      const cwd = String(dir);
+      const { stderr, exitCode } = await bun(cwd, ["test", "-t", "--lint"]);
+      expect(stderr).toContain(" 1 pass\n");
+      expect(exitCode).toBe(0);
+      expect(await markerExists(cwd)).toBe(true);
+    },
+    60_000,
+  );
+});
+
 // Every place stderr reports, as `file:line:column`. A code frame has `at bad.ts:1:9`, a plain line starts `bad.ts(1,9)`.
 function positions(stderr: string) {
   const found = new Set<string>();

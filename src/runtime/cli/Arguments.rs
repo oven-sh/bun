@@ -656,6 +656,8 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
+    // No help text, which hides it. `parse_test_command_options` reads it only to refuse it: a flag that is not in the table is dropped.
+    parse_param!("--lint"),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
@@ -1813,6 +1815,11 @@ fn accept_lint(
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
+    // `bun test` does no lint run: the flag is refused ahead of the options below and of bunfig.toml, with the variable that turns it on set or not.
+    if args.flag(b"--lint") {
+        cli::lint_command::refuse("bun test");
+    }
+
     if let Some(timeout_ms) = args.option(b"--timeout") {
         if !timeout_ms.is_empty() {
             ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {

@@ -74,6 +74,7 @@ pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in
 pub(crate) fn is_relative_external(record: &ImportRecord) -> bool {
     let path = record.path.text;
     !record.source_index.is_valid()
+        && !record.path.is_disabled
         && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
         && (path.starts_with(b"./") || path.starts_with(b"../") || path == b"." || path == b"..")
 }

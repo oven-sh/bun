@@ -1292,7 +1292,12 @@ pub(crate) fn merge_small_chunks(
         // of its live parts run anything at the top level.
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
         inits.clear();
-        let pure = fold_pure && this.loading_file_side_effects(source_index, Some(&mut inits));
+        // A relative path of an external module counts from the directory of the chunk, so such a file stays too.
+        let pure = fold_pure
+            && this.loading_file_side_effects(source_index, Some(&mut inits))
+            && !import_records[source_index as usize]
+                .iter()
+                .any(is_relative_external);
         if fold_pure && !pure {
             inits.clear();
             this.top_level_inits(source_index, &mut inits);

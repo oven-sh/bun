@@ -1107,6 +1107,7 @@ describe("bundler", () => {
       "/src/api/reader.js": `console.log("reader");`,
       "/src/api/uses.js": `import "./local.js"; console.log("uses");`,
       "/src/api/lazy.js": `console.log("lazy"); globalThis.load = () => import("./local.js");`,
+      "/src/api/optional.js": `try { require("./missing.js"); } catch (e) { console.log(e.message); }`,
       "/src/api/store.js": `${store} console.log("store"); export class Store { name = "s"; }`,
       "/src/api/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name); globalThis.load?.();`,
       "/src/jobs/index.js": `console.log("jobs");`,
@@ -1183,6 +1184,45 @@ describe("bundler", () => {
       api.expectFile("/out/api/index.js").toContain(`"./local.js"`);
     },
     run: { file: "/out/api/index.js", stdout: "store\nlazy\napi s\nroute s\nlocal" },
+  });
+  // No file loads from the path of a require() that did not resolve. optional.js moves like any other file, and the message keeps the path.
+  for (const [name, exports] of [
+    ["EntryWithoutExports", ""],
+    ["EntryWithExports", `export const version = 1;`],
+  ]) {
+    itBundled("splitting/RequireOfMissingFileIsNoRelativeExternalImport/" + name, {
+      ...relativeExternal(`import "./optional.js";`, "", exports),
+      run: { file: "/out/api/index.js", stdout: "Cannot require module ./missing.js\nstore\napi s\nroute s" },
+    });
+  }
+  // load.js runs nothing, so --min-chunk-size could fold its chunk into the chunk of util.js, where the path names another file.
+  itBundled("splitting/MinChunkSizeKeepsFileWithRelativeExternalImport", {
+    files: {
+      "/src/api/index.js": /* js */ `
+        import { load } from "./load.js";
+        import { u } from "../util.js";
+        console.log("api", u());
+        load().then(() => import("./route.js"));
+      `,
+      "/src/api/load.js": `export const load = () => import("./local.js");`,
+      "/src/api/route.js": /* js */ `
+        import { load } from "./load.js";
+        import { u } from "../util.js";
+        console.log("route", u(), typeof load);
+      `,
+      "/src/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+      "/src/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+    },
+    external: ["*local.js"],
+    runtimeFiles: { "/out/api/local.js": `console.log("local");` },
+    entryPoints: ["/src/api/index.js", "/src/admin.js"],
+    outputPaths: ["/out/api/index.js", "/out/admin.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/api/index.js", stdout: "api u\nlocal\nroute u function" },
   });
   itBundled("splitting/EntryFilesStayWhenSharedCodeIsData", {
     files: {

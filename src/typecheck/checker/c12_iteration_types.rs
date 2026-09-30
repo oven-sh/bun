@@ -826,9 +826,9 @@ impl<'a> Checker<'a> {
         &mut self,
         t: TypeId,
         resolver: IterationTypesResolverKind,
-        method_name: &'static [u8],
+        method_name: &[u8],
         error_node: NodeId,
-        mut diagnostic_output: Option<&mut Vec<DiagnosticId>>,
+        diagnostic_output: Option<&mut Vec<DiagnosticId>>,
     ) -> IterationTypes {
         let a = self.ast;
         let method = self.get_property_of_type(t, method_name);
@@ -961,7 +961,7 @@ impl<'a> Checker<'a> {
                     resolver.must_have_a_value_diagnostic(),
                     &[Arg::Str(method_name)],
                 );
-                self.report_diagnostic(diagnostic, diagnostic_output.as_deref_mut());
+                self.report_diagnostic(diagnostic, diagnostic_output);
             }
             yield_type = self.any_type;
             return_types.push(self.any_type);

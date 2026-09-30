@@ -510,27 +510,26 @@ impl<'a> Checker<'a> {
                 return reported_error;
             }
             let more_than_one_real_children = valid_children.len() > 1;
-            let array_like_target_parts;
-            let non_array_like_target_parts;
             let iterable_type = self.get_global_iterable_type();
-            if iterable_type != self.empty_generic_type {
-                let any_iterable = self.create_iterable_type(self.any_type);
-                array_like_target_parts = self.filter_type(children_target_type, &mut |c, t| {
-                    c.is_type_assignable_to(t, any_iterable)
-                });
-                non_array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c, t| {
+            let (array_like_target_parts, non_array_like_target_parts) =
+                if iterable_type != self.empty_generic_type {
+                    let any_iterable = self.create_iterable_type(self.any_type);
+                    let array_like = self.filter_type(children_target_type, &mut |c, t| {
+                        c.is_type_assignable_to(t, any_iterable)
+                    });
+                    let non_array_like = self.filter_type(children_target_type, &mut |c, t| {
                         !c.is_type_assignable_to(t, any_iterable)
                     });
-            } else {
-                array_like_target_parts = self.filter_type(children_target_type, &mut |c, t| {
-                    c.is_array_or_tuple_like_type(t)
-                });
-                non_array_like_target_parts = self
-                    .filter_type(children_target_type, &mut |c, t| {
+                    (array_like, non_array_like)
+                } else {
+                    let array_like = self.filter_type(children_target_type, &mut |c, t| {
+                        c.is_array_or_tuple_like_type(t)
+                    });
+                    let non_array_like = self.filter_type(children_target_type, &mut |c, t| {
                         !c.is_array_or_tuple_like_type(t)
                     });
-            }
+                    (array_like, non_array_like)
+                };
             let mut invalid_text_diagnostic = JsxInvalidTextDiagnostic {
                 node,
                 children_prop_name,
@@ -622,7 +621,7 @@ impl<'a> Checker<'a> {
                                 Arg::Str(&children_target_type_text),
                             ],
                         );
-                        self.report_diagnostic(diag, diagnostic_output.as_deref_mut());
+                        self.report_diagnostic(diag, diagnostic_output);
                         reported_error = true;
                     }
                 }
@@ -1020,8 +1019,7 @@ impl<'a> Checker<'a> {
     ) -> SignatureId {
         let a = self.ast;
         let is_jsx_open_fragment = is_jsx_opening_fragment(a, node);
-        let expr_types;
-        if !is_jsx_open_fragment {
+        let expr_types = if !is_jsx_open_fragment {
             if is_jsx_intrinsic_tag_name(a, a.tag_name(node)) {
                 let result = self.get_intrinsic_attributes_type_from_jsx_opening_like_element(node);
                 let fake_signature = self.create_signature_for_jsx_intrinsic(node, result);
@@ -1061,10 +1059,10 @@ impl<'a> Checker<'a> {
                 }
                 return fake_signature;
             }
-            expr_types = self.check_expression(a.tag_name(node));
+            self.check_expression(a.tag_name(node))
         } else {
-            expr_types = self.get_jsx_fragment_type(node);
-        }
+            self.get_jsx_fragment_type(node)
+        };
         let apparent_type = self.get_apparent_type(expr_types);
         if self.is_error_type(apparent_type) {
             return self.resolve_error_call(node);
@@ -1721,8 +1719,7 @@ impl<'a> Checker<'a> {
                 self.types[intrinsic_class_attribs].symbol,
             );
             let host_class_type = self.get_return_type_of_signature(sig);
-            let library_managed_attribute_type;
-            if !type_params.is_nil() {
+            let library_managed_attribute_type = if !type_params.is_nil() {
                 // apply JSX.IntrinsicClassAttributes<hostClassType, ...>
                 let min_type_argument_count = self.get_min_type_argument_count(type_params);
                 let type_arguments = self.list_of(&[host_class_type]);
@@ -1733,11 +1730,10 @@ impl<'a> Checker<'a> {
                     is_in_js_file(a, context),
                 );
                 let mapper = new_type_mapper(self, type_params, inferred_args);
-                library_managed_attribute_type =
-                    self.instantiate_type(intrinsic_class_attribs, mapper);
+                self.instantiate_type(intrinsic_class_attribs, mapper)
             } else {
-                library_managed_attribute_type = intrinsic_class_attribs;
-            }
+                intrinsic_class_attribs
+            };
             apparent_attributes_type =
                 self.intersect_types(library_managed_attribute_type, apparent_attributes_type);
         }

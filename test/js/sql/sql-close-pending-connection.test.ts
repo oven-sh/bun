@@ -379,7 +379,7 @@ for (const [name, peer, url] of tlsDrivers) {
     async () => {
       using server = peer(holdOpen);
       const closed = Promise.withResolvers<void>();
-      const sql = new SQL({
+      await using sql = new SQL({
         url: url(server.port),
         max: 1,
         idleTimeout: 1,
@@ -390,7 +390,6 @@ for (const [name, peer, url] of tlsDrivers) {
       await closed.promise;
       await server.ended;
       await server.closed;
-      await sql.close();
     },
   );
 
@@ -434,7 +433,7 @@ for (const [name, peer, url, code] of protocolViolations) {
     `${name}: a protocol violation closes the socket against a TLS peer that never answers close_notify`,
     async () => {
       using server = peer();
-      const sql = new SQL({ url: url(server.port), max: 1, tls: { rejectUnauthorized: false } });
+      await using sql = new SQL({ url: url(server.port), max: 1, tls: { rejectUnauthorized: false } });
       const settled = await sql.connect().then(
         () => "connected",
         e => e.code,
@@ -442,7 +441,6 @@ for (const [name, peer, url, code] of protocolViolations) {
       expect(settled).toBe(code);
       await server.ended;
       await server.closed;
-      await sql.close();
     },
   );
 }

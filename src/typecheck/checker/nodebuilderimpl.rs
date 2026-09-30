@@ -3555,3 +3555,988 @@ impl NodeBuilderImpl {
         }
     }
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PropertyNameNodeKind {
+    Identifier,
+    NumericLiteral,
+    StringLiteral,
+}
+
+// classifyPropertyName determines the kind of node that would be created for a property name: an identifier, a numeric literal, or a string literal.
+fn classify_property_name(
+    name: &[u8],
+    string_named: bool,
+    is_method: bool,
+) -> PropertyNameNodeKind {
+    if is_method && name == b"new" {
+        return PropertyNameNodeKind::StringLiteral;
+    }
+    if is_identifier_text(name, LanguageVariant::Standard) {
+        return PropertyNameNodeKind::Identifier;
+    }
+    if !string_named && is_numeric_literal_name(name) && crate::jsnum::from_string(name).0 >= 0.0 {
+        PropertyNameNodeKind::NumericLiteral
+    } else {
+        PropertyNameNodeKind::StringLiteral
+    }
+}
+
+impl NodeBuilderImpl {
+    pub(crate) fn create_property_name_node_for_identifier_or_literal(
+        self,
+        c: &mut Checker<'_>,
+        name: &[u8],
+        single_quote: bool,
+        string_named: bool,
+        is_method: bool,
+        symbol: SymbolId,
+    ) -> NodeId {
+        match classify_property_name(name, string_named, is_method) {
+            PropertyNameNodeKind::Identifier => self.new_identifier(c, name, symbol),
+            PropertyNameNodeKind::NumericLiteral => {
+                self.f(c).new_numeric_literal(name, TokenFlags::NONE)
+            }
+            PropertyNameNodeKind::StringLiteral => self.f(c).new_string_literal(
+                name,
+                if single_quote {
+                    TokenFlags::SINGLE_QUOTE
+                } else {
+                    TokenFlags::NONE
+                },
+            ),
+        }
+    }
+
+    pub(crate) fn is_string_named(self, c: &mut Checker<'_>, d: NodeId) -> bool {
+        let a = c.ast;
+        let name = get_name_of_declaration(a, d);
+        if name.is_nil() {
+            return false;
+        }
+        if is_computed_property_name(a, name) {
+            let t = c.check_expression(a.expression(name));
+            return c.types[t].flags.intersects(TypeFlags::STRING_LIKE);
+        }
+        if is_element_access_expression(a, name) {
+            let t = c.check_expression(a.as_element_access_expression(name).argument_expression);
+            return c.types[t].flags.intersects(TypeFlags::STRING_LIKE);
+        }
+        is_string_literal(a, name)
+    }
+
+    pub(crate) fn is_single_quoted_string_named(self, c: &Checker<'_>, d: NodeId) -> bool {
+        let a = c.ast;
+        let name = get_name_of_declaration(a, d);
+        !name.is_nil()
+            && is_string_literal(a, name)
+            && a.as_string_literal(name)
+                .token_flags
+                .intersects(TokenFlags::SINGLE_QUOTE)
+    }
+
+    pub(crate) fn get_property_name_node_for_symbol(
+        self,
+        c: &mut Checker<'_>,
+        symbol: SymbolId,
+        enclosing_declaration: NodeId,
+    ) -> NodeId {
+        let a = c.ast;
+        let sym = a.sym(symbol);
+        if !sym.value_declaration.is_nil() {
+            let decl_name = a.name(sym.value_declaration);
+            if !decl_name.is_nil() && is_private_identifier(a, decl_name) {
+                return self.f(c).deep_clone_node(decl_name);
+            }
+        }
+        let declarations = sym.declarations.as_slice();
+        let mut string_named = !declarations.is_empty();
+        for d in declarations {
+            if !string_named {
+                break;
+            }
+            string_named = self.is_string_named(c, *d);
+        }
+        let single_quote = !declarations.is_empty()
+            && declarations
+                .iter()
+                .all(|d| self.is_single_quoted_string_named(c, *d));
+        let is_method = sym.flags.intersects(SymbolFlags::METHOD);
+        let from_name_type = self.get_property_name_node_for_symbol_from_name_type(
+            c,
+            symbol,
+            enclosing_declaration,
+            single_quote,
+            string_named,
+            is_method,
+        );
+        if !from_name_type.is_nil() {
+            return from_name_type;
+        }
+        let mut name: Vec<u8> = sym.name.to_vec();
+        let private_name_prefix = [INTERNAL_SYMBOL_NAME_PREFIX, b"#".as_slice()].concat();
+        if let Some(rest) = sym.name.strip_prefix(private_name_prefix.as_slice()) {
+            // symbol IDs are unstable - replace #nnn# with #private#
+            let digits = rest.iter().take_while(|ch| ch.is_ascii_digit()).count();
+            name = [b"__#private".as_slice(), rest.get(digits..).unwrap_or(&[])].concat();
+        }
+        self.create_property_name_node_for_identifier_or_literal(
+            c,
+            &name,
+            single_quote,
+            string_named,
+            is_method,
+            symbol,
+        )
+    }
+
+    // See getNameForSymbolFromNameType for a stringy equivalent
+    pub(crate) fn get_property_name_node_for_symbol_from_name_type(
+        self,
+        c: &mut Checker<'_>,
+        symbol: SymbolId,
+        enclosing_declaration: NodeId,
+        single_quote: bool,
+        string_named: bool,
+        is_method: bool,
+    ) -> NodeId {
+        let a = c.ast;
+        let Some(links) = c.value_symbol_links.try_get(symbol) else {
+            return NodeId::NIL;
+        };
+        let name_type = links.name_type;
+        if name_type.is_nil() {
+            return NodeId::NIL;
+        }
+        let mut enum_enclosing_declaration = enclosing_declaration;
+        if enum_enclosing_declaration.is_nil() && !self.ctx(c).enclosing_file.is_nil() {
+            enum_enclosing_declaration = self.ctx(c).enclosing_file;
+        }
+        let name_type_flags = c.types[name_type].flags;
+        let name_type_symbol = c.types[name_type].symbol;
+        if name_type_flags.intersects(TypeFlags::ENUM_LITERAL) {
+            let mut enum_symbol = a.sym(name_type_symbol).parent;
+            if enum_symbol.is_nil() {
+                enum_symbol = name_type_symbol;
+            }
+            if !enum_enclosing_declaration.is_nil()
+                && c.is_symbol_accessible_by_flags(
+                    enum_symbol,
+                    enum_enclosing_declaration,
+                    SymbolFlags::VALUE,
+                )
+            {
+                let save_enclosing_declaration = self.ctx(c).enclosing_declaration;
+                self.ctx_mut(c).enclosing_declaration = enum_enclosing_declaration;
+                let expression = self.symbol_to_expression(c, name_type_symbol, SymbolFlags::VALUE);
+                let result = self.f(c).new_computed_property_name(expression);
+                self.ctx_mut(c).enclosing_declaration = save_enclosing_declaration;
+                return result;
+            }
+        }
+        if name_type_flags.intersects(TypeFlags::STRING_OR_NUMBER_LITERAL) {
+            let name: Vec<u8> = match c.as_literal_type(name_type).value {
+                LiteralValue::Number(v) => crate::jsnum::Number(v).string(),
+                LiteralValue::String(v) => v.to_vec(),
+                _ => Vec::new(),
+            };
+            if !is_identifier_text(&name, LanguageVariant::Standard)
+                && (string_named || !is_numeric_literal_name(&name))
+            {
+                return self.f(c).new_string_literal(
+                    &name,
+                    if single_quote {
+                        TokenFlags::SINGLE_QUOTE
+                    } else {
+                        TokenFlags::NONE
+                    },
+                );
+            }
+            if is_numeric_literal_name(&name) && name.first() == Some(&b'-') {
+                let operand = self
+                    .f(c)
+                    .new_numeric_literal(name.get(1..).unwrap_or(&[]), TokenFlags::NONE);
+                let negative = self
+                    .f(c)
+                    .new_prefix_unary_expression(Kind::MinusToken, operand);
+                return self.f(c).new_computed_property_name(negative);
+            }
+            return self.create_property_name_node_for_identifier_or_literal(
+                c,
+                &name,
+                single_quote,
+                string_named,
+                is_method,
+                symbol,
+            );
+        }
+        if name_type_flags.intersects(TypeFlags::UNIQUE_ES_SYMBOL) {
+            let expression = self.symbol_to_expression(c, name_type_symbol, SymbolFlags::VALUE);
+            return self.f(c).new_computed_property_name(expression);
+        }
+        NodeId::NIL
+    }
+
+    // Upstream appends to the slice it is given and returns it.
+    pub(crate) fn add_property_to_element_list(
+        self,
+        c: &mut Checker<'_>,
+        property_symbol: SymbolId,
+        type_elements: &mut Vec<NodeId>,
+    ) {
+        let a = c.ast;
+        let property = a.sym(property_symbol);
+        let property_is_reverse_mapped =
+            property.check_flags.intersects(CheckFlags::REVERSE_MAPPED);
+        let property_type = if self.should_use_placeholder_for_property(c, property_symbol) {
+            c.any_type
+        } else {
+            c.get_non_missing_type_of_symbol(property_symbol)
+        };
+        let save_enclosing_declaration = self.ctx(c).enclosing_declaration;
+        self.ctx_mut(c).enclosing_declaration = NodeId::NIL;
+        let first_declaration = property.declarations.as_slice().first().copied();
+        if is_late_bound_name(property.name) {
+            if let Some(decl) = first_declaration {
+                if c.has_late_bindable_name(decl) {
+                    if is_binary_expression(a, decl) {
+                        let name = get_name_of_declaration(a, decl);
+                        if !name.is_nil() && is_element_access_expression(a, name) {
+                            let argument = a.as_element_access_expression(name).argument_expression;
+                            if is_property_access_entity_name_expression(a, argument, false) {
+                                self.track_computed_name(c, argument, save_enclosing_declaration);
+                            }
+                        }
+                    } else {
+                        self.track_computed_name(
+                            c,
+                            a.expression(a.name(decl)),
+                            save_enclosing_declaration,
+                        );
+                    }
+                }
+            } else {
+                let text = c.symbol_to_string(property_symbol);
+                SymbolTrackerImpl::report_non_serializable_property(self.ctx_mut(c), &text);
+            }
+        }
+        if !property.value_declaration.is_nil() {
+            self.ctx_mut(c).enclosing_declaration = property.value_declaration;
+        } else if let Some(decl) = first_declaration.filter(|decl| !decl.is_nil()) {
+            self.ctx_mut(c).enclosing_declaration = decl;
+        } else {
+            self.ctx_mut(c).enclosing_declaration = save_enclosing_declaration;
+        }
+        let property_name =
+            self.get_property_name_node_for_symbol(c, property_symbol, save_enclosing_declaration);
+        self.ctx_mut(c).enclosing_declaration = save_enclosing_declaration;
+        self.ctx_mut(c).approximate_length += symbol_name(a, property_symbol).len() as isize + 1;
+
+        let parent_is_class = !property.parent.is_nil()
+            && a.sym(property.parent).flags.intersects(SymbolFlags::CLASS);
+        if property.flags.intersects(SymbolFlags::ACCESSOR) {
+            let write_type = c.get_write_type_of_symbol(property_symbol);
+            if !c.is_error_type(property_type) && !c.is_error_type(write_type) {
+                let prop_declaration =
+                    get_declaration_of_kind(a, property_symbol, Kind::PropertyDeclaration);
+                if property_type != write_type || parent_is_class && prop_declaration.is_nil() {
+                    let symbol_mapper = c.value_symbol_links.get(property_symbol).mapper;
+                    let getter_declaration =
+                        get_declaration_of_kind(a, property_symbol, Kind::GetAccessor);
+                    if !getter_declaration.is_nil() {
+                        let mut getter_signature =
+                            c.get_signature_from_declaration(getter_declaration);
+                        if !symbol_mapper.is_nil() {
+                            getter_signature =
+                                c.instantiate_signature(getter_signature, symbol_mapper);
+                        }
+                        let getter = self.signature_to_signature_declaration_helper(
+                            c,
+                            getter_signature,
+                            Kind::GetAccessor,
+                            Some(&SignatureToSignatureDeclarationOptions {
+                                name: property_name,
+                                ..Default::default()
+                            }),
+                        );
+                        self.set_comment_range(c, getter, getter_declaration);
+                        type_elements.push(getter);
+                    }
+                    let setter_declaration =
+                        get_declaration_of_kind(a, property_symbol, Kind::SetAccessor);
+                    if !setter_declaration.is_nil() {
+                        let mut setter_signature =
+                            c.get_signature_from_declaration(setter_declaration);
+                        if !symbol_mapper.is_nil() {
+                            setter_signature =
+                                c.instantiate_signature(setter_signature, symbol_mapper);
+                        }
+                        let setter = self.signature_to_signature_declaration_helper(
+                            c,
+                            setter_signature,
+                            Kind::SetAccessor,
+                            Some(&SignatureToSignatureDeclarationOptions {
+                                name: property_name,
+                                ..Default::default()
+                            }),
+                        );
+                        self.set_comment_range(c, setter, setter_declaration);
+                        type_elements.push(setter);
+                    }
+                    return;
+                } else if parent_is_class
+                    && !prop_declaration.is_nil()
+                    && a.modifier_nodes(prop_declaration)
+                        .as_slice()
+                        .iter()
+                        .any(|m| a.kind(*m) == Kind::AccessorKeyword)
+                {
+                    let fake_getter_signature = c.new_signature(
+                        SignatureFlags::NONE,
+                        NodeId::NIL,
+                        &[],
+                        SymbolId::NIL,
+                        &[],
+                        property_type,
+                        TypePredicateId::NIL,
+                        0,
+                    );
+                    let fake_getter_declaration = self.signature_to_signature_declaration_helper(
+                        c,
+                        fake_getter_signature,
+                        Kind::GetAccessor,
+                        Some(&SignatureToSignatureDeclarationOptions {
+                            name: property_name,
+                            ..Default::default()
+                        }),
+                    );
+                    self.set_comment_range(c, fake_getter_declaration, prop_declaration);
+                    type_elements.push(fake_getter_declaration);
+
+                    let setter_param = c.new_symbol(SymbolFlags::FUNCTION_SCOPED_VARIABLE, b"arg");
+                    c.value_symbol_links.get(setter_param).resolved_type = write_type;
+                    let void_type = c.void_type;
+                    let fake_setter_signature = c.new_signature(
+                        SignatureFlags::NONE,
+                        NodeId::NIL,
+                        &[],
+                        SymbolId::NIL,
+                        &[setter_param],
+                        void_type,
+                        TypePredicateId::NIL,
+                        0,
+                    );
+                    let fake_setter_declaration = self.signature_to_signature_declaration_helper(
+                        c,
+                        fake_setter_signature,
+                        Kind::SetAccessor,
+                        Some(&SignatureToSignatureDeclarationOptions {
+                            name: property_name,
+                            ..Default::default()
+                        }),
+                    );
+                    type_elements.push(fake_setter_declaration);
+                    return;
+                }
+            }
+        }
+
+        let mut optional_token = NodeId::NIL;
+        if property.flags.intersects(SymbolFlags::OPTIONAL) {
+            optional_token = self.f(c).new_token(Kind::QuestionToken);
+        }
+        if property
+            .flags
+            .intersects(SymbolFlags::FUNCTION | SymbolFlags::METHOD)
+            && c.get_properties_of_object_type(property_type).is_empty()
+            && !c.is_readonly_symbol(property_symbol)
+        {
+            let defined_type = c.filter_type(property_type, |c, t| {
+                !c.types[t].flags.intersects(TypeFlags::UNDEFINED)
+            });
+            let signatures = c.get_signatures_of_type(defined_type, SignatureKind::Call);
+            for signature in signatures.iter().copied() {
+                let method_declaration = self.signature_to_signature_declaration_helper(
+                    c,
+                    signature,
+                    Kind::MethodSignature,
+                    Some(&SignatureToSignatureDeclarationOptions {
+                        name: property_name,
+                        question_token: optional_token,
+                        ..Default::default()
+                    }),
+                );
+                let mut comment_source = c.signatures[signature].declaration;
+                if comment_source.is_nil() {
+                    comment_source = property.value_declaration;
+                }
+                self.set_comment_range(c, method_declaration, comment_source);
+                type_elements.push(method_declaration);
+            }
+            if !signatures.is_empty() || optional_token.is_nil() {
+                return;
+            }
+        }
+        let property_type_node;
+        if self.should_use_placeholder_for_property(c, property_symbol) {
+            property_type_node = self.create_elided_information_placeholder(c);
+        } else {
+            if property_is_reverse_mapped {
+                self.ctx_mut(c).reverse_mapped_stack.push(property_symbol);
+            }
+            if !property_type.is_nil() {
+                property_type_node = self.serialize_type_for_declaration(
+                    c,
+                    NodeId::NIL,
+                    property_type,
+                    property_symbol,
+                    true,
+                );
+            } else {
+                property_type_node = self.f(c).new_keyword_type_node(Kind::AnyKeyword);
+            }
+            if property_is_reverse_mapped {
+                self.ctx_mut(c).reverse_mapped_stack.pop();
+            }
+        }
+
+        let mut modifiers = ModifierListId::NIL;
+        if c.is_readonly_symbol(property_symbol) {
+            let readonly = self.f(c).new_modifier(Kind::ReadonlyKeyword);
+            modifiers = self.f(c).new_modifier_list(&[readonly]);
+            self.ctx_mut(c).approximate_length += 9;
+        }
+        let property_signature = self.f(c).new_property_signature_declaration(
+            modifiers,
+            property_name,
+            optional_token,
+            property_type_node,
+            NodeId::NIL,
+        );
+        self.set_comment_range(c, property_signature, property.value_declaration);
+        type_elements.push(property_signature);
+    }
+}
+
+// nodebuilder_hover.go isExpanding: whether hover expansion is on for this context.
+pub(crate) fn is_expanding(ctx: &NodeBuilderContext) -> bool {
+    ctx.max_expansion_depth >= 0
+}
+
+impl NodeBuilderImpl {
+    // `resolved_type` is the type whose structured part upstream receives.
+    pub(crate) fn create_type_nodes_from_resolved_type(
+        self,
+        c: &mut Checker<'_>,
+        resolved_type: TypeId,
+    ) -> NodeListId {
+        let a = c.ast;
+        if self.check_truncation_length(c) {
+            if self.ctx(c).flags.intersects(Flags::NO_TRUNCATION) {
+                let elem = self.f(c).new_not_emitted_type_element();
+                let commented = c.node_builder.impl_.e.add_synthetic_trailing_comment(
+                    a,
+                    elem,
+                    Kind::MultiLineCommentTrivia,
+                    b"elided",
+                    false,
+                );
+                return self.f(c).new_node_list(&[commented]);
+            }
+            let name = self.f(c).new_identifier(b"...");
+            let signature = self.f(c).new_property_signature_declaration(
+                ModifierListId::NIL,
+                name,
+                NodeId::NIL,
+                NodeId::NIL,
+                NodeId::NIL,
+            );
+            return self.f(c).new_node_list(&[signature]);
+        }
+        let mut type_elements: Vec<NodeId> = Vec::new();
+        let call_signatures = c.as_structured_type(resolved_type).call_signatures();
+        for signature in call_signatures.as_slice() {
+            type_elements.push(self.signature_to_signature_declaration_helper(
+                c,
+                *signature,
+                Kind::CallSignature,
+                None,
+            ));
+        }
+        let construct_signatures = c.as_structured_type(resolved_type).construct_signatures();
+        for signature in construct_signatures.as_slice() {
+            if c.signatures[*signature]
+                .flags
+                .intersects(SignatureFlags::ABSTRACT)
+            {
+                continue;
+            }
+            type_elements.push(self.signature_to_signature_declaration_helper(
+                c,
+                *signature,
+                Kind::ConstructSignature,
+                None,
+            ));
+        }
+        let index_infos = c.as_structured_type(resolved_type).index_infos;
+        let is_reverse_mapped = c.types[resolved_type]
+            .object_flags
+            .intersects(ObjectFlags::REVERSE_MAPPED);
+        for info in index_infos.as_slice() {
+            // Upstream passes the placeholder through core.IfElse, which evaluates it for every index info.
+            let placeholder = self.create_elided_information_placeholder(c);
+            let type_node = if is_reverse_mapped {
+                placeholder
+            } else {
+                NodeId::NIL
+            };
+            let nodes = self
+                .index_info_to_object_computed_names_or_signature_declaration(c, *info, type_node);
+            type_elements.extend_from_slice(&nodes);
+        }
+
+        let properties = c.as_structured_type(resolved_type).properties;
+        let properties = properties.as_slice();
+        let Some(&last_property) = properties.last() else {
+            return self.f(c).new_node_list(&type_elements);
+        };
+
+        let mut i: usize = 0;
+        for property_symbol in properties.iter().copied() {
+            let property = a.sym(property_symbol);
+            if is_expanding(self.ctx(c)) && property.flags.intersects(SymbolFlags::PROTOTYPE) {
+                continue;
+            }
+            i += 1;
+            if self
+                .ctx(c)
+                .flags
+                .intersects(Flags::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL)
+            {
+                if property.flags.intersects(SymbolFlags::PROTOTYPE) {
+                    continue;
+                }
+                if get_declaration_modifier_flags_from_symbol(a, property_symbol)
+                    .intersects(ModifierFlags::PRIVATE | ModifierFlags::PROTECTED)
+                {
+                    SymbolTrackerImpl::report_private_in_base_of_class_expression(
+                        self.ctx_mut(c),
+                        property.name,
+                    );
+                }
+                if is_private_identifier_symbol(a, property_symbol) {
+                    let name = symbol_name(a, property_symbol);
+                    SymbolTrackerImpl::report_private_in_base_of_class_expression(
+                        self.ctx_mut(c),
+                        &name,
+                    );
+                }
+            }
+            if self.check_truncation_length(c) && (i + 2 < properties.len() - 1) {
+                let more = properties.len() - i;
+                if self.ctx(c).flags.intersects(Flags::NO_TRUNCATION) {
+                    if let Some(last) = type_elements.last().copied() {
+                        let commented = c.node_builder.impl_.e.add_synthetic_trailing_comment(
+                            a,
+                            last,
+                            Kind::MultiLineCommentTrivia,
+                            format!("... {more} more elided ...").as_bytes(),
+                            false,
+                        );
+                        if let Some(slot) = type_elements.last_mut() {
+                            *slot = commented;
+                        }
+                    }
+                } else {
+                    let name = self
+                        .f(c)
+                        .new_identifier(format!("... {more} more ...").as_bytes());
+                    let signature = self.f(c).new_property_signature_declaration(
+                        ModifierListId::NIL,
+                        name,
+                        NodeId::NIL,
+                        NodeId::NIL,
+                        NodeId::NIL,
+                    );
+                    type_elements.push(signature);
+                }
+                self.add_property_to_element_list(c, last_property, &mut type_elements);
+                break;
+            }
+            self.add_property_to_element_list(c, property_symbol, &mut type_elements);
+        }
+        if !type_elements.is_empty() {
+            self.f(c).new_node_list(&type_elements)
+        } else {
+            NodeListId::NIL
+        }
+    }
+
+    pub(crate) fn create_type_node_from_object_type(
+        self,
+        c: &mut Checker<'_>,
+        t: TypeId,
+    ) -> NodeId {
+        let a = c.ast;
+        if c.is_generic_mapped_type(t)
+            || (c.types[t].object_flags.intersects(ObjectFlags::MAPPED)
+                && c.as_mapped_type(t).contains_error)
+        {
+            return self.create_mapped_type_node_from_type(c, t);
+        }
+        c.resolve_structured_type_members(t);
+        let resolved = t;
+        let call_sigs = c.as_structured_type(resolved).call_signatures();
+        let ctor_sigs = c.as_structured_type(resolved).construct_signatures();
+        let properties = c.as_structured_type(resolved).properties;
+        let index_infos = c.as_structured_type(resolved).index_infos;
+        let (call_sigs, ctor_sigs) = (call_sigs.as_slice(), ctor_sigs.as_slice());
+        if properties.as_slice().is_empty() && index_infos.as_slice().is_empty() {
+            if call_sigs.is_empty() && ctor_sigs.is_empty() {
+                self.ctx_mut(c).approximate_length += 2;
+                let members = self.f(c).new_node_list(&[]);
+                let result = self.f(c).new_type_literal_node(members);
+                c.node_builder
+                    .impl_
+                    .e
+                    .set_emit_flags(result, EmitFlags::SINGLE_LINE);
+                return result;
+            }
+            if let ([signature], []) = (call_sigs, ctor_sigs) {
+                return self.signature_to_signature_declaration_helper(
+                    c,
+                    *signature,
+                    Kind::FunctionType,
+                    None,
+                );
+            }
+            if let ([signature], []) = (ctor_sigs, call_sigs) {
+                return self.signature_to_signature_declaration_helper(
+                    c,
+                    *signature,
+                    Kind::ConstructorType,
+                    None,
+                );
+            }
+        }
+        let abstract_signatures: Vec<SignatureId> = ctor_sigs
+            .iter()
+            .copied()
+            .filter(|signature| {
+                c.signatures[*signature]
+                    .flags
+                    .intersects(SignatureFlags::ABSTRACT)
+            })
+            .collect();
+        if !abstract_signatures.is_empty() {
+            let mut types: Vec<TypeId> = Vec::with_capacity(abstract_signatures.len() + 1);
+            for s in &abstract_signatures {
+                types.push(c.get_or_create_type_from_signature(*s));
+            }
+            // count the number of type elements excluding abstract constructors
+            let property_count = if self
+                .ctx(c)
+                .flags
+                .intersects(Flags::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL)
+            {
+                properties
+                    .as_slice()
+                    .iter()
+                    .filter(|p| !a.sym(**p).flags.intersects(SymbolFlags::PROTOTYPE))
+                    .count()
+            } else {
+                properties.as_slice().len()
+            };
+            let type_element_count = call_sigs.len()
+                + (ctor_sigs.len() - abstract_signatures.len())
+                + index_infos.as_slice().len()
+                + property_count;
+            // don't include an empty object literal if there were no other static-side properties to write, i.e. `abstract class C { }` becomes `abstract new () => {}` and not `(abstract new () => {}) & {}`
+            if type_element_count != 0 {
+                // create a copy of the object type without any abstract construct signatures.
+                types.push(
+                    self.get_resolved_type_without_abstract_construct_signatures(c, resolved),
+                );
+            }
+            let intersection = c.get_intersection_type(&types);
+            return self.type_to_type_node(c, intersection);
+        }
+
+        let restore_flags = self.save_restore_flags(c);
+        self.ctx_mut(c).flags |= Flags::IN_OBJECT_TYPE_LITERAL;
+        let members = self.create_type_nodes_from_resolved_type(c, resolved);
+        self.restore_flags(c, restore_flags);
+        let type_literal_node = self.f(c).new_type_literal_node(members);
+        self.ctx_mut(c).approximate_length += 2;
+        let emit_flags = if self
+            .ctx(c)
+            .flags
+            .intersects(Flags::MULTILINE_OBJECT_LITERALS)
+        {
+            EmitFlags::NONE
+        } else {
+            EmitFlags::SINGLE_LINE
+        };
+        c.node_builder
+            .impl_
+            .e
+            .set_emit_flags(type_literal_node, emit_flags);
+        type_literal_node
+    }
+}
+
+pub(crate) fn get_type_alias_for_type_literal(c: &mut Checker<'_>, t: TypeId) -> SymbolId {
+    let a = c.ast;
+    let symbol = c.types[t].symbol;
+    if !symbol.is_nil() && a.sym(symbol).flags.intersects(SymbolFlags::TYPE_LITERAL) {
+        if let Some(&declaration) = a.sym(symbol).declarations.as_slice().first() {
+            let node = walk_up_parenthesized_types(a, a.parent(declaration));
+            if is_type_alias_declaration(a, node) {
+                return c.get_symbol_of_declaration(node);
+            }
+        }
+    }
+    SymbolId::NIL
+}
+
+impl NodeBuilderImpl {
+    pub(crate) fn should_write_type_of_function_symbol(
+        self,
+        c: &mut Checker<'_>,
+        symbol: SymbolId,
+        type_id: TypeId,
+    ) -> (bool, SymbolId) {
+        let a = c.ast;
+        let mut symbol = symbol;
+        let sym = a.sym(symbol);
+        let mut is_static_method_symbol = false;
+        if sym.flags.intersects(SymbolFlags::METHOD) {
+            // typeof static method
+            for declaration in sym.declarations.as_slice() {
+                if is_static(a, *declaration)
+                    && !c.is_late_bindable_index_signature(get_name_of_declaration(a, *declaration))
+                {
+                    is_static_method_symbol = true;
+                    break;
+                }
+            }
+        }
+        let mut is_non_local_function_symbol = false;
+        let mut is_function_expression_symbol = false;
+        if sym.flags.intersects(SymbolFlags::FUNCTION) {
+            if !sym.parent.is_nil() {
+                // is exported function symbol
+                is_non_local_function_symbol = true;
+            } else {
+                for declaration in sym.declarations.as_slice().iter().copied() {
+                    let parent = a.parent(declaration);
+                    if a.kind(parent) == Kind::SourceFile || a.kind(parent) == Kind::ModuleBlock {
+                        is_non_local_function_symbol = true;
+                        break;
+                    }
+                    // A function expression or an arrow function assigned to a const or let at the top level behaves like a function declaration: `const foo = function() {}`.
+                    let parent2 = a.parent(parent);
+                    let parent3 = a.parent(parent2);
+                    let parent4 = a.parent(parent3);
+                    if is_function_expression_or_arrow_function(a, declaration)
+                        && is_variable_declaration(a, parent)
+                        && is_variable_declaration_list(a, parent2)
+                        && is_variable_statement(a, parent3)
+                        && !parent4.is_nil()
+                        && (a.kind(parent4) == Kind::SourceFile
+                            || a.kind(parent4) == Kind::ModuleBlock)
+                    {
+                        is_non_local_function_symbol = true;
+                        is_function_expression_symbol = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if is_static_method_symbol || is_non_local_function_symbol {
+            // typeof is allowed only for static/non local functions
+            let enclosing_declaration = self.ctx(c).enclosing_declaration;
+            if is_function_expression_symbol && !sym.value_declaration.is_nil() {
+                let value_parent = a.parent(sym.value_declaration);
+                if !value_parent.is_nil() && value_parent != enclosing_declaration {
+                    // Use the symbol of the variable declaration, not the function expression, when the type is used outside of its own initializer.
+                    symbol = c.get_merged_symbol(a.symbol(value_parent));
+                }
+            }
+            // The type of the symbol uses itself recursively, and the build succeeds without a visibility error or no structural fallback is allowed.
+            let use_type_of = self.ctx(c).flags.intersects(Flags::USE_TYPE_OF_FUNCTION)
+                || self.ctx(c).visited_types.has(&type_id);
+            let result = use_type_of
+                && (!self.ctx(c).flags.intersects(Flags::USE_STRUCTURAL_FALLBACK)
+                    || c.is_value_symbol_accessible(symbol, enclosing_declaration));
+            return (result, symbol);
+        }
+        (false, symbol)
+    }
+
+    pub(crate) fn create_anonymous_type_node(self, c: &mut Checker<'_>, t: TypeId) -> NodeId {
+        self.create_anonymous_type_node_ex(c, t, false, false)
+    }
+
+    pub(crate) fn should_emit_type_of_symbol(
+        self,
+        c: &mut Checker<'_>,
+        force_expansion: bool,
+        force_class_expansion: bool,
+        is_instance_type: SymbolFlags,
+        symbol: SymbolId,
+        type_id: TypeId,
+    ) -> (bool, SymbolId) {
+        if force_expansion {
+            return (false, symbol);
+        }
+        let a = c.ast;
+        let sym = a.sym(symbol);
+        // Always use 'typeof T' for type of class, enum, and module objects
+        let non_function_result = sym.flags.intersects(SymbolFlags::CLASS)
+            && !force_class_expansion
+            && c.get_base_type_variable_of_class(symbol).is_nil()
+            && !(!sym.value_declaration.is_nil()
+                && is_class_like(a, sym.value_declaration)
+                && self
+                    .ctx(c)
+                    .flags
+                    .intersects(Flags::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL)
+                && (!is_class_declaration(a, sym.value_declaration) || {
+                    let enclosing_declaration = self.ctx(c).enclosing_declaration;
+                    c.is_symbol_accessible(symbol, enclosing_declaration, is_instance_type, false)
+                        .accessibility
+                        != SymbolAccessibility::Accessible
+                }))
+            || sym
+                .flags
+                .intersects(SymbolFlags::ENUM | SymbolFlags::VALUE_MODULE);
+        if non_function_result {
+            return (true, symbol);
+        }
+        self.should_write_type_of_function_symbol(c, symbol, type_id)
+    }
+
+    pub(crate) fn create_anonymous_type_node_ex(
+        self,
+        c: &mut Checker<'_>,
+        t: TypeId,
+        force_class_expansion: bool,
+        force_expansion: bool,
+    ) -> NodeId {
+        let a = c.ast;
+        let type_id = t;
+        let symbol = c.types[t].symbol;
+        if symbol.is_nil() {
+            // Anonymous types without a symbol are never circular.
+            return self.create_type_node_from_object_type(c, t);
+        }
+        let is_instantiation_expression_type = c.types[t]
+            .object_flags
+            .intersects(ObjectFlags::INSTANTIATION_EXPRESSION_TYPE);
+        if is_instantiation_expression_type {
+            let existing = c.as_instantiation_expression_type(t).node;
+            // instantiationExpressionType.node is unreliable for constituents of unions and intersections: a reuse is only valid when the node resolves back to this type.
+            if is_type_query_node(a, existing)
+                && self.get_type_from_type_node(c, existing, false) == t
+            {
+                if self.ctx(c).visited_types.has(&type_id) {
+                    return self.create_elided_information_placeholder(c);
+                }
+                self.ctx_mut(c).visited_types.add(type_id);
+                let type_node = self.try_reuse_existing_non_parameter_type_node(
+                    c,
+                    existing,
+                    t,
+                    NodeId::NIL,
+                    TypeId::NIL,
+                );
+                self.ctx_mut(c).visited_types.delete(&type_id);
+                if !type_node.is_nil() {
+                    return type_node;
+                }
+            }
+            if self.ctx(c).visited_types.has(&type_id) {
+                return self.create_elided_information_placeholder(c);
+            }
+            return self.visit_and_transform_type(
+                c,
+                t,
+                NodeBuilderImpl::create_type_node_from_object_type,
+            );
+        }
+        let is_instance_type = if is_class_instance_side(c, t) {
+            SymbolFlags::TYPE
+        } else {
+            SymbolFlags::VALUE
+        };
+        let (ok, symbol) = self.should_emit_type_of_symbol(
+            c,
+            force_expansion,
+            force_class_expansion,
+            is_instance_type,
+            symbol,
+            type_id,
+        );
+        if ok {
+            if self.should_expand_type(c, t, false) {
+                self.ctx_mut(c).depth += 1;
+            } else {
+                return self.symbol_to_type_node(c, symbol, is_instance_type, NodeListId::NIL);
+            }
+        }
+        if self.ctx(c).visited_types.has(&type_id) {
+            // If type is an anonymous type literal in a type alias declaration, use type alias name
+            let type_alias = get_type_alias_for_type_literal(c, t);
+            if !type_alias.is_nil() {
+                // The specified symbol flags need to be reinterpreted as type flags
+                self.symbol_to_type_node(c, type_alias, SymbolFlags::TYPE, NodeListId::NIL)
+            } else {
+                self.create_elided_information_placeholder(c)
+            }
+        } else {
+            self.visit_and_transform_type(c, t, NodeBuilderImpl::create_type_node_from_object_type)
+        }
+    }
+
+    pub(crate) fn get_type_from_type_node(
+        self,
+        c: &mut Checker<'_>,
+        node: NodeId,
+        no_mapped_types: bool,
+    ) -> TypeId {
+        // A synthetic node without a parent has no type: upstream dereferences a nil node here.
+        if node.is_nil() || c.ast.parent(node).is_nil() {
+            return c.error_type;
+        }
+        let t = c.get_type_from_type_node(node);
+        let mapper = self.ctx(c).mapper;
+        if mapper.is_nil() {
+            return t;
+        }
+        let instantiated = c.instantiate_type(t, mapper);
+        if no_mapped_types && instantiated != t {
+            return TypeId::NIL;
+        }
+        instantiated
+    }
+
+    pub(crate) fn type_to_type_node_or_circularity_elision(
+        self,
+        c: &mut Checker<'_>,
+        t: TypeId,
+    ) -> NodeId {
+        if c.types[t].flags.intersects(TypeFlags::UNION) {
+            if self.ctx(c).visited_types.has(&t) {
+                let ctx = self.ctx_mut(c);
+                if !ctx.flags.intersects(Flags::ALLOW_ANONYMOUS_IDENTIFIER) {
+                    ctx.encountered_error = true;
+                    SymbolTrackerImpl::report_cyclic_structure_error(ctx);
+                }
+                return self.create_elided_information_placeholder(c);
+            }
+            return self.visit_and_transform_type(c, t, NodeBuilderImpl::type_to_type_node);
+        }
+        self.type_to_type_node(c, t)
+    }
+}

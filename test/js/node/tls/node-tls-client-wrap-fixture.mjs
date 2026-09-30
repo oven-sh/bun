@@ -58,44 +58,47 @@ export async function shutdown() {
     "destroy()": socket => socket.destroy(),
   };
 
-  const report = {};
-  try {
-    for (const [transportName, makeTransport] of Object.entries(transports)) {
-      for (const [methodName, call] of Object.entries(methods)) {
-        const { raw, settled } = await makeTransport();
-        raw.on("error", () => {});
-        const errors = [];
-        let closed = false;
-        // Settled by 'close', or by the 'error' that takes its place when destroy() fails.
-        const done = Promise.withResolvers();
-        const socket = new TLSSocket(raw, { rejectUnauthorized: false });
-        socket.on("error", error => {
-          errors.push(`error ${error.code ?? error.message}`);
-          done.resolve();
-        });
-        socket.on("close", () => {
-          closed = true;
-          done.resolve();
-        });
-        try {
-          call(socket);
-          await settled;
-          // The shutdown runs from process.nextTick, so it is over when a setImmediate runs.
-          await nextTurn();
-          socket.destroy();
-          await done.promise;
-        } catch (error) {
-          errors.push(`threw ${error.message}`);
-        }
-        report[`${transportName}: ${methodName}`] = { errors, closed };
-        raw.destroy();
-      }
+  async function shutDown(makeTransport, call) {
+    const { raw, settled } = await makeTransport();
+    raw.on("error", () => {});
+    const errors = [];
+    let closed = false;
+    // Settled by 'close', or by the 'error' that takes its place when destroy() fails.
+    const done = Promise.withResolvers();
+    const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+    socket.on("error", error => {
+      errors.push(`error ${error.code ?? error.message}`);
+      done.resolve();
+    });
+    socket.on("close", () => {
+      closed = true;
+      done.resolve();
+    });
+    try {
+      call(socket);
+      await settled;
+      // The shutdown runs from process.nextTick, so it is over when a setImmediate runs.
+      await nextTurn();
+      socket.destroy();
+      await done.promise;
+    } catch (error) {
+      errors.push(`threw ${error.message}`);
     }
+    raw.destroy();
+    return { errors, closed };
+  }
+
+  const cells = Object.entries(transports).flatMap(([transportName, makeTransport]) =>
+    Object.entries(methods).map(([methodName, call]) => [`${transportName}: ${methodName}`, makeTransport, call]),
+  );
+  try {
+    // Each cell has a stream and a wrap of its own, so the cells run together.
+    const results = await Promise.all(cells.map(([, makeTransport, call]) => shutDown(makeTransport, call)));
+    return Object.fromEntries(cells.map(([name], index) => [name, results[index]]));
   } finally {
     for (const socket of accepted) socket.destroy();
     peer.close();
   }
-  return report;
 }
 
 // The calls of Connection.prototype._startTLS in mysql 2.18.1 (lib/Connection.js), in its

@@ -4545,25 +4545,26 @@ describe.concurrent("pm untrusted/trust under the isolated linker", () => {
     expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([hostName]);
   });
 
-  test("does not run scripts inside the shared global store", async () => {
-    const pkgName = "lifecycle-globalstore-pkg";
-    await using ctx = await setup({ pkgName, bunfigExtra: "globalStore = true\n" });
-    const { packageDir, cacheDir } = ctx;
+  // A direct dependency is the case where `node_modules/<name>` itself resolves into the shared store.
+  test.each(["root", "workspace"] as const)(
+    "does not run scripts inside the shared global store (dependency of the %s package)",
+    async dependent => {
+      const pkgName = "lifecycle-globalstore-pkg";
+      await using ctx = await setup({ pkgName, dependent, bunfigExtra: "globalStore = true\n" });
+      const { packageDir, cacheDir } = ctx;
 
-    {
-      const { err, exitCode } = await run(ctx, "install");
-      expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
-    }
+      {
+        const { err, exitCode } = await run(ctx, "install");
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
 
-    {
       const { out, err, exitCode } = await run(ctx, "pm", "trust", pkgName);
+      expect(findMarkers(cacheDir)).toEqual([]);
       expect(err).not.toContain("error:");
       expect(out).toContain("linked from the global store");
       expect(exitCode).toBe(0);
-    }
-
-    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
-    expect(findMarkers(cacheDir)).toEqual([]);
-  });
+      expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+    },
+  );
 });

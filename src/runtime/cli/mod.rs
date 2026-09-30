@@ -344,6 +344,7 @@ pub(crate) mod filter_arg;
 pub(crate) mod filter_run;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
+pub(crate) mod lint_command;
 #[path = "multi_run.rs"]
 pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
@@ -1379,6 +1380,9 @@ pub(crate) mod command {
                     bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
                 }
 
+                // The embedded entry point is what runs: `--lint` among the options parsed next is refused.
+                super::lint_command::refuse_in_compiled_executable(bun::argv().as_slice());
+
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
 
@@ -1418,6 +1422,10 @@ pub(crate) mod command {
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
         let ctx = init(tag, log)?;
+        // Ahead of every run mode: `parse` returned before the other flags of a lint run were read.
+        if ctx.lint {
+            super::lint_command::exec(ctx);
+        }
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         if ctx.parallel || ctx.sequential {
@@ -1528,6 +1536,7 @@ pub(crate) mod command {
             1
         };
         let argv = argv_zslice();
+        super::lint_command::refuse_in_bunx(&argv[start_idx..]);
         super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
     }
 

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("BUN_OPTIONS environment variable", () => {
@@ -127,5 +127,41 @@ describe("BUN_OPTIONS environment variable", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString()).toContain("NORMAL");
+  });
+
+  // `--lint` makes `bun` and `bun run` check their files and run none of them. It is refused in BUN_OPTIONS.
+  describe("--lint", () => {
+    // Run, this file writes the marker.
+    const files = { "x.ts": `import { writeFileSync } from "node:fs";\nwriteFileSync("marker.txt", "ran");\n` };
+
+    /** Runs `bun <command>` in `cwd` with `env` over `bunEnv`. */
+    function bun(cwd: string, command: string, env: NodeJS.Dict<string>) {
+      const result = spawnSync({ cmd: [bunExe(), ...command.split(" ")], env: { ...bunEnv, ...env }, cwd });
+      return { stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+    }
+
+    test.each([
+      ["--lint", "x.ts"],
+      ["--lint", "run x.ts"],
+      ["--smol --lint", "x.ts"],
+      ["--lint", "--lint x.ts"],
+    ])("BUN_OPTIONS='%s' is refused and `bun %s` runs nothing", (options, command) => {
+      using dir = tempDir("bun-options-lint", files);
+      const refused = { stdout: "", stderr: "error: --lint cannot be set in BUN_OPTIONS\n", exitCode: 1 };
+      // The refusal does not depend on the variable that turns `--lint` on.
+      for (const variable of ["1", undefined]) {
+        const env = { BUN_OPTIONS: options, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: variable };
+        expect(bun(String(dir), command, env)).toEqual(refused);
+      }
+      expect(existsSync(`${dir}/marker.txt`)).toBe(false);
+    });
+
+    test("another option in BUN_OPTIONS does not refuse --lint on the command line", () => {
+      using dir = tempDir("bun-options-lint-other", files);
+      const env = { BUN_OPTIONS: "--smol", BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1" };
+      // The file is checked and not run.
+      expect(bun(String(dir), "--lint x.ts", env)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      expect(existsSync(`${dir}/marker.txt`)).toBe(false);
+    });
   });
 });

@@ -3447,19 +3447,23 @@ describe.concurrent("uncaughtException from socket listeners", () => {
 });
 
 describe("a write that is still queued natively", () => {
-  const N = 8 * 1024 * 1024;
+  const STEP = 1024 * 1024;
+  const chunk = Buffer.alloc(STEP, 120);
+
+  // The peer does not read. Windows takes a first send of any size whole, so one write is not enough there.
+  function writeUntilQueued(socket: Socket) {
+    let written = 0;
+    let queued = false;
+    while (!queued && written < 64 * STEP) {
+      queued = !socket.write(chunk);
+      written += STEP;
+    }
+    return { written, queued };
+  }
 
   it("is sent before the FIN when the handle shuts down", async () => {
-    const received = Promise.withResolvers<number>();
-    const server = createServer({ allowHalfOpen: true }, peer => {
-      let got = 0;
-      peer.on("data", chunk => (got += chunk.length));
-      peer.on("error", () => {});
-      peer.on("end", () => {
-        received.resolve(got);
-        peer.end();
-      });
-    });
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer({ allowHalfOpen: true, pauseOnConnect: true }, peer => accepted.resolve(peer));
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
       const socket = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
@@ -3468,11 +3472,22 @@ describe("a write that is still queued natively", () => {
       await once(socket, "connect");
       const closed = Promise.withResolvers<void>();
       socket.on("close", () => closed.resolve());
-      const flushed = socket.write(Buffer.alloc(N, 120));
+      const { written, queued } = writeUntilQueued(socket);
       // @ts-expect-error the native handle
       socket._handle.shutdown();
-      const [got] = await Promise.all([received.promise, closed.promise]);
-      expect({ flushed, got }).toEqual({ flushed: false, got: N });
+
+      const peer = await accepted.promise;
+      const received = Promise.withResolvers<number>();
+      let got = 0;
+      peer.on("error", () => {});
+      peer.on("end", () => {
+        received.resolve(got);
+        peer.end();
+      });
+      peer.on("data", data => (got += data.length));
+      peer.resume();
+      const [gotAtEnd] = await Promise.all([received.promise, closed.promise]);
+      expect({ queued, got: gotAtEnd }).toEqual({ queued: true, got: written });
     } finally {
       server.close();
     }
@@ -3480,7 +3495,6 @@ describe("a write that is still queued natively", () => {
 
   it.each(["the peer resets the connection", "destroy()"] as const)("stays in bytesWritten when %s", async how => {
     const accepted = Promise.withResolvers<Socket>();
-    // The peer never reads, so most of the write stays queued.
     const server = createServer({ pauseOnConnect: true }, peer => {
       peer.on("error", () => {});
       accepted.resolve(peer);
@@ -3490,7 +3504,7 @@ describe("a write that is still queued natively", () => {
       const socket = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       socket.on("error", () => {});
       await once(socket, "connect");
-      const flushed = socket.write(Buffer.alloc(N, 120));
+      const { written, queued } = writeUntilQueued(socket);
       const peer = await accepted.promise;
       const closed = Promise.withResolvers<void>();
       socket.on("close", () => closed.resolve());
@@ -3498,7 +3512,7 @@ describe("a write that is still queued natively", () => {
       else peer.resetAndDestroy();
       await closed.promise;
       peer.destroy();
-      expect({ flushed, bytesWritten: socket.bytesWritten }).toEqual({ flushed: false, bytesWritten: N });
+      expect({ queued, bytesWritten: socket.bytesWritten }).toEqual({ queued: true, bytesWritten: written });
     } finally {
       server.close();
     }

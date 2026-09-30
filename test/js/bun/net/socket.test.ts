@@ -6345,15 +6345,26 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)
 });
 
 it("a close by the peer frees a queued end(data) tail and keeps bytesWritten", async () => {
-  const N = 16 * 1024 * 1024;
+  const STEP = 1024 * 1024;
+  const TAIL = 8 * 1024 * 1024;
   const sawFin = Promise.withResolvers<Socket>();
   const closed = Promise.withResolvers<void>();
+  let accepted = 0;
+  let kernelFull = false;
   using server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       data(s) {
-        s.end(Buffer.alloc(N, 120));
+        // write() fills the kernel first, so end() has to queue its chunk: Windows takes a first send of any size whole.
+        const step = Buffer.alloc(STEP, 120);
+        let took = STEP;
+        while (took === STEP && accepted < 64 * STEP) {
+          took = s.write(step);
+          accepted += Math.max(took, 0);
+        }
+        kernelFull = took !== STEP;
+        accepted += s.end(Buffer.alloc(TAIL, 120));
       },
       end: s => sawFin.resolve(s),
       close: () => closed.resolve(),
@@ -6366,18 +6377,16 @@ it("a close by the peer frees a queued end(data) tail and keeps bytesWritten", a
   peer.pause();
   peer.on("connect", () => peer.end("request\n"));
   const socket = await sawFin.promise;
-  const queued = {
-    tailHeld: estimateShallowMemoryUsageOf(socket) > 4 * 1024 * 1024,
-    bytesWritten: socket.bytesWritten,
-  };
+  const queued = { tailHeld: estimateShallowMemoryUsageOf(socket) > TAIL / 2, bytesWritten: socket.bytesWritten };
   peer.destroy();
   await closed.promise;
   const afterClose = {
     tailHeld: estimateShallowMemoryUsageOf(socket) > 64 * 1024,
     bytesWritten: socket.bytesWritten,
   };
-  expect({ queued, afterClose }).toEqual({
-    queued: { tailHeld: true, bytesWritten: N },
-    afterClose: { tailHeld: false, bytesWritten: N },
+  expect({ kernelFull, queued, afterClose }).toEqual({
+    kernelFull: true,
+    queued: { tailHeld: true, bytesWritten: accepted },
+    afterClose: { tailHeld: false, bytesWritten: accepted },
   });
 });

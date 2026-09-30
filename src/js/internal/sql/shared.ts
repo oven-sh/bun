@@ -4,6 +4,7 @@ const PublicArray = globalThis.Array;
 const {
   Query,
   SQLQueryFlags,
+  onQuerySettled,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
@@ -804,7 +805,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   bindQuery(query: QueryType<any, any>, onClose: (err: Error) => void) {
     this.queries.add(onClose);
-    query.finally(onQueryFinish.bind(this, onClose));
+    onQuerySettled(query, onQueryFinish.bind(this, onClose));
   }
 
   protected doRetry() {

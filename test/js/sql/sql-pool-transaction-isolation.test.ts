@@ -6,6 +6,7 @@
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type net from "node:net";
 import {
   listeningServer,
@@ -107,6 +108,28 @@ function firstInterleaving(received: Received[]): string | null {
     }
   }
   return null;
+}
+
+// Counts the calls of then(), catch() and finally() of each query, which all have one
+// prototype. The client gives a connection back when a query settles, and it must not
+// do that with a reaction of its own on the promise of the query.
+function countReactionCalls(query: object) {
+  const proto = Object.getPrototypeOf(query);
+  const methods = ["then", "catch", "finally"] as const;
+  const original = Object.fromEntries(methods.map(name => [name, proto[name]]));
+  const calls = { then: 0, catch: 0, finally: 0 };
+  for (const name of methods) {
+    proto[name] = function (this: unknown, ...args: unknown[]) {
+      calls[name]++;
+      return original[name].apply(this, args);
+    };
+  }
+  return {
+    calls,
+    [Symbol.dispose]() {
+      Object.assign(proto, original);
+    },
+  };
 }
 
 const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
@@ -439,4 +462,221 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       await new Promise<void>(r => server.close(() => r()));
     }
   });
+
+  test("a query gets no reaction from the client when its connection goes back to the pool", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      using counted = countReactionCalls(sql.unsafe("SELECT 'never run'"));
+      const since = () => {
+        const calls = { ...counted.calls };
+        counted.calls.then = counted.calls.catch = counted.calls.finally = 0;
+        return calls;
+      };
+
+      await sql.unsafe("SELECT 'pool'");
+      const pool = since();
+
+      const reserved = await sql.reserve();
+      since();
+      await reserved.unsafe("SELECT 'reserved'");
+      const onReserved = since();
+      reserved.release();
+
+      // BEGIN, the query of the caller and COMMIT: the client awaits the first and the last.
+      await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'transaction'");
+      });
+      const transaction = since();
+
+      expect({ pool, onReserved, transaction }).toEqual({
+        pool: { then: 1, catch: 0, finally: 0 },
+        onReserved: { then: 1, catch: 0, finally: 0 },
+        transaction: { then: 3, catch: 0, finally: 0 },
+      });
+      // Each connection went back: the pool has one, and the statements ran in this order.
+      expect(received.map(({ sql }) => sql)).toEqual([
+        "SELECT 'warm'",
+        "SELECT 'pool'",
+        "SELECT 'reserved'",
+        beginCommand,
+        "SELECT 'transaction'",
+        "COMMIT",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("a query that the client rejects before it sends it gives its connection back", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const values: unknown[] = [1];
+      Object.defineProperty(values, 0, {
+        enumerable: true,
+        get() {
+          throw new Error("thrown by a parameter");
+        },
+      });
+      const error = await sql.unsafe("SELECT 'never sent'", values).then(
+        () => null,
+        e => e,
+      );
+      expect(error?.message).toBe("thrown by a parameter");
+
+      // begin() needs the one connection of the pool with no query on it.
+      const transaction = await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'transaction'");
+        return "committed";
+      });
+      expect(transaction).toBe("committed");
+      expect(received.map(({ sql }) => sql)).toEqual(["SELECT 'warm'", beginCommand, "SELECT 'transaction'", "COMMIT"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The pool starts a waiting transaction from the callback that gives the connection back.
+  test("a transaction that waits for the connection keeps the AsyncLocalStorage store of its caller", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const storage = new AsyncLocalStorage<string>();
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const stores = await storage.run("caller", async () => {
+        // This query has the only connection of the pool when begin() asks for one.
+        const holder = sql.unsafe("SELECT 'holder'").execute();
+        const inTransaction = await sql.begin(async tx => {
+          const before = storage.getStore();
+          await tx.unsafe("SELECT 'transaction'");
+          return [before, storage.getStore()];
+        });
+        await holder;
+        return inTransaction;
+      });
+      expect(stores).toEqual(["caller", "caller"]);
+      expect(received.map(({ sql }) => sql)).toEqual([
+        "SELECT 'warm'",
+        "SELECT 'holder'",
+        beginCommand,
+        "SELECT 'transaction'",
+        "COMMIT",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // A query is a pending query of its transaction until the callback of the client runs, and each
+  // reaction of the caller runs before that callback. Before, a reaction added after execute() ran
+  // after it, and close({ timeout }) in that reaction found no pending query and rolled back.
+  // close({ timeout }) with a pending query that settles in time rolls nothing back (#32148), so
+  // both transactions commit until that is fixed.
+  test("close({ timeout }) does the same in a reaction added before execute() and in one added after it", async () => {
+    const outcome = async (start: (tx: Bun.TransactionSQL) => PromiseLike<unknown>) => {
+      const received: Received[] = [];
+      const { port, server } = await mockServer(received);
+      const sql = new SQL(options(port));
+      try {
+        const begin = await sql
+          .begin(async tx => {
+            await start(tx).then(() => tx.close({ timeout: 30 }));
+          })
+          .then(
+            () => "resolved",
+            e => e.code,
+          );
+        return { begin, statements: received.map(({ sql }) => sql) };
+      } finally {
+        await sql.close({ timeout: 0 }).catch(() => {});
+        await new Promise<void>(r => server.close(() => r()));
+      }
+    };
+    const addedBefore = await outcome(tx => tx.unsafe("SELECT 'transaction'"));
+    const addedAfter = await outcome(tx => tx.unsafe("SELECT 'transaction'").execute());
+    expect(addedAfter).toEqual(addedBefore);
+  });
+
+  // bun:test fails this test if the failure of the query is reported as an unhandled rejection.
+  test("a query that fails on its connection, and that nothing reads, is not an unhandled rejection", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+      const query = sql.unsafe("SELECT 'KILL'").execute();
+      while (Bun.peek.status(query) === "pending") await new Promise(resolve => setImmediate(resolve));
+      expect(Bun.peek.status(query)).toBe("rejected");
+      // On a new connection, and after the turns in which a rejection is reported.
+      await sql.unsafe("SELECT 'after'");
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // Fake timers replace queueMicrotask(), and its callbacks then wait for the clock of the test.
+  // Runs in a child process: the global belongs to the whole process. The timeout is for the
+  // start of a child of a debug build.
+  test("a connection goes back to the pool while queueMicrotask() is replaced", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const sql = new Bun.SQL(${JSON.stringify(options(port))});
+            await sql.unsafe("SELECT 'warm'");
+            globalThis.queueMicrotask = () => {};
+            await sql.unsafe("SELECT 'pool'");
+            const transaction = await sql.begin(async tx => {
+              await tx.unsafe("SELECT 'transaction'");
+              return "committed";
+            });
+            console.log(JSON.stringify({ transaction }));
+            process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ transaction: "committed" });
+      expect(exitCode).toBe(0);
+      expect(received.map(({ sql }) => sql)).toEqual([
+        "SELECT 'warm'",
+        "SELECT 'pool'",
+        beginCommand,
+        "SELECT 'transaction'",
+        "COMMIT",
+      ]);
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }, 30_000);
+});
+
+test("sqlite: a query of a transaction gets no reaction from the client", async () => {
+  await using sql = new SQL(":memory:");
+  await sql`SELECT 1`;
+  using counted = countReactionCalls(sql`SELECT 1`);
+
+  // BEGIN, the query of the caller and COMMIT: the client awaits the first and the last.
+  await sql.begin(async tx => {
+    await tx`SELECT 2`;
+  });
+  expect(counted.calls).toEqual({ then: 3, catch: 0, finally: 0 });
 });

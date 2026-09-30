@@ -10,6 +10,7 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _settled = Symbol("settled");
 
 const PublicPromise = Promise;
 
@@ -31,6 +32,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_strings]: QueryStrings;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
+  public [_settled]: Promise<void> | undefined;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -94,8 +96,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_strings] = strings;
     this[_values] = values;
     this[_flags] = flags;
+    this[_settled] = undefined;
 
     this[_results] = null;
+  }
+
+  #notifySettled() {
+    const settled = this[_settled];
+    if (settled !== undefined) {
+      this[_settled] = undefined;
+      $resolvePromise(settled, undefined);
+    }
   }
 
   #run() {
@@ -191,7 +202,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     handle.done?.();
 
-    return this[_resolve](x);
+    this[_resolve](x);
+    this.#notifySettled();
   }
 
   reject(x: Error) {
@@ -201,14 +213,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if (!(this[_queryStatus] & SQLQueryStatus.invalidHandle)) {
       const handle = this.#getQueryHandle();
 
-      if (!handle) {
-        return this[_reject](x);
+      if (handle) {
+        handle.done?.();
       }
-
-      handle.done?.();
     }
 
-    return this[_reject](x);
+    this[_reject](x);
+    this.#notifySettled();
   }
 
   cancel() {
@@ -324,6 +335,24 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 }
 
+/**
+ * Runs `callback` one time after `query` settles, as a reaction of `query` does: in a microtask, and in
+ * the async context of this call. The reaction is on a promise of its own, so that `query` has only the
+ * reactions of the caller. The promise of `query` counts as handled. A query has one such callback.
+ */
+function onQuerySettled(query: Query<any, any>, callback: () => void) {
+  $pokePromiseAsHandled(query);
+  const settled = $newPromise<void>();
+  // An exception of `callback` rejects a promise that nothing reads.
+  $pokePromiseAsHandled(settled.$then(callback));
+  if ($isPromisePending(query)) {
+    $assert(query[_settled] === undefined, "a query has one settled callback");
+    query[_settled] = settled;
+  } else {
+    $resolvePromise(settled, undefined);
+  }
+}
+
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
@@ -353,6 +382,7 @@ const enum SQLQueryStatus {
 
 export default {
   Query,
+  onQuerySettled,
   SQLQueryFlags,
   SQLQueryResultMode,
 

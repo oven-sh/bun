@@ -222,16 +222,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
-                }
+            } else if !result.is_same_name(&left) {
+                *result = Metadata::MObject;
             }
         } else {
             // always take the next value if left is MNone
@@ -281,16 +273,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
-                }
+            } else if !result.is_same_name(&left) {
+                *result = Metadata::MObject;
             }
         } else {
             // make sure intersection of only MUnknown serializes to "undefined"
@@ -298,6 +282,21 @@ impl Metadata {
             if matches!(result, Metadata::MUnknown) {
                 *result = Metadata::MUndefined;
             }
+        }
+    }
+
+    /// Whether `self` and `other`, which are of one kind, serialize to one value: two names do where they are the same names.
+    fn is_same_name(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Metadata::MIdentifier(name), Metadata::MIdentifier(other)) => name.eql(*other),
+            (Metadata::MDot(names), Metadata::MDot(others)) => {
+                names.len() == others.len()
+                    && names
+                        .iter()
+                        .zip(others)
+                        .all(|(name, other)| name.eql(*other))
+            }
+            _ => true,
         }
     }
 

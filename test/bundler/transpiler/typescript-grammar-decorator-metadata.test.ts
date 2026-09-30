@@ -87,6 +87,17 @@ describe("emitDecoratorMetadata of a type that tsc serializes in another way tha
   });
 
   test.each([
+    ["string | (never | never)", "Object"],
+    ["string | never & string", "Object"],
+    ["(null | undefined) | string", "Object"],
+    ["string & (unknown & unknown)", "Object"],
+    ["A.B | C.D", "Object"],
+    ["A.B & A.C", "Object"],
+  ])("an operand of | and & counts as what it serializes to: %s", (type, expected) => {
+    expect(ofProperty(type)).toBe(expected);
+  });
+
+  test.each([
     ["A | unique symbol", "Object"],
     ["unique symbol & A", "Object"],
     ['A | import("x")', "Object"],

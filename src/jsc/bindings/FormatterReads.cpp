@@ -107,7 +107,9 @@ static bool listsItsStorage(JSValue value)
 }
 
 // The entry count of a Map or a Set: what a subclass reports as its `size`, which runs
-// its getter. 0 for a WeakMap or a WeakSet, which cannot be listed.
+// its getter. A `size` that is not a number is not converted to one, which would run its
+// `valueOf` and throws for a BigInt or a Symbol: what the collection holds stands in for it.
+// 0 for a WeakMap or a WeakSet, which cannot be listed.
 extern "C" int32_t Bun__FormatterReads__collectionSize(EncodedJSValue encodedValue, JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
@@ -117,11 +119,12 @@ extern "C" int32_t Bun__FormatterReads__collectionSize(EncodedJSValue encodedVal
     auto* set = dynamicDowncast<JSSet>(value);
     if (!map && !set)
         return 0;
+    int32_t held = static_cast<int32_t>(std::min<uint32_t>(map ? map->size() : set->size(), std::numeric_limits<int32_t>::max()));
     if (listsItsStorage(value))
-        return static_cast<int32_t>(std::min<uint32_t>(map ? map->size() : set->size(), std::numeric_limits<int32_t>::max()));
+        return held;
     JSValue size = asObject(value)->get(globalObject, vm.propertyNames->size);
     RETURN_IF_EXCEPTION(scope, 0);
-    RELEASE_AND_RETURN(scope, size.toInt32(globalObject));
+    return size.isNumber() ? JSC::toInt32(size.asNumber()) : held;
 }
 
 enum class EventField : uint8_t {
@@ -233,7 +236,15 @@ extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
     auto* set = dynamicDowncast<JSSet>(value);
     if (!map && !set)
         return false;
-    if (listsItsStorage(value)) {
+    bool fromStorage = listsItsStorage(value);
+    JSValue iteratorMethod;
+    if (!fromStorage) {
+        iteratorMethod = asObject(value)->get(globalObject, vm.propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(scope, false);
+        // Its prototype was taken away. Nothing else can list it.
+        fromStorage = !iteratorMethod.isCallable();
+    }
+    if (fromStorage) {
         uint32_t limit = std::max(size, 0);
         bool truncated = map
             ? forEachInStorage<JSMap>(vm, map->storage(), 0, limit, visit)
@@ -246,7 +257,7 @@ extern "C" bool Bun__FormatterReads__forEachEntry(EncodedJSValue encodedValue, J
     uint32_t held = map ? map->size() : set->size();
     size = static_cast<int32_t>(std::min<uint32_t>(std::max(size, 0), std::max<uint32_t>(held, 1 << 20)));
 
-    IterationRecord iterationRecord = iteratorForIterable(globalObject, value);
+    IterationRecord iterationRecord = iteratorForIterable(globalObject, asObject(value), iteratorMethod);
     RETURN_IF_EXCEPTION(scope, false);
 
     bool truncated = false;

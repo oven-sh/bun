@@ -101,6 +101,14 @@ describe.concurrent("the native stack limit in diffs and snapshots", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("the elements after one that is too deep leave nothing in the diff", async () => {
+    const { stderr, exitCode } = await runDeepTest(`${deepObject}\nexpect([v, 1, 2, 3]).toEqual([]);`);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain("note: a value is nested too deeply to print in full.");
+    expect(stderr).not.toMatch(/^\+\s+,$/m);
+    expect(exitCode).toBe(1);
+  });
+
   const formattingFailed = "RangeError: Maximum call stack size exceeded.";
 
   test("toMatchSnapshot on a deep object fails instead of writing a truncated snapshot", async () => {

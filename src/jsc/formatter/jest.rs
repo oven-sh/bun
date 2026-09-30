@@ -281,7 +281,8 @@ impl<'a> Formatter<'a> {
             // The element that ended a run of holes, so that it is read once.
             let mut read_ahead = JSValue::ZERO;
             let mut i: u32 = 0;
-            while i < len {
+            // Once an element was too deep for the stack, the rest print nothing but their commas.
+            while i < len && !self.failed {
                 let element = match core::mem::take(&mut read_ahead) {
                     JSValue::ZERO => value.get_direct_index(self.global_this, i)?,
                     element => element,

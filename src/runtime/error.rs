@@ -140,12 +140,6 @@ pub enum Error {
     InvalidRequest,
     #[error("FailedToCreateCoreFoudationSourceLoop")]
     FailedToCreateCoreFoudationSourceLoop,
-    #[error("eol")]
-    eol,
-    #[error("fmt")]
-    fmt,
-    #[error("InvalidCharacter")]
-    InvalidCharacter,
     #[error("FailedToSpawnFSEventsThread")]
     FailedToSpawnFSEventsThread,
     #[error("CompilationError")]
@@ -416,9 +410,6 @@ impl Error {
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
             Self::FailedToCreateCoreFoudationSourceLoop => "FailedToCreateCoreFoudationSourceLoop",
-            Self::eol => "eol",
-            Self::fmt => "fmt",
-            Self::InvalidCharacter => "InvalidCharacter",
             Self::FailedToSpawnFSEventsThread => "FailedToSpawnFSEventsThread",
             Self::CompilationError => "CompilationError",
             Self::DeferredErrors => "DeferredErrors",

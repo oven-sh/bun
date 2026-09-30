@@ -30,8 +30,6 @@ pub(crate) fn freemem() -> u64 {
 mod _impl {
     use super::*;
     use bun_core::EncodedSlice;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    use bun_core::ZStr;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
@@ -48,7 +46,7 @@ mod _impl {
     // ─── local shims for upstream API gaps (Phase D) ──────────────────────────
 
     /// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
-    /// `crate::Error`/`bun_sys::Error`. The variant payload is discarded by
+    /// `bun_sys::Error`. The variant payload is discarded by
     /// `cpus()`, which throws a `SystemError`.
     pub(crate) enum OsError {
         Js,
@@ -57,11 +55,6 @@ mod _impl {
     impl From<bun_jsc::JsError> for OsError {
         fn from(_: bun_jsc::JsError) -> Self {
             Self::Js
-        }
-    }
-    impl From<crate::Error> for OsError {
-        fn from(_: crate::Error) -> Self {
-            Self::Any
         }
     }
     impl From<bun_sys::Error> for OsError {
@@ -240,11 +233,89 @@ mod _impl {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
-        // Create the return array
-        let values = JSValue::create_empty_array(global_this, 0)?;
-        let mut num_cpus: u32 = 0;
+    #[derive(Clone, Copy)]
+    struct LinuxCpu<'a> {
+        times: CPUTimes,
+        /// The `model name` of this CPU, a slice of /proc/cpuinfo.
+        model: Option<&'a [u8]>,
+    }
 
+    /// The CPUs that /proc/stat lists, each at the index of its id.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn parse_proc_stat<'a>(stat: &[u8]) -> Vec<Option<LinuxCpu<'a>>> {
+        // https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1750 ("Kernel maximum"): a larger id is not a CPU.
+        const MAX_CPUS: usize = 8192;
+        // https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1905: a tick is 10 ms, sysconf(_SC_CLK_TCK) is fixed at 100.
+        const MS_PER_TICK: u64 = 10;
+
+        let mut cpus: Vec<Option<LinuxCpu<'a>>> =
+            Vec::with_capacity(strings::count_char(stat, b'\n'));
+        let mut lines = strings::tokenize(stat, b"\n");
+
+        // Skip the first line (aggregate of all CPUs)
+        let _ = lines.next();
+
+        for line in lines {
+            // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
+            let mut toks = strings::tokenize_any(line, b" \t");
+            let Some(id) = toks
+                .next()
+                .and_then(|name| name.strip_prefix(b"cpu"))
+                .and_then(bun_fmt::parse_decimal::<u32>)
+            else {
+                break; // done with CPUs
+            };
+            let mut ticks = || toks.next().and_then(bun_fmt::parse_decimal::<u64>);
+            let (Some(user), Some(nice), Some(sys), Some(idle), Some(_iowait), Some(irq)) =
+                (ticks(), ticks(), ticks(), ticks(), ticks(), ticks())
+            else {
+                break;
+            };
+
+            let id = id as usize;
+            if id >= MAX_CPUS {
+                continue;
+            }
+            if cpus.len() <= id {
+                cpus.resize(id + 1, None);
+            }
+            cpus[id] = Some(LinuxCpu {
+                times: CPUTimes {
+                    user: user.wrapping_mul(MS_PER_TICK),
+                    nice: nice.wrapping_mul(MS_PER_TICK),
+                    sys: sys.wrapping_mul(MS_PER_TICK),
+                    idle: idle.wrapping_mul(MS_PER_TICK),
+                    irq: irq.wrapping_mul(MS_PER_TICK),
+                },
+                model: None,
+            });
+        }
+
+        cpus
+    }
+
+    /// Gives each CPU the `model name` of the /proc/cpuinfo processor that has its id.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn join_models<'a>(cpus: &mut [Option<LinuxCpu<'a>>], cpuinfo: &'a [u8]) {
+        const KEY_PROCESSOR: &[u8] = b"processor\t: ";
+        const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
+
+        let mut id: Option<usize> = None;
+        for line in strings::tokenize(cpuinfo, b"\n") {
+            if let Some(digits) = line.strip_prefix(KEY_PROCESSOR) {
+                // libuv stops at a `processor` line without a number: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1809. Bun skips that block.
+                id = bun_fmt::parse_decimal::<u32>(strings::trim(digits, b" \t\n"))
+                    .map(|id| id as usize);
+            } else if let Some(model) = line.strip_prefix(KEY_MODEL_NAME) {
+                if let Some(Some(cpu)) = id.and_then(|id| cpus.get_mut(id)) {
+                    cpu.model = Some(model);
+                }
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         let mut file_buf: Vec<u8> = Vec::new();
 
         // Read /proc/stat to get number of CPUs and times
@@ -283,148 +354,65 @@ mod _impl {
             // file closed on Drop
 
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
-            let contents = file_buf.as_slice();
+        }
+        let mut cpus = parse_proc_stat(&file_buf);
 
-            let mut line_iter = strings::tokenize(contents, b"\n");
-
-            // Skip the first line (aggregate of all CPUs)
-            let _ = line_iter.next();
-
-            // Read each CPU line
-            while let Some(line) = line_iter.next() {
-                // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
-                let mut toks = strings::tokenize_any(line, b" \t");
-                let cpu_name = toks.next();
-                if cpu_name.is_none() || !cpu_name.unwrap().starts_with(b"cpu") {
-                    break; // done with CPUs
-                }
-
-                //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
-                let scale: u64 = 10;
-
-                let times = CPUTimes {
-                    user: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    nice: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    sys: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    idle: scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?,
-                    irq: {
-                        let _ = toks.next().ok_or(crate::Error::eol)?; // skip iowait
-                        scale * parse_u64(toks.next().ok_or(crate::Error::eol)?)?
-                    },
-                };
-
-                // Actually create the JS object representing the CPU
-                let cpu = JSValue::create_empty_object(global_this, 1);
-                cpu.put(global_this, b"times", times.to_value(global_this));
-                values.put_index(global_this, num_cpus, cpu)?;
-
-                num_cpus += 1;
-            }
-
-            file_buf.clear();
+        // Read /proc/cpuinfo to get model information (optional: on any error the models stay "unknown")
+        file_buf.clear();
+        let cpuinfo = bun_sys::File::open(bun_core::zstr!("/proc/cpuinfo"), bun_sys::O::RDONLY, 0)
+            .and_then(|file| {
+                file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)
+            });
+        if cpuinfo.is_ok() {
+            join_models(&mut cpus, &file_buf);
         }
 
-        // Read /proc/cpuinfo to get model information (optional)
-        if let Ok(file) =
-            bun_sys::File::open(bun_core::zstr!("/proc/cpuinfo"), bun_sys::O::RDONLY, 0)
-        {
-            // file closed on Drop
-
-            file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
-            let contents = file_buf.as_slice();
-
-            let mut line_iter = strings::tokenize(contents, b"\n");
-
-            const KEY_PROCESSOR: &[u8] = b"processor\t: ";
-            const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
-
-            let mut cpu_index: u32 = 0;
-            let mut has_model_name = true;
-            while let Some(line) = line_iter.next() {
-                if line.starts_with(KEY_PROCESSOR) {
-                    if !has_model_name {
-                        let cpu = values.get_index(global_this, cpu_index)?;
-                        cpu.put(
-                            global_this,
-                            b"model",
-                            global_this.common_strings().unknown(),
-                        );
-                    }
-                    // If this line starts a new processor, parse the index from the line
-                    let digits = strings::trim(&line[KEY_PROCESSOR.len()..], b" \t\n");
-                    cpu_index = parse_u32(digits)?;
-                    if cpu_index >= num_cpus {
-                        return Err(OsError::Any);
-                    }
-                    has_model_name = false;
-                } else if line.starts_with(KEY_MODEL_NAME) {
-                    // If this is the model name, extract it and store on the current cpu
-                    let model_name = &line[KEY_MODEL_NAME.len()..];
-                    let cpu = values.get_index(global_this, cpu_index)?;
-                    cpu.put(
-                        global_this,
-                        b"model",
-                        bun_string_jsc::create_utf8_for_js(global_this, model_name)?,
-                    );
-                    has_model_name = true;
-                }
-            }
-            if !has_model_name {
-                let cpu = values.get_index(global_this, cpu_index)?;
-                cpu.put(
-                    global_this,
-                    b"model",
-                    global_this.common_strings().unknown(),
-                );
-            }
-
-            file_buf.clear();
-        } else {
-            // Initialize model name to "unknown"
-            let mut it = values.array_iterator(global_this)?;
-            while let Some(cpu) = it.next()? {
-                cpu.put(
-                    global_this,
-                    b"model",
-                    global_this.common_strings().unknown(),
-                );
-            }
+        let count = cpus.iter().flatten().count();
+        if count == 0 {
+            // Node returns [] here. lazyCpus in os.ts cannot take an empty result, so this stays an error.
+            return Err(OsError::Any);
         }
 
-        // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        for cpu_index in 0..num_cpus as usize {
-            let cpu = values.get_index(global_this, cpu_index as u32)?;
+        let values = JSValue::create_empty_array(global_this, count)?;
+        let mut index: u32 = 0;
+        let mut last_model: Option<(&[u8], JSValue)> = None;
+        for (id, cpu) in cpus.iter().enumerate() {
+            let Some(cpu) = cpu else { continue };
 
+            // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional: 0 on any error)
             let mut path_buf = [0u8; 128];
-            let path: &ZStr = {
-                let mut cursor = &mut path_buf[..];
-                write!(
-                    cursor,
-                    "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq\0",
-                    cpu_index
-                )
-                .map_err(|_| crate::Error::fmt)?;
-                let remaining = cursor.len();
-                let written = path_buf.len() - remaining;
-                // SAFETY: we wrote a NUL terminator at path_buf[written-1]
-                ZStr::from_buf(&path_buf[..], written - 1)
+            let path = bun_fmt::buf_print_z(
+                &mut path_buf,
+                format_args!("/sys/devices/system/cpu/cpu{id}/cpufreq/scaling_cur_freq"),
+            )
+            .map_err(|_| OsError::Any)?;
+            let mut khz_buf = [0u8; 32];
+            // libuv aborts when this file opens but has no number: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L1877. Bun reports 0.
+            let speed = bun_sys::File::open(path, bun_sys::O::RDONLY, 0)
+                .and_then(|file| file.read(&mut khz_buf))
+                .ok()
+                .and_then(|len| {
+                    bun_fmt::parse_decimal::<u64>(strings::trim(&khz_buf[..len], b" \n"))
+                })
+                .map_or(0, |khz| khz / 1000);
+
+            // CPUs with the same model name share one JS string.
+            let model = match (cpu.model, last_model) {
+                (None, _) => global_this.common_strings().unknown(),
+                (Some(model), Some((last, value))) if model == last => value,
+                (Some(model), _) => {
+                    let value = bun_string_jsc::create_utf8_for_js(global_this, model)?;
+                    last_model = Some((model, value));
+                    value
+                }
             };
-            if let Ok(file) = bun_sys::File::open(path, bun_sys::O::RDONLY, 0) {
-                // file closed on Drop
 
-                file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
-                let contents = file_buf.as_slice();
-
-                let digits = strings::trim(contents, b" \n");
-                let speed = parse_u64(digits).unwrap_or(0) / 1000;
-
-                cpu.put(global_this, b"speed", JSValue::js_number(speed as f64));
-
-                file_buf.clear();
-            } else {
-                // Initialize CPU speed to 0
-                cpu.put(global_this, b"speed", JSValue::js_number(0.0));
-            }
+            let entry = JSValue::create_empty_object(global_this, 3);
+            entry.put(global_this, b"times", cpu.times.to_value(global_this));
+            entry.put(global_this, b"model", model);
+            entry.put(global_this, b"speed", JSValue::js_number(speed as f64));
+            values.put_index(global_this, index, entry)?;
+            index += 1;
         }
 
         Ok(values)
@@ -1594,17 +1582,6 @@ impl NetmaskInt for u128 {
 }
 
 // ───────────────────────── local helpers ─────────────────────────
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn parse_u64(s: &[u8]) -> crate::Result<u64> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
-}
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn parse_u32(s: &[u8]) -> crate::Result<u32> {
-    bun_core::fmt::parse_int(s, 10).map_err(|_| crate::Error::InvalidCharacter)
-}
 
 #[cfg(windows)]
 #[inline]

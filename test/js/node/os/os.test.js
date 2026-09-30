@@ -150,8 +150,8 @@ it("cpus", () => {
 });
 
 // Runs the real os.cpus() in a child whose opens of /proc/stat, /proc/cpuinfo and
-// /sys/devices/system/cpu/ go to staged files. Each staged file gives every CPU id
-// its own value, so an entry that is filled from the wrong id fails.
+// /sys/devices/system/cpu/ go to staged files. Most layouts give every CPU id its
+// own value in each file, so an entry that is filled from the wrong id fails.
 const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
 
 // Compiles redirect-open.c. `path` is undefined on a host that cannot run it.
@@ -216,22 +216,29 @@ describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
     speed,
     times: { user, nice: 0, sys: 100, idle: 1000, irq: 0 },
   });
+  const range = (from, to) => Array.from({ length: to - from }, (_, i) => from + i);
+  const cpuinfoFile = blocks =>
+    blocks.map(([id, model]) => `processor\t: ${id}\nvendor_id\t: AuthenticAMD\nmodel name\t: ${model}\n\n`).join("");
+  const cpufreqFile = id => `sys/devices/system/cpu/cpu${id}/cpufreq/scaling_cur_freq`;
 
-  async function cpusOn(layouts) {
+  async function cpusOn(layouts, { oneFreeFd = false } = {}) {
     using root = tempDir("os-cpus", layouts);
     // LeakSanitizer cannot stop the threads of a process that is already traced.
     const asanOptions = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    const command = [
+      redirectOpen.path,
+      "/proc/stat",
+      "/proc/cpuinfo",
+      "/sys/devices/system/cpu/",
+      "--",
+      bunExe(),
+      join(import.meta.dir, "cpus-fixture.ts"),
+      ...(oneFreeFd ? ["--one-free-fd"] : []),
+      ...Object.keys(layouts).map(name => join(String(root), name)),
+    ];
     await using proc = Bun.spawn({
-      cmd: [
-        redirectOpen.path,
-        "/proc/stat",
-        "/proc/cpuinfo",
-        "/sys/devices/system/cpu/",
-        "--",
-        bunExe(),
-        join(import.meta.dir, "cpus-fixture.ts"),
-        ...Object.keys(layouts).map(name => join(String(root), name)),
-      ],
+      // The fixture takes every file descriptor up to the limit, so the limit has to be small.
+      cmd: oneFreeFd ? ["sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", ...command] : command,
       env: { ...bunEnv, ASAN_OPTIONS: asanOptions, LSAN_OPTIONS: "detect_leaks=0" },
       stdout: "pipe",
       stderr: "pipe",
@@ -251,6 +258,128 @@ describe.skipIf(!canRedirectOpen)("cpus on staged /proc and /sys files", () => {
       four: [cpu(0), cpu(1), cpu(2), cpu(3)],
       bare: [cpu(0, { model: "unknown", speed: 0 }), cpu(1, { model: "unknown", speed: 0 })],
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/29689
+  it.concurrent("keeps each CPU with its own id when the ids have a gap", async () => {
+    const epyc = [...range(0, 64), ...range(128, 192)];
+    const seen = await cpusOn({
+      epyc: layout({ stat: epyc }),
+      pairs: layout({ stat: [0, 1, 4, 5] }),
+      // One model for every CPU, as on most hosts.
+      oneModel: layout({ stat: [0, 1, 4, 5], "proc/cpuinfo": cpuinfoFile([0, 1, 4, 5].map(id => [id, "A"])) }),
+      // A model that comes back after another one.
+      modelRuns: layout({
+        stat: [0, 1, 4, 5, 8, 9],
+        "proc/cpuinfo": cpuinfoFile([0, 1, 4, 5, 8, 9].map(id => [id, id === 4 || id === 5 ? "B" : "A"])),
+      }),
+    });
+    expect(seen).toEqual({
+      epyc: epyc.map(id => cpu(id)),
+      pairs: [cpu(0), cpu(1), cpu(4), cpu(5)],
+      oneModel: [0, 1, 4, 5].map(id => cpu(id, { model: "A" })),
+      modelRuns: [0, 1, 4, 5, 8, 9].map(id => cpu(id, { model: id === 4 || id === 5 ? "B" : "A" })),
+    });
+  });
+
+  it.concurrent("takes the CPU list from /proc/stat as libuv does", async () => {
+    const seen = await cpusOn({
+      // The last line for an id wins.
+      repeated: layout({
+        stat: [0, 1],
+        "proc/stat": statFile([statLine(0), statLine(1), "cpu0 9 0 10 100 0 0 0 0 0 0"]),
+      }),
+      // The result is in id order.
+      unordered: layout({ stat: [2, 0, 1] }),
+      // The list ends at the first line that does not have the six numbers.
+      threeNumbers: layout({ stat: [0, 1, 2], "proc/stat": statFile([statLine(0), "cpu1 2 0 10", statLine(2)]) }),
+      fiveNumbers: layout({ stat: [0, 1, 2], "proc/stat": statFile([statLine(0), "cpu1 2 0 10 100 0", statLine(2)]) }),
+      // 8191 is the highest CPU id.
+      highIds: layout({ stat: [0, 255, 256, 1000, 8191] }),
+      bigId: layout({ stat: [0, 8192] }),
+      // The columns are user, nice, sys, idle, iowait, irq. iowait goes to no field.
+      fields: layout({
+        stat: [0, 1],
+        "proc/stat": statFile(["cpu0 1 2 3 4 5 6 7 8 9 10", "cpu1 11 12 13 14 15 16 17 18 19 20"]),
+        [cpufreqFile(0)]: "1999999\n",
+        [cpufreqFile(1)]: "999\n",
+      }),
+      // The tick counts wrap at 64 bits: 1844674407370955162 * 10 is 2 ** 64 + 4.
+      hugeTicks: layout({
+        stat: [0],
+        "proc/stat": statFile([
+          "cpu0 1844674407370955162 1844674407370955163 1844674407370955164 1844674407370955165 0 1844674407370955166 0",
+        ]),
+      }),
+    });
+    expect(seen).toEqual({
+      repeated: [cpu(0, { user: 90 }), cpu(1)],
+      unordered: [cpu(0), cpu(1), cpu(2)],
+      threeNumbers: [cpu(0)],
+      fiveNumbers: [cpu(0)],
+      highIds: [0, 255, 256, 1000, 8191].map(id => cpu(id)),
+      bigId: [cpu(0)],
+      fields: [
+        { model: modelOf(0), speed: 1999, times: { user: 10, nice: 20, sys: 30, idle: 40, irq: 60 } },
+        { model: modelOf(1), speed: 0, times: { user: 110, nice: 120, sys: 130, idle: 140, irq: 160 } },
+      ],
+      hugeTicks: [{ model: modelOf(0), speed: 1, times: { user: 4, nice: 14, sys: 24, idle: 34, irq: 44 } }],
+    });
+  });
+
+  it.concurrent("joins /proc/cpuinfo and cpufreq by id and skips what it cannot use", async () => {
+    const seen = await cpusOn({
+      // https://github.com/oven-sh/bun/issues/44125
+      extraProcessor: layout({ stat: range(0, 8), cpuinfo: range(0, 9) }),
+      // The host of that issue is aarch64, where no processor block has a model name.
+      arm64: layout({
+        stat: range(0, 8),
+        "proc/cpuinfo":
+          range(0, 9)
+            .map(id => `processor\t: ${id}\nBogoMIPS\t: 3.84\nFeatures\t: fp asimd\nCPU part\t: 0xd05\n\n`)
+            .join("") + "Hardware\t: Tensor G3\n",
+      }),
+      missingProcessor: layout({ stat: [0, 4], cpuinfo: [4], cpufreq: [4] }),
+      // A processor that /proc/stat does not list, between two CPUs and past the last one.
+      holeProcessor: layout({ stat: [0, 1, 4, 5], cpuinfo: range(0, 6), cpufreq: range(0, 6) }),
+      farProcessor: layout({ stat: [0, 1], cpuinfo: [0, 5, 1] }),
+      // A processor block that has no number is skipped. The blocks after it still count.
+      badProcessor: layout({
+        stat: [0, 1, 2],
+        "proc/cpuinfo": cpuinfoFile([
+          [0, "A"],
+          ["x", "B"],
+          [2, "C"],
+        ]),
+      }),
+      trailingSpace: layout({ stat: [0], "proc/cpuinfo": "processor\t: 0 \nmodel name\t: A\n\n" }),
+      // A directory opens for reading, and then read() fails with EISDIR.
+      unreadable: layout({ stat: [0, 1], "proc/cpuinfo": {}, [cpufreqFile(0)]: {} }),
+    });
+    expect(seen).toEqual({
+      extraProcessor: range(0, 8).map(id => cpu(id)),
+      arm64: range(0, 8).map(id => cpu(id, { model: "unknown" })),
+      missingProcessor: [cpu(0, { model: "unknown", speed: 0 }), cpu(4)],
+      holeProcessor: [cpu(0), cpu(1), cpu(4), cpu(5)],
+      farProcessor: [cpu(0), cpu(1)],
+      badProcessor: [cpu(0, { model: "A" }), cpu(1, { model: "unknown" }), cpu(2, { model: "C" })],
+      trailingSpace: [cpu(0, { model: "A" })],
+      unreadable: [cpu(0, { model: "unknown", speed: 0 }), cpu(1, { model: "unknown" })],
+    });
+  });
+
+  it.concurrent("throws when /proc/stat lists no CPU", async () => {
+    const seen = await cpusOn({
+      none: layout({ stat: [] }),
+      noneWithProcessors: layout({ stat: [], cpuinfo: [0, 1] }),
+    });
+    const error = { error: "ERR_SYSTEM_ERROR", message: "Failed to get CPU information" };
+    expect(seen).toEqual({ none: error, noneWithProcessors: error });
+  });
+
+  it.concurrent("has one file open at a time", async () => {
+    const seen = await cpusOn({ four: layout({ stat: [0, 1, 2, 3] }) }, { oneFreeFd: true });
+    expect(seen).toEqual({ four: [cpu(0), cpu(1), cpu(2), cpu(3)] });
   });
 });
 

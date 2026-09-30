@@ -1157,3 +1157,72 @@ it.each(["import", "require"])(
     });
   },
 );
+
+it.each([
+  ["that was loaded before", `await import(a);`],
+  ["whose fetch has not finished", ``],
+])("build.module() right after an import() of a module %s", async (_, before) => {
+  using dir = tempDir("plugin-module-right-after-import", {
+    "a.ts": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1; export const from = "file";`,
+    "entry.ts": `
+      const a = import.meta.dir + "/a.ts";
+      ${before}
+      const started = import(a);
+      Bun.plugin({
+        name: "replace a.ts",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+      console.log("started before:", (await started).from);
+      console.log("next:", (await import(a)).from);
+      console.log("a.ts evaluated:", globalThis.evaluations);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "started before: file\nnext: build.module()\na.ts evaluated: 1\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("concurrent import()s of a module share one onLoad", async () => {
+  using dir = tempDir("plugin-onload-concurrent-imports", {
+    "a.ts": `export {};`,
+    "entry.ts": `
+      let loads = 0;
+      Bun.plugin({
+        name: "count loads",
+        setup(build) {
+          build.onLoad({ filter: /a\\.ts$/ }, () => {
+            loads++;
+            return { contents: "export {}", loader: "ts" };
+          });
+        },
+      });
+      const [first, second, third] = await Promise.all([import("./a"), import("./a"), import("./a")]);
+      console.log({ sameModule: first === second && second === third, loads });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "{\n  sameModule: true,\n  loads: 1,\n}\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

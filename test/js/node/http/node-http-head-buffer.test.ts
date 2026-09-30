@@ -18,13 +18,21 @@ function connect(protocol: Protocol, port: number) {
 
 // The bytes that follow a request head in the same read are the `head` of the 'connect' and 'upgrade' events. No
 // other request has a use for them.
+//
+// Not in node-http.test.ts: the first test reads the arguments of the native dispatch, so it cannot run in Node.js.
 describe("the bytes behind a request head", () => {
   const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: example.com\r\n\r\n`;
   const post = (fields = "") => `POST URL HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\n${fields}\r\n`;
   const upgrade = "Connection: Upgrade\r\nUpgrade: test\r\n";
+  const upgradeRequest = `GET URL HTTP/1.1\r\nHost: example.com\r\n${upgrade}\r\n`;
+  const connectRequest = "CONNECT URL HTTP/1.1\r\nHost: example.com\r\n\r\n";
 
   // The request ("URL" is its path), the bytes behind it in the same write, and whether a listener can get them.
-  const dispatches: Record<string, { request: string; behind: string; handOff: boolean; splitAt?: number }> = {
+  // `splitAt` cuts the request in two reads. `behindPending` puts a request in front of it that gets no response.
+  const dispatches: Record<
+    string,
+    { request: string; behind: string; handOff: boolean; splitAt?: number; behindPending?: boolean }
+  > = {
     "POST and its body": { request: post(), behind: "hello", handOff: false },
     "POST and its body, head in two reads": { request: post(), behind: "hello", handOff: false, splitAt: 20 },
     "GET and a pipelined request": { request: get("URL"), behind: get("/next"), handOff: false },
@@ -47,12 +55,21 @@ describe("the bytes behind a request head", () => {
       behind: "hello",
       handOff: false,
     },
-    "Upgrade request": {
-      request: `GET URL HTTP/1.1\r\nHost: example.com\r\n${upgrade}\r\n`,
+    // A pipelined Upgrade request goes to 'request'.
+    "Upgrade request behind a pending response": {
+      request: upgradeRequest,
       behind: get("/next"),
-      handOff: true,
+      handOff: false,
+      behindPending: true,
     },
-    "CONNECT": { request: "CONNECT URL HTTP/1.1\r\nHost: example.com\r\n\r\n", behind: "tunneled", handOff: true },
+    "Upgrade request": { request: upgradeRequest, behind: get("/next"), handOff: true },
+    "CONNECT": { request: connectRequest, behind: "tunneled", handOff: true },
+    "CONNECT behind a pending response": {
+      request: connectRequest,
+      behind: "tunneled",
+      handOff: true,
+      behindPending: true,
+    },
   };
 
   test.each(protocols)("%s: reach JavaScript only for a request that can hand them to a listener", async protocol => {
@@ -90,9 +107,9 @@ describe("the bytes behind a request head", () => {
 
     const names = Object.keys(dispatches);
     for (const name of names) {
-      const { request, behind, splitAt } = dispatches[name];
+      const { request, behind, splitAt, behindPending } = dispatches[name];
       const url = `/${names.indexOf(name)}`;
-      const bytes = request.replace("URL", url) + behind;
+      const bytes = (behindPending ? get(`${url}/pending`) : "") + request.replace("URL", url) + behind;
       await dispatch(url, async client => {
         if (splitAt === undefined) return void client.write(bytes);
         client.write(bytes.slice(0, splitAt));
@@ -186,4 +203,32 @@ describe("the bytes behind a request head", () => {
       }
     },
   );
+
+  // The bytes behind the head of an Upgrade request with a body are its body.
+  test.each(protocols)("%s: are the body, not the head of 'upgrade', for a request with a body", async protocol => {
+    const { promise, resolve, reject } = Promise.withResolvers<object>();
+    await using server = await listen(protocol);
+    server.on("upgrade", (req, socket, head) => {
+      let body = "";
+      socket.on("error", reject);
+      req.on("error", reject);
+      req.on("data", chunk => (body += chunk.toString("latin1")));
+      req.on("end", () => {
+        resolve({ head: head.toString("latin1"), body });
+        socket.end();
+      });
+    });
+    server.on("request", req => reject(new Error(`'request' for ${req.method} ${req.url}`)));
+    server.on("clientError", reject);
+
+    const client = connect(protocol, (server.address() as AddressInfo).port);
+    try {
+      client.on("error", reject);
+      client.on("close", () => reject(new Error("the connection closed before the body of the request ended")));
+      client.write(`POST /upload HTTP/1.1\r\nHost: example.com\r\n${upgrade}Content-Length: 5\r\n\r\nhello`);
+      expect(await promise).toEqual({ head: "", body: "hello" });
+    } finally {
+      client.destroy();
+    }
+  });
 });

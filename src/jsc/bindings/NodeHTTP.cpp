@@ -163,14 +163,14 @@ static uint32_t assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, J
     return bits;
 }
 
-// Whether the JS dispatcher can pass `head` to a listener: 'connect', or 'upgrade' of a request without a body.
-static ALWAYS_INLINE bool canHandOffHead(JSC::VM& vm, JSValue methodString, uint32_t dispatchBits, bool hasBody)
+// Whether the JS dispatcher can pass `head` to a listener: 'connect', or 'upgrade' of a request that has no body and is not pipelined.
+static ALWAYS_INLINE bool canHandOffHead(JSC::VM& vm, JSValue methodString, uint32_t dispatchBits, bool hasBody, bool isPipelinedDispatch)
 {
     static constexpr uint32_t upgradeBits = kDispatchHasUpgrade | kDispatchConnUpgrade;
     // Every CONNECT has this cell as its method (Bun__HTTPMethod__toJS). Before the first one it is null and matches nothing.
     if (methodString == JSValue(Bun::commonStrings(vm).m_httpCONNECT))
         return true;
-    return !hasBody && (dispatchBits & upgradeBits) == upgradeBits;
+    return !hasBody && !isPipelinedDispatch && (dispatchBits & upgradeBits) == upgradeBits;
 }
 
 // Builds the rawHeaders flat array [name, value, ...] from the bytes captured
@@ -356,7 +356,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(jsBoolean(request->isAncient()));
 
     // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
-    if (!request->head.empty() && canHandOffHead(vm, methodString, dispatchBits, hasBody)) {
+    if (!request->head.empty() && canHandOffHead(vm, methodString, dispatchBits, hasBody, isPipelinedDispatch)) {
         JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->head.data()), request->head.size()));
         RETURN_IF_EXCEPTION(scope, {});
         args.append(headBuffer);

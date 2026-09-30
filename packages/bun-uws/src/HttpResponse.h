@@ -256,51 +256,18 @@ public:
             }
         }
 
-        /* if write was called and there was previously no Content-Length header set.
-         * node:http compat: pending response trailers (addTrailers) also force chunked
-         * framing, since trailer fields can only be sent on a chunked body. */
-        if ((httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS))
+        /* if write was called and there was previously no Content-Length header set */
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)
             && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            /* Trailers-only end with no body chunk: write() below would early-return on
-             * empty data, so terminate the header section and enter chunked mode here. */
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
-                writeMark();
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
-            }
-
             /* Write the chunked data if there is any (this will not send zero chunks) */
-            const bool terminated = !data.empty() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS);
+            const bool terminated = !data.empty();
             this->write(data, nullptr, terminated);
 
-
-            /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
-             * between it and the final CRLF. */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS) [[unlikely]] {
-                /* Only a node:http compat connection can set the flag, so the
-                 * downcast to the bigger IsNodeHttp=true block is safe.
-                 * (HttpResponse<SSL> is not templated on IsNodeHttp - it is the
-                 * type the C API casts to from a runtime `int ssl` - so this
-                 * one shared read stays a runtime bit test.) */
-                auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
-                /* Emit the terminating chunk, the trailer section and the final CRLF as
-                 * ONE write: when the response is not corked (cork slots are contended
-                 * under high connection counts), separate writes become separate tiny
-                 * TCP segments on the tail of every response. The buffer is about to be
-                 * cleared anyway, so build the frame in place. */
-                std::string &trailers = nodeHttpResponseData->nodeHttpResponseTrailers;
-                trailers.insert(0, "0\r\n", 3);
-                trailers.append("\r\n", 2);
-                Super::write(trailers.data(), (int) trailers.length());
-                trailers.clear();
-                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS;
-            } else if (!terminated) {
+            /* Terminating 0 chunk */
+            if (!terminated) {
                 Super::write("0\r\n\r\n", 5);
             }
             httpResponseData->markDone(this);
@@ -711,6 +678,40 @@ public:
         }
 
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
+    }
+
+    /* node:http: end a response that has trailer fields (response.addTrailers()).
+     * trailerSection is the end of the chunked body, already framed: the terminating
+     * chunk, the field lines and the final CRLF ("0\r\n" + lines + "\r\n", RFC 9112
+     * 7.1.2). Only a chunked body has one: a response with a Content-Length, to an
+     * HTTP/1.0 request, delimited by close or with a no-body status ends without it. */
+    void endWithTrailers(std::string_view data, std::string_view trailerSection) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        if (httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS)) {
+            if (data.empty() && (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                sendTerminatingChunk();
+            } else {
+                end(data);
+            }
+            return;
+        }
+
+        if (data.empty()) {
+            /* write() sends nothing for an empty chunk: this ends the head and enters chunked mode. */
+            flushHeaders();
+        } else {
+            this->write(data);
+        }
+
+        /* One write: on a socket that is not corked, separate writes are separate TCP segments. */
+        Super::write(trailerSection.data(), (int) trailerSection.length());
+        httpResponseData->markDone(this);
+
+        if (uncorkCompletedResponse() && closeIfDoneAndMarked(httpResponseData)) {
+            return;
+        }
+        this->resetTimeout();
     }
 
     void flushHeaders(bool flushImmediately = false) {

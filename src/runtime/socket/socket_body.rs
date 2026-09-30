@@ -1936,10 +1936,17 @@ impl<const SSL: bool> NewSocket<SSL> {
                 super::uws_jsc::verify_error_to_js(&ssl_error, &global)
             };
 
+            // node:tls (DEFERS) applies the name check in JS: its handler gets the result of the handshake itself.
+            let reported = if flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
+                success == 1
+            } else {
+                authorized
+            };
+
             result = match callback.call(
                 &global,
                 this_value,
-                &[this_value, JSValue::from(authorized), authorization_error],
+                &[this_value, JSValue::from(reported), authorization_error],
             ) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),

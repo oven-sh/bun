@@ -1598,6 +1598,13 @@ impl Value {
             return Ok(Value::Error(err.dupe(cx.global())));
         }
 
+        // A consumed body clones as consumed, so a copy made without the
+        // owner's usability check rejects its readers instead of reading as
+        // an empty "successful" body.
+        if matches!(self, Value::Used) {
+            return Ok(Value::Used);
+        }
+
         Ok(Value::Empty)
     }
 }

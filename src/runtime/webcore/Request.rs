@@ -380,11 +380,10 @@ impl Request {
     }
 
     /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
-    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
-    /// so it needs the same fetch-spec step-1 usability check.
+    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`].
+    /// [`Self::clone_into`] runs the fetch-spec usability check for both.
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
-        self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
         self.clone(&cx).ok()
@@ -1134,8 +1133,13 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Empty => {}
                             _ => {
+                                // Fetch spec Request(input, init): init gave no
+                                // body and input is unusable, so throw.
+                                if let Err(e) = request.throw_if_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1182,8 +1186,11 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Empty => {}
                             _ => {
+                                if let Err(e) = response.throw_if_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
                                 match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1451,7 +1458,6 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
 
@@ -1468,6 +1474,10 @@ impl Request {
         cx: &bun_jsc::JsThread<'_>,
         preserve_url: bool,
     ) -> JsResult<()> {
+        // Fetch spec: `clone()` step 1 and the Request constructor's "input is
+        // unusable" step. Every copy of a Request (the constructor, `clone()`,
+        // `BunRequest.prototype.clone`, `server.fetch(request)`) passes here.
+        self.throw_if_body_unusable(cx.global())?;
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(cx)?;

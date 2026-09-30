@@ -1079,9 +1079,11 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
 // loop one more turn, which runs the queued step and hides the bug.
 describe("a stream piped into a FileSink on a pipe is pumped to its end", () => {
   // Larger than a pipe, so the first write is short and the pump parks on it.
-  const first = 4 * 1024 * 1024;
+  const first = 2 * 1024 * 1024;
   const chunk = 64 * 1024;
   const chunks = 16;
+  // The whole stream as it must arrive. A stream that ends after the first chunk is a prefix.
+  const expected = Buffer.concat([Buffer.alloc(first, 97), Buffer.alloc(chunks * chunk, 98)]);
 
   // "parked" goes out on the second pull(), which runs once the pump has taken the first
   // chunk. The test reads only after that, so the first drain finds the pump parked.
@@ -1159,6 +1161,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   // writer is gone, on every POSIX, and needs no readiness notification.
   async function drain(fd: number) {
     const buffer = Buffer.alloc(64 * 1024);
+    const parts: Buffer[] = [];
     let total = 0;
     let progressAt = performance.now();
     while (true) {
@@ -1173,7 +1176,8 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
         await Bun.sleep(1);
         continue;
       }
-      if (n === 0) return total;
+      if (n === 0) return Buffer.concat(parts);
+      parts.push(Buffer.from(buffer.subarray(0, n)));
       total += n;
       progressAt = performance.now();
     }
@@ -1192,11 +1196,13 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
     });
     const rest = await parked(proc.stderr);
     const [received, stderr, exitCode] = await Promise.all([
-      fifo ? drain(fifo.fd) : proc.stdout.bytes().then(bytes => bytes.length),
+      fifo ? drain(fifo.fd) : proc.stdout.bytes(),
       rest(),
       proc.exited,
     ]);
-    return { received, stderr, exitCode };
+    // `intact` is about the bytes that arrived: each one is the byte the stream has there.
+    const intact = expected.subarray(0, received.length).equals(received);
+    return { received: received.length, intact, stderr, exitCode };
   }
 
   const total = first + chunks * chunk;
@@ -1204,6 +1210,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   it.concurrent("chunks that arrive after the pump parked are written", async () => {
     expect(await run("chunks")).toEqual({
       received: total,
+      intact: true,
       stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0 }) + "\n",
       exitCode: 0,
     });
@@ -1218,6 +1225,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
     try {
       expect(await run("chunks", { fifo: { path, fd } })).toEqual({
         received: total,
+        intact: true,
         stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0 }) + "\n",
         exitCode: 0,
       });
@@ -1232,6 +1240,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   it.concurrent("'beforeExit' is emitted once while the stream is pumped", async () => {
     expect(await run("chunks", { countBeforeExit: true })).toEqual({
       received: total,
+      intact: true,
       stderr: "parked\n" + JSON.stringify({ settled: `resolved ${total}`, code: 0, beforeExit: 1 }) + "\n",
       exitCode: 0,
     });
@@ -1240,6 +1249,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   it.concurrent("a stream that closes while the pump is parked settles the promise", async () => {
     expect(await run("close")).toEqual({
       received: first,
+      intact: true,
       stderr: "parked\n" + JSON.stringify({ settled: `resolved ${first}`, code: 0 }) + "\n",
       exitCode: 0,
     });
@@ -1248,6 +1258,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   it.concurrent("a stream that fails while the pump is parked rejects the promise", async () => {
     expect(await run("error")).toEqual({
       received: first,
+      intact: true,
       stderr: "parked\n" + JSON.stringify({ settled: "rejected boom", code: 0 }) + "\n",
       exitCode: 0,
     });
@@ -1256,6 +1267,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   it.concurrent("a sink that is closed once its buffer drains settles the promise", async () => {
     expect(await run("directClose")).toEqual({
       received: first,
+      intact: true,
       stderr: "parked\n" + JSON.stringify({ settled: `resolved ${first}`, code: 0 }) + "\n",
       exitCode: 0,
     });

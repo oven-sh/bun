@@ -25,7 +25,6 @@ var tmpdir = function () {
 };
 
 // os.cpus() is super expensive
-// Specifically: getting the CPU speed on Linux is very expensive
 // Some packages like FastGlob only bother to read the length of the array
 // so instead of actually populating the entire object
 // we turn them into getters

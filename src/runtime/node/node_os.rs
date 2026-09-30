@@ -379,11 +379,11 @@ mod _impl {
         for (id, cpu) in cpus.iter().enumerate() {
             let Some(cpu) = cpu else { continue };
 
-            // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional: 0 on any error)
+            // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_max_freq (optional: 0 on any error). Same as libuv since https://github.com/libuv/libuv/pull/5200 (Node on libuv <= 1.52.1 reads scaling_cur_freq).
             let mut path_buf = [0u8; 128];
             let path = bun_fmt::buf_print_z(
                 &mut path_buf,
-                format_args!("/sys/devices/system/cpu/cpu{id}/cpufreq/scaling_cur_freq"),
+                format_args!("/sys/devices/system/cpu/cpu{id}/cpufreq/scaling_max_freq"),
             )
             .map_err(|_| OsError::Any)?;
             let mut khz_buf = [0u8; 32];

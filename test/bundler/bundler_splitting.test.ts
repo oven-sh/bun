@@ -1196,6 +1196,39 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "setup\nindex 0 util\nroute 0 util" },
   });
+  itBundled("splitting/MinChunkSizeKeepsOtherEntryFromChunkThatRepeatsEntryImports", {
+    files: {
+      "/admin.js": /* js */ `
+        import { util } from "./util.js";
+        import { big0 } from "./big.js";
+        console.log("admin", util(), big0(1));
+      `,
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import { x } from "pkg";
+        console.log("index", x());
+        import("./r1.js").then(() => import("./r2.js")).then(() => import("./r3.js"));
+      `,
+      "/setup.cjs": `console.log("setup");`,
+      "/r1.js": `import { h } from "./helper.js"; import { util } from "./util.js"; console.log("r1", h(), util());`,
+      "/r2.js": `import { h } from "./helper.js"; import { util } from "./util.js"; console.log("r2", h(), util());`,
+      "/r3.js": `import { x } from "pkg"; console.log("r3", x());`,
+      "/helper.js": `import { x } from "pkg"; export function h() { return x(); }`,
+      "/util.js": `export function util() { return "util"; }`,
+      "/big.js": Array.from({ length: 3000 }, (_, i) => `export function big${i}(a) { return a + ${i}; }`).join("\n"),
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false, "type": "module", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `const cache = new Map(); export const x = () => cache.size;`,
+    },
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/admin.js", stdout: "admin util 1" },
+      { file: "/out/index.js", stdout: "setup\nindex 0\nr1 0 util\nr2 0 util\nr3 0" },
+    ],
+  });
   itBundled("splitting/EntryWithExportsSetupImportRunsBeforeSharedCodeWhenOtherEntrySharesRuntime", {
     files: {
       ...setupBeforeShared("export const version = 1;"),

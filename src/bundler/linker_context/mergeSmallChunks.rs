@@ -182,8 +182,6 @@ struct Group {
     pin: Pin,
     /// The parent of the class of an entry point that only its name pins.
     parent_of_pinned_entry: bool,
-    /// `LinkerContext::entry_imports_in_parent` names it, so rule 2 leaves it where it is.
-    repeats_entry_imports: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -233,7 +231,6 @@ impl Group {
             wants_inits: false,
             pin,
             parent_of_pinned_entry: false,
-            repeats_entry_imports: false,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -877,8 +874,9 @@ fn files_that_leave_entry_chunk<'a>(
             && (record.path.text.starts_with(b"./") || record.path.text.starts_with(b"../"))
     };
     // An external `import` goes to the top of its chunk, ahead of what the parent runs.
-    let mut limit = u32::MAX;
+    let (mut limit, mut first_to_repeat) = (u32::MAX, u32::MAX);
     this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, record, x| {
+        first_to_repeat = first_to_repeat.min(part);
         if x.is_none()
             && (parent_gains_no_import
                 || is_relative_external(&records[entry_source as usize][record as usize]))
@@ -889,7 +887,8 @@ fn files_that_leave_entry_chunk<'a>(
     candidates.truncate(cut);
     candidates.truncate(candidates.partition_point(|candidate| candidate.1 < limit));
     let mut candidates = candidates.into_iter().peekable();
-    while let Some(&(_, part)) = candidates.peek() {
+    let mut moved = false;
+    'groups: while let Some(&(_, part)) = candidates.peek() {
         taken.clear();
         while let Some((file, _)) = candidates.next_if(|candidate| candidate.1 == part) {
             pending.push(file);
@@ -918,11 +917,18 @@ fn files_that_leave_entry_chunk<'a>(
                 for &file in &taken {
                     leaves.unset(file as usize);
                 }
-                return Ok(part);
+                limit = part;
+                break 'groups;
             }
         }
+        moved = true;
     }
-    Ok(last_part.min(limit))
+    let parts_end = last_part.min(limit);
+    Ok(if moved || first_to_repeat < parts_end {
+        parts_end
+    } else {
+        0
+    })
 }
 
 /// Folds code-splitting chunks into other chunks where that is unobservable,
@@ -1481,7 +1487,8 @@ pub(crate) fn merge_small_chunks(
                 && repeated.0 > 0
             {
                 repeated.1 = groups.values()[target_index].first_source;
-                groups.values_mut()[target_index].repeats_entry_imports = true;
+                // It runs what it repeats, also when each of its files is side-effect free.
+                groups.values_mut()[target_index].pure = false;
             }
         }
         for &member in members {
@@ -1686,7 +1693,6 @@ pub(crate) fn merge_small_chunks(
             let c = &groups[candidate];
             if c.merged_into.is_some()
                 || c.pin != Pin::None
-                || c.repeats_entry_imports
                 || !c.pure
                 || c.size >= min_chunk_size
                 || c.size > max_headroom

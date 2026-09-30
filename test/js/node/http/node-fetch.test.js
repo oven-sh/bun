@@ -435,6 +435,12 @@ test("node-fetch fetch() rejects with AbortError when the signal aborts", async 
   const preAborted = await fetch2(server.url, { signal: AbortSignal.abort(new Error("custom reason")) }).catch(e => e);
   expect(preAborted).toBeInstanceOf(AbortError);
   expect(preAborted.type).toBe("aborted");
+
+  // A present null signal detaches the Request's signal, as in the native fetch().
+  const request = new Request(server.url, { signal: AbortSignal.abort() });
+  const detached = fetch2(request, { signal: null });
+  gate.resolve();
+  expect(await (await detached).text()).toBe("late");
 });
 
 test("node-fetch fetch() rejects with a system FetchError when the connection is refused", async () => {
@@ -570,6 +576,28 @@ test("node-fetch fetch() keeps a TypeError for a bad argument", async () => {
   const badHeader = await fetch2(server.url, { headers: { "a b": "c" } }).catch(e => e);
   expect(badHeader).toBeInstanceOf(TypeError);
   expect(badHeader).not.toBeInstanceOf(FetchError);
+
+  // node-fetch checks the arguments before the signal.
+  const abortedBadScheme = await fetch2("ftp://example.test/", { signal: AbortSignal.abort() }).catch(e => e);
+  expect(abortedBadScheme).toBeInstanceOf(TypeError);
+  expect(abortedBadScheme).not.toBeInstanceOf(AbortError);
+});
+
+test("node-fetch fetch() rejects with the error of a request body stream that fails", async () => {
+  using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+  // The shape of an fs error: a system error that is not the transport's.
+  const error = Object.assign(new Error("ENOENT: no such file or directory, open '/missing'"), {
+    errno: -2,
+    code: "ENOENT",
+    syscall: "open",
+    path: "/missing",
+  });
+  const body = new stream.Readable({
+    read() {
+      this.destroy(error);
+    },
+  });
+  expect(await fetch2(server.url, { method: "POST", body }).catch(e => e)).toBe(error);
 });
 
 test("node-fetch FetchError and AbortError match node-fetch's error classes", () => {

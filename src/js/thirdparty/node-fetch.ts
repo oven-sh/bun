@@ -11,6 +11,9 @@ interface WebResponseMembers {
   text(): Promise<string>;
   json(): Promise<any>;
   arrayBuffer(): Promise<ArrayBuffer>;
+  blob(): Promise<globalThis.Blob>;
+  bytes(): Promise<Uint8Array>;
+  formData(): Promise<globalThis.FormData>;
 }
 type WebResponseConstructor = new (
   body?: ConstructorParameters<typeof globalThis.Response>[0],
@@ -87,14 +90,19 @@ function readableFromOldStyleStream(source: import("node:stream").Stream) {
 let FetchedBody;
 function fetchedBody(response, web) {
   FetchedBody ??= class FetchedBody extends require("internal/webstreams_adapters")._ReadableFromWeb {
-    destroy(error, callback) {
-      if (error && this[kSignal]?.aborted) error = new AbortError("The operation was aborted.");
-      return super.destroy(error, callback);
+    [kSignal]: AbortSignal | null | undefined;
+
+    constructor(web, signal) {
+      super({ responseBody: true }, web);
+      this[kSignal] = signal;
+    }
+
+    destroy(error?: any) {
+      if (isAbort(error, this[kSignal])) error = new AbortError("The operation was aborted.");
+      return super.destroy(error);
     }
   };
-  const body = new FetchedBody({ responseBody: true }, web);
-  body[kSignal] = response[kSignal];
-  return body;
+  return new FetchedBody(web, response[kSignal]);
 }
 
 class Response extends WebResponse {
@@ -139,6 +147,14 @@ class Response extends WebResponse {
   async blob() {
     try {
       return await super.blob();
+    } catch (error) {
+      throw toNodeFetchBodyError(error, this);
+    }
+  }
+
+  async bytes() {
+    try {
+      return await super.bytes();
     } catch (error) {
       throw toNodeFetchBodyError(error, this);
     }
@@ -244,7 +260,9 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-  const signal = init?.signal ?? url?.signal;
+  // As in the native fetch(), a present `signal` wins, and a present null detaches the Request's signal.
+  const initSignal = init?.signal;
+  const signal = initSignal !== undefined ? initSignal : url?.signal;
   let response;
   try {
     response = await nativeFetch.$call(undefined, url, init);
@@ -257,19 +275,25 @@ async function fetch(
   return response;
 }
 
-// A failure of the transport is a system error and carries `errno`, as node's do. A bad argument
-// (`ERR_INVALID_URL`, `ERR_INVALID_ARG_VALUE`, an invalid header name) or a used body does not.
-function isSystemError(error) {
-  return $isObject(error) && typeof error.errno === "number";
+// The native fetch() rejects with the signal's reason when the signal aborts. node-fetch rejects
+// with AbortError whatever the reason is.
+function isAbort(error, signal) {
+  return signal?.aborted === true && error === signal.reason;
+}
+
+// The native fetch() reports a failure of the transport as a TypeError with `errno`, as node's system
+// errors have. A bad argument (`ERR_INVALID_URL`, an invalid header name) or a used body is a TypeError
+// without it. A request body stream that fails rejects with the stream's own error, as in node-fetch.
+function isTransportError(error): error is TypeError & { errno: number; code: string; path: string } {
+  return error instanceof TypeError && typeof (error as any).errno === "number";
 }
 
 // node-fetch rejects with its own classes once the request started:
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L70
-// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L108-L179
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L108-L217
 function toNodeFetchError(error, url, signal) {
-  // An abort rejects with AbortError whatever the signal's reason is.
-  if (signal?.aborted) return new AbortError("The operation was aborted.");
-  if (!isSystemError(error)) return error;
+  if (isAbort(error, signal)) return new AbortError("The operation was aborted.");
+  if (!isTransportError(error)) return error;
   const requestUrl = error.path || (typeof url === "string" ? url : (url?.url ?? String(url)));
   switch (error.code) {
     case "UnexpectedRedirect":
@@ -280,19 +304,23 @@ function toNodeFetchError(error, url, signal) {
     case "TooManyRedirects":
       return new FetchError(`maximum redirect reached at: ${requestUrl}`, "max-redirect");
     case "RedirectURLInvalid":
+    case "InvalidRedirectURL":
+    case "RedirectURLTooLong":
       return new FetchError(`uri requested responds with an invalid redirect URL: ${requestUrl}`, "invalid-redirect");
     case "UnsupportedRedirectProtocol":
       return new FetchError(
         `uri requested responds with an unsupported redirect URL: ${requestUrl}`,
         "unsupported-redirect",
       );
+    case "RequestBodyNotReusable":
+      return new FetchError("Cannot follow redirect with body being a readable stream", "unsupported-redirect");
   }
   return new FetchError(`request to ${requestUrl} failed, reason: ${error.message}`, "system", error);
 }
 
 function toNodeFetchBodyError(error, response) {
-  if (response[kSignal]?.aborted) return new AbortError("The operation was aborted.");
-  if (!isSystemError(error)) return error;
+  if (isAbort(error, response[kSignal])) return new AbortError("The operation was aborted.");
+  if (!isTransportError(error)) return error;
   return new FetchError(
     `Invalid response body while trying to fetch ${response.url}: ${error.message}`,
     "system",
@@ -324,7 +352,7 @@ class FetchError extends FetchBaseError {
   declare errno?: string;
   declare erroredSysCall?: string;
 
-  constructor(message, type, systemError) {
+  constructor(message, type, systemError?) {
     super(message, type);
     if (systemError) {
       this.code = this.errno = systemError.code;

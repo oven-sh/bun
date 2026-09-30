@@ -61,6 +61,15 @@ impl<A: Allocator + 'static> LineOffsetTableColumns for List<A> {
 }
 
 impl LineOffsetTable {
+    /// A row for the offset where a text ends. It has no columns.
+    pub fn end_of_text(byte_offset: u32) -> LineOffsetTable {
+        LineOffsetTable {
+            columns_for_non_ascii: Box::default(),
+            byte_offset_to_first_non_ascii: i32::MAX as u32,
+            byte_offset_to_start_of_line: byte_offset,
+        }
+    }
+
     #[inline]
     pub(crate) fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
         debug_assert!(loc.start > -1); // checked by caller

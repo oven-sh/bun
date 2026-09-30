@@ -109,7 +109,10 @@ impl<'a> Report<'a> {
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut generator = Generator::default();
+        let mut generator = Generator {
+            unterminated_length: byte_range_mapping.unterminated_length,
+            ..Default::default()
+        };
 
         for &source_id in &byte_range_mapping.source_ids {
             // SAFETY: `vm` is the live VM of `global_this`; the callback runs before the call returns.
@@ -585,6 +588,8 @@ struct Generator {
     function_blocks: Vec<BasicBlockRange>,
     /// SourceIDs that had anything compiled.
     loads: usize,
+    /// `ByteRangeMapping::unterminated_length` of the file.
+    unterminated_length: Option<c_int>,
 }
 
 impl Generator {
@@ -613,9 +618,37 @@ impl Generator {
             return;
         }
 
+        let loaded = this.blocks.len();
         this.blocks.extend_from_slice(blocks);
+        if let Some(length) = this.unterminated_length {
+            as_if_terminated(&mut this.blocks[loaded..], length);
+        }
         this.function_blocks.extend_from_slice(function_blocks);
         this.loads += 1;
+    }
+}
+
+/// JSC ends the last block of a program on the last unit of its text
+/// (`CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler`), or one unit later when a
+/// line terminator follows the text. `blocks` is one load of a text with no terminator. This
+/// gives the last block of the program the end it has with one.
+fn as_if_terminated(blocks: &mut [BasicBlockRange], length: c_int) {
+    let last = length - 1;
+    // The block ends with a function: JSC reports the empty range after the function. A function
+    // around that function reports one too, and that one stays as it is.
+    let after_function = |b: &BasicBlockRange| (b.start_offset, b.end_offset) == (length, last);
+    // The block starts at the end of the text: JSC moves its start onto the last unit, where the
+    // block before it ends too. That block is empty with or without a terminator.
+    let ends_with_text =
+        |b: &BasicBlockRange| b.end_offset == last && (0..=last).contains(&b.start_offset);
+    let program = blocks.iter().position(after_function).or_else(|| {
+        blocks
+            .iter()
+            .position(ends_with_text)
+            .filter(|_| blocks.iter().filter(|b| ends_with_text(b)).count() == 1)
+    });
+    if let Some(program) = program {
+        blocks[program].end_offset = length;
     }
 }
 
@@ -641,7 +674,10 @@ pub struct BasicBlockRange {
 }
 
 pub struct ByteRangeMapping {
+    /// A row for each line, then a row for the end of the text. `compute` has the one exception.
     pub(crate) line_offset_table: line_offset_table::List,
+    /// The length of the text in JSC's units, when `compute` added the row for its end.
+    unterminated_length: Option<c_int>,
     /// JSC records coverage per `SourceProvider`, and each load of the file makes one.
     pub(crate) source_ids: Vec<i32>,
     /// Of the text `line_offset_table` was built from.
@@ -827,10 +863,10 @@ impl ByteRangeMapping {
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
                     let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
+                        line_hits_slice[line as usize] = 0;
                     }
                 }
 
@@ -1031,15 +1067,30 @@ impl ByteRangeMapping {
         })
     }
 
+    /// `source_length` is the length of the text in JSC's units.
     pub(crate) fn compute(
         source_contents: &[u8],
+        source_length: usize,
         source_hash: u64,
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
+        let mut line_offset_table = LineOffsetTable::generate(source_contents, 0)
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let mut unterminated_length = None;
+        // A text of one line stands in for an empty CommonJS file, which reports no lines.
+        if let [_, .., last] = *line_offset_table.items_byte_offset_to_start_of_line()
+            && (last as usize) < source_contents.len()
+        {
+            bun_core::handle_oom(
+                line_offset_table
+                    .append(LineOffsetTable::end_of_text(source_contents.len() as u32)),
+            );
+            unterminated_length = c_int::try_from(source_length).ok();
+        }
         ByteRangeMapping {
-            line_offset_table: LineOffsetTable::generate(source_contents, 0)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+            line_offset_table,
+            unterminated_length,
             source_ids: vec![source_id],
             source_hash,
             source_url,
@@ -1071,8 +1122,13 @@ extern "C" fn ByteRangeMapping__generate(
         return;
     }
 
-    let new_value =
-        ByteRangeMapping::compute(source_contents.slice(), source_hash, source_id, source_url);
+    let new_value = ByteRangeMapping::compute(
+        source_contents.slice(),
+        source_contents_str.length(),
+        source_hash,
+        source_id,
+        source_url,
+    );
     map.insert(hash, new_value);
 }
 

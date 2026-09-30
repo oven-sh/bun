@@ -698,6 +698,32 @@ test("calls second", () => {
   expect(exitCode).toBe(0);
 });
 
+type Row = { functions: string; lines: string; uncovered: string };
+// The text reporter's row and the lcov record of every file in the report.
+async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
+  using dir = tempDir("cov", fixture);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error(stderr);
+  const rows: Record<string, Row> = {};
+  for (const line of stderr.split("\n")) {
+    const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
+    if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
+  }
+  const lcov: Record<string, string> = {};
+  for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split("end_of_record")) {
+    const file = record.match(/^SF:(.+)$/m)?.[1];
+    if (file) lcov[file] = record;
+  }
+  return { rows, lcov, stdout };
+}
+
 // JSC records coverage per SourceProvider, and a file has one for each time
 // it is loaded. Each case has a subject file of its own. Where a case loads
 // its subject twice, one load runs the `if` branch and the other runs the
@@ -908,33 +934,6 @@ test("b", () => {
 `,
   };
 
-  type Row = { functions: string; lines: string; uncovered: string };
-  async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
-    using dir = tempDir("cov-loaded-twice", fixture);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) throw new Error(stderr);
-    const rows: Record<string, Row> = {};
-    for (const line of stderr.split("\n")) {
-      const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
-      if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
-    }
-    const lcov: Record<string, string> = {};
-    for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split(
-      "end_of_record",
-    )) {
-      const file = record.match(/^SF:(.+)$/m)?.[1];
-      if (file) lcov[file] = record;
-    }
-    return { rows, lcov, stdout };
-  }
-
   let loaded: Awaited<ReturnType<typeof run>>;
   let oneLoad: Awaited<ReturnType<typeof run>>;
   let pluginUnderIsolate: Awaited<ReturnType<typeof run>>;
@@ -1004,5 +1003,205 @@ test("b", () => {
       hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| \d/),
       both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
     });
+  });
+});
+
+// JSC runs a text that bun does not print as it is, so the text can end without a line
+// terminator: a file whose first line starts with `// @bun`, and CommonJS under a changed
+// `Module.wrapper`. Each file here reports what the same text reports with a newline after it.
+describe("a text that is not printed by bun and has no final newline", () => {
+  // [the text, FNF and FNH, whether lines at the end of the text ran]
+  const texts: Record<string, [string, string, Record<number, boolean>]> = {
+    "never-ran-alone-on-the-last-line.js": [
+      "// @bun\nexport function first() {\n  return 1;\n}\nexport const second = () => 2;",
+      "FNF:2\nFNH:1",
+      { 5: true },
+    ],
+    "ran-alone-on-the-last-line.js": [
+      "// @bun\nexport function second() {\n  return 2;\n}\nexport const first = () => 1;",
+      "FNF:2\nFNH:1",
+      { 5: true },
+    ],
+    "all-on-the-last-line.js": [
+      "// @bun\nexport const first = () => 1; export const second = () => 2;",
+      "FNF:2\nFNH:1",
+      { 2: true },
+    ],
+    "last-line-of-two-bytes.js": [
+      "// @bun\nexport const first = () => {\n  return 1;\n};",
+      "FNF:1\nFNH:1",
+      { 4: true },
+    ],
+    "last-byte-closes-a-function-that-never-ran.js": [
+      "// @bun\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n  }",
+      "FNF:2\nFNH:1",
+      { 5: false, 6: false },
+    ],
+    "last-byte-closes-two-functions-that-ran.js": [
+      "// @bun\nexport const first = () => function () {\n  const a = 1;\n  return a;\n  }",
+      "FNF:2\nFNH:2",
+      { 5: true },
+    ],
+    "branch-not-taken-on-the-last-line.js": [
+      "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet)\n  first();",
+      "FNF:1\nFNH:1",
+      { 4: false },
+    ],
+    "last-byte-closes-a-branch-not-taken.js": [
+      "// @bun\nexport const first = () => 1;\nif (globalThis.neverSet) {\n  first();\n  }",
+      "FNF:1\nFNH:1",
+      { 5: false },
+    ],
+    "statement-not-reached-on-the-last-line.js": [
+      "// @bun\nexport const first = () => 1;\ntail();\nfunction tail() {\n  if (!globalThis.neverSet) return;\n  first(); }",
+      "FNF:2\nFNH:2",
+      { 6: false },
+    ],
+    // JSC counts the text in code units and the line table counts it in bytes.
+    "not-ascii.js": [
+      "// @bun\n// \u00a9 2024\nexport function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n    }",
+      "FNF:2\nFNH:1",
+      { 7: false },
+    ],
+    "wrapper-on-the-last-line.cjs": [
+      "// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {exports.first = () => 1; exports.second = () => 2;})",
+      "FNF:3\nFNH:2",
+      { 2: true },
+    ],
+  };
+  const terminated = (name: string) => `terminated-${name}`;
+
+  // `files`, each text as it is and with a final newline, and a test that calls first() of each.
+  function fixture(texts: Record<string, [string, ...unknown[]]>, files: Record<string, string>) {
+    files = { ...files };
+    const names: string[] = [];
+    for (const [name, [text]] of Object.entries(texts)) {
+      files[name] = text;
+      files[terminated(name)] = text + "\n";
+      names.push(name, terminated(name));
+    }
+    files["first.test.ts"] = `
+import { expect, test } from "bun:test";
+import { codeCoverageForFile } from "bun:jsc";
+import { join } from "node:path";
+${names.map((name, i) => (name.endsWith(".cjs") ? `const m${i} = require("./${name}");` : `import * as m${i} from "./${name}";`)).join("\n")}
+${"empty.cjs" in files ? `require("./empty.cjs");` : ""}
+const modules = { ${names.map((name, i) => `"${name}": m${i}`).join(", ")} };
+
+test("calls first() and not second()", () => {
+  for (const [name, module] of Object.entries(modules)) {
+    const value = module.first();
+    expect(typeof value === "function" ? value() : value).toBe(1);
+    console.log(JSON.stringify({ name, row: codeCoverageForFile(join(import.meta.dir, name), true) }));
+  }
+});
+`;
+    return files;
+  }
+
+  const bundle: typeof texts = {
+    "bundle.js": [
+      "// @bun\nfunction first(){return 1}function second(){return 2}export{first,second};",
+      "FNF:2\nFNH:1",
+      { 2: true },
+    ],
+  };
+  const bundleMap = JSON.stringify({
+    version: 3,
+    sources: ["lib.ts"],
+    sourcesContent: ["export function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n}\n"],
+    mappings: ";AAAO,SAAS,KAAK,EAAG,CACtB,MAAO,GAEF,SAAS,MAAM,EAAG,CACvB,MAAO",
+    names: [],
+  });
+  // `coverageIgnoreSourcemaps` makes a file with a source map report the lines of the text that ran.
+  const ignoringSourceMaps = {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageIgnoreSourcemaps = true\n`,
+    "bundle.js.map": bundleMap,
+    [`${terminated("bundle.js")}.map`]: bundleMap,
+    // bun prints these two. The test puts a wrapper of its own around the printed text.
+    "wrapped.cjs": "exports.first = () => 1;\nexports.second = () => 2;\n",
+    [terminated("wrapped.cjs")]: "exports.first = () => 1;\nexports.second = () => 2;\n",
+    "wrapper.test.ts": `
+import { expect, test } from "bun:test";
+import Module from "node:module";
+
+test("calls first() and not second()", () => {
+  const defaultEnd = Module.wrapper[1];
+  const end = "\\n;var unused = function () {};})";
+  try {
+    Module.wrapper[1] = end;
+    expect(require("./wrapped.cjs").first()).toBe(1);
+    Module.wrapper[1] = end + "\\n";
+    expect(require("./${terminated("wrapped.cjs")}").first()).toBe(1);
+  } finally {
+    Module.wrapper[1] = defaultEnd;
+  }
+});
+`,
+  };
+
+  const results: Record<string, Awaited<ReturnType<typeof run>>> = {};
+  beforeAll(async () => {
+    [results["no source map"], results["coverageIgnoreSourcemaps"]] = await Promise.all([
+      run(fixture(texts, { "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`, "empty.cjs": "" }), []),
+      run(fixture(bundle, ignoringSourceMaps), []),
+    ]);
+  });
+
+  // The table row and the lcov record of a file, without its name. `ran` is whether each line ran.
+  const report = ({ rows, lcov }: (typeof results)[string], file: string) => ({
+    row: rows[file],
+    record: lcov[file].replace(`SF:${file}\n`, "").trim(),
+    functions: lcov[file].match(/^FNF:\d+\nFNH:\d+$/m)?.[0],
+    ran: Object.fromEntries(
+      Array.from(lcov[file].matchAll(/^DA:(\d+),(\d+)$/gm), ([, line, hits]) => [line, hits !== "0"]),
+    ),
+  });
+  const any = {
+    row: { functions: expect.any(String), lines: expect.any(String), uncovered: expect.any(String) },
+    record: expect.any(String),
+  };
+
+  describe.each(Object.entries({ ...texts, ...bundle }))("%s", (file, [, functions, lines]) => {
+    const result = () => results[file in texts ? "no source map" : "coverageIgnoreSourcemaps"];
+
+    test("bun test --coverage", () => {
+      expect(report(result(), file)).toEqual({ ...any, functions, ran: expect.objectContaining(lines) });
+      expect(report(result(), file)).toEqual(report(result(), terminated(file)));
+    });
+
+    test("bun:jsc codeCoverageForFile()", () => {
+      const rows = Object.fromEntries(
+        result()
+          .stdout.split("\n")
+          .filter(line => line.startsWith("{"))
+          .map(line => JSON.parse(line))
+          .map(({ name, row }) => [name, row.slice(row.indexOf("|"))]),
+      );
+      expect(rows[file]).toMatch(/^\| +\d+\.\d+ \| +\d+\.\d+ \| /);
+      expect(rows[file]).toBe(rows[terminated(file)]);
+    });
+  });
+
+  test("CommonJS under a changed Module.wrapper", () => {
+    const result = results["coverageIgnoreSourcemaps"];
+    expect(report(result, "wrapped.cjs")).toEqual({
+      ...any,
+      // first(), second(), the wrapper, and the function in the end of the wrapper, on line 5.
+      functions: "FNF:4\nFNH:2",
+      ran: expect.objectContaining({ 5: true }),
+    });
+    expect(report(result, "wrapped.cjs")).toEqual(report(result, terminated("wrapped.cjs")));
+  });
+
+  test("a file with a final newline reports what it reported before", () => {
+    expect(results["no source map"].lcov[terminated("never-ran-alone-on-the-last-line.js")]).toContain(
+      "\nFNF:2\nFNH:1\nDA:2,10\nDA:3,9\nDA:4,1\nDA:5,21\nLF:4\nLH:4\n",
+    );
+  });
+
+  // The text of an empty CommonJS file is a wrapper that bun writes. The file has no line to report.
+  test("an empty .cjs file reports no line", () => {
+    expect(results["no source map"].lcov["empty.cjs"]).toContain("\nFNF:1\nFNH:1\nLF:0\nLH:0\n");
   });
 });

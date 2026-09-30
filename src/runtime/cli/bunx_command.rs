@@ -1342,7 +1342,10 @@ impl BunxCommand {
             .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
             .expect("oom");
 
+        // `envp` owns a copy. The tool run below must not inherit the marker:
+        // an install it spawns in the user's project would read it too.
         let envp = env_loader.map.create_null_delimited_env_map()?;
+        env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
 
         // Two passes at most: an install without `--force` keeps a package whose
         // version matches even when files are missing, so a second pass forces it.

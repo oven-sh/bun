@@ -873,6 +873,12 @@ describe("bunx cache", () => {
     "no-bin": {
       "1.0.0": { manifest: {}, files: { "index.js": "" } },
     },
+    "env-probe": {
+      "1.0.0": {
+        manifest: { bin: { "env-probe": "cli.js" } },
+        files: { "cli.js": `#!/usr/bin/env node\nconsole.log(String(process.env.BUN_INTERNAL_BUNX_INSTALL));\n` },
+      },
+    },
     "dep": {
       "1.0.0": { manifest: { main: "index.js" }, files: { "index.js": `module.exports = "dep 1.0.0";\n` } },
     },
@@ -1046,6 +1052,13 @@ describe("bunx cache", () => {
     expect(second.stderr).toContain("error: could not determine executable to run for package no-bin-file");
     expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin-file", "no-bin-file"] });
     expect(markers()).toEqual([false]);
+  });
+
+  // The install bunx spawns carries the marker. The tool, and any install the
+  // tool spawns in the user's project, must not.
+  it.concurrent("the tool does not inherit the bunx install marker", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("env-probe@latest")).toMatchObject({ stdout: "undefined\n", exitCode: 0 });
   });
 
   it.concurrent("a package that declares no bin fails after one install", async () => {

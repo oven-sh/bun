@@ -1951,12 +1951,13 @@ mod posix_impl {
             if rc < 0 { Err(last_errno()) } else { Ok(()) }
         }
     }
-    /// Closes `fd` and returns the error that callers see. Only EBADF surfaces.
+    /// Closes `fd` and returns the error for the caller. A file system can report a write error first at close.
     #[inline]
     pub(crate) fn close_error(fd: Fd) -> Option<Error> {
         match close_once(fd) {
-            Err(libc::EBADF) => Some(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd)),
-            _ => None,
+            // A close in progress: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/fs.c#L158-L167
+            Ok(()) | Err(libc::EINTR | libc::EINPROGRESS) => None,
+            Err(errno) => Some(Error::from_code_int(errno, Tag::close).with_fd(fd)),
         }
     }
     pub fn close(fd: Fd) -> Maybe<()> {

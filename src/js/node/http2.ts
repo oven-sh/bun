@@ -2995,9 +2995,10 @@ function withStreamFrame(handler) {
     return runInFrame(frame, handler, undefined, self, stream, a, b, c);
   };
 }
+// Node asserts on this close. The fd was only read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L475-L479
 function tryClose(fd) {
   try {
-    fs.close(fd);
+    fs.close(fd, () => {});
   } catch {}
 }
 

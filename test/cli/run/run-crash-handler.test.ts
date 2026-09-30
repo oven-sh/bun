@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { existsSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -11,9 +11,19 @@ const { getMachOImageZeroOffset } = crash_handler;
 // next unrelated failing test as "crash reported" and blocks its retries.
 const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
 
+// For children that die via SIG_DFL (rather than via a test hook that calls
+// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
+// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child (and by anything it spawns); every
+// user is isPosix-gated so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
+
+// Compiles the LD_PRELOAD shim of the native stack overflow tests.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
@@ -149,6 +159,298 @@ test("the crash report lists the CPU features", async () => {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
   expect(exitCode).not.toBe(0);
+});
+
+// A native stack overflow faults on the guard page, so the kernel can only run
+// a signal handler on an alternate signal stack. Two things used to break that:
+// JSC's VM initialization re-registers SIGSEGV/SIGBUS for the JIT without
+// SA_ONSTACK, and only the main thread had a sigaltstack. Every native
+// recursion that lost its stack, on any thread, died with the default action:
+// exit 139 and nothing on stderr.
+//
+// Not in an ASAN build: JSC's handler needs more than the alternate stack that
+// ASAN gives a thread, so it stays without SA_ONSTACK there.
+describe.if(isPosix && !isASAN)("native stack overflow is reported", () => {
+  const env = noReportEnv;
+
+  // The CI agents run with `ulimit -s unlimited`, where the main thread's stack
+  // grows until it exhausts memory instead of hitting a guard page. Give the
+  // child the usual 8 MiB so the overflow is a fault, not an OOM kill.
+  test.concurrent("on the main thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'ulimit -s 8192; exec "$0" "$@"',
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "stackOverflow",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("panic(main thread): Stack overflow");
+    expect(proc.signalCode).toBe("SIGSEGV");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("on a worker thread", async () => {
+    using dir = tempDir("stack-overflow-worker", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href, { name: "deep" });
+        worker.onerror = e => console.error("worker error: " + e.message);
+      `,
+      "worker.js": `
+        require("bun:internal-for-testing").crash_handler.stackOverflow();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "main.js"],
+      env,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("panic(deep): Stack overflow");
+    expect(proc.signalCode).toBe("SIGSEGV");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // No input overflows the native stack in these two places, so a preloaded
+  // library does it: in exit() and quick_exit(), or when the named thread asks
+  // for its stack bounds, which JSC does on every thread that runs it.
+  describe.if(isLinux && !!cc)("with a preloaded library that overflows the stack", () => {
+    let shimDir: ReturnType<typeof tempDir> | undefined;
+    let preload: typeof env;
+
+    beforeAll(async () => {
+      shimDir = tempDir("stack-overflow-shim", {
+        "overflow.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
+
+static unsigned long recurse(unsigned long depth) {
+  volatile char frame[1024];
+  frame[depth % sizeof(frame)] = (char)depth;
+  return recurse(depth + 1) + frame[0];
+}
+
+static void overflow(void) {
+  struct rlimit core = {0, 0};
+  setrlimit(RLIMIT_CORE, &core);
+  /* An unlimited main thread stack (the CI agents) grows until memory runs out. */
+  struct rlimit stack;
+  if (getrlimit(RLIMIT_STACK, &stack) == 0 && stack.rlim_cur > (8 << 20)) {
+    stack.rlim_cur = 8 << 20;
+    setrlimit(RLIMIT_STACK, &stack);
+  }
+  recurse(0);
+}
+
+void exit(int code) {
+  if (getenv("OVERFLOW_AT_EXIT")) overflow();
+  ((void (*)(int))dlsym(RTLD_NEXT, "exit"))(code);
+  abort();
+}
+
+void quick_exit(int code) {
+  if (getenv("OVERFLOW_AT_EXIT")) overflow();
+  ((void (*)(int))dlsym(RTLD_NEXT, "quick_exit"))(code);
+  abort();
+}
+
+int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
+  const char *target = getenv("OVERFLOW_ON_THREAD");
+  char name[16] = {0};
+  if (target && prctl(PR_GET_NAME, name) == 0 && strcmp(name, target) == 0) overflow();
+  return ((int (*)(pthread_t, pthread_attr_t *))dlsym(RTLD_NEXT, "pthread_getattr_np"))(thread, attr);
+}
+`,
+      });
+      const shim = path.join(String(shimDir), "overflow.so");
+      await using compile = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shim, path.join(String(shimDir), "overflow.c"), "-ldl"],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const [errors, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+      if (exitCode !== 0) throw new Error(`shim compile failed: ${errors}`);
+      preload = { ...env, LD_PRELOAD: [shim, env.LD_PRELOAD].filter(Boolean).join(":") };
+    });
+
+    afterAll(() => {
+      shimDir?.[Symbol.dispose]();
+    });
+
+    // `bun build` creates no global object. With `--bytecode` its first JSC VM
+    // is the one that generates the bytecode.
+    test.concurrent("after `bun build --bytecode` created the first VM", async () => {
+      using dir = tempDir("stack-overflow-bytecode", {
+        "entry.js": `console.log("hello");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--debug-crash-handler-use-trace-string",
+          "--bytecode",
+          "--target=bun",
+          "--outdir=out",
+          "entry.js",
+        ],
+        env: { ...preload, OVERFLOW_AT_EXIT: "1" },
+        cwd: String(dir),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("panic(main thread): Stack overflow");
+      // The bytecode is on disk, so its VM existed when the process exited.
+      expect(existsSync(path.join(String(dir), "out", "entry.js.jsc"))).toBe(true);
+      expect(proc.signalCode).toBe("SIGSEGV");
+      expect(exitCode).not.toBe(0);
+    });
+
+    // The compile cache generates its bytecode on a thread of its own.
+    test.concurrent("on the compile cache thread", async () => {
+      using dir = tempDir("stack-overflow-compile-cache", {
+        "main.cjs": `console.log("hello");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "main.cjs"],
+        env: {
+          ...preload,
+          NODE_COMPILE_CACHE: path.join(String(dir), "cache"),
+          OVERFLOW_ON_THREAD: "BunCompileCache",
+        },
+        cwd: String(dir),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("panic(BunCompileCache): Stack overflow");
+      expect(stdout).toBe("hello\n");
+      expect(proc.signalCode).toBe("SIGSEGV");
+      expect(exitCode).not.toBe(0);
+    });
+  });
+
+  // A fault close to the stack pointer is not always an overflow. An overflow
+  // is a data access in the frame being entered, so an instruction fetch and an
+  // access above the frame pointer keep the segmentation fault report and its
+  // address. Linux: the addresses come from /proc/self/maps.
+  describe.if(isLinux)("a fault near the stack pointer that is not an overflow keeps its address", () => {
+    const prelude = `
+      const { CFunction, read } = require("bun:ffi");
+      const maps = require("fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(Boolean)
+        .map(line => ({ start: Number("0x" + line.split("-")[0]), end: Number("0x" + line.split(/[- ]/)[1]), name: line }));
+      const stack = maps.find(m => m.name.endsWith("[stack]"));
+      let past = stack.end;
+      for (let next; (next = maps.find(m => m.start === past)); ) past = next.end;
+      const crashAt = (address, crash) => {
+        require("fs").writeSync(1, address.toString(16).toUpperCase());
+        crash(address);
+      };
+    `;
+
+    test.concurrent.each([
+      [
+        "a call through a pointer into the stack",
+        `crashAt(stack.end - 4096, ptr => new CFunction({ ptr, args: [], returns: "void" })());`,
+      ],
+      ["a read past the top of the stack", `crashAt(past, ptr => read.u8(ptr, 0));`],
+    ])("%s", async (_, crash) => {
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([bunExe(), "--debug-crash-handler-use-trace-string", "-e", prelude + crash]),
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [address, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(address).toMatch(/^[0-9A-F]+$/);
+      expect(stderr).toContain(`panic(main thread): Segmentation fault at address 0x${address}\n`);
+      expect(proc.signalCode).toBe("SIGSEGV");
+      expect(exitCode).not.toBe(0);
+    });
+  });
+});
+
+// JSC turns an out-of-bounds WebAssembly access into a RuntimeError in its
+// SIGSEGV/SIGBUS handler. On a thread that has an alternate signal stack, that
+// handler runs on it, except in an ASAN build.
+describe("an out-of-bounds WebAssembly access throws", () => {
+  const fixture = `
+    // (module (memory 1) (func (export "load") (param i32) (result i32) local.get 0 i32.load))
+    const bytes = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+      0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x08, 0x01, 0x04, 0x6c, 0x6f, 0x61,
+      0x64, 0x00, 0x00, 0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x28, 0x02, 0x00, 0x0b,
+    ]);
+    function run() {
+      const { load } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+      let thrown = 0;
+      for (let i = 0; i < ${isDebug || isASAN ? 300 : 20000}; i++) {
+        try {
+          load(0x7ffffff0);
+        } catch (e) {
+          if (e instanceof WebAssembly.RuntimeError) thrown++;
+        }
+      }
+      return thrown;
+    }
+    if (!Bun.isMainThread) {
+      postMessage(run());
+    } else if (process.argv[2] === "worker") {
+      const worker = new Worker(import.meta.url);
+      worker.onmessage = e => {
+        console.log(JSON.stringify([run(), e.data]));
+        worker.terminate();
+      };
+    } else {
+      console.log(JSON.stringify([run()]));
+    }
+  `;
+  const all = isDebug || isASAN ? 300 : 20000;
+
+  test.concurrent("on the main thread and in a Worker", async () => {
+    using dir = tempDir("wasm-out-of-bounds", { "fault.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fault.js", "worker"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([all, all]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The profiler holds a lock that the handler waits for, while it suspends the thread.
+  test.concurrent("while the sampling profiler suspends the thread", async () => {
+    using dir = tempDir("wasm-out-of-bounds", { "fault.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval=250", "fault.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([all]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
@@ -406,13 +708,6 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
-
-// For children that die via SIG_DFL (rather than via a test hook that calls
-// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
-// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
-// wrapper is inherited by the bun child (and by anything it spawns); every
-// user is isPosix-gated so /bin/sh is available.
-const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)

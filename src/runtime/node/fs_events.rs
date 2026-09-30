@@ -456,6 +456,7 @@ impl FSEventsLoop {
 
         let handle = match std::thread::Builder::new()
             .name("CFThreadLoop".into())
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || this.cf_thread_loop())
         {
             Ok(handle) => handle,

@@ -729,7 +729,10 @@ impl Linux {
         manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        match std::thread::Builder::new().spawn(move || Linux::thread_main(manager)) {
+        match std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || Linux::thread_main(manager))
+        {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
@@ -1391,7 +1394,10 @@ impl Kqueue {
         let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
-        match std::thread::Builder::new().spawn(move || Kqueue::thread_main(manager)) {
+        match std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || Kqueue::thread_main(manager))
+        {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();

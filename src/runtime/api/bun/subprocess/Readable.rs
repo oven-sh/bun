@@ -140,6 +140,8 @@ impl Readable {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
+            // Made for stdin only in Stdio::extract_blob(); stdout/stderr never see this.
+            Stdio::FileWindow(..) => unreachable!("FileWindow at stdout/stderr"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
             // ReadableStream is handled separately
             Stdio::ReadableStream(..) => Readable::Ignore,

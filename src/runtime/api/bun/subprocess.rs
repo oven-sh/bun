@@ -1498,7 +1498,8 @@ impl Subprocess<'_> {
     }
 }
 
-pub(crate) use bun_spawn::subprocess::{Source, SourceData};
+pub(crate) use bun_spawn::file_window;
+pub(crate) use bun_spawn::subprocess::{FileWindow, Source, SourceData};
 
 // JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
 // `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the

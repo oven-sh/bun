@@ -1,6 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::FdExt as _;
 #[cfg(windows)]
@@ -9,13 +9,16 @@ use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
+use crate::node::types::PathLikeExt as _;
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::blob::{BlobExt as _, MAX_SIZE};
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
+use crate::api::bun_subprocess::{FileWindow, file_window};
 
 // `SpawnOptions.Stdio` is platform-dependent: process.rs exposes `PosixStdio` /
 // `WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the body stays
@@ -60,6 +63,8 @@ pub(crate) enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
+    /// A sliced `Bun.file()` at stdin: the parent sends the window in chunks. `None` after `Writable::init` gave it to the writer.
+    FileWindow(Option<Box<FileWindow>>),
     #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Pipe,
@@ -270,7 +275,9 @@ impl Stdio {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) | Self::FileWindow(_) => {
+                buffer()
+            }
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
@@ -292,7 +299,11 @@ impl Stdio {
 
     pub(crate) fn is_piped(&self) -> bool {
         match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
+            Self::Capture(_)
+            | Self::Blob(_)
+            | Self::FileWindow(_)
+            | Self::Pipe
+            | Self::ReadableStream(_) => true,
             Self::Ipc => cfg!(windows),
             _ => false,
         }
@@ -573,6 +584,19 @@ impl Stdio {
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
+                    // stdout and stderr write to the file, so a window means nothing there.
+                    let window = match &blob {
+                        webcore::blob::Any::Blob(blob) if i != 1 && i != 2 => blob.file_window(),
+                        _ => None,
+                    };
+                    if window.is_some() && i != 0 {
+                        // Only stdin has a writer in the parent, and the child would read the whole file.
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "A sliced Bun.file() cannot be used for stdio[{i}] yet"
+                        )));
+                    }
+                    let window =
+                        window.map(|(offset, size)| (offset, (size != MAX_SIZE).then_some(size)));
                     match file.pathlike {
                         PathOrFileDescriptor::Fd(store_fd) => {
                             if Some(store_fd) == fd {
@@ -602,12 +626,28 @@ impl Stdio {
                                     }
                                 }
 
+                                if let Some((offset, length)) = window {
+                                    let opened = FileWindow::open_fd(store_fd, offset, length);
+                                    if self.set_file_window(global, opened)? {
+                                        return Ok(());
+                                    }
+                                }
+
                                 *self = Stdio::Fd(store_fd);
                             }
 
                             return Ok(());
                         }
                         PathOrFileDescriptor::Path(ref path) => {
+                            if let Some((offset, length)) = window {
+                                let mut buf = bun_paths::path_buffer_pool::get();
+                                let opened =
+                                    FileWindow::open_path(path.slice_z(&mut buf), offset, length);
+                                if self.set_file_window(global, opened)? {
+                                    return Ok(());
+                                }
+                            }
+
                             *self = Stdio::Path(path.clone());
                             return Ok(());
                         }
@@ -638,6 +678,23 @@ impl Stdio {
 
         *self = Stdio::Blob(blob);
         Ok(())
+    }
+}
+
+impl Stdio {
+    /// Returns `false` for a file that is not regular: it has no window, so the child gets the file.
+    fn set_file_window(
+        &mut self,
+        global: &JSGlobalObject,
+        opened: sys::Result<file_window::Opened>,
+    ) -> JsResult<bool> {
+        *self = match opened {
+            Ok(file_window::Opened::Window(window)) => Stdio::FileWindow(Some(window)),
+            Ok(file_window::Opened::Empty) => Stdio::Ignore,
+            Ok(file_window::Opened::NotRegular) => return Ok(false),
+            Err(err) => return Err(global.throw_value(err.to_js(global))),
+        };
+        Ok(true)
     }
 }
 

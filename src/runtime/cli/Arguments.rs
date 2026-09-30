@@ -339,6 +339,8 @@ const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"
     ),
+    // No help text, which hides it. `parse` reads it for `AutoCommand` and `RunCommand` only.
+    parse_param!("--lint"),
 ];
 
 const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -911,6 +913,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let mut temp = bun_paths::path_buffer_pool::get();
         Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
+
+    // A lint run returns here, ahead of bunfig.toml and of every flag below. `node` shares `RUN_TABLE` and never lints.
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) && args.flag(b"--lint") {
+        return Ok(accept_lint(&args, ctx, cwd));
+    }
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
     // (uses_global_options=false). bunx picks up no-orphans via the
@@ -1751,6 +1758,21 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     Ok(opts)
+}
+
+/// Marks `ctx` as a lint run and gives it the working directory and the operands, all that such a run reads.
+#[cold]
+#[inline(never)]
+fn accept_lint(
+    args: &clap::Args<clap::Help>,
+    ctx: Context<'_>,
+    cwd: Box<[u8]>,
+) -> api::TransformOptions {
+    ctx.lint = true;
+    ctx.args.absolute_working_dir = Some(cwd);
+    ctx.positionals = slice_to_owned(args.positionals());
+    ctx.passthrough = slice_to_owned(args.remaining());
+    ctx.args.clone()
 }
 
 /// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /

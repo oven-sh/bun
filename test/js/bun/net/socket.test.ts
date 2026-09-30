@@ -1,6 +1,7 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, getEventLoopStats, socketFaultInjection } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
@@ -6292,4 +6293,91 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
     mismatchAt: -1,
   });
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent.each(["tcp", "tls"] as const)("%s shutdown() after end(data)", transport => {
+  const N = 8 * 1024 * 1024;
+
+  it("sends the FIN after the queued tail", async () => {
+    const payload = randomFillSync(Buffer.allocUnsafe(N));
+    const received = Promise.withResolvers<void>();
+    let got = 0;
+    let mismatchAt = -1;
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: {
+        data(_, chunk) {
+          if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
+          got += chunk.byteLength;
+        },
+        close: () => received.resolve(),
+        error() {},
+      },
+    });
+    const closed = Promise.withResolvers<void>();
+    let endReturned = -2;
+    let afterShutdown: number[] = [];
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        open(s) {
+          endReturned = s.end(payload);
+          s.shutdown();
+          afterShutdown = [s.write("more"), s.end("more")];
+        },
+        data() {},
+        close: () => closed.resolve(),
+        error() {},
+      },
+    });
+    await Promise.all([received.promise, closed.promise]);
+    expect({ endReturned, afterShutdown, got, mismatchAt }).toEqual({
+      endReturned: N,
+      afterShutdown: [-1, -1],
+      got: N,
+      mismatchAt: -1,
+    });
+  });
+});
+
+it("a close by the peer frees a queued end(data) tail and keeps bytesWritten", async () => {
+  const N = 16 * 1024 * 1024;
+  const sawFin = Promise.withResolvers<Socket>();
+  const closed = Promise.withResolvers<void>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(s) {
+        s.end(Buffer.alloc(N, 120));
+      },
+      end: s => sawFin.resolve(s),
+      close: () => closed.resolve(),
+      error() {},
+    },
+  });
+  // The peer sends its request and its FIN, and never reads.
+  const peer = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+  peer.on("error", () => {});
+  peer.pause();
+  peer.on("connect", () => peer.end("request\n"));
+  const socket = await sawFin.promise;
+  const queued = {
+    tailHeld: estimateShallowMemoryUsageOf(socket) > 4 * 1024 * 1024,
+    bytesWritten: socket.bytesWritten,
+  };
+  peer.destroy();
+  await closed.promise;
+  const afterClose = {
+    tailHeld: estimateShallowMemoryUsageOf(socket) > 64 * 1024,
+    bytesWritten: socket.bytesWritten,
+  };
+  expect({ queued, afterClose }).toEqual({
+    queued: { tailHeld: true, bytesWritten: N },
+    afterClose: { tailHeld: false, bytesWritten: N },
+  });
 });

@@ -1,3 +1,5 @@
+use core::cell::Cell;
+
 use bun_io::StreamBuffer;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_ptr::JsCell;
@@ -5,28 +7,32 @@ use bun_ptr::JsCell;
 /// Unsent bytes of node:net writes. A drain moves no bytes and an empty queue holds no allocation.
 /// Every edit goes through `append`, `consume` or `release`.
 #[derive(Default)]
-pub(crate) struct PendingWrites(JsCell<StreamBuffer>);
+pub(crate) struct PendingWrites {
+    bytes: JsCell<StreamBuffer>,
+    /// `shutdown()` ran over queued bytes. The FIN follows the last of them.
+    fin_deferred: Cell<bool>,
+}
 
 impl PendingWrites {
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        self.0.get().size()
+        self.bytes.get().size()
     }
 
     #[inline]
     pub(crate) fn slice(&self) -> &[u8] {
-        self.0.get().slice()
+        self.bytes.get().slice()
     }
 
     /// The allocation, sent prefix included.
     #[inline]
     pub(crate) fn capacity(&self) -> usize {
-        self.0.get().memory_cost()
+        self.bytes.get().memory_cost()
     }
 
     #[inline]
     pub(crate) fn append(&self, bytes: &[u8]) {
-        self.0
+        self.bytes
             .with_mut(|buffer| bun_core::handle_oom(buffer.write(bytes)));
     }
 
@@ -34,16 +40,44 @@ impl PendingWrites {
     #[inline]
     pub(crate) fn consume(&self, n: usize) {
         if n >= self.len() {
-            self.0.set(StreamBuffer::default());
+            self.bytes.set(StreamBuffer::default());
         } else {
-            self.0.with_mut(|buffer| buffer.wrote(n));
+            self.bytes.with_mut(|buffer| buffer.wrote(n));
         }
     }
 
-    /// Drops the bytes that the socket did not take.
+    /// Drops the bytes that the socket did not take, and returns their count.
     #[inline]
-    pub(crate) fn release(&self) {
-        self.0.set(StreamBuffer::default());
+    pub(crate) fn release(&self) -> usize {
+        let dropped = self.len();
+        self.bytes.set(StreamBuffer::default());
+        self.fin_deferred.set(false);
+        dropped
+    }
+
+    /// Makes the FIN wait for the queued bytes. False with an empty queue: the caller sends the FIN now.
+    #[inline]
+    pub(crate) fn defer_fin(&self) -> bool {
+        if self.len() == 0 {
+            return false;
+        }
+        self.fin_deferred.set(true);
+        true
+    }
+
+    #[inline]
+    pub(crate) fn is_fin_deferred(&self) -> bool {
+        self.fin_deferred.get()
+    }
+
+    /// True once, when the last queued byte is gone and a FIN waits for it.
+    #[inline]
+    pub(crate) fn take_deferred_fin(&self) -> bool {
+        if self.fin_deferred.get() && self.len() == 0 {
+            self.fin_deferred.set(false);
+            return true;
+        }
+        false
     }
 }
 

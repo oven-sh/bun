@@ -3445,3 +3445,62 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("a write that is still queued natively", () => {
+  const N = 8 * 1024 * 1024;
+
+  it("is sent before the FIN when the handle shuts down", async () => {
+    const received = Promise.withResolvers<number>();
+    const server = createServer({ allowHalfOpen: true }, peer => {
+      let got = 0;
+      peer.on("data", chunk => (got += chunk.length));
+      peer.on("error", () => {});
+      peer.on("end", () => {
+        received.resolve(got);
+        peer.end();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const socket = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      socket.on("error", () => {});
+      socket.resume();
+      await once(socket, "connect");
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => closed.resolve());
+      const flushed = socket.write(Buffer.alloc(N, 120));
+      // @ts-expect-error the native handle
+      socket._handle.shutdown();
+      const [got] = await Promise.all([received.promise, closed.promise]);
+      expect({ flushed, got }).toEqual({ flushed: false, got: N });
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each(["the peer resets the connection", "destroy()"] as const)("stays in bytesWritten when %s", async how => {
+    const accepted = Promise.withResolvers<Socket>();
+    // The peer never reads, so most of the write stays queued.
+    const server = createServer({ pauseOnConnect: true }, peer => {
+      peer.on("error", () => {});
+      accepted.resolve(peer);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const socket = connect({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      const flushed = socket.write(Buffer.alloc(N, 120));
+      const peer = await accepted.promise;
+      const closed = Promise.withResolvers<void>();
+      socket.on("close", () => closed.resolve());
+      if (how === "destroy()") socket.destroy();
+      else peer.resetAndDestroy();
+      await closed.promise;
+      peer.destroy();
+      expect({ flushed, bytesWritten: socket.bytesWritten }).toEqual({ flushed: false, bytesWritten: N });
+    } finally {
+      server.close();
+    }
+  });
+});

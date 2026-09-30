@@ -6792,6 +6792,8 @@ declare module "bun" {
      * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
      * Calls the `shutdown(2)` syscall internally.
      *
+     * `shutdown()` does not cut data that `end(data)` queued. Bun sends the FIN packet after the queued data.
+     *
      * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
      * @example
      * ```ts
@@ -7089,6 +7091,8 @@ declare module "bun" {
     /**
      * The total number of bytes successfully written to the socket since it was established.
      * This includes data currently buffered by the OS but not yet acknowledged by the remote peer.
+     * It also includes the data that `end(data)` queued, before and after Bun sends it. The count keeps
+     * that data if the socket closes before Bun can send it.
      */
     readonly bytesWritten: number;
 

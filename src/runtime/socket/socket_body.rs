@@ -1113,6 +1113,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         matches!(self.socket.get().socket, uws::InternalSocket::Connected(_))
     }
 
+    /// Frees the queued bytes that the socket can no longer send. `bytesWritten` keeps them in its count.
+    fn discard_pending_writes(&self) {
+        let dropped = self.buffered_data_for_node_net.release();
+        self.bytes_written
+            .set(self.bytes_written.get() + dropped as u64);
+    }
+
     /// True when this socket still points at `handlers` — false once a
     /// re-entrant reconnect or `upgradeTLS` repointed it.
     #[inline]
@@ -1168,7 +1175,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // before clear_and_free/unrefOnNextTick so the ref is balanced even if
         // those calls unwind.
         let _guard = RefPtr::from_this(this);
-        this.buffered_data_for_node_net.release();
+        this.discard_pending_writes();
 
         let needs_deref = !this.socket.get().is_detached();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
@@ -1363,7 +1370,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
         let socket = self.socket.get();
-        self.buffered_data_for_node_net.release();
+        self.discard_pending_writes();
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
@@ -1391,7 +1398,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
         unsafe { *ext = core::ptr::null_mut() };
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.buffered_data_for_node_net.release();
+        self.discard_pending_writes();
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -2211,6 +2218,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
         let write_errno = this.write_errno.replace(0);
+        // A Duplex or named-pipe transport can close from inside its own send, which still reads the queue.
+        if this.is_usockets_backed() {
+            this.discard_pending_writes();
+        }
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2723,7 +2734,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         if this.socket.get().is_detached() {
-            this.buffered_data_for_node_net.release();
+            this.discard_pending_writes();
             return Ok(JSValue::FALSE);
         }
 
@@ -2755,7 +2766,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         if this.socket.get().is_detached() {
-            this.buffered_data_for_node_net.release();
+            this.discard_pending_writes();
             return Ok(JSValue::FALSE);
         }
 
@@ -2821,7 +2832,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket = self.socket.get();
-        if socket.is_shutdown() || socket.is_closed() {
+        if socket.is_shutdown()
+            || socket.is_closed()
+            || self.buffered_data_for_node_net.is_fin_deferred()
+        {
             return WriteResult::Success {
                 wrote: -1,
                 total: buffer.slice().len() + self.buffered_data_for_node_net.len() as usize,
@@ -2900,7 +2914,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // Fatal write error (or the socket is already shut down/closed):
                 // the buffered bytes can never be delivered - drop them now that
                 // the borrow of their slice has ended.
-                self.buffered_data_for_node_net.release();
+                self.discard_pending_writes();
             } else if rc > 0 {
                 let wrote_u: usize = usize::try_from(rc.max(0)).expect("int cast");
                 self.buffered_data_for_node_net.consume(wrote_u);
@@ -3185,7 +3199,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // buffer, stop re-arming the writable retry, and report the
                     // errno so the event-loop caller surfaces it (the data was
                     // already acknowledged to JS, so only an 'error' can).
-                    self.buffered_data_for_node_net.release();
+                    self.discard_pending_writes();
                     return fatal_errno;
                 }
                 res
@@ -3203,6 +3217,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if self.can_end_after_flush() {
             self.mark_inactive();
+        } else if self.buffered_data_for_node_net.take_deferred_fin() {
+            self.socket.get().shutdown();
         }
         0
     }
@@ -3279,7 +3295,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else {
+        } else if !this.buffered_data_for_node_net.defer_fin() {
             this.socket.get().shutdown();
         }
 
@@ -3778,6 +3794,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
+        this.discard_pending_writes();
 
         // Only NOW is it safe for dispatch to fire: ext + kind point at `tls`.
         *uws::us_socket_t::opaque_mut(new_raw.as_ptr()).ext() = Some(tls);

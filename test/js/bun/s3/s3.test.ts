@@ -2266,15 +2266,22 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
       },
     ],
     [
-      // close() reports no outcome of the upload, so it drops the failure. A closed writer
-      // cannot report it later, whatever its end() does.
+      // close() reports no outcome of the upload, so it drops the failure. It also detaches
+      // the writer, so a later end() throws before it reaches the sink.
       "close() after a part upload failed",
       `${partUploadFailed}
        const close = String(writer.close());
-       const reportedLater = await Promise.resolve()
-         .then(() => writer.end())
-         .then(() => false, e => e.code === "AccessDenied");`,
-      { close: "undefined", reportedLater: false, requests: ["create", "part"] },
+       let endAfterClose;
+       try {
+         endAfterClose = "returned " + writer.end();
+       } catch (e) {
+         endAfterClose = "threw: " + e.message.split(".")[0];
+       }`,
+      {
+        close: "undefined",
+        endAfterClose: "threw: This NetworkSink has already been closed",
+        requests: ["create", "part"],
+      },
     ],
     [
       "end() after CreateMultipartUpload was denied",

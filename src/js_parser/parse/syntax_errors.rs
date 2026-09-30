@@ -387,7 +387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // isListTerminator of PCTypeArguments: every token but "," ends the list, so `f<>()` misses no type
         if opts.contains(SkipTypeOptions::IsTypeArgument)
             && self.lexer.token != T::TComma
-            && self.is_at_start_of_type_argument()
+            && matches!(self.byte_before_token(), Some(b'<' | b','))
         {
             return Ok(false);
         }
@@ -396,6 +396,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // typeHasArrowFunctionBlockingParseError: an arrow function whose return type is missing is none
             if opts.contains(SkipTypeOptions::IsReturnType)
                 && self.lexer.token == T::TEqualsGreaterThan
+                && matches!(self.byte_before_token(), Some(b':' | b'>'))
             {
                 return Err(Error::Backtrack);
             }
@@ -409,17 +410,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    /// Whether the token before the one the lexer is on is "<" or ",": an element of a list of type arguments starts here.
-    fn is_at_start_of_type_argument(&self) -> bool {
+    /// The last character of the token before the one the lexer is on: "<" or "," before an element of a list, ":" or "=>" before a return type.
+    fn byte_before_token(&self) -> Option<u8> {
         let lexer = &self.lexer;
         let start = u32::try_from(lexer.start).unwrap_or(u32::MAX);
         let before = ts::full_start(lexer.contents, &lexer.all_comments, start) as usize;
-        let last = before.checked_sub(1).and_then(|at| lexer.contents.get(at));
-        matches!(last, Some(b'<' | b','))
+        let last = before.checked_sub(1)?;
+        lexer.contents.get(last).copied()
     }
 
     /// `Lexer::unexpected` for an attempt, which turns the log of the lexer off: what the attempt logs goes if the attempt does.
     fn log_unexpected_in_attempt(&mut self) {
+        self.lexer.start = self.lexer.start.min(self.lexer.end);
         let range = self.lexer.range();
         if self.lexer.prev_error_loc.eql(range.loc) {
             return;

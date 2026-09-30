@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readdirSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -14,7 +14,7 @@ import {
   tempDir,
 } from "harness";
 import { constants as osConstants } from "os";
-import { join, sep } from "path";
+import { basename, join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
 
@@ -4261,11 +4261,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   });
 }
 
-// These tests use a self-contained registry instead of verdaccio because the
-// verdaccio fixture set is installed under a hoisted `setupTest()`, and the
-// isolated-linker code path needs a workspace layout.
+// These tests use a self-contained registry instead of verdaccio so that each
+// one picks its own project layout, packages and dependency specifier.
 describe.concurrent("pm untrusted/trust under the isolated linker", () => {
-  function makeTarball(pkg: Record<string, unknown>): Uint8Array {
+  function makeTarball(pkg: Record<string, unknown>, files: Record<string, string>): Uint8Array {
     const enc = new TextEncoder();
     const hdr = (name: string, size: number) => {
       const h = new Uint8Array(512);
@@ -4292,7 +4291,7 @@ describe.concurrent("pm untrusted/trust under the isolated linker", () => {
     };
     const parts = [
       ...entry("package/package.json", JSON.stringify(pkg)),
-      ...entry("package/index.js", "module.exports = {}"),
+      ...Object.entries(files).flatMap(([name, data]) => entry(`package/${name}`, data)),
       new Uint8Array(1024),
     ];
     const out = new Uint8Array(parts.reduce((a, x) => a + x.length, 0));
@@ -4304,35 +4303,65 @@ describe.concurrent("pm untrusted/trust under the isolated linker", () => {
     return Bun.gzipSync(out);
   }
 
+  type RegistryPackage = {
+    packageJson: { name: string; scripts?: Record<string, string>; [key: string]: unknown };
+    files?: Record<string, string>;
+  };
+
   /**
-   * Workspace root + `packages/b` depending on `pkgName`, which has a postinstall
-   * that drops `RAN-marker` in its own directory. Served from an in-process registry.
-   * `depSpec(serverUrl)` controls how `packages/b` depends on it.
+   * A project that depends on `pkgName` (all packages are at 1.0.0), served from an in-process registry.
+   * - `packages`: what the registry serves. Defaults to `pkgName` alone, with a postinstall that
+   *   drops `RAN-marker` in its own directory.
+   * - `dependent`: `"workspace"` (default) declares the dependency in workspace member `packages/b`,
+   *   `"root"` declares it in the root package.json of a project with no workspaces.
+   * - `depSpec(serverUrl)`: the dependency specifier, `"1.0.0"` by default.
+   * - `bunfigLinker: false` leaves `linker = "isolated"` out of bunfig.toml, for a test that
+   *   passes `--linker isolated` to `bun install` itself.
    */
-  async function setup(opts: { pkgName: string; bunfigExtra?: string; depSpec?: (serverUrl: string) => string }) {
+  async function setup(opts: {
+    pkgName: string;
+    bunfigExtra?: string;
+    depSpec?: (serverUrl: string) => string;
+    packages?: RegistryPackage[];
+    dependent?: "workspace" | "root";
+    bunfigLinker?: boolean;
+  }) {
     const { pkgName } = opts;
-    const pj = {
-      name: pkgName,
-      version: "1.0.0",
-      scripts: {
-        postinstall: `${bunExe()} -e 'require("fs").writeFileSync("RAN-marker","ok")'`,
-      },
-    };
-    const tgz = makeTarball(pj);
-    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
+    const served = new Map(
+      (
+        opts.packages ?? [
+          {
+            packageJson: {
+              name: pkgName,
+              scripts: { postinstall: `${bunExe()} -e 'require("fs").writeFileSync("RAN-marker","ok")'` },
+            },
+          },
+        ]
+      ).map(({ packageJson, files }) => {
+        const manifest = { version: "1.0.0", ...packageJson };
+        const tgz = makeTarball(manifest, files ?? { "index.js": "module.exports = {}" });
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
+        return [packageJson.name, { manifest, tgz, integrity }] as const;
+      }),
+    );
 
     const server = Bun.serve({
       port: 0,
       fetch(req) {
-        if (new URL(req.url).pathname.endsWith(".tgz")) return new Response(tgz);
+        const path = new URL(req.url).pathname;
+        const isTarball = path.endsWith("-1.0.0.tgz");
+        const name = isTarball ? basename(path, "-1.0.0.tgz") : decodeURIComponent(path.slice(1));
+        const pkg = served.get(name);
+        if (!pkg) return new Response("not found", { status: 404 });
+        if (isTarball) return new Response(pkg.tgz);
         return Response.json({
-          name: pkgName,
+          name,
           "dist-tags": { latest: "1.0.0" },
           versions: {
             "1.0.0": {
-              ...pj,
-              hasInstallScript: true,
-              dist: { tarball: `${server.url}${pkgName}-1.0.0.tgz`, integrity },
+              ...pkg.manifest,
+              hasInstallScript: pkg.manifest.scripts !== undefined,
+              dist: { tarball: `${server.url}${name}-1.0.0.tgz`, integrity: pkg.integrity },
             },
           },
         });
@@ -4340,19 +4369,21 @@ describe.concurrent("pm untrusted/trust under the isolated linker", () => {
     });
     const serverUrl = String(server.url);
 
-    const dir = tempDir("pm-trust-isolated", {
-      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
-      "packages/b/package.json": JSON.stringify({
-        name: "ws-b",
-        version: "1.0.0",
-        dependencies: { [pkgName]: opts.depSpec ? opts.depSpec(serverUrl) : "1.0.0" },
-      }),
-    });
+    const dependencies = { [pkgName]: opts.depSpec ? opts.depSpec(serverUrl) : "1.0.0" };
+    const dir = tempDir(
+      "pm-trust-isolated",
+      opts.dependent === "root"
+        ? { "package.json": JSON.stringify({ name: "root", private: true, dependencies }) }
+        : {
+            "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+            "packages/b/package.json": JSON.stringify({ name: "ws-b", version: "1.0.0", dependencies }),
+          },
+    );
     const packageDir = String(dir);
     const cacheDir = join(packageDir, ".bun-cache");
     await write(
       join(packageDir, "bunfig.toml"),
-      `[install]\nregistry = "${serverUrl}"\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n${opts.bunfigExtra ?? ""}`,
+      `[install]\nregistry = "${serverUrl}"\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\n${opts.bunfigLinker === false ? "" : 'linker = "isolated"\n'}${opts.bunfigExtra ?? ""}`,
     );
 
     return {
@@ -4465,6 +4496,53 @@ describe.concurrent("pm untrusted/trust under the isolated linker", () => {
 
     expect(findMarkers(bunStore)).toEqual([join(bunStore, entryName, "node_modules", pkgName, "RAN-marker")]);
     expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+  });
+
+  test("runs a direct dependency's script with its own dependencies' bins on PATH", async () => {
+    const hostName = "lifecycle-bin-host-pkg";
+    const toolName = "lifecycle-bin-tool-pkg";
+    // The script's PATH is built from the ancestors of its cwd, so `host`'s postinstall only finds
+    // `tool` when it runs at host's store path and not through the project's `node_modules/host` symlink.
+    // Only `bun install` is told the linker, so `bun pm trust` has to recognise the layout on disk.
+    await using ctx = await setup({
+      pkgName: hostName,
+      dependent: "root",
+      bunfigLinker: false,
+      packages: [
+        { packageJson: { name: hostName, dependencies: { [toolName]: "1.0.0" }, scripts: { postinstall: toolName } } },
+        {
+          packageJson: { name: toolName, bin: { [toolName]: "./cli.js" } },
+          files: { "cli.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("RAN-marker", "ok");\n` },
+        },
+      ],
+    });
+    const { packageDir } = ctx;
+
+    {
+      const { err, exitCode } = await run(ctx, "install", "--linker", "isolated");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    const bunStore = join(packageDir, "node_modules", ".bun");
+    const hostNodeModules = join(bunStore, `${hostName}@1.0.0`, "node_modules");
+    // Windows links a bin as `<name>.exe` + `<name>.bunx`.
+    const hasBin = (binDir: string) =>
+      existsSync(binDir) && readdirSync(binDir).some(f => f === toolName || f.startsWith(`${toolName}.`));
+    expect({
+      besideHostInStore: hasBin(join(hostNodeModules, ".bin")),
+      inProject: hasBin(join(packageDir, "node_modules", ".bin")),
+    }).toEqual({ besideHostInStore: true, inProject: false });
+
+    {
+      const { out, err, exitCode } = await run(ctx, "pm", "trust", hostName);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(findMarkers(bunStore)).toEqual([join(hostNodeModules, hostName, "RAN-marker")]);
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([hostName]);
   });
 
   test("does not run scripts inside the shared global store", async () => {

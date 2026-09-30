@@ -2671,7 +2671,7 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
   30_000,
 );
 
-test("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
+test.concurrent("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
   const fixture = /* js */ `
     import vm from "node:vm";
     import { edenGC, fullGC } from "bun:jsc";
@@ -2679,12 +2679,13 @@ test("a FinalizationRegistry cleanup job is dropped when its context dies before
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const liveContextCleanedUp = Promise.withResolvers();
     let liveContext;
+    let deadContextCleanups = 0;
 
     function setup() {
       // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
       // cancels the job too, so these contexts are past the first 8 and their registries are not.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup() {} }));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
       for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
@@ -2697,18 +2698,19 @@ test("a FinalizationRegistry cleanup job is dropped when its context dies before
     edenGC(); // The registered objects are dead: every registry posts its cleanup job.
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
     await liveContextCleanedUp.promise;
-    console.log("the live context's registry cleaned up");
+    await nextTurn(); // A job posted after the live context's has run by now too.
+    console.log({ deadContextCleanups });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "the live context's registry cleaned up\n",
+    stdout: "{\n  deadContextCleanups: 0,\n}\n",
     stderr: "",
     exitCode: 0,
   });
 });
 
-test("Atomics.notify does not wake the Atomics.waitAsync of a context that died", async () => {
+test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context that died", async () => {
   const fixture = /* js */ `
     import vm from "node:vm";
     import { fullGC } from "bun:jsc";

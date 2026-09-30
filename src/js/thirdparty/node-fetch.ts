@@ -275,15 +275,13 @@ async function fetch(
   return response;
 }
 
-// The native fetch() rejects with the signal's reason when the signal aborts. node-fetch rejects
-// with AbortError whatever the reason is.
+// The native fetch() rejects with the signal's reason. node-fetch rejects with AbortError whatever the reason is.
 function isAbort(error, signal) {
   return signal?.aborted === true && error === signal.reason;
 }
 
-// The native fetch() reports a failure of the transport as a TypeError with `errno`, as node's system
-// errors have. A bad argument (`ERR_INVALID_URL`, an invalid header name) or a used body is a TypeError
-// without it. A request body stream that fails rejects with the stream's own error, as in node-fetch.
+// The native fetch() reports a transport failure as a TypeError with `errno`. A bad argument, a used body
+// and a failed request body stream do not have one, and node-fetch rejects with those errors as they are.
 function isTransportError(error): error is TypeError & { errno: number; code: string; path: string } {
   return error instanceof TypeError && typeof (error as any).errno === "number";
 }
@@ -361,8 +359,7 @@ class FetchError extends FetchBaseError {
   }
 }
 
-// node-fetch's AbortError is a FetchBaseError. This one stays a DOMException so that
-// `error instanceof DOMException` keeps working on Bun, where fetch() rejected with one before.
+// A DOMException, not a FetchBaseError as in node-fetch: fetch() on Bun rejected with one before.
 class AbortError extends DOMException {
   type: string;
 

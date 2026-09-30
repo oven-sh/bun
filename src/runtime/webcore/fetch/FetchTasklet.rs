@@ -1423,8 +1423,7 @@ impl FetchTasklet {
             _ => fail.name(),
         };
 
-        // A failed `connect(2)` names its syscall, as the `getaddrinfo` path
-        // above does, so the error has the `node:net` shape.
+        // A failed `connect(2)` names its syscall, as the `getaddrinfo` path above does.
         let syscall = match fail {
             http::Error::ConnectionRefused => BunString::static_("connect"),
             http::Error::FailedToOpenSocket if self.result.connect_errno != 0 => {

@@ -34,14 +34,15 @@ function lost(object, ref) {
   return 0;
 }
 
-function run(name, gc, withRef, makeObject) {
+// keyObject picks the object that gets the key; only the object from makeObject stays reachable.
+function run(name, gc, withRef, makeObject, keyObject = object => object) {
   let count = 0;
   for (let i = 0; i < 4; i++) {
     const object = makeObject();
-    const ref = addKey(object, withRef);
+    const ref = addKey(keyObject(object), withRef);
     scrub(100);
     gc();
-    count += lost(object, ref);
+    count += lost(keyObject(object), ref);
   }
   result[name] = count;
 }
@@ -69,12 +70,8 @@ run("old dictionary eden", edenGC, false, () => oldDictionary);
 run("old object eden", edenGC, false, () => oldObject);
 run("old dictionary full", fullGC, true, () => oldDictionary);
 
-// The key is on a prototype, reached through an instance.
-run("prototype full", fullGC, true, () => {
-  const proto = {};
-  globalThis.keep = Object.create(proto);
-  return proto;
-});
+// The key is on a prototype that is reachable only through an instance.
+run("prototype full", fullGC, true, () => Object.create({}), object => Object.getPrototypeOf(object));
 
 // The value of the WeakMap entry reaches the object that has the symbol as a key: the cycle is
 // still collected.

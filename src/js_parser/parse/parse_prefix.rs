@@ -1078,12 +1078,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let had_pure_comment_before =
             p.lexer.has_pure_comment_before && !p.options.ignore_dce_annotations;
         let less_than = p.lexer.snapshot();
+        let logged = p.lint_logged();
         let result = p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking();
         if result == SkipTypeParameterResult::DefinitelyTypeParameters {
-            // The type parameters of the arrow function are read again, as the ones that are kept.
-            p.lexer.restore(&less_than);
-            let owner = crate::parse::attached::Owner::arrow(loc);
-            p.lint_type_parameters(Some(owner))?;
+            p.lint_type_parameters_of_arrow(loc, &less_than, logged)?;
             p.lexer.expect(T::TOpenParen)?;
             return p.parse_paren_expr_for_lint(
                 loc,

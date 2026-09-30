@@ -253,9 +253,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// How many messages, errors and warnings the log holds.
-    fn lint_logged(&self) -> (usize, u32, u32) {
+    pub(crate) fn lint_logged(&self) -> (usize, u32, u32) {
         let log = self.log();
         (log.msgs.len(), log.errors, log.warnings)
+    }
+
+    /// Goes back to the "<" of `less_than`: what the attempt that skipped from there logged since `logged` goes, for the reading that is kept reports it.
+    fn lint_forget_skipped_type_parameters(
+        &mut self,
+        less_than: &LexerSnapshot<'a>,
+        logged: (usize, u32, u32),
+    ) {
+        self.lexer.restore(less_than);
+        let log = self.log();
+        log.msgs.truncate(logged.0);
+        log.errors = logged.1;
+        log.warnings = logged.2;
+    }
+
+    /// Type parameters that prove the arrow function at `arrow` were skipped from the "<" of `less_than`, with the log at `logged` before: they are read again, as the ones that are kept, and recorded.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn lint_type_parameters_of_arrow(
+        &mut self,
+        arrow: Loc,
+        less_than: &LexerSnapshot<'a>,
+        logged: (usize, u32, u32),
+    ) -> Result<(), Error> {
+        self.lint_forget_skipped_type_parameters(less_than, logged);
+        let less_than_loc = self.lexer.loc();
+        let type_parameters = self.build_type_script_type_parameters()?;
+        self.lint_arrow_type_parameters(arrow, less_than_loc, type_parameters);
+        Ok(())
     }
 
     /// Goes back to the "<" of `less_than` and skips the type parameters up to the "(" as before: what was logged since `logged` goes.
@@ -299,6 +328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<SkipTypeParameterResult, Error> {
         let less_than = self.lexer.snapshot();
         let less_than_loc = self.lexer.loc();
+        let logged = self.lint_logged();
         let result = self.try_skip_type_script_type_parameters_then_open_paren_with_backtracking();
         if result == SkipTypeParameterResult::DidNotSkipAnything {
             return Ok(result);
@@ -307,7 +337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut type_arguments = None;
         let type_parameters = if result == SkipTypeParameterResult::DefinitelyTypeParameters {
             // The type parameters of an arrow function are read again, as the ones that are kept.
-            self.lexer.restore(&less_than);
+            self.lint_forget_skipped_type_parameters(&less_than, logged);
             let type_parameters = self.build_type_script_type_parameters()?;
             if self.lexer.loc() != open {
                 self.lexer.expected(T::TOpenParen)?;

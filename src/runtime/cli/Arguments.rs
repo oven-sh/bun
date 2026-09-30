@@ -567,6 +567,8 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--windows-copyright <STR>        When using --compile targeting Windows, set the executable copyright"
         ),
+        // No help text, which hides it. `parse` reads it only to refuse it: a flag that is not in the table is dropped.
+        parse_param!("--lint"),
     ],
     maybe_bake_debug_params!(),
 );
@@ -917,6 +919,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // A lint run returns here, ahead of bunfig.toml and of every flag below. `node` shares `RUN_TABLE` and never lints.
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) && args.flag(b"--lint") {
         return Ok(accept_lint(&args, ctx, cwd));
+    }
+    // `bun build` does no lint run: the flag is refused ahead of bunfig.toml, whether or not the variable that turns it on is set.
+    if cmd == CommandTag::BuildCommand && args.flag(b"--lint") {
+        cli::lint_command::refuse("bun build");
     }
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely

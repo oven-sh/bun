@@ -136,6 +136,40 @@ describe("--lint among the flags that bunx reads before the package name", () =>
   });
 });
 
+describe("--lint among the flags of bun build", () => {
+  const refused = { stdout: "", stderr: "error: --lint cannot be used with bun build\n", exitCode: 1 };
+  // The refusal does not depend on the variable that turns `--lint` on.
+  const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+  // Built, this file becomes `out.js` or `out/x.js`, or text on stdout when the command names no output.
+  const files = { "x.ts": 'console.log("built");\n' };
+
+  test.concurrent.each([
+    "build --lint x.ts --outfile out.js",
+    "build x.ts --outfile out.js --lint",
+    "--lint build x.ts --outfile out.js",
+    "build --lint x.ts --outdir out",
+    "build --lint x.ts",
+  ])("`bun %s` is refused and nothing is built", async command => {
+    using dir = tempDir("lint-build", files);
+    const cwd = String(dir);
+    const args = command.split(" ");
+    const [set, unset] = await Promise.all([bun(cwd, args, lintEnv), bun(cwd, args, withoutVariable)]);
+    expect(set).toEqual(refused);
+    expect(unset).toEqual(refused);
+    expect(await readdirSorted(cwd)).toEqual(["x.ts"]);
+  });
+
+  test.concurrent("`bun build --lint=value` is refused by the argument parser and nothing is built", async () => {
+    using dir = tempDir("lint-build-value", files);
+    const cwd = String(dir);
+    // The argument parser also writes the help of `bun build` to stdout.
+    const { stderr, exitCode } = await bun(cwd, ["build", "--lint=value", "x.ts", "--outfile", "out.js"]);
+    expect(stderr).toBe("error: The argument '--lint' does not take a value.\n");
+    expect(exitCode).toBe(1);
+    expect(await readdirSorted(cwd)).toEqual(["x.ts"]);
+  });
+});
+
 describe("--lint in the value of --compile-exec-argv", () => {
   const refused = { stdout: "", stderr: "error: --lint cannot be set in --compile-exec-argv\n", exitCode: 1 };
   // The refusal does not depend on the variable that turns `--lint` on.

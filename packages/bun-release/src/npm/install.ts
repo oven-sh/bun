@@ -129,8 +129,12 @@ export function optimizeBun(path: string): void {
   const installScript =
     os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.com/install | bash";
   try {
-    link(path, join(__dirname, "bin", "bun.exe"));
-    link(join(__dirname, "bin", "bun.exe"), join(__dirname, "bin", "bunx.exe"));
+    const bunPath = join(__dirname, "bin", "bun.exe");
+    const bunxPath = join(__dirname, "bin", "bunx.exe");
+    link(path, bunPath);
+    if (os !== "win32") chmod(bunPath, 0o755);
+    link(bunPath, bunxPath);
+    if (os !== "win32") chmod(bunxPath, 0o755);
     return;
   } catch (error) {
     debug("optimizeBun failed", error);

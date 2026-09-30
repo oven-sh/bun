@@ -576,34 +576,32 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     }
   });
 
-  // A query is a pending query of its transaction until the callback of the client runs, and each
-  // reaction of the caller runs before that callback. Before, a reaction added after execute() ran
-  // after it, and close({ timeout }) in that reaction found no pending query and rolled back.
-  // close({ timeout }) with a pending query that settles in time rolls nothing back (#32148), so
-  // both transactions commit until that is fixed.
-  test("close({ timeout }) does the same in a reaction added before execute() and in one added after it", async () => {
-    const outcome = async (start: (tx: Bun.TransactionSQL) => PromiseLike<unknown>) => {
-      const received: Received[] = [];
-      const { port, server } = await mockServer(received);
-      const sql = new SQL(options(port));
-      try {
-        const begin = await sql
-          .begin(async tx => {
-            await start(tx).then(() => tx.close({ timeout: 30 }));
-          })
-          .then(
-            () => "resolved",
-            e => e.code,
-          );
-        return { begin, statements: received.map(({ sql }) => sql) };
-      } finally {
-        await sql.close({ timeout: 0 }).catch(() => {});
-        await new Promise<void>(r => server.close(() => r()));
-      }
-    };
-    const addedBefore = await outcome(tx => tx.unsafe("SELECT 'transaction'"));
-    const addedAfter = await outcome(tx => tx.unsafe("SELECT 'transaction'").execute());
-    expect(addedAfter).toEqual(addedBefore);
+  // A query that settled is not a pending query of its transaction. So close({ timeout }) in a reaction
+  // of that query waits for nothing and rolls back, and the COMMIT of begin() finds the transaction closed.
+  test.each([
+    ["added before execute()", (tx: Bun.TransactionSQL) => tx.unsafe("SELECT 'transaction'")],
+    ["added after execute()", (tx: Bun.TransactionSQL) => tx.unsafe("SELECT 'transaction'").execute()],
+  ])("close({ timeout }) of a transaction rolls back in a reaction of its query %s", async (_, start) => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const error = await sql
+        .begin(async tx => {
+          await start(tx).then(() => tx.close({ timeout: 30 }));
+        })
+        .then(
+          () => null,
+          e => e,
+        );
+      expect({ code: error?.code, statements: received.map(({ sql }) => sql) }).toEqual({
+        code: adapter === "postgres" ? "ERR_POSTGRES_CONNECTION_CLOSED" : "ERR_MYSQL_CONNECTION_CLOSED",
+        statements: [beginCommand, "SELECT 'transaction'", "ROLLBACK"],
+      });
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 
   // bun:test fails this test if the failure of the query is reported as an unhandled rejection.

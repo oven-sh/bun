@@ -13,7 +13,7 @@ interface PooledConnection {
   close(): void;
 }
 
-const { Query, SQLQueryFlags, onQuerySettled } = require("internal/sql/query");
+const { Query, SQLQueryFlags, removeQueryWhenSettled } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
@@ -174,11 +174,6 @@ const SQL = function SQL(
     }
   }
 
-  function onTransactionQueryDisconnected(query: Query<any, any>) {
-    const transactionQueries = this;
-    transactionQueries.delete(query);
-  }
-
   function queryFromTransactionHandler(transactionQueries, query, handle, err) {
     const pooledConnection = this;
     if (err) {
@@ -192,7 +187,7 @@ const SQL = function SQL(
       return query.reject(pool.queryCancelledError());
     }
 
-    onQuerySettled(query, onTransactionQueryDisconnected.bind(transactionQueries, query));
+    removeQueryWhenSettled(query, transactionQueries);
 
     try {
       // Use adapter method to get the actual connection

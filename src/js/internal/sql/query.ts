@@ -11,6 +11,7 @@ const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
 const _settled = Symbol("settled");
+const _pending = Symbol("pending");
 
 const PublicPromise = Promise;
 
@@ -33,6 +34,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
   public [_settled]: Promise<void> | undefined;
+  public [_pending]: Set<Query<any, any>> | undefined;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -97,11 +99,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_values] = values;
     this[_flags] = flags;
     this[_settled] = undefined;
+    this[_pending] = undefined;
 
     this[_results] = null;
   }
 
   #notifySettled() {
+    const pending = this[_pending];
+    if (pending !== undefined) {
+      this[_pending] = undefined;
+      pending.$delete(this);
+    }
     const settled = this[_settled];
     if (settled !== undefined) {
       this[_settled] = undefined;
@@ -353,6 +361,19 @@ function onQuerySettled(query: Query<any, any>, callback: () => void) {
   }
 }
 
+/**
+ * Takes `query` out of `pending` when it settles, before a reaction of `query` runs: in a reaction, the
+ * query is not a pending query. The promise of `query` counts as handled.
+ */
+function removeQueryWhenSettled(query: Query<any, any>, pending: Set<Query<any, any>>) {
+  $pokePromiseAsHandled(query);
+  if ($isPromisePending(query)) {
+    query[_pending] = pending;
+  } else {
+    pending.$delete(query);
+  }
+}
+
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
@@ -383,6 +404,7 @@ const enum SQLQueryStatus {
 export default {
   Query,
   onQuerySettled,
+  removeQueryWhenSettled,
   SQLQueryFlags,
   SQLQueryResultMode,
 

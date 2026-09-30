@@ -76,7 +76,7 @@ enum MemberName {
 enum Bracketed {
     /// A type, which stands for a name.
     Type,
-    /// A type with ": type" or "in type" after it, or a sign after the "]".
+    /// A type with ": type" or "in type as type" after it, or a sign after the "]".
     TypeWithIndex,
     /// The expression of parseComputedPropertyName.
     Expression,
@@ -870,6 +870,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     || self.lexer.token == T::TThis)
                             {
                                 self.lexer.next()?;
+
+                                // "asserts x \n is boolean"
+                                if self.lexer.has_newline_before
+                                    && self.lexer.is_contextual_keyword(b"is")
+                                    && self.skip_type_script_predicate_type_after_newline()?
+                                {
+                                    return Ok(());
+                                }
                             }
                         }
                         TsIdentKind::PrimitiveAny => {
@@ -1327,7 +1335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.parse_property_or_method_signature(MemberName::Index, false)
                         }
                         Bracketed::Expression => {
-                            self.parse_property_or_method_signature_of_reference(false)
+                            self.parse_property_or_method_signature_of_reference(true, false)
                         }
                         Bracketed::Parameters => self.parse_type_of_index_signature(),
                     };
@@ -1341,7 +1349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     || (self.lexer.token == T::TBigIntegerLiteral && !self.lexer.is_log_disabled)
                 {
                     self.lexer.next()?;
-                    return self.parse_property_or_method_signature_of_reference(false);
+                    return self.parse_property_or_method_signature_of_reference(false, false);
                 }
                 self.parse_property_or_method_signature(MemberName::None, false)
             }
@@ -1519,7 +1527,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.parse_property_or_method_signature(MemberName::Index, true)
                 }
                 Bracketed::Expression | Bracketed::Parameters => {
-                    self.parse_property_or_method_signature_of_reference(true)
+                    self.parse_property_or_method_signature_of_reference(true, true)
                 }
             };
         }
@@ -1528,16 +1536,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_name_of_one_loop {
             self.parse_property_or_method_signature(MemberName::Word, true)
         } else {
-            self.parse_property_or_method_signature_of_reference(true)
+            self.parse_property_or_method_signature_of_reference(false, true)
         }
     }
 
     /// parsePropertyOrMethodSignature after a name that only the reference reads, or parseAccessorDeclaration after such a name.
     fn parse_property_or_method_signature_of_reference(
         &mut self,
+        is_computed_name: bool,
         is_accessor: bool,
     ) -> Result<(), Error> {
-        if !is_accessor && self.lexer.token == T::TQuestion {
+        let has_question = !is_accessor && self.lexer.token == T::TQuestion;
+        if has_question {
             self.lexer.next()?;
         }
         if is_accessor || self.lexer.token == T::TOpenParen || self.lexer.token == T::TLessThan {
@@ -1558,11 +1568,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         } else {
             // parseTypeAnnotation and parseInitializer
-            if self.lexer.token == T::TColon {
+            let has_type_annotation = self.lexer.token == T::TColon;
+            if has_type_annotation {
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
             }
-            if self.lexer.token == T::TEquals {
+            // scanTypeMemberStart: "#a = 1" starts no member, "#a? = 1" and "[a + b] = 1" start one
+            if (has_type_annotation || has_question || is_computed_name)
+                && self.lexer.token == T::TEquals
+            {
                 self.parse_initializer_in_type()?;
             }
         }
@@ -1586,6 +1600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Whether the member is one that the reference reads too: only then may a block or an initializer follow.
         let mut is_reference_form = name == MemberName::Word || name == MemberName::Bracket;
+        let mut has_question = false;
         if name != MemberName::None {
             // "a b: c": a name that a name or "[" follows is a member of its own, with or without a separator
             if name == MemberName::Word
@@ -1596,6 +1611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.lexer.token == T::TQuestion {
                 // "a?: b". The reference reads no "?" after the name of an accessor
                 self.lexer.next()?;
+                has_question = true;
                 if is_accessor {
                     is_reference_form = false;
                 }
@@ -1645,7 +1661,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.unexpected()?;
                     return Err(Error::SyntaxError);
                 }
-                if may_have_initializer && self.lexer.token == T::TEquals {
+                // scanTypeMemberStart: "a = 1" starts no member, "a? = 1" and "[a] = 1" start one
+                if may_have_initializer
+                    && (has_question || name == MemberName::Bracket)
+                    && self.lexer.token == T::TEquals
+                {
                     self.parse_initializer_in_type()?;
                 }
             }
@@ -1729,12 +1749,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
             }
-            // "{ [K in keyof T as `get-${K}`]: T[K] }"
+            // "{ [K in keyof T as `get-${K}`]: T[K] }". Without "as" the reference reads the name `[K in T]` here
             T::TIn => {
-                bracketed = Bracketed::TypeWithIndex;
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
                 if self.lexer.is_contextual_keyword(b"as") {
+                    bracketed = Bracketed::TypeWithIndex;
                     self.lexer.next()?;
                     self.skip_type_script_type(Level::Lowest)?;
                 }
@@ -2026,6 +2046,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_in = false;
             let mut has_out = false;
             let mut expect_identifier = true;
+            let mut is_named_out = false;
 
             let mut invalid_modifier_range = bun_ast::Range::NONE;
 
@@ -2071,6 +2092,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if self.lexer.is_contextual_keyword(b"out") {
                     let r = self.lexer.range();
+                    let had_invalid_modifier = invalid_modifier_range.len > 0;
                     if invalid_modifier_range.len == 0
                         && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
                     {
@@ -2083,6 +2105,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.next()?;
+                    // "function foo<out>() {}": what follows names no parameter, so "out" does
+                    if !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
+                        && (self.lexer.has_newline_before || !self.can_follow_modifier())
+                    {
+                        if !had_invalid_modifier {
+                            invalid_modifier_range = bun_ast::Range::NONE;
+                        }
+                        is_named_out = true;
+                        break;
+                    }
                     if invalid_modifier_range.len == 0
                         && has_out
                         && (self.lexer.token == T::TIn || self.lexer.token == T::TIdentifier)
@@ -2120,7 +2152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // expectIdentifier => Mandatory identifier (e.g. after "type Foo <in ___")
             // !expectIdentifier => Optional identifier (e.g. after "type Foo <out ___" since "out" may be the identifier)
-            if expect_identifier || self.lexer.token == T::TIdentifier {
+            if !is_named_out && (expect_identifier || self.lexer.token == T::TIdentifier) {
                 self.lexer.expect(T::TIdentifier)?;
             }
 
@@ -2363,11 +2395,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
+        // "x as A <= b": only "<" opens the list, alone or as the first half of "<<"
         match self.lexer.token {
-            T::TLessThan
-            | T::TLessThanEquals
-            | T::TLessThanLessThan
-            | T::TLessThanLessThanEquals => {}
+            T::TLessThan | T::TLessThanLessThan => {}
             _ => {
                 return Ok(false);
             }
@@ -2577,9 +2607,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.is_log_disabled = true;
 
         let mut data = arrow_data.clone();
+        let mut arrow_start = 0usize;
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
+            arrow_start = self.lexer.start;
             self.parse_arrow_body(&mut [], &mut data)?;
             // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
@@ -2602,6 +2634,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.ts_conditional_arrow_attempts
                 .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
+        }
+        if is_arrow_fn {
+            // The caller reads the return type again: a type in parentheses that ends it has this "=>" after it.
+            self.set_type_script_memo_at(arrow_start, true);
         }
         Ok(is_arrow_fn)
     }

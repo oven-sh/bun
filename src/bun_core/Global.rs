@@ -617,6 +617,9 @@ pub fn set_thread_name(name: &ZStr) {
 /// `prctl(PR_SET_NAME)` also updates `/proc/self/comm` (15 bytes max).
 /// No-op on other platforms; Windows goes through `uv_set_process_title`.
 pub fn set_process_title(title: &[u8]) {
+    // The OS sees a C string; stop at the first NUL like libuv's `strlen`.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    let title = &title[..crate::strings::index_of_char_usize(title, 0).unwrap_or(title.len())];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut comm = [0u8; 16];
@@ -633,13 +636,20 @@ pub fn set_process_title(title: &[u8]) {
             // Leave one NUL per original argv entry: macOS `ps` reads exactly
             // `argc` strings from the block, so with fewer NULs it would run
             // past argv and print the environment after the title.
-            let n = title.len().min(cap.saturating_sub(argc.max(1)));
-            // SAFETY: `os_argv_title_span` returns the writable kernel argv
-            // region of `cap` bytes; `argv()` reads owned copies, so nothing
-            // else in the process aliases it.
-            unsafe {
-                core::ptr::copy_nonoverlapping(title.as_ptr(), ptr, n);
-                core::ptr::write_bytes(ptr.add(n), 0, cap - n);
+            let room = cap.saturating_sub(argc.max(1));
+            // macOS `ps` also skips leading NULs as padding before argv[0],
+            // so an empty title would make it print the environment instead.
+            #[cfg(target_os = "macos")]
+            let title: &[u8] = if title.is_empty() { b" " } else { title };
+            if room > 0 {
+                let n = title.len().min(room);
+                // SAFETY: `os_argv_title_span` returns the writable kernel argv
+                // region of `cap` bytes; `argv()` reads owned copies, so nothing
+                // else in the process aliases it.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(title.as_ptr(), ptr, n);
+                    core::ptr::write_bytes(ptr.add(n), 0, cap - n);
+                }
             }
         }
     }

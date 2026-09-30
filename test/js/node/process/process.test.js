@@ -112,7 +112,7 @@ it("process.title with UTF-16 characters", () => {
 // What `ps` / `pgrep -f` see for the current process: /proc/self/cmdline on
 // Linux, the kernel argv block (KERN_PROCARGS2) via `ps` on macOS.
 const osVisibleTitleFixture = `
-  const fs = require("fs");
+  import * as fs from "node:fs";
   function osCmdline() {
     if (process.platform === "linux") return fs.readFileSync("/proc/self/cmdline").toString().split("\\0")[0];
     const { stdout } = Bun.spawnSync(["ps", "-o", "command=", "-p", String(process.pid)]);
@@ -130,7 +130,12 @@ it.concurrent.skipIf(!isLinux && !isMacOS)("process.title is visible to ps", asy
     const r1 = { readback: process.title, cmdline: osCmdline(), comm: osComm() };
     process.title = Buffer.alloc(4096, "x").toString();
     const r2 = { readback: process.title.length, cmdline: osCmdline(), comm: osComm() };
-    console.log(JSON.stringify({ r1, r2, argvUnchanged: JSON.stringify(process.argv) === argvBefore }));
+    process.title = "";
+    const empty = osCmdline().trim();
+    process.title = "before\\0after";
+    const embeddedNul = osCmdline().trim();
+    const argvUnchanged = JSON.stringify(process.argv) === argvBefore;
+    console.log(JSON.stringify({ r1, r2, empty, embeddedNul, argvUnchanged }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -140,7 +145,7 @@ it.concurrent.skipIf(!isLinux && !isMacOS)("process.title is visible to ps", asy
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { r1, r2, argvUnchanged } = JSON.parse(stdout);
+  const { r1, r2, empty, embeddedNul, argvUnchanged } = JSON.parse(stdout);
   // `ps` on macOS joins the NUL-padded remainder of argv with spaces; only the
   // leading title is meaningful.
   expect(r1.readback).toBe("bun-title-renamed");
@@ -152,6 +157,9 @@ it.concurrent.skipIf(!isLinux && !isMacOS)("process.title is visible to ps", asy
   expect(r2.cmdline.length).toBeGreaterThan(0);
   expect(r2.cmdline.length).toBeLessThan(4096);
   expect(r2.cmdline).toMatch(/^x+$/);
+  // An empty title must not expose the environment (macOS `ps` skips leading
+  // NULs), and the OS title stops at an embedded NUL.
+  expect({ empty, embeddedNul }).toEqual({ empty: "", embeddedNul: "before" });
   // process.argv reads owned copies, not the rewritten kernel block.
   expect(argvUnchanged).toBe(true);
   expect(exitCode).toBe(0);

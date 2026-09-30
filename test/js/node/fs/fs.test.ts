@@ -17,6 +17,8 @@ import {
   tempVolume,
   tmpdirSync,
 } from "harness";
+import { spawn as nodeSpawn } from "node:child_process";
+import { once } from "node:events";
 import fs, {
   closeSync,
   constants,
@@ -57,8 +59,6 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
-import { spawn as nodeSpawn } from "node:child_process";
-import { once } from "node:events";
 import { createServer, Socket } from "node:net";
 import * as os from "node:os";
 import path, { basename, dirname, relative, resolve } from "node:path";

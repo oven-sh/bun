@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -776,3 +776,152 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// Reads stdout line by line. `next()` resolves with the next non-empty line.
+function lineReader(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const lines: string[] = [];
+  return {
+    async next(): Promise<string> {
+      while (lines.length === 0) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("stdout closed");
+        buffered += decoder.decode(value, { stream: true });
+        const parts = buffered.split("\n");
+        buffered = parts.pop() ?? "";
+        lines.push(...parts.filter(line => line.length > 0));
+      }
+      return lines.shift()!;
+    },
+  };
+}
+
+// Retargets the link at `linkPath` with a rename over it, as `ln -sfn` does.
+function retargetSymlink(linkPath: string, target: string) {
+  symlinkSync(target, linkPath + ".tmp");
+  renameSync(linkPath + ".tmp", linkPath);
+}
+
+// The resolver keys a module by its real path and the watcher watches that
+// real path. An import that goes through a symlink has to follow the link when
+// the link changes, not stay bound to the file the link pointed to at first.
+describe.skipIf(isWindows)("--hot follows a retargeted symlink on the import path", () => {
+  async function run(files: Record<string, string>, links: Record<string, string>) {
+    const dir = tempDir("hot-symlink", files);
+    for (const [link, target] of Object.entries(links)) {
+      symlinkSync(target, join(String(dir), link));
+    }
+    const runner = spawn({
+      cmd: [bunExe(), "--hot", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    return { dir, runner, stdout: lineReader(runner.stdout), path: (p: string) => join(String(dir), p) };
+  }
+
+  it("directory symlink", async () => {
+    const { dir, runner, stdout, path } = await run(
+      {
+        "entry.ts": `import "./cur/app.ts";`,
+        "v1/app.ts": `console.log("MARK_V1");`,
+        "v2/app.ts": `console.log("MARK_V2");`,
+      },
+      { cur: "v1" },
+    );
+    using _dir = dir;
+    await using _runner = runner;
+    expect(await stdout.next()).toBe("MARK_V1");
+
+    retargetSymlink(path("cur"), "v2");
+    expect(await stdout.next()).toBe("MARK_V2");
+
+    // An edit to the new target is seen.
+    writeFileSync(path("v2/app.ts"), `console.log("MARK_V2_EDITED");`);
+    expect(await stdout.next()).toBe("MARK_V2_EDITED");
+  });
+
+  it("directory symlink with a directory below it", async () => {
+    const { dir, runner, stdout, path } = await run(
+      {
+        "entry.ts": `import "./cur/sub/app.ts";`,
+        "v1/sub/app.ts": `console.log("MARK_V1");`,
+        "v2/sub/app.ts": `console.log("MARK_V2");`,
+      },
+      { cur: "v1" },
+    );
+    using _dir = dir;
+    await using _runner = runner;
+    expect(await stdout.next()).toBe("MARK_V1");
+
+    retargetSymlink(path("cur"), "v2");
+    expect(await stdout.next()).toBe("MARK_V2");
+
+    writeFileSync(path("v2/sub/app.ts"), `console.log("MARK_V2_EDITED");`);
+    expect(await stdout.next()).toBe("MARK_V2_EDITED");
+  });
+
+  it("directory symlink in a directory with no loaded module", async () => {
+    const { dir, runner, stdout, path } = await run(
+      {
+        "src/entry.ts": `import "../links/cur/app.ts";`,
+        "entry.ts": `import "./src/entry.ts";`,
+        "v1/app.ts": `console.log("MARK_V1");`,
+        "v2/app.ts": `console.log("MARK_V2");`,
+        "links/.keep": "",
+      },
+      { "links/cur": "../v1" },
+    );
+    using _dir = dir;
+    await using _runner = runner;
+    expect(await stdout.next()).toBe("MARK_V1");
+
+    retargetSymlink(path("links/cur"), "../v2");
+    expect(await stdout.next()).toBe("MARK_V2");
+
+    writeFileSync(path("v2/app.ts"), `console.log("MARK_V2_EDITED");`);
+    expect(await stdout.next()).toBe("MARK_V2_EDITED");
+  });
+
+  it("directory symlink whose new target has a directory the old one lacked", async () => {
+    const { dir, runner, stdout, path } = await run(
+      {
+        "entry.ts": `import("./cur/sub/app.ts").catch(() => console.log("MARK_MISSING"));`,
+        "v1/app.ts": `console.log("MARK_V1");`,
+        "v2/sub/app.ts": `console.log("MARK_V2");`,
+      },
+      { cur: "v1" },
+    );
+    using _dir = dir;
+    await using _runner = runner;
+    expect(await stdout.next()).toBe("MARK_MISSING");
+
+    // The resolver cached `cur/sub` as not found under v1.
+    retargetSymlink(path("cur"), "v2");
+    expect(await stdout.next()).toBe("MARK_V2");
+  });
+
+  it("file symlink", async () => {
+    const { dir, runner, stdout, path } = await run(
+      {
+        "entry.ts": `import "./app.ts";`,
+        "v1/app.ts": `console.log("MARK_V1");`,
+        "v2/app.ts": `console.log("MARK_V2");`,
+      },
+      { "app.ts": "v1/app.ts" },
+    );
+    using _dir = dir;
+    await using _runner = runner;
+    expect(await stdout.next()).toBe("MARK_V1");
+
+    retargetSymlink(path("app.ts"), "v2/app.ts");
+    expect(await stdout.next()).toBe("MARK_V2");
+
+    writeFileSync(path("v2/app.ts"), `console.log("MARK_V2_EDITED");`);
+    expect(await stdout.next()).toBe("MARK_V2_EDITED");
+  });
+});

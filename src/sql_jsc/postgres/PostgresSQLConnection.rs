@@ -141,8 +141,8 @@ pub struct PostgresSQLConnection {
 
     pub(crate) backend_parameters: JsCell<StringMap>,
     pub(crate) backend_key_data: JsCell<protocol::BackendKeyData>,
-    /// The query that a cancel connection stops, until it writes the CancelRequest.
-    cancel_target: JsCell<Option<RefPtr<PostgresSQLQuery>>>,
+    /// What a cancel connection stops, until it writes the CancelRequest or fails.
+    cancel_target: JsCell<Option<CancelTarget>>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
     // into `options_buf` (built by `ConnectionStrings::new`). Struct is Box-allocated
@@ -516,7 +516,10 @@ impl PostgresSQLConnection {
         }));
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
         sock.start_tls_handshake();
-        self.start();
+        // A cancel connection decides what to write when the handshake has ended.
+        if !self.is_cancel_request() {
+            self.start();
+        }
     }
 
     fn setup_max_lifetime_timer_if_necessary(&self) {
@@ -748,6 +751,8 @@ impl PostgresSQLConnection {
         }
 
         self.status.set(Status::Failed);
+        // A cancel connection that fails before it writes lets go of its session and query here.
+        self.cancel_target.set(None);
 
         let _guard = self.ref_guard();
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
@@ -848,8 +853,7 @@ impl PostgresSQLConnection {
         self.status.set(Status::SentStartupMessage);
         if self.is_cancel_request() {
             let target = self.cancel_target.with_mut(Option::take);
-            // The query can end during the dial, and a CancelRequest then stops the next query.
-            let Some(packet) = target.and_then(|request| Self::cancel_request_for(&request)) else {
+            let Some(packet) = target.and_then(|target| target.cancel_request()) else {
                 self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
                 return;
             };
@@ -952,12 +956,16 @@ impl PostgresSQLConnection {
                             if !ok {
                                 let v = verify_error_to_js(&ssl_error, self.global());
                                 self.fail_with_js_value(v);
+                                return;
                             }
                         }
                     }
                     // require is the same as prefer
                     SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
                 }
+            }
+            if self.is_cancel_request() {
+                self.start();
             }
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
@@ -1241,8 +1249,23 @@ pub(crate) struct ConnectParams<'a> {
     pub use_unnamed_prepared_statements: bool,
     pub on_connect: JSValue,
     pub on_close: JSValue,
-    /// Set for a connection that only delivers the CancelRequest for this query.
-    pub cancel: Option<RefPtr<PostgresSQLQuery>>,
+    /// Set for a connection that only delivers the CancelRequest for this target.
+    pub cancel: Option<CancelTarget>,
+}
+
+/// The query that a cancel connection stops, and the session whose backend runs it.
+pub(crate) struct CancelTarget {
+    session: RefPtr<PostgresSQLConnection>,
+    request: RefPtr<PostgresSQLQuery>,
+}
+
+impl CancelTarget {
+    /// `None` when the session is still connected and its backend runs another query by now.
+    fn cancel_request(&self) -> Option<[u8; 16]> {
+        let session = &*self.session;
+        (session.status.get() != Status::Connected || session.is_running(&self.request))
+            .then(|| session.backend_key_data.get().cancel_request())
+    }
 }
 
 impl PostgresSQLConnection {
@@ -1664,15 +1687,6 @@ impl PostgresSQLConnection {
             )
     }
 
-    /// The CancelRequest for `request`, while the backend of its session still runs it.
-    fn cancel_request_for(request: &PostgresSQLQuery) -> Option<[u8; 16]> {
-        let query = request.this_value.get().try_get()?;
-        let session = js::from_js_ref(postgres_sql_query::js::connection_get_cached(query)?)?;
-        session
-            .is_running(request)
-            .then(|| session.backend_key_data.get().cancel_request())
-    }
-
     /// Asks the server, on a second connection like this one, to cancel `request`, which this backend runs.
     pub(crate) fn send_cancel_request(&self, request: &PostgresSQLQuery) {
         // No BackendKeyData was ever received, so the server cannot be asked.
@@ -1745,7 +1759,10 @@ impl PostgresSQLConnection {
                 use_unnamed_prepared_statements: false,
                 on_connect: JSValue::ZERO,
                 on_close: JSValue::ZERO,
-                cancel: Some(request.ref_guard()),
+                cancel: Some(CancelTarget {
+                    session: self.ref_guard(),
+                    request: request.ref_guard(),
+                }),
             },
         );
         // Best effort: a cancel that cannot be dialed leaves the query running.

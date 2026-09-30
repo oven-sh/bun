@@ -72,7 +72,8 @@ const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]);
  * `cancelConnection` makes the second connection meet a server no real backend is:
  * one that answers a CancelRequest like the start of a session and does not hang
  * up, one that declines TLS, one whose certificate the session's CA did not sign,
- * or one that answers the SSLRequest only when the test calls `answerCancelConnection()`.
+ * or one that stops in the dial until the test calls `answerCancelConnection()`:
+ * before it answers the SSLRequest, or after its `S` and before the TLS handshake.
  */
 async function backend(
   options: {
@@ -80,7 +81,7 @@ async function backend(
     certificate?: { cert: string; key: string };
     host?: string;
     socketPath?: string;
-    cancelConnection?: "answers" | "declines-tls" | "other-certificate" | "waits";
+    cancelConnection?: "answers" | "declines-tls" | "other-certificate" | "holds-ssl-answer" | "holds-handshake";
   } = {},
 ) {
   const host = options.host ?? "127.0.0.1";
@@ -142,15 +143,30 @@ async function backend(
       rawSocket.pause();
       const leftover = buffered.subarray(SSL_REQUEST.length);
       if (leftover.length) rawSocket.unshift(leftover);
-      const answer = () => {
-        rawSocket.write("S");
+      const handshake = () => {
         const certificate = cancel === "other-certificate" ? expiredTls : (options.certificate ?? tlsCert);
         const secure = new tls.TLSSocket(rawSocket, { isServer: true, ...certificate });
         secure.on("error", () => {});
         serve(connection, secure);
       };
-      if (cancel === "waits") cancelConnectionWaiting.resolve(answer);
-      else answer();
+      if (cancel === "holds-ssl-answer") {
+        cancelConnectionWaiting.resolve(() => {
+          rawSocket.write("S");
+          handshake();
+        });
+      } else if (cancel === "holds-handshake") {
+        rawSocket.write("S");
+        // The ClientHello shows that the client is in the handshake now.
+        rawSocket.once("data", clientHello => {
+          rawSocket.pause();
+          rawSocket.unshift(clientHello);
+          cancelConnectionWaiting.resolve(handshake);
+        });
+        rawSocket.resume();
+      } else {
+        rawSocket.write("S");
+        handshake();
+      }
     };
     rawSocket.on("data", onPlaintext);
   });
@@ -203,9 +219,9 @@ async function backend(
     cancelPacket: cancelPacket.promise,
     /** Resolves once the second connection is closed. */
     cancelConnectionClosed: cancelConnectionClosed.promise,
-    /** With `waits`: resolves once the second connection has sent its SSLRequest, which is not answered yet. */
+    /** Resolves once the second connection has stopped in its dial, for the two modes that hold it. */
     cancelConnectionWaiting: cancelConnectionWaiting.promise.then(() => {}),
-    /** With `waits`: answers that SSLRequest with `S`, so that the TLS handshake can run. */
+    /** Lets the second connection finish its dial. */
     async answerCancelConnection() {
       (await cancelConnectionWaiting.promise)();
     },
@@ -487,32 +503,59 @@ test("the cancel connection closes when the server answers it", async () => {
 // The dial of the cancel connection is a TCP handshake and, for a TLS session, an
 // SSLRequest and a TLS handshake. The query can end in that time, and a
 // CancelRequest that is sent then stops the query that the backend runs next. So
-// the cancel connection looks at its query again when it is ready to write.
-test("the cancel connection sends nothing when its query ended during the dial", async () => {
-  await using server = await backend({ tls: true, cancelConnection: "waits" });
+// the cancel connection looks at its query again when the dial has ended, which
+// for TLS is the end of the handshake.
+test.each(["holds-ssl-answer", "holds-handshake"] as const)(
+  "the cancel connection sends nothing when its query ended during the dial (%s)",
+  async cancelConnection => {
+    await using server = await backend({ tls: true, cancelConnection });
+    server.autoReply = false;
+    await using sql = new SQL({ url: server.url, tls: { ca: tlsCert.cert }, max: 1, connectionTimeout: 5 });
+
+    const query = sql`select pg_sleep(10)`.execute();
+    await server.untilQueryUnits(1);
+    query.cancel();
+    await server.cancelConnectionWaiting;
+
+    // The query ends by itself while the cancel connection is held in its dial.
+    server.reply(
+      pgParseComplete(),
+      pgParameterDescription([]),
+      pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+      pgBindComplete(),
+      pgDataRow([Buffer.from("done")]),
+      pgCommandComplete("SELECT 1"),
+      pgReadyForQuery(),
+    );
+    expect(await query).toEqual([{ v: "done" }]);
+
+    await server.answerCancelConnection();
+    await server.cancelConnectionClosed;
+    expect(server.cancelPacketSeen).toBe(false);
+  },
+);
+
+// reserved.close() cancels its running queries and closes the connection in the
+// same tick, so the session is gone when the cancel connection is ready to write.
+// The backend still runs the query, and nothing else of this client can reach that
+// backend, so the CancelRequest has to go out.
+test("cancel() still reaches the server when the session closes during the dial", async () => {
+  await using server = await backend();
   server.autoReply = false;
-  await using sql = new SQL({ url: server.url, tls: { ca: tlsCert.cert }, max: 1, connectionTimeout: 5 });
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
 
-  const query = sql`select pg_sleep(10)`.execute();
-  await server.untilQueryUnits(1);
-  query.cancel();
-  await server.cancelConnectionWaiting;
-
-  // The query ends by itself while the cancel connection waits for its `S`.
-  server.reply(
-    pgParseComplete(),
-    pgParameterDescription([]),
-    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
-    pgBindComplete(),
-    pgDataRow([Buffer.from("done")]),
-    pgCommandComplete("SELECT 1"),
-    pgReadyForQuery(),
+  const reserved = await sql.reserve();
+  const query = reserved`select pg_sleep(10)`.execute();
+  const settled = query.then(
+    rows => rows,
+    err => err,
   );
-  expect(await query).toEqual([{ v: "done" }]);
+  await server.untilQueryUnits(1);
 
-  await server.answerCancelConnection();
-  await server.cancelConnectionClosed;
-  expect(server.cancelPacketSeen).toBe(false);
+  await reserved.close();
+
+  expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
+  expect((await settled).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
 });
 
 // A dial to an IP literal is a socket before it is open, and uSockets reports

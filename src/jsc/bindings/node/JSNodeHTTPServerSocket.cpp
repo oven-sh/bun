@@ -374,6 +374,26 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
     return deferShutdownUntilResponseDrains<false>(socket, destroySoon);
 }
 
+JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject)
+{
+    // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
+    // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
+    // re-add), without which macOS 26 does not deliver the peer's close.
+    // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
+    const bool cycleReads = !upgraded && !tunnelReadsPaused();
+    if (socket && cycleReads) {
+        us_socket_pause(socket);
+    }
+    auto result = us_socket_buffered_js_write(socket, is_ssl, ended, hasUnsentResponseBytes(), flushesStreamBufferOnDrain(), &streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    // Undo the pause above after the shutdown so the unread body drains
+    // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
+    // SHUT_WR) is not deleted by a W -> R|W -> R step.
+    if (socket && cycleReads) {
+        us_socket_resume(socket);
+    }
+    return result;
+}
+
 template<bool SSL>
 static void closeWhenDrainedImpl(us_socket_t* socket)
 {

@@ -478,6 +478,15 @@ const first = await new Promise((resolve, reject) => {
   let closedByServer = true;
   sock.on("data", chunk => {
     data += chunk.toString();
+    if (mode === "hmr") {
+      // The dev server's parked-request path does not close the socket yet.
+      // Content-Length is 0, so the header terminator ends the response.
+      if (data.includes("\\r\\n\\r\\n")) {
+        closedByServer = false;
+        sock.destroy();
+      }
+      return;
+    }
     // The response has arrived. Give the server a bounded time to close.
     sock.setTimeout(2000, () => {
       closedByServer = false;

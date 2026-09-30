@@ -2,7 +2,6 @@ import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
-import { createElement } from "react";
 
 function test1000000(arg1: any, arg218718132: any) {}
 

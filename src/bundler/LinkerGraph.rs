@@ -460,11 +460,9 @@ pub(crate) fn generate_symbol_import_and_use(
         let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
         let uses_entry = part.symbol_uses.get_or_put(ref_)?;
         if !uses_entry.found_existing {
-            *uses_entry.value_ptr = symbol::Use {
-                count_estimate: use_count,
-            };
+            *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
         } else {
-            uses_entry.value_ptr.count_estimate += use_count;
+            uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
         }
     }
 
@@ -687,39 +685,26 @@ impl<'a> LinkerGraph<'a> {
                     + server_component_boundaries.list.len()
                     + dynamic_import_entry_points.len(),
             )?;
-            // SAFETY: capacity reserved; columns initialized below.
-            unsafe { self.entry_points.set_len(entry_points.len()) };
-
-            // Note: `source_indices` / `path_strings` are disjoint columns of
-            // the same `MultiArrayList`. `split_mut()` hands out both at once;
-            // `self.entry_points` is not
-            // reallocated until after `path_strings`/`source_indices` are done
-            // with (the next `append_assume_capacity` is within the
-            // pre-reserved capacity, so no realloc).
-            let mut ep_slice = self.entry_points.slice();
-            let ep_cols = ep_slice.split_mut();
-            let source_indices: &mut [index::Int] = ep_cols.source_index;
-            let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
-
-            debug_assert_eq!(entry_points.len(), path_strings.len());
-            debug_assert_eq!(entry_points.len(), source_indices.len());
-            for ((i, path_string), source_index) in entry_points
-                .iter()
-                .zip(path_strings.iter_mut())
-                .zip(source_indices.iter_mut())
-            {
+            for i in entry_points {
                 let source = &sources[i.get() as usize];
                 debug_assert!(source.index.0 == i.get());
+
+                // Two entry points can name one file, e.g. when an onResolve plugin
+                // maps two names to it. The file gets one entry point and one output.
+                if entry_point_kinds[source.index.0 as usize] != entry_point::Kind::None {
+                    continue;
+                }
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
-                if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = RawSlice::new(original_name);
-                } else {
-                    *path_string = RawSlice::new(source.path.text);
-                }
-
-                *source_index = source.index.0;
+                let output_path = match entry_point_original_names.get(i.get()) {
+                    Some(original_name) => RawSlice::new(original_name),
+                    None => RawSlice::new(source.path.text),
+                };
+                self.entry_points.append_assume_capacity(EntryPoint {
+                    source_index: source.index.0,
+                    output_path,
+                });
             }
 
             for &id in dynamic_import_entry_points {
@@ -823,8 +808,6 @@ impl<'a> LinkerGraph<'a> {
                 stable_source_indices[source_index.get() as usize] = Index::source(i as u32);
             }
 
-            let distances: &mut [u32] = files_cols.distance_from_entry_point;
-            distances.fill(File::default().distance_from_entry_point);
             // `Index` is `#[repr(transparent)]` over `u32`; the field stores
             // raw `u32` so unwrap via `.get()` (no slice reinterpret needed).
             self.stable_source_indices = stable_source_indices.iter().map(|i| i.get()).collect();
@@ -1014,10 +997,6 @@ pub struct File {
 
     pub(crate) input_file: Index,
 
-    /// The minimum number of links in the module graph to get from an entry point
-    /// to this file
-    pub(crate) distance_from_entry_point: u32,
-
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
@@ -1042,7 +1021,6 @@ impl Default for File {
             // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),
-            distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
             line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
@@ -1057,7 +1035,6 @@ bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         entry_bits: AutoBitSet,
         input_file: Index,
-        distance_from_entry_point: u32,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
         line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

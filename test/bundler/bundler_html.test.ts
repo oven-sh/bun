@@ -226,6 +226,29 @@ export const padZero = (num) => String(num).padStart(2, '0');`,
     },
   });
 
+  // A script that is also an entry point still runs in its place on the page.
+  itBundled("html/script-that-is-also-an-entry-point", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./first.js"></script>
+    <script type="module" src="./second.js"></script>
+  </head>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/second.js": `console.log("second");`,
+    },
+    entryPoints: ["/index.html", "/second.js"],
+    onAfterBundle(api) {
+      const jsMatch = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + jsMatch![1])).toMatch(/"first"[\s\S]*"second"/);
+      api.expectFile("out/second.js").toContain('console.log("second")');
+    },
+  });
+
   // Test CSS imports
   itBundled("html/css-imports", {
     outdir: "out/",

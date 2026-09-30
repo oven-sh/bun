@@ -842,6 +842,49 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
+  // A streamed body that ends before the sink's first flush goes out through tryEnd() from the
+  // sink's own buffer. onWritable resends what is left each time the window reopens.
+  test.each([
+    ["default", [10, 5, 1000]],
+    ["bytes", [10, 5, 1000]],
+    ["direct", [10, 5, 1000]],
+    ["generator", [10, 5, 1000]],
+    ["default", [1, 1, 1000]],
+    ["default", [20, 1, 1000]],
+    ["default", [10, 5, 7, 2, 1000]],
+    ["default", [10, 1000]], // one partial write only
+  ] as const)(
+    "streamed body (%s source) that ends at once, windows %j: every byte is sent once",
+    async (kind, windows) => {
+      const path = `/stream-once?kind=${kind}`;
+      const expected = Buffer.from(Array.from({ length: 100 }, (_, i) => i)).toString("hex");
+      const raw = await RawH2.connect(fx.port, secure, { settings: setting(4, windows[0]) });
+      try {
+        await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+        raw.headers(1, baseHeaders(path));
+        let granted: number = windows[0];
+        for (const inc of windows.slice(1)) {
+          // Each window but the last is smaller than what is left: the write was partial.
+          while (received(raw, 1) < granted)
+            await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && received(raw, 1) >= granted);
+          await barrier(raw, "g" + granted);
+          expect(received(raw, 1)).toBe(granted);
+          raw.write(frame(T.WINDOW_UPDATE, 0, 1, u32(inc)));
+          granted += inc;
+        }
+        expect((await raw.body(1)).toString("hex")).toBe(expected);
+      } finally {
+        raw.close();
+      }
+      // The same response over default windows: it is the content-length path that was exercised.
+      const res = await request(session, { ":path": path });
+      expect({ length: res.headers["content-length"], body: res.body.toString("hex") }).toEqual({
+        length: "100",
+        body: expected,
+      });
+    },
+  );
+
   test("raising SETTINGS_INITIAL_WINDOW_SIZE mid-stream releases exactly the delta", async () => {
     const raw = await RawH2.connect(fx.port, secure, { settings: setting(4, 0) });
     await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);

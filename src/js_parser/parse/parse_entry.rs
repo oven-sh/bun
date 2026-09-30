@@ -51,6 +51,48 @@ macro_rules! init_p {
     }};
 }
 
+/// What `Parser::parse_only` parsed.
+pub struct ParsedOnly<'p, 'a> {
+    pub stmts: &'p [js_ast::Stmt],
+    p: &'p P<'a, false, false>,
+}
+
+impl<'a> ParsedOnly<'_, 'a> {
+    /// An unvisited identifier is its spelling.
+    #[inline]
+    pub fn name_of(&self, r#ref: js_ast::Ref) -> &'a [u8] {
+        self.p.load_name_from_ref(r#ref)
+    }
+    /// Where the parameters of the async arrow at `at` start.
+    pub fn async_arrow_parameters(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .async_arrow_parameters
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the expression after the `=>` at `at` starts.
+    pub fn arrow_expression_body(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?
+            .arrow_expression_bodies
+            .get(&at.start)
+            .copied()
+    }
+    /// Where the class element whose name or static block is at `at` starts.
+    pub fn class_element(&self, at: js_ast::Loc) -> Option<i32> {
+        self.starts()?.class_elements.get(&at.start).copied()
+    }
+    fn starts(&self) -> Option<&crate::p::StartsForParseOnly> {
+        self.p.starts_for_parse_only.as_ref()
+    }
+    pub fn import_path(&self, import_record_index: u32) -> &[u8] {
+        self.p
+            .import_records
+            .items()
+            .get(import_record_index as usize)
+            .map_or(&[], |record| record.path.text)
+    }
+}
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,
@@ -88,6 +130,8 @@ pub struct Options<'a> {
     pub allow_unresolved: &'a options::AllowUnresolved,
 
     pub module_type: options::ModuleType,
+    /// The source is one of JavaScriptCore's builtins: `@name` is a name.
+    pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
     pub transform_only: bool,
@@ -138,6 +182,7 @@ impl<'a> Default for Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -224,6 +269,7 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
+            jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
@@ -297,6 +343,7 @@ impl<'a> Options<'a> {
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
+            jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
             import_meta_main_value: None,
@@ -329,6 +376,7 @@ impl<'a> Parser<'a> {
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -374,6 +422,46 @@ impl<'a> Parser<'a> {
                 self._parse::<false>()
             }
         }
+    }
+
+    /// Parses, and visits nothing: `f` gets the statements as they were written (nothing folded, dropped or bound).
+    /// `Err`: the source does not parse.
+    #[cold]
+    pub fn parse_only<R>(mut self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
+        type Pi<'a> = P<'a, false, false>;
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        let mut __p = init_p!(Pi<'_>;
+            self.bump, self.log, self.source, self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        p.starts_for_parse_only = Some(Default::default());
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            ..Default::default()
+        };
+        let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
+        // What the parser only logs is an error all the same: the statements are its best guess.
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        Ok(f(&ParsedOnly {
+            stmts: stmts.as_slice(),
+            p,
+        }))
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from
@@ -528,7 +616,6 @@ impl<'a> Parser<'a> {
             );
         }
 
-        scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
         Ok(())
     }
 
@@ -605,7 +692,7 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
+            symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
@@ -900,7 +987,7 @@ impl<'a> Parser<'a> {
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
         // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
@@ -1236,6 +1323,10 @@ impl<'a> Parser<'a> {
             struct PerRecord {
                 escaped: bool,
                 aliases: Vec<bun_ast::StoreStr>,
+                items: Vec<bun_ast::ast_result::DynamicImportItem>,
+                /// A name is read some other way (a `{...rest}` copy, a local
+                /// that stays one), so the call's value must hold it.
+                needs_value: bool,
             }
             let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
             // A namespace ref is listed once per registration and once per
@@ -1300,8 +1391,41 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                     }
-                    rec.aliases
-                        .push(bun_ast::StoreStr::new(arena.alloc_slice_copy(key)));
+                    let alias = bun_ast::StoreStr::new(arena.alloc_slice_copy(key));
+                    rec.aliases.push(alias);
+                    let is_require_marker = p
+                        .import_records
+                        .items()
+                        .get(import_record_id as usize)
+                        .is_some_and(|record| crate::p::is_require_marker(record, key));
+                    // A read off `ns` (an item already), or a local a pattern
+                    // binds. Assigning to either, or reaching the local through
+                    // a hoisting merge or a direct `eval`, keeps the read as
+                    // written.
+                    let is_item = local.is_valid()
+                        && !is_require_marker
+                        && (p.is_import_item.contains_key(&local)
+                            || p.dynamic_import_destructured_locals.contains_key(&local))
+                        && !p.symbols[ns_ref.inner_index() as usize].has_been_assigned_to()
+                        && p.dynamic_import_namespace_locals
+                            .get(&ns_ref)
+                            .is_none_or(|records| records.len() == 1)
+                        && {
+                            let symbol = &p.symbols[local.inner_index() as usize];
+                            !symbol.has_been_assigned_to()
+                                && !symbol.has_link()
+                                && !symbol.must_not_be_renamed()
+                                && !p.named_imports.contains(&local)
+                        };
+                    if is_item {
+                        rec.items.push(bun_ast::ast_result::DynamicImportItem {
+                            local,
+                            alias,
+                            namespace_ref: ns_ref,
+                        });
+                    } else {
+                        rec.needs_value = true;
+                    }
                 }
             }
 
@@ -1313,12 +1437,19 @@ impl<'a> Parser<'a> {
                 }
                 rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
                 rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
-                let aliases = &rec.aliases;
-                let alias_slice = arena
-                    .alloc_slice_fill_with::<bun_ast::StoreStr, _>(aliases.len(), |j| aliases[j]);
+                let aliases = arena.alloc_slice_copy(&rec.aliases);
+                let items = arena.alloc_slice_copy(&rec.items);
                 bun_core::handle_oom(
-                    p.dynamic_import_aliases
-                        .put(import_record_id, bun_ast::StoreSlice::new(alias_slice)),
+                    p.dynamic_import_aliases.put(
+                        import_record_id,
+                        bun_ast::ast_result::DynamicImportUse {
+                            aliases: bun_ast::StoreSlice::new(aliases),
+                            items: bun_ast::StoreSlice::new(items),
+                            needs_namespace_object: rec.needs_value
+                                || p.dynamic_import_needs_object
+                                    .contains_key(&import_record_id),
+                        },
+                    ),
                 );
             }
         }
@@ -1415,9 +1546,15 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        if needs_decl_count > 0 {
+                        if needs_decl_count > 0 || p.has_top_level_function_merged_with_var {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
+                            p.deoptimize_commonjs_named_exports();
+                        } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
+                            .use_count_estimate
+                            > p.module_exports_rewrite_count
+                        {
+                            // `module.constructor` and other uses of `module` need the wrapper.
                             p.deoptimize_commonjs_named_exports();
                         }
                     }
@@ -1559,6 +1696,7 @@ impl<'a> Parser<'a> {
             && p.commonjs_named_exports.count() == 0
             && !p.has_top_level_return
             && !p.has_with_scope
+            && !p.has_top_level_function_merged_with_var
             && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
             && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
         {
@@ -1666,7 +1804,7 @@ impl<'a> Parser<'a> {
                 p.symbols.as_mut_slice()[p.module_ref.inner_index() as usize].use_count_estimate =
                     0;
                 match part.symbol_uses.get_mut(&found.namespace_ref) {
-                    Some(uses) if uses.count_estimate > 1 => uses.count_estimate -= 1,
+                    Some(uses) if uses.count_estimate() > 1 => uses.subtract(1),
                     _ => {
                         let _ = part.symbol_uses.swap_remove(&found.namespace_ref);
                     }
@@ -2283,7 +2421,6 @@ impl<'a> Parser<'a> {
         }
 
         // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        #[allow(deprecated)]
         if !p.response_ref.is_null()
             && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
         {

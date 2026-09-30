@@ -2,10 +2,7 @@ const huge = Array.from({ length: 1000000 }, () => 0);
 huge.fill(0);
 let hasRun = false;
 const gc = typeof Bun !== "undefined" ? Bun.gc : typeof globalThis.gc !== "undefined" ? globalThis.gc : () => {};
-const rss =
-  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 var timers = new Array(50_000);
 

@@ -4,7 +4,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap as _;
 use bun_uws as uws;
 
-pub struct WebSocketServerContext {
+pub(crate) struct WebSocketServerContext {
     pub(crate) handler: Handler,
 
     pub(crate) max_payload_length: u32, // default 16MB
@@ -17,7 +17,7 @@ pub struct WebSocketServerContext {
     pub(crate) close_on_backpressure_limit: bool,
 }
 
-pub struct Handler {
+pub(crate) struct Handler {
     pub(crate) on_open: JSValue,
     pub(crate) on_message: JSValue,
     pub on_close: JSValue,
@@ -41,6 +41,8 @@ pub struct Handler {
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
     pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
+    /// The context of the script that gave these handlers: a websocket event is dispatched inside it.
+    pub(crate) context: bun_jsc::ContextId,
 
     /// used by publish()
     pub(crate) flags: HandlerFlags,
@@ -95,6 +97,7 @@ impl Handler {
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
             global_object.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
                 on_error,
                 global_object,
                 JSValue::UNDEFINED,
@@ -110,7 +113,7 @@ impl Handler {
         Ok(())
     }
 
-    pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
+    pub(crate) fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
         let mut handler = Handler {
             on_open: JSValue::ZERO,
             on_message: JSValue::ZERO,
@@ -123,6 +126,7 @@ impl Handler {
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
+            context: global_object.bun_vm().context_of_caller_no_frame().id(),
             flags: HandlerFlags::empty(),
         };
 

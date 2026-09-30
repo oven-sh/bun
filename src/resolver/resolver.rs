@@ -3353,15 +3353,18 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-            if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                if entries.generation >= self.generation {
-                    dir_entries_option = cached_entry;
-                    needs_iter = false;
-                } else {
-                    in_place = Some(std::ptr::from_mut(*entries));
-                }
+        if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index)
+            && let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry
+        {
+            if entries.generation >= self.generation {
+                dir_entries_option = cached_entry;
+                needs_iter = false;
+            } else {
+                in_place = Some(std::ptr::from_mut(*entries));
             }
+        } else {
+            // No slot, or a slot that only holds an error: the listing from before it is parked.
+            in_place = rfs!().adopt_parked_listing(&mut cached_dir_entry_result);
         }
 
         if needs_iter {
@@ -4604,15 +4607,18 @@ impl<'a> Resolver<'a> {
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
-            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
-                if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
-                        dir_entries_option = cached_entry;
-                        needs_iter = false;
-                    } else {
-                        in_place = Some(std::ptr::from_mut(*entries));
-                    }
+            if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index)
+                && let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry
+            {
+                if entries.generation >= self.generation {
+                    dir_entries_option = cached_entry;
+                    needs_iter = false;
+                } else {
+                    in_place = Some(std::ptr::from_mut(*entries));
                 }
+            } else {
+                // No slot, or a slot that only holds an error: the listing from before it is parked.
+                in_place = rfs!().adopt_parked_listing(&mut cached_dir_entry_result);
             }
 
             if needs_iter {

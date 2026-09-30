@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -928,3 +928,60 @@ it.each([
     stderr: [],
   });
 });
+
+// https://github.com/oven-sh/bun/issues/11083
+it(
+  "should not keep a listing of the directory for each reload",
+  async () => {
+    // A save makes --hot drop the cached listing of the directory, and the
+    // next import reads the directory again. The dropped listing could not be
+    // freed, so each save kept about 200 bytes for each file of the directory.
+    const files: Record<string, string> = {
+      "entry.mjs": `import { n } from "./dep.mjs";\nBun.gc(true);\nconsole.log("RELOAD", n, process.memoryUsage.rss());\n`,
+      "dep.mjs": `export const n = 0;\n`,
+    };
+    for (let i = 0; i < 5000; i++) files[`unused-${i}.txt`] = "";
+    using dir = tempDir("hot-listing-per-reload", files);
+    const dep = join(String(dir), "dep.mjs");
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "entry.mjs"],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const warmup = 5;
+    const saves = 25;
+    // rss[n] is the RSS of the process when it has loaded save number n.
+    const rss: number[] = [];
+    const decoder = new TextDecoder();
+    let buffered = "";
+    reading: for await (const chunk of runner.stdout) {
+      buffered += decoder.decode(chunk, { stream: true });
+      let newline: number;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const match = /^RELOAD (\d+) (\d+)$/.exec(buffered.slice(0, newline));
+        buffered = buffered.slice(newline + 1);
+        // One save can reload more than once.
+        if (!match || Number(match[1]) !== rss.length) continue;
+        rss.push(Number(match[2]));
+        if (rss.length > warmup + saves) break reading;
+        writeFileSync(dep, `export const n = ${rss.length};\n`);
+      }
+    }
+
+    expect(rss.length).toBe(warmup + saves + 1);
+    const growthMiB = (rss[warmup + saves] - rss[warmup]) / 1024 / 1024;
+    expect(growthMiB).toBeLessThan(isASAN || isDebug ? 12 : 8);
+  },
+  longTimeout,
+);

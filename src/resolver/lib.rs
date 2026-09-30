@@ -1035,8 +1035,15 @@ pub mod fs {
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
             self.inner().mark_not_found(result)
         }
-        pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
-            self.inner().remove(key)
+        pub(crate) fn invalidate(&mut self, key: &[u8]) -> bool {
+            self.inner().invalidate(key)
+        }
+        #[inline]
+        pub(crate) fn parked_index(
+            &mut self,
+            result: &bun_alloc::Result,
+        ) -> Option<bun_alloc::IndexType> {
+            self.inner().parked_index(result)
         }
     }
 
@@ -1265,6 +1272,9 @@ pub mod fs {
                     )));
                 }
             }
+            if in_place.is_none() {
+                in_place = self.adopt_parked_listing(&mut cache_result);
+            }
 
             let had_handle = maybe_handle.is_some();
             let handle: Fd = match maybe_handle {
@@ -1347,15 +1357,30 @@ pub mod fs {
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
         /// an entry was removed.
+        /// The next read refills the same slot: see `adopt_parked_listing`.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
+            // BSSMap singleton and `invalidate` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
-            self.entries.remove(file_path)
+            self.entries.invalidate(file_path)
+        }
+
+        /// Points `result` at the slot its key had before a bust. Returns the listing to refill.
+        #[inline]
+        pub(crate) fn adopt_parked_listing(
+            &mut self,
+            result: &mut bun_alloc::Result,
+        ) -> Option<*mut DirEntry> {
+            debug_assert!(self.entries_mutex.is_held_by_current_thread());
+            result.index = self.entries.parked_index(result)?;
+            match self.entries.at_index(result.index)? {
+                EntriesOption::Entries(listing) => Some(std::ptr::from_mut::<DirEntry>(*listing)),
+                EntriesOption::Err(_) => None,
+            }
         }
 
         /// lstat + (if symlink) open + fstat +

@@ -6533,7 +6533,7 @@ describe.concurrent("a deeply nested define value", () => {
 
   it("is freed with its transpiler", async () => {
     // The copy left its list buffers on the global heap, where nothing frees
-    // them: about 120 KB for each transpiler with this define.
+    // them: about 115 KB for each transpiler with this define.
     const script = `
       const entries = {};
       for (let i = 0; i < 150; i++) entries["key" + i] = ["value" + i, i, { n: i }];
@@ -6545,12 +6545,13 @@ describe.concurrent("a deeply nested define value", () => {
         }
         Bun.gc(true);
       };
-      construct(50);
+      construct(10);
       const before = process.memoryUsage.rss();
-      construct(400);
+      construct(100);
       console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
     `;
-    await expectRssDeltaBelow(["--smol", "-e", script], { release: 16, debug: 16 });
+    // The leak was 11 MiB here. Without it the growth is under 2 MiB.
+    await expectRssDeltaBelow(["--smol", "-e", script], { release: 6, debug: 6 });
   });
 
   it("that is empty is not shared with an empty macro result", async () => {
@@ -6579,7 +6580,9 @@ describe.concurrent("a deeply nested define value", () => {
         worker.onmessage = event => { console.log(JSON.stringify(fromMacro), event.data); worker.terminate(); };
       `,
     };
-    expect(await run(["main.js"], files)).toEqual({
+    const result = await run(["main.js"], files);
+    // Debug builds print "[macro] call <name>" to stdout first.
+    expect({ ...result, stdout: result.stdout.replace(/^\[macro\].*\n/gm, "") }).toEqual({
       stdout: "{} 1 true\n",
       stderr: "",
       exitCode: 0,

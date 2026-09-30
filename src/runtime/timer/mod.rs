@@ -1102,8 +1102,7 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             {
-                self.immediate_refd_spawn_sync_loop = ctx.is_spawn_sync_loop();
-                ctx.loop_ref();
+                self.immediate_refd_spawn_sync_loop = ctx.loop_ref();
             }
             #[cfg(windows)]
             {
@@ -1148,8 +1147,7 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             {
-                self.timer_refd_spawn_sync_loop = ctx.is_spawn_sync_loop();
-                ctx.loop_ref();
+                self.timer_refd_spawn_sync_loop = ctx.loop_ref();
             }
             // `uv_timer.ref()` is intentionally unconditional (no `data !=
             // null` guard). Invariant: every path that reaches a positive

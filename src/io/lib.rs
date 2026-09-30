@@ -374,7 +374,7 @@ impl EventLoopCtx {
     }
     /// True while `Bun.spawnSync` has its isolated loop installed as the current loop.
     #[inline]
-    pub fn is_spawn_sync_loop(&self) -> bool {
+    pub(crate) fn is_spawn_sync_loop(&self) -> bool {
         self.platform_event_loop_ptr() != bun_uws_sys::Loop::get()
     }
     /// The loop a counter was taken on: the isolated `spawnSync` loop when its
@@ -393,12 +393,18 @@ impl EventLoopCtx {
         // SAFETY: the thread's loop; same contract as `loop_mut`.
         unsafe { &mut *bun_uws_sys::Loop::get() }
     }
-    #[inline]
-    pub fn loop_ref(&self) {
+    /// Refs the current loop. Returns whether that loop is `Bun.spawnSync`'s
+    /// isolated loop, which is the bit [`Self::loop_unref_for`] takes.
+    // Out of line, like `loop_unref_for`: `KeepAlive` inlines into several hundred callers.
+    #[inline(never)]
+    #[must_use]
+    pub fn loop_ref(&self) -> bool {
+        let spawn_sync_loop = self.is_spawn_sync_loop();
         self.loop_mut().ref_();
+        spawn_sync_loop
     }
-    /// Releases a [`Self::loop_ref`] taken while [`Self::is_spawn_sync_loop`] was `spawn_sync_loop`.
-    #[inline]
+    /// Releases a [`Self::loop_ref`] that returned `spawn_sync_loop`.
+    #[inline(never)]
     #[cfg(not(windows))]
     pub fn loop_unref_for(&self, spawn_sync_loop: bool) {
         self.loop_for(spawn_sync_loop).unref();

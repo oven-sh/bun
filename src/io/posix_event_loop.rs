@@ -480,8 +480,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, vm: EventLoopCtx) {
-        let loop_ = self.loop_mut(vm);
+    fn deactivate(&mut self, loop_: &mut Loop) {
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
@@ -496,8 +495,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, vm: EventLoopCtx) {
-        let loop_ = self.loop_mut(vm);
+    fn activate(&mut self, loop_: &mut Loop) {
         self.flags.remove(Flags::Closed);
 
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
@@ -583,7 +581,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(vm, flag, one_shot, fd);
+        return self.register_with_fd_impl(self.loop_mut(vm), flag, one_shot, fd);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -604,12 +602,12 @@ impl FilePoll {
     ))]
     fn register_with_fd_impl(
         &mut self,
-        vm: EventLoopCtx,
+        loop_: &mut Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = self.loop_mut(vm).fd;
+        let watcher_fd = loop_.fd;
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
@@ -670,7 +668,7 @@ impl FilePoll {
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
-                self.deactivate(vm);
+                self.deactivate(loop_);
                 return errno;
             }
         }
@@ -781,7 +779,7 @@ impl FilePoll {
 
             let errno = sys::get_errno(rc);
             if errno != sys::E::SUCCESS {
-                self.deactivate(vm);
+                self.deactivate(loop_);
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kqueue));
             }
         }
@@ -845,12 +843,12 @@ impl FilePoll {
 
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
-                self.deactivate(vm);
+                self.deactivate(loop_);
                 return err;
             }
         }
 
-        self.activate(vm);
+        self.activate(loop_);
         self.flags.insert(match flag {
             Flags::Readable => Flags::PollReadable,
             Flags::Process => {
@@ -883,6 +881,7 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        let loop_ = self.loop_mut(vm);
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
@@ -891,7 +890,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        let result = self.unregister_with_fd_impl(vm, fd, force_unregister);
+        let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -902,7 +901,7 @@ impl FilePoll {
             let _ = (fd, force_unregister);
             sys::Result::Ok(())
         };
-        self.deactivate(vm);
+        self.deactivate(loop_);
         result
     }
 
@@ -914,7 +913,7 @@ impl FilePoll {
     ))]
     fn unregister_with_fd_impl(
         &mut self,
-        vm: EventLoopCtx,
+        loop_: &mut Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -931,7 +930,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
-        let watcher_fd = self.loop_mut(vm).fd;
+        let watcher_fd = loop_.fd;
         let both_directions = disarmed_only
             || (self.flags.contains(Flags::PollReadable)
                 && self.flags.contains(Flags::PollWritable));

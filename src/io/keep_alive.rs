@@ -76,8 +76,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Active;
-        self.spawn_sync_loop = event_loop_ctx.is_spawn_sync_loop();
-        event_loop_ctx.loop_ref();
+        self.spawn_sync_loop = event_loop_ctx.loop_ref();
     }
 
     /// Allow a poll to keep the process alive.

@@ -15,7 +15,7 @@ use bun_collections::{HashContext, HashMap};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 thread_local! {
-    static COMPARISONS: Cell<u32> = const { Cell::new(0) };
+    static COMPARISONS: Cell<u64> = const { Cell::new(0) };
 }
 
 struct CountingContext;
@@ -35,21 +35,24 @@ const MISSES: u64 = 1000;
 
 /// `hashMapChurnProbe(live, cycles)`: inserts the keys `0..live`, then
 /// `cycles` times removes the oldest key and inserts the next integer, so the
-/// map always holds `live` entries. Then looks up 1,000 keys that were never
-/// inserted. Returns `{ capacity, length, maxComparisons }`, where
-/// `maxComparisons` is the largest number of stored entries that one of those
-/// lookups was compared against.
+/// map always holds `live` entries. With no live key there is nothing to
+/// replace. Then looks up 1,000 keys that were never inserted. Returns
+/// `{ capacity, length, maxComparisons }`, where `maxComparisons` is the
+/// largest number of stored entries that one of those lookups was compared
+/// against.
 pub(crate) fn churn_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let live = frame.argument(0).to_int32().clamp(0, 1 << 20) as u64;
-    let cycles = frame.argument(1).to_int32().clamp(0, 1 << 24) as u64;
+    let live = frame.argument(0).coerce_to_i32(global)?.clamp(0, 1 << 20) as u64;
+    let cycles = frame.argument(1).coerce_to_i32(global)?.clamp(0, 1 << 24) as u64;
 
     let mut map: HashMap<u64, (), CountingContext> = HashMap::new();
     for key in 0..live {
         map.insert(key, ());
     }
-    for cycle in 0..cycles {
-        map.remove(&cycle);
-        map.insert(live + cycle, ());
+    if live > 0 {
+        for cycle in 0..cycles {
+            map.remove(&cycle);
+            map.insert(live + cycle, ());
+        }
     }
 
     let mut max_comparisons = 0;
@@ -70,7 +73,7 @@ pub(crate) fn churn_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     result.put(
         global,
         b"maxComparisons",
-        JSValue::js_number(f64::from(max_comparisons)),
+        JSValue::js_number(max_comparisons as f64),
     );
     Ok(result)
 }

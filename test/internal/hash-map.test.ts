@@ -15,3 +15,7 @@ test("a lookup in a map that never removed an entry walks one short run", () => 
 test("a lookup still walks one short run after 2,000 removals", () => {
   expect(hashMapChurnProbe(256, 2000)).toEqual({ capacity: 512, length: 256, maxComparisons: 19 });
 });
+
+test("the probe churns nothing when no key is live", () => {
+  expect(hashMapChurnProbe(0, 1000)).toEqual({ capacity: 0, length: 0, maxComparisons: 0 });
+});

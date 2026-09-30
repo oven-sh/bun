@@ -1,6 +1,6 @@
 // A command that stands for a linter: it reads its operands and never runs them. A line of an operand that starts with "//~ " tells it what to do.
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { extname, relative, resolve } from "node:path";
 
 const loaders: Record<string, "ts" | "tsx" | "jsx"> = {
   ".ts": "ts",
@@ -10,8 +10,10 @@ const loaders: Record<string, "ts" | "tsx" | "jsx"> = {
   ".jsx": "jsx",
 };
 const forever = () => new Promise<never>(() => setInterval(() => {}, 1 << 30));
+// The path that `bun --lint` prints for an operand: made absolute, then relative to the current directory, with forward slashes.
+const printed = (operand: string) => relative(process.cwd(), resolve(operand)).replaceAll("\\", "/");
 
-// The verbs of such a line: print <line for stderr>, stdout <line>, exit <code>, kill <signal>, hang. "{file}" is the operand as it was given.
+// The verbs of such a line: print <line for stderr>, stdout <line>, exit <code>, kill <signal>, hang. "{file}" is the operand as it was given, "{relative}" is the path that `bun --lint` prints for it.
 async function lint(args: string[]): Promise<number> {
   if (args[0] !== "--lint" || args.length < 2) {
     process.stderr.write("usage: --lint <files>\n");
@@ -36,7 +38,7 @@ async function lint(args: string[]): Promise<number> {
     const orders = text.split(/\r?\n/).filter(line => line.startsWith("//~ "));
     for (const order of orders) {
       const [, verb, rest = ""] = /^\/\/~ (\S+) ?(.*)$/.exec(order) ?? [];
-      const value = rest.replaceAll("{file}", operand);
+      const value = rest.replaceAll("{file}", operand).replaceAll("{relative}", printed(operand));
       if (verb === "print") {
         err += value + "\n";
         if (/^(?:\S.*?\(\d+,\d+\): )?error /.test(value)) errors++;
@@ -48,14 +50,14 @@ async function lint(args: string[]): Promise<number> {
       } else if (verb === "hang") await forever();
     }
     if (orders.length > 0) continue;
-    // An operand without such a line is parsed, and each syntax error is printed with the code TS1005.
+    // An operand without such a line is parsed, and each syntax error is printed with the code TS1005, at the path that `bun --lint` prints.
     try {
       new Bun.Transpiler({ loader: loaders[extname(operand)] ?? "js" }).transformSync(text);
     } catch (error) {
       const found = (error as { errors?: unknown[] }).errors ?? [error];
       for (const one of found) {
         const { message, position } = one as { message: string; position?: { line: number; column: number } | null };
-        err += `${operand}(${position?.line ?? 1},${position?.column ?? 1}): error TS1005: ${message}\n`;
+        err += `${printed(operand)}(${position?.line ?? 1},${position?.column ?? 1}): error TS1005: ${message}\n`;
         errors++;
       }
     }

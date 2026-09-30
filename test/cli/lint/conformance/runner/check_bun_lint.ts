@@ -1,5 +1,5 @@
 // The default check: it starts a command with --lint and the files of the program as operands, and reads the plain format of tsc from stderr.
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tsgoRules } from "./diagnosticwriter";
 import { isDefaultLibraryFile } from "./error_baseline";
@@ -7,7 +7,7 @@ import { makeTemporaryDirectory, mapRealPaths, toRealPath, toVirtualName } from 
 import type { Check, CheckResult } from "./run";
 import type { Diagnostic, DiagnosticLocation, DiagnosticMessageChain } from "./shape";
 import { type PlainChain, type PlainDiagnostic, parsePlainDiagnostics } from "./tsc_plain_format";
-import { getBaseFileName, getNormalizedAbsolutePath } from "./tspath";
+import { getBaseFileName, getNormalizedAbsolutePath, normalizeSlashes } from "./tspath";
 
 export interface SpawnCheckOptions {
   // The command without the flag and the operands: [bunExe()].
@@ -143,11 +143,25 @@ function chainOf(
   return next?.map(c => ({ messageText: text(c.messageText), next: chainOf(c.next, text) }));
 }
 
-// The diagnostics of a run with the names of the instance: a real path below the root becomes the name that the harness has.
+// A directory with its links resolved: a command that runs in it has that path as its current directory. One that cannot be resolved stays as given.
+function physical(directory: string): string {
+  try {
+    return realpathSync.native(directory);
+  } catch {
+    return directory;
+  }
+}
+
+// The harness name of a path that the command printed; undefined for a file outside the root. The command prints a path relative to its current directory, with ".." where the file is outside it. It is made absolute here, as the command makes an operand absolute: toVirtualName gives a path with a ".." that leaves the root a name in the instance.
+function nameOfPrinted(root: string, cwd: string, printed: string): string | undefined {
+  return toVirtualName(root, "/", getNormalizedAbsolutePath(printed, normalizeSlashes(cwd)));
+}
+
+// The diagnostics of a run with the names of the instance: a real path below the root becomes the name that the harness has. cwd is the current directory that the command had.
 function toCheckResult(
   plain: readonly PlainDiagnostic[],
   root: string,
-  currentDirectory: string,
+  cwd: string,
   ignoreRules: readonly string[],
 ): CheckResult {
   const diagnostics: Diagnostic[] = [];
@@ -166,7 +180,7 @@ function toCheckResult(
     }
     let location: DiagnosticLocation | undefined;
     if (p.path !== undefined) {
-      let file = toVirtualName(root, currentDirectory, p.path);
+      let file = nameOfPrinted(root, cwd, p.path);
       if (file === undefined) {
         if (!isDefaultLibraryFile(p.path)) {
           throw new Error(`stderr line ${p.at} names a file that is not of the instance: ${p.path}`);
@@ -194,10 +208,11 @@ function remove(directory: string): void {
   } catch {}
 }
 
-async function probeIn(directory: string, options: SpawnCheckOptions): Promise<ProbeResult> {
+async function probeIn(given: string, options: SpawnCheckOptions): Promise<ProbeResult> {
   const no = (reason: string): ProbeResult => ({ ok: false, reason });
   const ran = no("the command ran the file that it was to check");
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(given, { recursive: true });
+  const directory = physical(given);
   const mark = join(directory, "ran.txt");
   const clean = join(directory, "ok.ts");
   const broken = join(directory, "bad.ts");
@@ -226,7 +241,7 @@ async function probeIn(directory: string, options: SpawnCheckOptions): Promise<P
   const secondRead = readRun(second);
   if (!secondRead.ok) return no(`a file with a syntax error: ${secondRead.reason}`);
   const hit = secondRead.diagnostics.some(
-    d => d.category === "error" && d.path !== undefined && toVirtualName(directory, "/", d.path) === "/bad.ts",
+    d => d.category === "error" && d.path !== undefined && nameOfPrinted(directory, directory, d.path) === "/bad.ts",
   );
   if (!hit) return no(`a file with a syntax error gave no error in it (exit code ${second.exitCode})`);
   return { ok: true, reason: "" };
@@ -256,15 +271,16 @@ export function createSpawnCheck(options: SpawnCheckOptions): Check {
     const verdict = await (probed ??= probe({ ...options, command, env }));
     if (!verdict.ok) return unavailable(`the command is no linter: ${verdict.reason}`);
     if (input.root === undefined) return unavailable("the run wrote no file for the command to read");
-    const root = resolve(input.root);
+    // With its links resolved the root has the spelling of the current directory of the command, which prints an operand relative to it.
+    const root = physical(resolve(input.root));
     const currentDirectory = getNormalizedAbsolutePath(input.currentDirectory, "/");
     // The operands and the current directory are all that the command takes: the options of the instance do not reach it.
     const operands = input.rootFiles.map(name => toRealPath(root, getNormalizedAbsolutePath(name, currentDirectory)));
     if (operands.length === 0) return unavailable("the instance has no file of a program to be an operand");
-    const cwd = toRealPath(root, currentDirectory);
+    const cwd = physical(toRealPath(root, currentDirectory));
     const read = readRun(await spawnCommand([...command, "--lint", ...operands], cwd, env, signal));
     // A signal, an exit without a list of diagnostics and a text of no known form are a crash of the instance.
     if (!read.ok) throw new Error(read.reason);
-    return toCheckResult(read.diagnostics, root, currentDirectory, ignoreRules);
+    return toCheckResult(read.diagnostics, root, cwd, ignoreRules);
   };
 }

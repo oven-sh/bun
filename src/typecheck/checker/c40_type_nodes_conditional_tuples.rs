@@ -1,13 +1,14 @@
-// checker.go:24225-25124 (layers T-TYPENODE, T-TUPLE, K-GENERIC, K-SUBST): the functions of 24225-24390, 24690-24696, 24791-24803 and 24820-25124: types of the remaining type nodes, array and tuple type construction, generic type predicates and the conditional flow type of a type node.
+// checker.go:24225-25124 (layers T-TYPENODE, T-INSTANTIATE, T-TUPLE, K-GENERIC, K-SUBST): the functions of 24225-24390, 24602-24660, 24690-24696, 24791-24803 and 24820-25124: types of the remaining type nodes, permissive and restrictive instantiations, array and tuple type construction, generic type predicates and the conditional flow type of a type node.
 use crate::ast::{
     Ast, CheckFlags, Kind, NodeId, SymbolFlags, SymbolId, is_conditional_type_node,
     is_mapped_type_node, is_named_tuple_member, is_parameter_declaration, is_statement,
     is_tuple_type_node, is_type_operator_node,
 };
 use crate::checker::{
-    Checker, ElementFlags, IntersectionFlags, ObjectFlags, TupleElementInfo, TypeAliasId,
-    TypeFlags, TypeId, TypeMapperId, UnionReduction, every_type, get_total_fixed_element_count,
-    get_tuple_key, get_type_list_key, is_tuple_type, new_simple_type_mapper,
+    CachedTypeKey, CachedTypeKind, Checker, ElementFlags, IntersectionFlags, ObjectFlags,
+    TupleElementInfo, TypeAliasId, TypeFlags, TypeId, TypeMapperId, UnionReduction, every_type,
+    get_total_fixed_element_count, get_tuple_key, get_type_list_key, is_tuple_type,
+    new_simple_type_mapper,
 };
 use crate::core::{List, Map};
 use crate::jsnum::Number;
@@ -264,6 +265,95 @@ impl<'a> Checker<'a> {
             self.get_constraint_type_from_mapped_type(t);
         }
         self.type_node_links[links].resolved_type
+    }
+
+    pub fn get_permissive_instantiation(&mut self, t: TypeId) -> TypeId {
+        if self.types[t]
+            .flags
+            .intersects(TypeFlags::PRIMITIVE | TypeFlags::ANY_OR_UNKNOWN | TypeFlags::NEVER)
+        {
+            return t;
+        }
+        let key = CachedTypeKey {
+            kind: CachedTypeKind::PERMISSIVE_INSTANTIATION,
+            type_id: t,
+        };
+        let cached = self.cached_types.get(&key);
+        if !cached.is_nil() {
+            return cached;
+        }
+        let permissive_mapper = self.permissive_mapper;
+        let result = self.instantiate_type(t, permissive_mapper);
+        let ok = self.cached_types.set(key, result);
+        self.map_set(ok);
+        result
+    }
+
+    pub fn get_restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
+        if self.types[t]
+            .flags
+            .intersects(TypeFlags::PRIMITIVE | TypeFlags::ANY_OR_UNKNOWN | TypeFlags::NEVER)
+        {
+            return t;
+        }
+        let key = CachedTypeKey {
+            kind: CachedTypeKind::RESTRICTIVE_INSTANTIATION,
+            type_id: t,
+        };
+        let cached = self.cached_types.get(&key);
+        if !cached.is_nil() {
+            return cached;
+        }
+        let restrictive_mapper = self.restrictive_mapper;
+        let result = self.instantiate_type(t, restrictive_mapper);
+        let ok = self.cached_types.set(key, result);
+        self.map_set(ok);
+        // We set the following so we don't attempt to set the restrictive instance of a restrictive instance which is redundant - we'll produce new type identities, but all type params have already been mapped. This also gives us a way to detect restrictive instances upon comparisons and _disable_ the "distributeive constraint" assignability check for them, which is distinctly unsafe, as once you have a restrctive instance, all the type parameters are constrained to `unknown` and produce tons of false positives/negatives!
+        let result_key = CachedTypeKey {
+            kind: CachedTypeKind::RESTRICTIVE_INSTANTIATION,
+            type_id: result,
+        };
+        let ok = self.cached_types.set(result_key, result);
+        self.map_set(ok);
+        result
+    }
+
+    pub fn get_restrictive_type_parameter(&mut self, t: TypeId) -> TypeId {
+        let constraint = self.as_type_parameter(t).constraint;
+        if constraint.is_nil() && self.get_constraint_declaration(t).is_nil()
+            || constraint == self.no_constraint_type
+        {
+            return t;
+        }
+        let key = CachedTypeKey {
+            kind: CachedTypeKind::RESTRICTIVE_TYPE_PARAMETER,
+            type_id: t,
+        };
+        let cached = self.cached_types.get(&key);
+        if !cached.is_nil() {
+            return cached;
+        }
+        let symbol = self.types[t].symbol;
+        let result = self.new_type_parameter(symbol);
+        let no_constraint_type = self.no_constraint_type;
+        self.as_type_parameter_mut(result).constraint = no_constraint_type;
+        let ok = self.cached_types.set(key, result);
+        self.map_set(ok);
+        result
+    }
+
+    pub fn restrictive_mapper_worker(&mut self, t: TypeId) -> TypeId {
+        if self.types[t].flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            return self.get_restrictive_type_parameter(t);
+        }
+        t
+    }
+
+    pub fn permissive_mapper_worker(&mut self, t: TypeId) -> TypeId {
+        if self.types[t].flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            return self.wildcard_type;
+        }
+        t
     }
 
     pub fn get_type_from_infer_type_node(&mut self, node: NodeId) -> TypeId {

@@ -2888,102 +2888,103 @@ impl NodeBuilderImpl {
 }
 
 impl Checker<'_> {
-    fn get_uniq_associated_names_from_tuple_type(
-        &mut self,
-        t: TypeId,
-        rest_symbol: SymbolId,
-    ) -> Vec<Vec<u8>> {
-        let target = self.as_type_reference(t).target;
-        let element_infos = self.as_tuple_type(target).element_infos;
-        let mut names: Vec<Vec<u8>> = Vec::with_capacity(element_infos.as_slice().len());
-        for (i, info) in element_infos.as_slice().iter().enumerate() {
-            names.push(self.get_tuple_element_label(*info, rest_symbol, i as isize));
-        }
-        if !names.is_empty() {
-            let mut duplicates: Vec<usize> = Vec::new();
-            let mut unique_names: HashMap<Vec<u8>, bool> = HashMap::default();
-            for (i, name) in names.iter().enumerate() {
-                if unique_names.contains_key(name) {
-                    duplicates.push(i);
-                } else {
-                    unique_names.insert(name.clone(), true);
-                }
-            }
-            let mut counters: HashMap<Vec<u8>, isize> = HashMap::default();
-            for i in duplicates {
-                let Some(base) = names.get(i).cloned() else {
-                    continue;
-                };
-                let mut counter = counters.get(&base).copied().unwrap_or(1);
-                let mut name;
-                loop {
-                    name = [base.as_slice(), b"_", counter.to_string().as_bytes()].concat();
-                    if unique_names.contains_key(&name) {
-                        counter += 1;
-                        continue;
-                    }
-                    unique_names.insert(name.clone(), true);
-                    break;
-                }
-                // Upstream stores the counter under the new name: `names[i]` is already replaced when `counters` is written.
-                counters.insert(name.clone(), counter + 1);
-                if let Some(slot) = names.get_mut(i) {
-                    *slot = name;
-                }
-            }
-        }
-        names
-    }
-
-    fn expand_signature_parameters_with_tuple_members(
-        &mut self,
-        sig: SignatureId,
-        rest_type: TypeId,
-        rest_index: usize,
-        rest_symbol: SymbolId,
-    ) -> Vec<SymbolId> {
-        let element_types = self.get_type_arguments(rest_type);
-        let associated_names =
-            self.get_uniq_associated_names_from_tuple_type(rest_type, rest_symbol);
-        let target = self.as_type_reference(rest_type).target;
-        let element_infos = self.as_tuple_type(target).element_infos;
-        let mut result: Vec<SymbolId> = self.signatures[sig]
-            .parameters
-            .as_slice()
-            .get(..rest_index)
-            .unwrap_or(&[])
-            .to_vec();
-        for (i, t) in element_types.as_slice().iter().copied().enumerate() {
-            let name = associated_names.get(i).cloned().unwrap_or_default();
-            let flags = element_infos
-                .as_slice()
-                .get(i)
-                .map_or(ElementFlags::NONE, |info| info.flags);
-            let mut check_flags = CheckFlags::NONE;
-            if flags.intersects(ElementFlags::VARIABLE) {
-                check_flags = CheckFlags::REST_PARAMETER;
-            } else if flags.intersects(ElementFlags::OPTIONAL) {
-                check_flags = CheckFlags::OPTIONAL_PARAMETER;
-            }
-            let symbol =
-                self.new_symbol_ex(SymbolFlags::FUNCTION_SCOPED_VARIABLE, &name, check_flags);
-            let resolved_type = if flags.intersects(ElementFlags::REST) {
-                self.create_array_type(t)
-            } else {
-                t
-            };
-            let links = self.value_symbol_links_get(symbol);
-            self.value_symbol_links[links].resolved_type = resolved_type;
-            result.push(symbol);
-        }
-        result
-    }
-
     pub fn get_expanded_parameters(
         &mut self,
         sig: SignatureId,
         skip_union_expanding: bool,
     ) -> Vec<Vec<SymbolId>> {
+        // The two closures of upstream's getExpandedParameters are local functions here: the methods of checker.go:27855 and 27881 have the same names and other bodies.
+        fn get_uniq_associated_names_from_tuple_type(
+            c: &mut Checker<'_>,
+            t: TypeId,
+            rest_symbol: SymbolId,
+        ) -> Vec<Vec<u8>> {
+            let target = c.as_type_reference(t).target;
+            let element_infos = c.as_tuple_type(target).element_infos;
+            let mut names: Vec<Vec<u8>> = Vec::with_capacity(element_infos.as_slice().len());
+            for (i, info) in element_infos.as_slice().iter().enumerate() {
+                names.push(c.get_tuple_element_label(*info, rest_symbol, i as isize));
+            }
+            if !names.is_empty() {
+                let mut duplicates: Vec<usize> = Vec::new();
+                let mut unique_names: HashMap<Vec<u8>, bool> = HashMap::default();
+                for (i, name) in names.iter().enumerate() {
+                    if unique_names.contains_key(name) {
+                        duplicates.push(i);
+                    } else {
+                        unique_names.insert(name.clone(), true);
+                    }
+                }
+                let mut counters: HashMap<Vec<u8>, isize> = HashMap::default();
+                for i in duplicates {
+                    let Some(base) = names.get(i).cloned() else {
+                        continue;
+                    };
+                    let mut counter = counters.get(&base).copied().unwrap_or(1);
+                    let mut name;
+                    loop {
+                        name = [base.as_slice(), b"_", counter.to_string().as_bytes()].concat();
+                        if unique_names.contains_key(&name) {
+                            counter += 1;
+                            continue;
+                        }
+                        unique_names.insert(name.clone(), true);
+                        break;
+                    }
+                    // Upstream stores the counter under the new name: `names[i]` is already replaced when `counters` is written.
+                    counters.insert(name.clone(), counter + 1);
+                    if let Some(slot) = names.get_mut(i) {
+                        *slot = name;
+                    }
+                }
+            }
+            names
+        }
+
+        fn expand_signature_parameters_with_tuple_members(
+            c: &mut Checker<'_>,
+            sig: SignatureId,
+            rest_type: TypeId,
+            rest_index: usize,
+            rest_symbol: SymbolId,
+        ) -> Vec<SymbolId> {
+            let element_types = c.get_type_arguments(rest_type);
+            let associated_names =
+                get_uniq_associated_names_from_tuple_type(c, rest_type, rest_symbol);
+            let target = c.as_type_reference(rest_type).target;
+            let element_infos = c.as_tuple_type(target).element_infos;
+            let mut result: Vec<SymbolId> = c.signatures[sig]
+                .parameters
+                .as_slice()
+                .get(..rest_index)
+                .unwrap_or(&[])
+                .to_vec();
+            for (i, t) in element_types.as_slice().iter().copied().enumerate() {
+                let name = associated_names.get(i).cloned().unwrap_or_default();
+                let flags = element_infos
+                    .as_slice()
+                    .get(i)
+                    .map_or(ElementFlags::NONE, |info| info.flags);
+                let mut check_flags = CheckFlags::NONE;
+                if flags.intersects(ElementFlags::VARIABLE) {
+                    check_flags = CheckFlags::REST_PARAMETER;
+                } else if flags.intersects(ElementFlags::OPTIONAL) {
+                    check_flags = CheckFlags::OPTIONAL_PARAMETER;
+                }
+                let symbol =
+                    c.new_symbol_ex(SymbolFlags::FUNCTION_SCOPED_VARIABLE, &name, check_flags);
+                let resolved_type = if flags.intersects(ElementFlags::REST) {
+                    c.create_array_type(t)
+                } else {
+                    t
+                };
+                let links = c.value_symbol_links_get(symbol);
+                c.value_symbol_links[links].resolved_type = resolved_type;
+                result.push(symbol);
+            }
+            result
+        }
+
         if self.signatures[sig].has_rest_parameter() {
             let parameters = self.signatures[sig].parameters;
             let rest_index = parameters.as_slice().len().saturating_sub(1);
@@ -2994,7 +2995,8 @@ impl Checker<'_> {
                 .unwrap_or(SymbolId::NIL);
             let rest_type = self.get_type_of_symbol(rest_symbol);
             if is_tuple_type(self, rest_type) {
-                return vec![self.expand_signature_parameters_with_tuple_members(
+                return vec![expand_signature_parameters_with_tuple_members(
+                    self,
                     sig,
                     rest_type,
                     rest_index,
@@ -3011,7 +3013,8 @@ impl Checker<'_> {
                 {
                     let mut result: Vec<Vec<SymbolId>> = Vec::new();
                     for t in union_types.as_slice() {
-                        result.push(self.expand_signature_parameters_with_tuple_members(
+                        result.push(expand_signature_parameters_with_tuple_members(
+                            self,
                             sig,
                             *t,
                             rest_index,

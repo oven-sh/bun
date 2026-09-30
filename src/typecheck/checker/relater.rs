@@ -3478,12 +3478,17 @@ impl<'a> Checker<'a> {
         [root_name, b"_", itoa(index).as_slice()].concat()
     }
 
+    // The binding patterns of a rest parameter nest as deep as the source does: the entry tests the stack.
     pub fn get_tuple_element_label_from_binding_element(
         &mut self,
         node: NodeId,
         index: isize,
         element_flags: ElementFlags,
     ) -> Vec<u8> {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.stack_limit::<()>();
+            return [b"arg_".as_slice(), itoa(index).as_slice()].concat();
+        }
         let node_name = self.ast.name(node);
         if !node_name.is_nil() {
             match self.ast.kind(node_name) {
@@ -3721,7 +3726,11 @@ impl<'a> Checker<'a> {
         predicate
     }
 
+    // A composite signature can be made of composite signatures: the entry tests the stack.
     pub fn is_resolving_return_type_of_signature(&mut self, signature: SignatureId) -> bool {
+        if !self.stack_check.is_safe_to_recurse() {
+            return self.stack_limit();
+        }
         let composite = self.signatures[signature].composite;
         if !composite.is_nil() {
             for &s in self.composite_signatures[composite].signatures.as_slice() {

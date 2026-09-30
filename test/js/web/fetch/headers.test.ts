@@ -638,31 +638,40 @@ describe("Headers", () => {
         });
 
         // A response off the wire has no call that can throw. At the real limit
-        // the process aborts, as it did before. Under this limit the value keeps
-        // the fields that fit: 10 of the 12.
-        test("fields of a response that pass the limit keep the ones that fit", async () => {
-          const field = `x-repeated: ${Buffer.alloc(100_000, "v").toString()}\r\n`;
-          const response = Buffer.concat([
-            Buffer.from("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n"),
-            Buffer.alloc(12 * field.length, field),
-            Buffer.from("\r\n"),
-          ]);
-          const server = createServer(socket => {
-            socket.on("error", () => {});
-            socket.once("data", () => socket.end(response));
+        // the process aborts, as it did before. Under a lowered limit the value
+        // keeps the fields that fit. The child has a limit of 64 KB: its response
+        // of 91 KB is far below the 1 MiB of headers that fetch() accepts. Of the
+        // 90 fields of 1,000 characters, the value keeps 65.
+        test("fields of a response that pass a lowered limit keep the ones that fit", async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
+                const field = "x-repeated: " + Buffer.alloc(1000, "v").toString() + "\\r\\n";
+                const response = Buffer.concat([
+                  Buffer.from("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n"),
+                  Buffer.alloc(90 * field.length, field),
+                  Buffer.from("\\r\\n"),
+                ]);
+                let sent = 0;
+                const send = socket => {
+                  sent += socket.write(response.subarray(sent));
+                  if (sent === response.length) socket.end();
+                };
+                using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: send, drain: send } });
+                const { headers } = await fetch("http://127.0.0.1:" + server.port + "/");
+                console.log(headers.get("x-repeated").length);
+              `,
+            ],
+            env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+            stdout: "pipe",
+            stderr: "pipe",
           });
-          const { promise: listening, resolve, reject } = Promise.withResolvers<void>();
-          server.on("error", reject);
-          server.listen(0, "127.0.0.1", () => resolve());
-          const previous = internalForTesting.setSyntheticAllocationLimitForTesting(limit);
-          try {
-            await listening;
-            const { headers } = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
-            expect(headers.get("x-repeated")!.length).toBe(10 * 100_000 + 9 * 2);
-          } finally {
-            internalForTesting.setSyntheticAllocationLimitForTesting(previous);
-            server.close();
-          }
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout).toBe(`${65 * 1000 + 64 * 2}\n`);
+          expect(exitCode).toBe(0);
         });
       });
 

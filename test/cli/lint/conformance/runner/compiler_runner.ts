@@ -52,6 +52,8 @@ export interface EnumeratedInstance {
   skipReason?: string;
   // The text of the t.Fatal or of the panic, for status invalid.
   invalidReason?: string;
+  // What the config reader does not model for the instance: where this is not empty, the status may not be that of the reference.
+  notes: string[];
   // The test is one of skippedEmitTests: the reference skips its "output" subtest and still compares its error baseline.
   emitOnly: boolean;
 }
@@ -217,7 +219,7 @@ export function getConfiguredName(filename: string, namedConfiguration: NamedTes
   return configuredName;
 }
 
-type Status = Pick<EnumeratedInstance, "status" | "skipReason" | "invalidReason">;
+type Status = Pick<EnumeratedInstance, "status" | "skipReason" | "invalidReason" | "notes">;
 
 // compiler_runner.go:50, for the tests of the submodule: the runner of the reference's own tests is not ported.
 export class CompilerBaselineRunner {
@@ -273,7 +275,8 @@ export class CompilerBaselineRunner {
     const test = getCompilerFileBasedTest(filename);
     const basename = getBaseFileName(filename);
     if (!test.ok) {
-      return [this.instanceOf(basename, filename, undefined, { status: "invalid", invalidReason: test.reason })];
+      const status: Status = { status: "invalid", invalidReason: test.reason, notes: [] };
+      return [this.instanceOf(basename, filename, undefined, status)];
     }
     // The reference parses the units again for every instance; they are the same for each.
     let parsed: ParseTestFilesResult<TestUnit> | undefined;
@@ -308,15 +311,15 @@ export class CompilerBaselineRunner {
     try {
       const units = payload();
       if (!units.ok) {
-        status = { status: "invalid", invalidReason: units.reason };
+        status = { status: "invalid", invalidReason: units.reason, notes: [] };
       } else {
         const made = getInstanceStatus(getBaseFileName(test.filename), units, config?.config);
-        status = { status: made.status };
+        status = { status: made.status, notes: made.notes };
         if (made.skipReason !== undefined) status.skipReason = made.skipReason;
         if (made.invalidReason !== undefined) status.invalidReason = made.invalidReason;
       }
     } catch (error) {
-      status = { status: "invalid", invalidReason: messageOf(error) };
+      status = { status: "invalid", invalidReason: messageOf(error), notes: [] };
     }
     return this.instanceOf(testName, test.filename, config, status);
   }

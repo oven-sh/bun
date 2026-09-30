@@ -5452,13 +5452,8 @@ static void forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
     if (!object)
         return;
 
+    // No stack check: `Formatter::enter` made it on the way in, and knows whether to throw or to stop.
     auto& vm = JSC::getVM(globalObject);
-    auto throwScopeForStackOverflowException = DECLARE_THROW_SCOPE(vm);
-
-    if (!vm.isSafeToRecurse()) [[unlikely]] {
-        throwStackOverflowError(globalObject, throwScopeForStackOverflowException);
-        return;
-    }
 
     size_t prototypeCount = 0;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

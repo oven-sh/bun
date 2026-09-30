@@ -78,7 +78,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             &diff_config,
         )?;
         if self.abbreviated {
-            f.write_str("\n\nnote: [Array], [Object], [Map], [Set] and [Error] stand for values that are printed in full earlier in the same output.")?;
+            f.write_str("\n\nnote: [Array], [Object], [Map] and [Set] stand for values that are printed in full earlier in the same output. The output for repeated values is limited to 1 MiB.")?;
         }
         if self.stopped_early {
             f.write_str("\n\nnote: a value is nested too deeply to print in full.")?;

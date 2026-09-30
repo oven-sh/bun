@@ -144,11 +144,13 @@ impl bun_io::Write for CountingWriter<'_> {
 impl Tag {
     /// Whether the printer for this tag can reach another JS value. No `_`
     /// arm: a new tag does not compile until someone decides.
-    pub(crate) const fn holds_values(self) -> bool {
+    pub(crate) const fn holds_values(self, style: Style) -> bool {
         match self {
+            // `[Name: message]` in a snapshot.
+            Tag::Error => matches!(style, Style::Console),
+
             Tag::Array
             | Tag::Object
-            | Tag::Error
             | Tag::Map
             | Tag::MapIterator
             | Tag::SetIterator
@@ -276,7 +278,7 @@ impl<'a> Formatter<'a> {
         if self.global_this.has_exception() {
             return Err(jsc::JsError::Thrown);
         }
-        if !format.holds_values() {
+        if !format.holds_values(self.style) {
             return Ok(Some(Entered::LEAF));
         }
         self.enter_holder::<C>(format, writer_, value)
@@ -362,11 +364,10 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
     ) -> JsResult<()> {
         if self.shared_reference_budget.past == PastBudget::Throw {
-            let error = self.global_this.create_range_error_instance(format_args!(
-                "Cannot serialize this value: its shared references repeat more than {} MiB of output",
+            return Err(self.global_this.throw(format_args!(
+                "Snapshot value is too large to serialize: the objects that it references more than once print more than {} MiB. Snapshot a smaller part of the value.",
                 self.shared_reference_budget.bytes / (1024 * 1024)
-            ));
-            return Err(self.global_this.throw_value(error));
+            )));
         }
         self.abbreviated = true;
         match self.style {

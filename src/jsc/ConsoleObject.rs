@@ -3915,6 +3915,7 @@ pub mod formatter {
                 adapter.interface(),
                 C,
                 false,
+                false,
             );
             Ok(())
         }

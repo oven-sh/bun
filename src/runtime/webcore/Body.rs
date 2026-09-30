@@ -1392,6 +1392,15 @@ impl Value {
         Ok(())
     }
 
+    /// Mark a body nothing will read as used. The caller cancels the returned producer once this borrow ends: it can run JS.
+    #[must_use]
+    pub(crate) fn discard(&mut self) -> streams::SourceHandle {
+        match &mut core::mem::replace(self, Value::Used) {
+            Value::Locked(locked) => core::mem::take(&mut locked.producer),
+            _ => streams::SourceHandle::None,
+        }
+    }
+
     // mutates self to Null and is called explicitly at specific protocol points.
     // Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`). Now
     // delegates the actual resource release to `Drop` (below) via assignment, so a later

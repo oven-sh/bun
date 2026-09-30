@@ -262,6 +262,73 @@ describe("HEAD request with a ReadableStream body", () => {
     });
   }
 });
+describe("a pending Response body that the server does not send", () => {
+  // The body never ends, so only a closed connection ends the upstream request.
+  function serveEndlessBody(requests: number) {
+    let aborted = 0;
+    const allAborted = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => {
+          if (++aborted === requests) allAborted.resolve();
+        });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("<p>pending</p>"));
+            },
+          }),
+        );
+      },
+    });
+    return { server, allAborted: allAborted.promise };
+  }
+
+  const producers = {
+    "fetch()": (url: URL) => fetch(url),
+    "HTMLRewriter.transform(await fetch())": async (url: URL) => new HTMLRewriter().transform(await fetch(url)),
+  };
+
+  for (const [name, produce] of Object.entries(producers)) {
+    it(`HEAD closes the upstream request of ${name}`, async () => {
+      const { server: upstream, allAborted } = serveEndlessBody(3);
+      await using _ = upstream;
+      await using proxy = Bun.serve({
+        port: 0,
+        fetch: () => produce(upstream.url),
+      });
+
+      for (let i = 0; i < 3; i++) {
+        const response = await fetch(proxy.url, { method: "HEAD" });
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("");
+      }
+      await allAborted;
+    });
+
+    it(`a client that left before the handler returned closes the upstream request of ${name}`, async () => {
+      const { server: upstream, allAborted } = serveEndlessBody(1);
+      await using _ = upstream;
+      const client = new AbortController();
+      await using proxy = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const response = await produce(upstream.url);
+          const left = Promise.withResolvers<void>();
+          request.signal.addEventListener("abort", () => left.resolve());
+          client.abort();
+          await left.promise;
+          return response;
+        },
+      });
+
+      expect(fetch(proxy.url, { signal: client.signal })).rejects.toThrow();
+      await allAborted;
+    });
+  }
+});
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
     it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {

@@ -741,7 +741,7 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
+    /// Cancel the body stream or producer of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
         if let Body::Value::Locked(locked) = response.get_body_value()
             && locked.has_consumer()
@@ -754,7 +754,10 @@ where
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
         }
-        *response.get_body_value() = Body::Value::Used;
+        response
+            .get_body_value()
+            .discard()
+            .cancel(JSValue::UNDEFINED);
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.

@@ -1793,8 +1793,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             && success == 0
             && ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH;
 
-        // node:tls sockets defer the hostname verdict: their JS layer applies
-        // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
         if SSL
             && (authorized || rejected_in_handshake)
@@ -4198,8 +4196,8 @@ bitflags::bitflags! {
         const HOSTNAME_MISMATCH    = 1 << 11;
         const REJECT_UNAUTHORIZED  = 1 << 12;
         /// Set only by the node:net / node:tls socket constructors: their JS
-        /// layer owns server-identity policy (`checkServerIdentity`), so a
-        /// hostname mismatch alone is reported but never enforced natively.
+        /// layer owns server-identity policy (`checkServerIdentity`), so the
+        /// native name check does not run for them.
         const DEFERS_SERVER_IDENTITY = 1 << 13;
         /// `upgradeTLS({ isServer: true })`: the socket acts as the TLS server
         /// even though its `Handlers` mode is `Client` (no listener), so the

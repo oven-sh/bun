@@ -1,34 +1,58 @@
-//! `bun --lint <files>`: reads and parses each operand and prints what the parser reports. No file is run.
+//! `bun --lint <files>`: reads and parses each operand and prints the diagnostics of the run, sorted and each once. No file is run.
 
 use bstr::BStr;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, ZBox, ZStr};
+use bun_lint::code_frame::write_code_frames;
+use bun_lint::diagnosticwriter::{FormattingOptions, write_format_diagnostics};
+use bun_lint::program::sort_and_deduplicate_diagnostics;
+use bun_lint::tspath::{self, ComparePathsOptions};
+use bun_lint::{Category, Code, Diagnostic, FileId, SourceFile};
 use bun_options_types::context::Context;
 
 /// The extensions a lint run reads, in the order TypeScript lists them.
 const SUPPORTED_EXTENSIONS: &str =
     "'.ts', '.tsx', '.d.ts', '.js', '.jsx', '.cts', '.d.cts', '.cjs', '.mts', '.d.mts', '.mjs'";
 
-/// Checks every operand and runs none. Exits with 1 without an operand, with 2 when a file has an error, else with 0.
+/// Checks every operand and runs none. Exits with 1 without an operand, with 2 when a diagnostic is an error, else with 0.
 #[cold]
 #[inline(never)]
 pub(crate) fn exec(ctx: Context<'_>) -> ! {
-    let mut files: &[Box<[u8]>] = &ctx.positionals;
+    let mut operands: &[Box<[u8]>] = &ctx.positionals;
     // `bun run` keeps its own name as the first positional.
-    if let [first, rest @ ..] = files
+    if let [first, rest @ ..] = operands
         && &**first == b"run"
     {
-        files = rest;
+        operands = rest;
     }
-    if files.is_empty() && ctx.passthrough.is_empty() {
+    if operands.is_empty() && ctx.passthrough.is_empty() {
         bun_core::err_generic!("--lint needs one or more files");
         Global::exit(1);
     }
-    let mut failed = false;
-    let mut printed = false;
-    for operand in files.iter().chain(ctx.passthrough.iter()) {
-        failed |= check_file(operand, &mut printed);
-    }
+    let cwd = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
+    let failed = run(operands, &ctx.passthrough, cwd);
     Global::exit(if failed { 2 } else { 0 });
+}
+
+/// Checks the operands and prints every diagnostic of the run, in order and once. `true`: one of them is an error.
+fn run(operands: &[Box<[u8]>], passthrough: &[Box<[u8]>], cwd: &[u8]) -> bool {
+    // With forward slashes on every platform, as the current directory of the reference.
+    let current_directory = tspath::get_normalized_absolute_path(cwd, b"");
+    // A source borrows its path: `paths` is declared before `files`, so it is dropped after it.
+    let paths: Vec<ZBox> = operands
+        .iter()
+        .chain(passthrough)
+        .map(|operand| ZBox::from_bytes(&**operand))
+        .collect();
+    let mut files: Vec<SourceFile> = Vec::new();
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    for path in &paths {
+        check_file(path, &current_directory, &mut files, &mut diagnostics);
+    }
+    let diagnostics = sort_and_deduplicate_diagnostics(&files, diagnostics);
+    write_diagnostics(&files, &diagnostics, &current_directory);
+    diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.category == Category::Error)
 }
 
 /// The loader of a file that a lint run parses, from its extension.
@@ -44,45 +68,77 @@ fn is_declaration_file(operand: &[u8]) -> bool {
     operand.ends_with(b".d.ts") || operand.ends_with(b".d.mts") || operand.ends_with(b".d.cts")
 }
 
-/// Writes the empty line between the output of two operands.
-fn separate(printed: &mut bool) {
-    if core::mem::replace(printed, true) {
-        Output::print_error("\n");
+/// An error that belongs to no file.
+fn error_without_file(code: Code, text: core::fmt::Arguments<'_>) -> Diagnostic {
+    Diagnostic {
+        file: None,
+        start: 0,
+        length: 0,
+        category: Category::Error,
+        code,
+        text: bun_ast::alloc_print(text),
+        chain: Vec::new(),
+        related: Vec::new(),
     }
 }
 
-/// Reads and parses one operand and prints what the log holds. `true`: the file has an error.
-fn check_file(operand: &[u8], printed: &mut bool) -> bool {
+/// Reads and parses one operand. What is found goes to `diagnostics`, and the file to `files` when something was found in it.
+fn check_file(
+    path: &ZStr,
+    current_directory: &[u8],
+    files: &mut Vec<SourceFile>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let operand = path.as_bytes();
     let Some(loader) = loader_of(operand) else {
-        separate(printed);
-        bun_core::err_generic!(
-            "File '{}' has an unsupported extension. The only supported extensions are {}.",
-            BStr::new(operand),
-            SUPPORTED_EXTENSIONS
-        );
-        return true;
+        diagnostics.push(error_without_file(
+            Code::UNSUPPORTED_EXTENSION,
+            format_args!(
+                "File '{}' has an unsupported extension. The only supported extensions are {}.",
+                BStr::new(operand),
+                SUPPORTED_EXTENSIONS
+            ),
+        ));
+        return;
     };
-    // The source and the log borrow the path: it outlives both.
-    let path = bun_core::ZBox::from_bytes(operand);
-    let source = match bun_ast::to_source(&path, bun_ast::ToSourceOptions { convert_bom: true }) {
+    let source = match bun_ast::to_source(path, bun_ast::ToSourceOptions { convert_bom: true }) {
         Ok(source) => source,
         Err(err) => {
-            separate(printed);
-            if err.get_errno() == bun_sys::E::ENOENT {
-                bun_core::err_generic!("File '{}' not found.", BStr::new(operand));
+            diagnostics.push(if err.get_errno() == bun_sys::E::ENOENT {
+                error_without_file(
+                    Code::CANNOT_READ_FILE,
+                    format_args!("File '{}' not found.", BStr::new(operand)),
+                )
             } else {
-                bun_core::err_generic!(
-                    "Cannot read file '{}': {}.",
-                    BStr::new(operand),
-                    BStr::new(err.name())
-                );
-            }
-            return true;
+                error_without_file(
+                    Code::CANNOT_READ_FILE,
+                    format_args!(
+                        "Cannot read file '{}': {}.",
+                        BStr::new(operand),
+                        BStr::new(err.name())
+                    ),
+                )
+            });
+            return;
         }
     };
     if is_declaration_file(operand) {
-        return false;
+        return;
     }
+    // The place of the file in `files` when it is kept.
+    let file = FileId(u32::try_from(files.len()).unwrap_or(u32::MAX));
+    let found = parse(file, loader, &source);
+    // Nothing points into the text of a file without a diagnostic: it is not kept.
+    if found.is_empty() {
+        return;
+    }
+    let file_name = tspath::get_normalized_absolute_path(operand, current_directory);
+    files.push(SourceFile::new(file_name.into_boxed_slice(), source));
+    diagnostics.extend(found);
+}
+
+/// What the parser reports for one file.
+fn parse(file: FileId, loader: bun_ast::Loader, source: &bun_ast::Source) -> Vec<Diagnostic> {
     bun_ast::initialize_store();
     let _reset = bun_ast::StoreResetGuard::new();
     let arena = bun_alloc::Arena::new();
@@ -95,18 +151,40 @@ fn check_file(operand: &[u8], printed: &mut bool) -> bool {
     let define = bun_js_parser::Define::default();
     let mut log = bun_ast::Log::init();
     log.level = bun_ast::Level::Warn;
-    let parsed = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena)
+    let parsed = bun_js_parser::Parser::init(options, &mut log, source, &define, &arena)
         .and_then(|parser| parser.parse().map(drop));
     if let Err(err) = parsed
         && log.errors == 0
     {
-        log.add_range_error(Some(&source), bun_ast::Range::None, err.name().as_bytes());
+        log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
     }
-    if log.has_any() {
-        separate(printed);
-        // The buffer the messages above go to, so the output keeps the order of the operands.
-        let _ = log.print(std::ptr::from_mut(Output::error_writer_buffered()));
-        Output::flush();
+    core::mem::take(&mut log.msgs)
+        .into_iter()
+        .filter_map(|msg| Diagnostic::from_msg(file, msg))
+        .collect()
+}
+
+/// Writes the diagnostics to stderr: a code frame for each on a terminal, else a line for each as tsc writes it.
+fn write_diagnostics(files: &[SourceFile], diagnostics: &[Diagnostic], current_directory: &[u8]) {
+    if diagnostics.is_empty() {
+        return;
     }
-    log.errors > 0
+    let format_opts = FormattingOptions {
+        compare_paths_options: ComparePathsOptions {
+            use_case_sensitive_file_names: tspath::USE_CASE_SENSITIVE_FILE_NAMES,
+            current_directory,
+        },
+        new_line: b"\n",
+    };
+    let mut output: Vec<u8> = Vec::new();
+    if Output::is_stderr_tty() {
+        if Output::enable_ansi_colors_stderr() {
+            write_code_frames::<true>(&mut output, files, diagnostics, &format_opts);
+        } else {
+            write_code_frames::<false>(&mut output, files, diagnostics, &format_opts);
+        }
+    } else {
+        write_format_diagnostics(&mut output, files, diagnostics, &format_opts);
+    }
+    let _ = Output::error_writer_buffered().write_all(&output);
 }

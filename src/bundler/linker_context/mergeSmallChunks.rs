@@ -39,7 +39,19 @@ impl LinkerContext<'_> {
                 && !flags.is_async_or_has_async_dependency
                 && (flags.wrap != WrapKind::None
                     || self.graph.ast.items_flags()[source_index as usize]
-                        .contains(crate::bundled_ast::Flags::ONLY_DECLARES)))
+                        .contains(crate::bundled_ast::Flags::ONLY_DECLARES)
+                    // Data. Not TOML: a datetime in it is a call of `Temporal`.
+                    || matches!(
+                        self.parse_graph().input_files.items_loader()[source_index as usize],
+                        Loader::Json
+                            | Loader::Jsonc
+                            | Loader::Json5
+                            | Loader::Yaml
+                            | Loader::Text
+                            | Loader::File
+                            | Loader::Base64
+                            | Loader::Dataurl
+                    )))
     }
 
     /// None of the file's live parts run anything at the top level:
@@ -170,6 +182,8 @@ struct Group {
     pin: Pin,
     /// The parent of the class of an entry point that only its name pins.
     parent_of_pinned_entry: bool,
+    /// `LinkerContext::entry_imports_in_parent` names it, so rule 2 leaves it where it is.
+    repeats_entry_imports: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -219,6 +233,7 @@ impl Group {
             wants_inits: false,
             pin,
             parent_of_pinned_entry: false,
+            repeats_entry_imports: false,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -823,7 +838,11 @@ fn files_that_leave_entry_chunk<'a>(
             // A chunk of another class runs before both, and so does what it imports.
             match when_chunk_runs(file)? {
                 Runs::WithEntry => {}
-                Runs::WithOtherEntry if parent_gains_no_import => return Ok(0),
+                Runs::WithOtherEntry
+                    if parent_gains_no_import && !this.loading_file_only_declares(file) =>
+                {
+                    return Ok(0);
+                }
                 _ => continue,
             }
         } else if live(file) && file != entry_source {
@@ -850,15 +869,23 @@ fn files_that_leave_entry_chunk<'a>(
     // What one `import` of the entry point's file loads goes or stays as a whole, with what it imports. No chunk may import a pinned chunk, so a file that leads back there ends the list.
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
+    // Printed as written, so it names a file next to the chunk that holds it.
+    let records = this.graph.ast.items_import_records();
+    let is_relative_external = |record: &bun_ast::ImportRecord| {
+        !record.source_index.is_valid()
+            && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+            && (record.path.text.starts_with(b"./") || record.path.text.starts_with(b"../"))
+    };
     // An external `import` goes to the top of its chunk, ahead of what the parent runs.
     let mut limit = u32::MAX;
-    if parent_gains_no_import {
-        this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, _, x| {
-            if x.is_none() {
-                limit = limit.min(part);
-            }
-        });
-    }
+    this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, record, x| {
+        if x.is_none()
+            && (parent_gains_no_import
+                || is_relative_external(&records[entry_source as usize][record as usize]))
+        {
+            limit = limit.min(part);
+        }
+    });
     candidates.truncate(cut);
     candidates.truncate(candidates.partition_point(|candidate| candidate.1 < limit));
     let mut candidates = candidates.into_iter().peekable();
@@ -881,6 +908,7 @@ fn files_that_leave_entry_chunk<'a>(
                     pending.push(other);
                 }
             });
+            stuck |= records[file as usize].iter().any(is_relative_external);
             if parent_gains_no_import {
                 this.for_each_import_that_runs(file, 0..parts_len(file), &mut |_, _, x| {
                     stuck |= x.is_none();
@@ -1450,8 +1478,10 @@ pub(crate) fn merge_small_chunks(
             if takes_entry_files
                 && let Some(repeated) =
                     entry_imports_in_parent.get_mut(class.find_first_set().expect("one bit set"))
+                && repeated.0 > 0
             {
                 repeated.1 = groups.values()[target_index].first_source;
+                groups.values_mut()[target_index].repeats_entry_imports = true;
             }
         }
         for &member in members {
@@ -1656,6 +1686,7 @@ pub(crate) fn merge_small_chunks(
             let c = &groups[candidate];
             if c.merged_into.is_some()
                 || c.pin != Pin::None
+                || c.repeats_entry_imports
                 || !c.pure
                 || c.size >= min_chunk_size
                 || c.size > max_headroom

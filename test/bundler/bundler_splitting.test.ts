@@ -1093,6 +1093,130 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nconfig 1\nboth\nouter 1\nindex\nlazy" },
   });
+  itBundled("splitting/SharedFileThatPrintsNothingHasNoChunkToRepeatImportsIn", {
+    files: {
+      "/index.js": `import "./styles.js"; console.log("index"); import("./route.js");`,
+      "/styles.js": `import "./app.css";`,
+      "/route.js": `import "./styles.js"; console.log("route");`,
+      "/app.css": `.a { color: red }`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index\nroute" },
+  });
+  // Printed as written, so it names a file next to the chunk that holds it.
+  for (const [name, imports, stdout] of [
+    [
+      "OfEntryFile",
+      `import "./first.js"; import "./local.js"; import "./reader.js";`,
+      "first\nstore\nlocal\nreader\napi s\nroute s",
+    ],
+    ["OfFileThatWouldMove", `import "./first.js"; import "./uses.js";`, "first\nstore\nlocal\nuses\napi s\nroute s"],
+  ] as const) {
+    itBundled("splitting/RelativeExternalImportStaysInEntryChunk/" + name, {
+      files: {
+        "/src/api/index.js": /* js */ `
+          ${imports}
+          import { Store } from "./store.js";
+          console.log("api", new Store().name);
+          import("./route.js");
+        `,
+        "/src/api/first.js": `console.log("first");`,
+        "/src/api/reader.js": `console.log("reader");`,
+        "/src/api/uses.js": `import "./local.js"; console.log("uses");`,
+        "/src/api/store.js": `console.log("store"); export class Store { name = "s"; }`,
+        "/src/api/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
+        "/src/jobs/index.js": `console.log("jobs");`,
+      },
+      external: ["*local.js"],
+      runtimeFiles: { "/out/api/local.js": `console.log("local");` },
+      entryPoints: ["/src/api/index.js", "/src/jobs/index.js"],
+      outputPaths: ["/out/api/index.js", "/out/jobs/index.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("local.js");
+        api.expectFile("/out/api/index.js").toContain(`"./local.js"`);
+      },
+      run: { file: "/out/api/index.js", stdout },
+    });
+  }
+  itBundled("splitting/EntryFilesStayWhenSharedCodeIsData", {
+    files: {
+      "/index.js": /* js */ `
+        import "./own.js";
+        import data from "./data.json";
+        import text from "./note.txt";
+        console.log("index", data.v, text);
+        import("./route.js");
+      `,
+      "/own.js": `console.log("own");`,
+      "/data.json": `{ "v": 1 }`,
+      "/note.txt": `note`,
+      "/route.js": `import data from "./data.json"; import text from "./note.txt"; console.log("route", data.v, text);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`"own"`);
+    },
+    run: { file: "/out/index.js", stdout: "own\nindex 1 note\nroute 1 note" },
+  });
+  itBundled("splitting/MinChunkSizeKeepsChunkThatRepeatsEntryImports", {
+    files: {
+      "/admin.js": /* js */ `
+        import { util } from "./util.js";
+        import * as big from "./big.js";
+        console.log("admin", util(), Object.keys(big).length);
+      `,
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import { x } from "pkg";
+        import { util } from "./util.js";
+        console.log("index", x(), util());
+        import("./route.js");
+      `,
+      "/setup.cjs": `console.log("setup");`,
+      "/route.js": `import { x } from "pkg"; import { util } from "./util.js"; console.log("route", x(), util());`,
+      "/util.js": `export function util() { return "util"; }`,
+      "/big.js": Array.from({ length: 3000 }, (_, i) => `export function big${i}(a) { return a + ${i}; }`).join("\n"),
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false, "type": "module", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `const cache = new Map(); export const x = () => cache.size;`,
+    },
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "setup\nindex 0 util\nroute 0 util" },
+  });
+  itBundled("splitting/EntryWithExportsSetupImportRunsBeforeSharedCodeWhenOtherEntrySharesRuntime", {
+    files: {
+      ...setupBeforeShared("export const version = 1;"),
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import { Store } from "./store.js";
+        import dep from "./dep.cjs";
+        export const version = 1;
+        console.log("index", new Store().name, dep);
+        import("./settings.js");
+      `,
+      "/dep.cjs": `module.exports = "dep";`,
+      "/admin.js": `import other from "./other.cjs"; console.log(other);`,
+      "/other.cjs": `module.exports = "other";`,
+    },
+    entryPoints: ["/index.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index app dep\nsettings app" },
+  });
   // An entry point with exports takes no fold under any name. The chunk of the shared code keeps its place and gains no import.
   itBundled("splitting/EntryWithExportsKeepsExternalImportAfterSharedCode", {
     files: {

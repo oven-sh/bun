@@ -586,7 +586,10 @@ impl EntryWalk {
 
         let entry_file = c.graph.entry_points.items_source_index()[entry_id as usize];
         let (repeat_end, repeat_slot) = match c.entry_imports_in_parent.get(entry_id as usize) {
-            Some(&(parts_end, parent_file)) if parts_end > 0 => {
+            // No file of the parent prints code: it has no chunk, and nothing to run ahead of.
+            Some(&(parts_end, parent_file))
+                if parts_end > 0 && plan.chunk_of_file[parent_file as usize] != u32::MAX =>
+            {
                 let parent = plan.chunk_of_file[parent_file as usize] as usize;
                 debug_assert!(plan.owner_of_chunk[parent] == entry_id);
                 (parts_end, plan.slot_of_chunk[parent])

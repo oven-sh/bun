@@ -5,6 +5,7 @@ mod context;
 pub mod diagnostic;
 pub mod diagnosticwriter;
 mod linter;
+pub mod program;
 mod rule;
 mod rules;
 pub mod scanner;

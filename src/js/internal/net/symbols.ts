@@ -10,4 +10,6 @@ export default {
   kVerifyError: Symbol("kVerifyError"),
   // net.Socket.prototype method behind the client-side `new tls.TLSSocket(socket)`.
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),
+  // True on a client-side `new tls.TLSSocket(socket)`. The TLSSocket constructor sets it.
+  kStandaloneWrap: Symbol("kStandaloneWrap"),
 };

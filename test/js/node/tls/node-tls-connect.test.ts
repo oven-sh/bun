@@ -3219,6 +3219,59 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     });
   });
 
+  it("setSession() on a wrap has no effect: it does not abort the process and does not throw", async () => {
+    // In a process of its own: the wrap sent its ClientHello in the constructor, and BoringSSL
+    // aborts the process when a session is set after that.
+    const script = `
+      const net = require("node:net");
+      const tls = require("node:tls");
+      const { once } = require("node:events");
+      (async () => {
+        // With TLS 1.2 the session of a connection is ready at 'secureConnect'.
+        const server = tls.createServer({ ...${JSON.stringify(COMMON_CERT_)}, maxVersion: "TLSv1.2" }, socket => {
+          socket.on("error", () => {});
+          socket.resume();
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address();
+        const first = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        await once(first, "secureConnect");
+        const session = first.getSession();
+        first.destroy();
+
+        const raw = net.connect(port, "127.0.0.1");
+        await once(raw, "connect");
+        const wrap = new tls.TLSSocket(raw, { rejectUnauthorized: false });
+        const secure = once(wrap, "secure");
+        let threw = false;
+        try {
+          wrap.setSession(session);
+        } catch {
+          threw = true;
+        }
+        wrap._start();
+        await secure;
+        console.log(JSON.stringify({ sessionBytes: session.length > 0, threw, reused: wrap.isSessionReused() }));
+        wrap.destroy();
+        server.close();
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      // `sessionBytes` shows that the call got a session that the native function can parse.
+      stdout: '{"sessionBytes":true,"threw":false,"reused":false}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("verifies the chain but, unlike tls.connect({ socket }), not the hostname", async () => {
     // agent1's certificate names no host at all, so only tls.connect()'s
     // onConnectSecure has something to object to.
@@ -3383,7 +3436,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       });
     });
 
-    // setSession() after the handshake started is not covered here: it aborts the process until #41671 lands.
+    // Not covered here: setSession() after the handshake started on a tls.connect() socket aborts the process (#41671).
     it.skipIf(skip)("a session that is set before the handshake starts is resumed", async () => {
       expect(await session()).toEqual({
         "tls.connect({ port, session })": true,

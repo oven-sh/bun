@@ -47,6 +47,7 @@ const {
   kDestroyOnRead,
   kPreHandshakeWrite,
   kSecureConnectDone,
+  kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
 } = require("internal/net/symbols");
@@ -293,7 +294,6 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
-const kStandaloneWrap = Symbol("kStandaloneWrap");
 // On the raw handle of an adopted fd: the TLS socket that adopted it.
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 // On that TLS socket: the fd closed, and the socket it wraps waits to be closed with it.
@@ -2673,7 +2673,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 // Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.
 Socket.prototype[kUpgradeClientTLS] = function (connection, servername) {
-  this[kStandaloneWrap] = true;
   // Own, as in tls.connect(): connect() takes an inherited `rejectUnauthorized` for the caller's choice.
   Socket.prototype.connect.$call(this, {
     socket: connection,

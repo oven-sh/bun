@@ -28,6 +28,7 @@ const {
   kArmHandshakeTimeout,
   kPreHandshakeWrite,
   kSecureConnectDone,
+  kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
 } = require("internal/net/symbols");
@@ -859,6 +860,7 @@ function TLSSocket(socket?, options?) {
       this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")
         ? options.rejectUnauthorized !== false
         : !getAllowUnauthorized();
+      this[kStandaloneWrap] = true;
       this[kUpgradeClientTLS](socket, options.servername);
       // http2-wrapper reads `new TLSSocket(new PassThrough())._handle._parentWrap.constructor` as its JSStreamSocket.
       const handle = this._handle;
@@ -1078,6 +1080,8 @@ TLSSocket.prototype.setServername = function setServername(name) {
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
+  // A wrap sent its ClientHello in the constructor, and BoringSSL aborts the process on a session set after that.
+  if (this[kStandaloneWrap]) return;
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);

@@ -202,8 +202,11 @@ export function readErrorBaseline(rules: Rules, text: string, options: ReadOptio
   }
 
   for (const section of sections) {
+    // The writer takes the diagnostics whose name compares equal to the name of the file; the same name always does.
     section.entries = entries.filter(
-      e => e.fileName !== undefined && comparePathsOf(rules, e.fileName, section.name, caseInsensitive) === 0,
+      e =>
+        e.fileName !== undefined &&
+        (e.fileName === section.name || comparePathsOf(rules, e.fileName, section.name, caseInsensitive) === 0),
     );
     if (section.entries.length !== section.count) {
       throw new ReadError(
@@ -660,6 +663,18 @@ function readSectionOnce(
   };
   let i = 0;
   let lineIndex = 0;
+  // The diagnostics before this one have their message: no line looks at them again.
+  let done = 0;
+  // How the line at i looks: every diagnostic that has not started asks, so the answer is kept for as long as i stays.
+  let lookedAt = -1;
+  let looksLikeSquiggle = false;
+  let messageFollows = false;
+  const look = (): void => {
+    if (lookedAt === i) return;
+    lookedAt = i;
+    looksLikeSquiggle = isSquiggle(lines[i]);
+    messageFollows = lines[i + 1] !== undefined && lines[i + 1].startsWith("!!! ");
+  };
 
   if (lines.length === 0) throw new ReadError(`section ${section.name} has no line`);
   while (i < lines.length) {
@@ -675,7 +690,8 @@ function readSectionOnce(
     i++;
     result.contentLines.push(contentLine.slice(4));
     let last = unitLines !== undefined && lineIndex === unitLines.length - 1;
-    for (let k = 0; k < entries.length; k++) {
+    while (done < entries.length && state[done] === 2) done++;
+    for (let k = done; k < entries.length; k++) {
       if (state[k] === 2) continue;
       const e = entries[k];
       let expects: boolean;
@@ -683,23 +699,27 @@ function readSectionOnce(
         expects = true;
       } else if (e.line !== undefined) {
         expects = e.line - 1 <= lineIndex;
-        if (!expects && isSquiggle(lines[i]) && lines[i + 1] !== undefined && lines[i + 1].startsWith("!!! ")) {
-          // A message never follows a source line, so this is a squiggle line of a diagnostic of a later line, which the writer makes on the last line only.
-          expects = true;
-          last = true;
-          decisions.push(
-            `${section.name} has more line starts than lines: diagnostics of later lines are at its last line`,
-          );
+        if (!expects) {
+          look();
+          if (looksLikeSquiggle && messageFollows) {
+            // A message never follows a source line, so this is a squiggle line of a diagnostic of a later line, which the writer makes on the last line only.
+            expects = true;
+            last = true;
+            decisions.push(
+              `${section.name} has more line starts than lines: diagnostics of later lines are at its last line`,
+            );
+          }
         }
       } else {
         // Masked position: a line of tildes, or a line of white space before a message, is a squiggle line.
-        const l = lines[i];
-        expects = isSquiggle(l) && (l.includes("~") || (lines[i + 1] !== undefined && lines[i + 1].startsWith("!!! ")));
+        look();
+        expects = looksLikeSquiggle && (lines[i].includes("~") || messageFollows);
         if (expects) decisions.push(`masked position in ${section.name}: a squiggle line is taken by its look`);
       }
       if (!expects) continue;
+      look();
       const l = lines[i];
-      if (!isSquiggle(l)) {
+      if (!looksLikeSquiggle) {
         throw new ReadError(
           `section ${section.name}: squiggle line expected after source line ${lineIndex + 1}, found ${JSON.stringify(l)}`,
         );

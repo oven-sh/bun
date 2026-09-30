@@ -56,7 +56,6 @@ unsafe impl Send for CopyFile {}
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
-    const OWED_AT_EXIT: bool = cfg!(windows);
     #[cfg(windows)]
     fn waits(this: &Self) -> bool {
         super::waits_on(&this.source_file_store.pathlike)

@@ -28,6 +28,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import type { Writable } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -1042,6 +1043,24 @@ it.skipIf(!isWindows)("'close' comes after everything the child wrote to a pipe 
   // The exit is announced a moment after the process stops being there to signal.
   spawnSync(bunExe(), ["-e", ""], { env: bunEnv });
   expect(await closed).toBe(Buffer.alloc(50, "0123456789").toString());
+});
+
+// As in node, which lets what is left in every pipe go when the child has exited.
+it.each([
+  ["is left alone", () => {}],
+  ["is only written to", (child: ChildProcess) => void (child.stdio[3] as Writable).write("request")],
+  ["is looked at once the child has exited", (child: ChildProcess) => void child.on("exit", () => child.stdio[3])],
+])("'close' comes once when a pipe above stderr that the child wrote to %s", async (_name, use) => {
+  const child = spawn(bunExe(), ["-e", `require("fs").writeSync(3, "reply")`], {
+    env: bunEnv,
+    stdio: ["ignore", "ignore", "inherit", "pipe"],
+  });
+  child.stdio[3]!.on("error", () => {});
+  let closes = 0;
+  const closed = new Promise<void>(resolve => child.on("close", () => (closes++, resolve())));
+  use(child);
+  await closed;
+  expect({ closes, pipeClosed: child.stdio[3]!.destroyed }).toEqual({ closes: 1, pipeClosed: true });
 });
 
 it("should call close and exit before process exits", async () => {

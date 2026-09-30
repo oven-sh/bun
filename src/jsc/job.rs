@@ -666,10 +666,6 @@ impl<C: JobContext> Job<C> {
             let task = &raw mut (*job).task;
             let next_append = &raw const (*job).next_append;
             let mut follows = core::ptr::null();
-            if C::OWED_AT_EXIT {
-                (*job).owed = true;
-                WorkPool::owe_write();
-            }
             for (index, fd_use) in fd_uses.into_iter().enumerate() {
                 let Some(fd_use) = fd_use else { continue };
                 let entered = cx
@@ -709,8 +705,9 @@ impl<C: JobContext> Job<C> {
             // Last: told of it, the job ahead can have given it to the pool, and
             // the pool can be done with it, before this returns. That job takes
             // itself out of `last_append` on this thread before it is freed.
-            if let Some(last) = follows.as_ref()
-                && last
+            if let Some(last) = follows.as_ref() {
+                (*task).callback = Self::run_handed_over;
+                if last
                     .compare_exchange(
                         core::ptr::null_mut(),
                         task,
@@ -718,11 +715,31 @@ impl<C: JobContext> Job<C> {
                         Ordering::Acquire,
                     )
                     .is_ok()
-            {
-                return;
+                {
+                    return;
+                }
+                (*task).callback = Self::run_on_pool;
+            }
+            if C::OWED_AT_EXIT {
+                (*job).owed = true;
+                WorkPool::owe_write();
             }
             WorkPool::schedule(task);
         }
+    }
+
+    /// The pool's from the job ahead of it, which counted it
+    /// ([`Completion::finish`]). Not counted while it was behind that one,
+    /// which can be a write to a pipe that nobody reads.
+    fn run_handed_over(task: *mut WorkPoolTask) {
+        #[cfg(windows)]
+        if C::OWED_AT_EXIT {
+            // SAFETY: as in `run`.
+            unsafe { (*bun_core::from_field_ptr!(Self, task, task)).owed = true };
+        } else {
+            WorkPool::write_settled();
+        }
+        Self::run_on_pool(task);
     }
 
     fn run_on_pool(task: *mut WorkPoolTask) {
@@ -820,12 +837,16 @@ impl<C: JobContext> Completion<C> {
         let me = ManuallyDrop::new(self);
         // SAFETY: the job is this thread's until it is posted below.
         let job = unsafe { &mut *me.job.as_ptr() };
-        if C::OWED_AT_EXIT && core::mem::take(&mut job.owed) {
-            WorkPool::write_settled();
-        }
         let next = job.next_append.swap(APPENDED, Ordering::AcqRel);
         if !next.is_null() {
+            // Before this one is settled: an exit that waits for it goes on to
+            // wait for what was written behind it.
+            #[cfg(windows)]
+            WorkPool::owe_write();
             WorkPool::schedule(next);
+        }
+        if C::OWED_AT_EXIT && core::mem::take(&mut job.owed) {
+            WorkPool::write_settled();
         }
         // SAFETY: moving the field out of a value that is never dropped.
         let ticket = unsafe { core::ptr::read(&raw const me.ticket) };

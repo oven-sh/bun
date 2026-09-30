@@ -1198,6 +1198,15 @@ class ChildProcess extends EventEmitter {
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
+
+      // 'close' waits for the pipes above stderr too, and one that holds what nobody reads never ends.
+      const stdio = this.#stdioObject;
+      if (stdio) {
+        for (let i = 3; i < stdio.length; i++) {
+          const stream = stdio[i];
+          if (stream && !stream.destroyed && stream.readable) stream.resume();
+        }
+      }
     }
 
     const spawnfile = this.spawnfile;

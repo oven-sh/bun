@@ -464,7 +464,10 @@ mod _async_tasks {
         args::Cp<'static>,
     );
     impl_fs_argument!(
-        args::FdVectorIo => |args| Some(FdUse::Uses(args.fd)),
+        args::FdVectorIo => |args| Some(match args.position {
+            Some(_) => FdUse::Uses(args.fd),
+            None => FdUse::Appends(args.fd),
+        }),
         args::FTruncate => |args| Some(FdUse::Uses(args.fd)),
         args::Write<'static> => |args| Some(match args.position {
             Some(_) => FdUse::Uses(args.fd),
@@ -877,7 +880,13 @@ mod _async_tasks {
             tracker.did_schedule(cx.global());
             let completion = FsCompletion::new(cx.global(), callback);
             let value = completion.value();
-            let fd_use = args.fd_use();
+            let fd_use = match args.fd_use() {
+                // `FdVectorIo` is `readv`'s too.
+                Some(FdUse::Appends(fd)) if matches!(F, NodeFSFunctionEnum::Readv) => {
+                    Some(FdUse::Uses(fd))
+                }
+                fd_use => fd_use,
+            };
             bun_jsc::Job::<Self>::schedule_on_fd(
                 cx,
                 Self {

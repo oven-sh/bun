@@ -57,6 +57,9 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import { spawn as nodeSpawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer, Socket } from "node:net";
 import * as os from "node:os";
 import path, { basename, dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
@@ -8587,6 +8590,11 @@ describe.skipIf(!isWindows).concurrent("what was written is in the file when pro
     ["Bun.file().writer() that is not ended", `Bun.file("out.txt").writer().write(text);`],
     ["Bun.write() of a Blob", `Bun.write("out.txt", new Blob([text]));`],
     ["Bun.write() to a descriptor", `Bun.write(fs.openSync("out.txt", "w"), Buffer.alloc(700_000, "x"));`, 700_000],
+    [
+      "one fs.write() behind the other",
+      `const fd = fs.openSync("out.txt", "w"); for (let i = 0; i < 50; i++) fs.write(fd, text, () => {});`,
+      50_000,
+    ],
   ])("%s", async (_name, write, size = 1000) => {
     using dir = tempDir("fs-write-then-exit", {});
     await using proc = Bun.spawn({
@@ -8643,6 +8651,56 @@ describe.skipIf(!isWindows).concurrent("what was written is in the file when pro
   });
 });
 
+// Such a write lasts for as long as the reader likes. (Windows only: elsewhere a build that takes the VM down at
+// exit waits for the threads that are in one.)
+describe.skipIf(!isWindows).concurrent("process.exit() does not wait for a write to a pipe that nobody reads", () => {
+  const bytes = `Buffer.alloc(1 << 20, "x")`;
+  it.each([
+    ["fs.write()", `fs.write(1, ${bytes}, () => {});`],
+    ["one fs.write() behind the other", `fs.write(1, ${bytes}, () => {}); fs.write(1, ${bytes}, () => {});`],
+    ["fs.write() behind fs.writev()", `fs.writev(1, [${bytes}], () => {}); fs.write(1, ${bytes}, () => {});`],
+    [
+      "one Bun.write() of a Blob behind the other",
+      `Bun.write(Bun.stdout, new Blob([${bytes}])); Bun.write(Bun.stdout, new Blob([${bytes}]));`,
+    ],
+    [
+      "Bun.write() of a file behind fs.write()",
+      `fs.write(1, ${bytes}, () => {}); Bun.write(Bun.stdout, Bun.file("in.bin"));`,
+    ],
+    ["Bun.write() of bytes to the pipe's path", `Bun.write(process.argv[1], ${bytes});`, true],
+    ["Bun.write() of a file to the pipe's path", `Bun.write(process.argv[1], Bun.file("in.bin"));`, true],
+  ])("%s", async (_name, write, waitsForConnection = false) => {
+    using dir = tempDir("fs-exit-full-pipe", { "in.bin": Buffer.alloc(1 << 20, "y").toString() });
+    const name = `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
+    const connected = Promise.withResolvers<Socket>();
+    await using server = createServer(socket => {
+      socket.pause();
+      socket.on("error", () => {});
+      connected.resolve(socket);
+    });
+    await once(server.listen(name), "listening");
+    // Reads nothing of its child's stdout until it is asked for it.
+    const child = nodeSpawn(
+      bunExe(),
+      // By its path the pipe is opened on another thread: the exit comes when that has written what fits.
+      [
+        "-e",
+        `const fs = require("fs"); ${write} ${waitsForConnection ? "fs.readSync(0, Buffer.alloc(1));" : ""} process.exit(0);`,
+        name,
+      ],
+      { env: bunEnv, cwd: String(dir), stdio: ["pipe", "pipe", "inherit"] },
+    );
+    const exited = once(child, "exit");
+    // It does not hear that the child is gone while it holds what it does not read, and the server waits for it.
+    using _socket = waitsForConnection
+      ? { [Symbol.dispose]: Socket.prototype.destroy.bind(await connected.promise) }
+      : null;
+    child.stdin!.end("x");
+    expect(await exited).toEqual([0, null]);
+    child.stdout!.resume();
+  });
+});
+
 // Each is written where the one before it left the descriptor's position. The work pool starts jobs in no particular order.
 describe.concurrent("writes at a descriptor's position that are not awaited keep their order", () => {
   it.each([
@@ -8651,6 +8709,8 @@ describe.concurrent("writes at a descriptor's position that are not awaited keep
     ["FileHandle.write()", "(fd, text, handle) => handle.write(text)"],
     ["fs.writeFile()", "(fd, text) => new Promise(resolve => fs.writeFile(fd, text, resolve))"],
     ["fs.appendFile()", "(fd, text) => new Promise(resolve => fs.appendFile(fd, text, resolve))"],
+    ["fs.writev()", "(fd, text) => new Promise(resolve => fs.writev(fd, [Buffer.from(text)], resolve))"],
+    ["FileHandle.writev()", "(fd, text, handle) => handle.writev([Buffer.from(text)])"],
     [
       "one after the other of them, and Bun.write()",
       `(fd, text, handle, i) =>
@@ -8659,7 +8719,8 @@ describe.concurrent("writes at a descriptor's position that are not awaited keep
            () => handle.write(text),
            () => new Promise(resolve => fs.appendFile(fd, text, resolve)),
            () => Bun.write(fd, text),
-         ][i % 4]()`,
+           () => new Promise(resolve => fs.writev(fd, [Buffer.from(text)], resolve)),
+         ][i % 5]()`,
     ],
   ])("%s", async (_name, write) => {
     using dir = tempDir("fs-write-order", {});

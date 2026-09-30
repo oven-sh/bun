@@ -641,8 +641,10 @@ impl Stdio {
                         PathOrFileDescriptor::Path(ref path) => {
                             if let Some((offset, length)) = window {
                                 let mut buf = bun_paths::path_buffer_pool::get();
+                                // The error names the path that the caller gave, not its NT form.
                                 let opened =
-                                    FileWindow::open_path(path.slice_z(&mut buf), offset, length);
+                                    FileWindow::open_path(path.slice_z(&mut buf), offset, length)
+                                        .map_err(|err| err.with_path(path.slice()));
                                 if self.set_file_window(global, opened)? {
                                     return Ok(());
                                 }

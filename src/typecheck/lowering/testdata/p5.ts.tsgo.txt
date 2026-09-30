@@ -1,0 +1,58 @@
+file /p5.ts scriptKind=3 variant=0 dts=false textLen=143
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=44 identifiers=13 text=16 reparsedClones=0
+root KindSourceFile [0,143) f=0x0
+  .Statements: list [0,142) n=7
+    - KindForInStatement [0,14) f=0x0
+      .Expression: KindIdentifier [9,11) f=0x0 Text="b"
+      .Initializer: KindIdentifier [5,6) f=0x400 Text="a"
+      .Statement: KindEmptyStatement [12,14) f=0x0
+    - KindForOfStatement [14,31) f=0x0
+      .Expression: KindIdentifier [26,28) f=0x0 Text="c"
+      .Initializer: KindPropertyAccessExpression [20,23) f=0x400
+        .Expression: KindIdentifier [20,21) f=0x400 Text="a"
+        .name: KindIdentifier [22,23) f=0x400 Text="b"
+      .Statement: KindEmptyStatement [29,31) f=0x0
+    - KindForStatement [31,51) f=0x0
+      .Initializer: KindVariableDeclarationList [37,45) f=0x0
+        .Declarations: list [40,45) n=2
+          - KindVariableDeclaration [40,42) f=0x400
+            .name: KindIdentifier [40,42) f=0x400 Text="x"
+          - KindVariableDeclaration [43,45) f=0x400
+            .name: KindIdentifier [43,45) f=0x400 Text="y"
+      .Statement: KindEmptyStatement [49,51) f=0x0
+    - KindIfStatement [51,65) f=0x0
+      .Expression: KindIdentifier [56,57) f=0x0 Text="a"
+      .ThenStatement: KindBlock [58,65) f=0x0
+        .Statements: list [60,63) n=1
+          - KindExpressionStatement [60,63) f=0x0
+            .Expression: KindIdentifier [60,62) f=0x0 Text="b"
+    - KindFunctionDeclaration [65,104) f=0x0
+      .Body: KindBlock [78,104) f=0x0
+        .Statements: list [80,102) n=2
+          - KindExpressionStatement [80,94) f=0x0
+            .Expression: KindStringLiteral [80,93) f=0x0 Text="use strict" TokenFlags=0x0
+          - KindReturnStatement [94,102) f=0x0
+      .Parameters: list [77,77) n=0
+      .name: KindIdentifier [74,76) f=0x0 Text="f"
+    - KindVariableStatement [104,124) f=0x0
+      .DeclarationList: KindVariableDeclarationList [104,123) f=0x0
+        .Declarations: list [108,123) n=1
+          - KindVariableDeclaration [108,123) f=0x0
+            .Initializer: KindObjectLiteralExpression [112,123) f=0x0 MultiLine
+              .Properties: list [114,121) n=1
+                - KindPropertyAssignment [114,121) f=0x0
+                  .Initializer: KindNumericLiteral [119,121) f=0x0 Text="1" TokenFlags=0x0
+                  .name: KindIdentifier [114,118) f=0x0 Text="a"
+            .name: KindIdentifier [108,110) f=0x0 Text="o"
+    - KindVariableStatement [124,142) f=0x0
+      .DeclarationList: KindVariableDeclarationList [124,141) f=0x0
+        .Declarations: list [128,141) n=1
+          - KindVariableDeclaration [128,141) f=0x0
+            .Initializer: KindArrayLiteralExpression [134,141) f=0x0 MultiLine
+              .Elements: list [136,140) n=1
+                - KindNumericLiteral [136,140) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [128,132) f=0x0 Text="arr"
+  .EndOfFileToken: KindEndOfFile [142,143) f=0x0

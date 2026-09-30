@@ -1,0 +1,39 @@
+file /q5.js scriptKind=1 variant=1 dts=false textLen=86
+externalModuleIndicator KindExportAssignment[67,85)
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=25 identifiers=8 text=9 reparsedClones=0
+root KindSourceFile [0,86) f=0x10000
+  .Statements: list [0,85) n=4
+    - KindVariableStatement [0,10) f=0x10000
+      .DeclarationList: KindVariableDeclarationList [0,9) f=0x10000
+        .Declarations: list [3,9) n=1
+          - KindVariableDeclaration [3,9) f=0x10000
+            .Initializer: KindNumericLiteral [7,9) f=0x10000 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [3,5) f=0x10000 Text="x"
+    - KindFunctionDeclaration [10,41) f=0x10000
+      .Body: KindBlock [24,41) f=0x10000
+        .Statements: list [26,39) n=1
+          - KindReturnStatement [26,39) f=0x10000
+            .Expression: KindPropertyAccessExpression [33,38) f=0x10020
+              .Expression: KindIdentifier [33,35) f=0x10000 Text="a"
+              .QuestionDotToken: KindQuestionDotToken [35,37) f=0x10000
+              .name: KindIdentifier [37,38) f=0x10000 Text="b"
+      .Parameters: list [22,23) n=1
+        - KindParameter [22,23) f=0x10000
+          .name: KindIdentifier [22,23) f=0x10000 Text="a"
+      .name: KindIdentifier [19,21) f=0x10000 Text="f"
+    - KindClassDeclaration [41,67) f=0x10000
+      .Members: list [51,65) n=1
+        - KindMethodDeclaration [51,65) f=0x10000
+          .Body: KindBlock [62,65) f=0x10000
+            .Statements: list [64,64) n=0
+          .Parameters: list [61,61) n=0
+          .modifiers.flags=0x100
+          .modifiers: list [51,58) n=1
+            - KindStaticKeyword [51,58) f=0x10000
+          .name: KindIdentifier [58,60) f=0x10000 Text="m"
+      .name: KindIdentifier [47,49) f=0x10000 Text="C"
+    - KindExportAssignment [67,85) f=0x10000
+      .Expression: KindIdentifier [82,84) f=0x12000 Text="C"
+  .EndOfFileToken: KindEndOfFile [85,86) f=0x10000

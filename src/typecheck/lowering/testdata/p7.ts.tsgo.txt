@@ -1,0 +1,34 @@
+file /p7.ts scriptKind=3 variant=0 dts=false textLen=147
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=28 identifiers=6 text=12 reparsedClones=0
+root KindSourceFile [0,147) f=0x0
+  .Statements: list [0,146) n=5
+    - KindFunctionDeclaration [0,26) f=0x200000
+      .Body: KindBlock [23,26) f=0x0
+        .Statements: list [25,25) n=0
+      .Parameters: list [22,22) n=0
+      .name: KindIdentifier [19,21) f=0x0 Text="f"
+    - KindVariableStatement [26,64) f=0x4200000
+      .DeclarationList: KindVariableDeclarationList [26,63) f=0x2
+        .Declarations: list [57,63) n=1
+          - KindVariableDeclaration [57,63) f=0x0
+            .Initializer: KindNumericLiteral [61,63) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [57,59) f=0x0 Text="c"
+    - KindVariableStatement [64,96) f=0x200000
+      .DeclarationList: KindVariableDeclarationList [64,95) f=0x0
+        .Declarations: list [89,95) n=1
+          - KindVariableDeclaration [89,95) f=0x0
+            .Initializer: KindNumericLiteral [93,95) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [89,91) f=0x0 Text="v"
+    - KindVariableStatement [96,135) f=0x0
+      .DeclarationList: KindVariableDeclarationList [96,134) f=0x0
+        .Declarations: list [112,134) n=1
+          - KindVariableDeclaration [112,134) f=0x0
+            .Initializer: KindParenthesizedExpression [116,134) f=0x200000
+              .Expression: KindNumericLiteral [132,133) f=0x0 Text="1" TokenFlags=0x0
+            .name: KindIdentifier [112,114) f=0x0 Text="w"
+    - KindExpressionStatement [135,146) f=0x0
+      .Expression: KindIdentifier [135,145) f=0x0 Text="x"
+  .EndOfFileToken: KindEndOfFile [146,147) f=0x0

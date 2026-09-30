@@ -1,0 +1,71 @@
+file /q4.ts scriptKind=3 variant=0 dts=false textLen=131
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=55 identifiers=15 text=21 reparsedClones=0
+root KindSourceFile [0,131) f=0x0
+  .Statements: list [0,130) n=5
+    - KindVariableStatement [0,62) f=0x0
+      .DeclarationList: KindVariableDeclarationList [0,61) f=0x2
+        .Declarations: list [5,61) n=2
+          - KindVariableDeclaration [5,45) f=0x0
+            .Initializer: KindIdentifier [43,45) f=0x0 Text="o"
+            .name: KindObjectBindingPattern [5,41) f=0x0
+              .Elements: list [7,40) n=4
+                - KindBindingElement [7,17) f=0x0
+                  .Initializer: KindNumericLiteral [15,17) f=0x0 Text="1" TokenFlags=0x0
+                  .PropertyName: KindComputedPropertyName [7,10) f=0x0
+                    .Expression: KindIdentifier [8,9) f=0x0 Text="k"
+                  .name: KindIdentifier [11,13) f=0x0 Text="v"
+                - KindBindingElement [18,25) f=0x0
+                  .PropertyName: KindStringLiteral [18,22) f=0x0 Text="q" TokenFlags=0x10000
+                  .name: KindIdentifier [23,25) f=0x0 Text="w"
+                - KindBindingElement [26,31) f=0x0
+                  .PropertyName: KindNumericLiteral [26,28) f=0x0 Text="3" TokenFlags=0x0
+                  .name: KindIdentifier [29,31) f=0x0 Text="z"
+                - KindBindingElement [32,40) f=0x0
+                  .DotDotDotToken: KindDotDotDotToken [32,36) f=0x0
+                  .name: KindIdentifier [36,40) f=0x0 Text="rest"
+          - KindVariableDeclaration [46,61) f=0x0
+            .Initializer: KindIdentifier [59,61) f=0x0 Text="p"
+            .name: KindArrayBindingPattern [46,57) f=0x0
+              .Elements: list [48,56) n=2
+                - KindBindingElement [48,51) f=0x0
+                  .name: KindArrayBindingPattern [48,51) f=0x0
+                    .Elements: list [49,50) n=1
+                      - KindBindingElement [49,50) f=0x0
+                        .name: KindIdentifier [49,50) f=0x0 Text="a"
+                - KindBindingElement [52,56) f=0x0
+                  .name: KindObjectBindingPattern [52,56) f=0x0
+                    .Elements: list [54,55) n=1
+                      - KindBindingElement [54,55) f=0x0
+                        .name: KindIdentifier [54,55) f=0x0 Text="b"
+    - KindExpressionStatement [62,73) f=0x0
+      .Expression: KindCallExpression [62,72) f=0x0
+        .Arguments: list [65,70) n=2
+          - KindNumericLiteral [65,66) f=0x0 Text="1" TokenFlags=0x0
+          - KindNumericLiteral [67,69) f=0x0 Text="2" TokenFlags=0x0
+        .Expression: KindIdentifier [62,64) f=0x0 Text="f"
+    - KindExpressionStatement [73,85) f=0x0
+      .Expression: KindBinaryExpression [73,84) f=0x0
+        .Left: KindIdentifier [73,75) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [75,77) f=0x0
+        .Right: KindObjectLiteralExpression [77,84) f=0x0
+          .Properties: list [79,82) n=1
+            - KindShorthandPropertyAssignment [79,81) f=0x0
+              .name: KindIdentifier [79,81) f=0x0 Text="a"
+    - KindSwitchStatement [85,110) f=0x0
+      .CaseBlock: KindCaseBlock [96,110) f=0x0
+        .Clauses: list [98,108) n=1
+          - KindCaseClause [98,108) f=0x0
+            .Expression: KindNumericLiteral [103,105) f=0x0 Text="1" TokenFlags=0x0
+            .Statements: list [106,108) n=1
+              - KindEmptyStatement [106,108) f=0x0
+      .Expression: KindIdentifier [94,95) f=0x0 Text="s"
+    - KindLabeledStatement [110,130) f=0x0
+      .Label: KindIdentifier [110,114) f=0x0 Text="lbl"
+      .Statement: KindBlock [115,130) f=0x0
+        .Statements: list [117,128) n=1
+          - KindBreakStatement [117,128) f=0x0
+            .Label: KindIdentifier [123,127) f=0x0 Text="lbl"
+  .EndOfFileToken: KindEndOfFile [130,131) f=0x0

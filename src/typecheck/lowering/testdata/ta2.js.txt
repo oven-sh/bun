@@ -1,0 +1,16 @@
+a < b > (c);
+a < b, c > (d);
+a < b.c > `x`;
+a < 1 > (c);
+new a < b > (c);
+a < b >
+c;
+x << y > (z) > (w);
+x << 2 > (y);
+a < b[c] > (d);
+a < b | c > (d);
+a < typeof b > (c);
+a < -1 > (b);
+a < b.
+c > (d);
+g < h << i + j > (k);

@@ -1,0 +1,37 @@
+file /q7.ts scriptKind=3 variant=0 dts=false textLen=62
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=30 identifiers=12 text=12 reparsedClones=0
+root KindSourceFile [0,62) f=0x0
+  .Statements: list [0,61) n=7
+    - KindExpressionStatement [0,5) f=0x0
+      .Expression: KindBinaryExpression [0,5) f=0x0
+        .Left: KindIdentifier [0,1) f=0x0 Text="x"
+        .OperatorToken: KindEqualsToken [1,3) f=0x0
+        .Right: KindIdentifier [3,5) f=0x0 Text="a"
+    - KindExpressionStatement [5,9) f=0x0
+      .Expression: KindPrefixUnaryExpression [5,9) f=0x0 Operator=KindPlusPlusToken
+        .Operand: KindIdentifier [8,9) f=0x0 Text="b"
+    - KindExpressionStatement [9,19) f=0x0
+      .Expression: KindBinaryExpression [9,19) f=0x0
+        .Left: KindIdentifier [9,11) f=0x0 Text="y"
+        .OperatorToken: KindEqualsToken [11,13) f=0x0
+        .Right: KindCallExpression [13,19) f=0x0
+          .Arguments: list [17,18) n=1
+            - KindIdentifier [17,18) f=0x0 Text="d"
+          .Expression: KindIdentifier [13,15) f=0x0 Text="c"
+    - KindExpressionStatement [19,28) f=0x0
+      .Expression: KindIdentifier [19,27) f=0x0 Text="return_"
+    - KindIfStatement [28,44) f=0x0
+      .ElseStatement: KindExpressionStatement [42,44) f=0x0
+        .Expression: KindIdentifier [42,44) f=0x0 Text="c"
+      .Expression: KindIdentifier [33,34) f=0x0 Text="a"
+      .ThenStatement: KindExpressionStatement [35,37) f=0x0
+        .Expression: KindIdentifier [35,37) f=0x0 Text="b"
+    - KindDoStatement [44,59) f=0x0
+      .Expression: KindIdentifier [57,58) f=0x0 Text="e"
+      .Statement: KindEmptyStatement [47,49) f=0x0
+    - KindExpressionStatement [59,61) f=0x0
+      .Expression: KindIdentifier [59,61) f=0x0 Text="f"
+  .EndOfFileToken: KindEndOfFile [61,62) f=0x0

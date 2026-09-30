@@ -1,0 +1,35 @@
+file /dir1.ts scriptKind=3 variant=0 dts=false textLen=130
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=27 identifiers=1 text=9 reparsedClones=0
+root KindSourceFile [0,130) f=0x0
+  .Statements: list [0,129) n=6
+    - KindExpressionStatement [0,8) f=0x0
+      .Expression: KindParenthesizedExpression [0,7) f=0x0
+        .Expression: KindStringLiteral [1,6) f=0x0 Text="foo" TokenFlags=0x0
+    - KindExpressionStatement [8,40) f=0x0
+      .Expression: KindParenthesizedExpression [8,33) f=0x0
+        .Expression: KindStringLiteral [15,26) f=0x0 Text="bar" TokenFlags=0x0
+    - KindExpressionStatement [40,51) f=0x0
+      .Expression: KindParenthesizedExpression [40,50) f=0x0
+        .Expression: KindParenthesizedExpression [42,49) f=0x0
+          .Expression: KindStringLiteral [43,48) f=0x0 Text="baz" TokenFlags=0x0
+    - KindExpressionStatement [51,65) f=0x0
+      .Expression: KindStringLiteral [51,64) f=0x0 Text="use strict" TokenFlags=0x0
+    - KindExpressionStatement [65,81) f=0x0
+      .Expression: KindParenthesizedExpression [65,80) f=0x0
+        .Expression: KindStringLiteral [67,79) f=0x0 Text="use strict" TokenFlags=0x0
+    - KindFunctionDeclaration [81,129) f=0x0
+      .Body: KindBlock [94,129) f=0x0
+        .Statements: list [96,127) n=3
+          - KindExpressionStatement [96,110) f=0x0
+            .Expression: KindStringLiteral [96,109) f=0x0 Text="use strict" TokenFlags=0x0
+          - KindExpressionStatement [110,117) f=0x0
+            .Expression: KindParenthesizedExpression [110,116) f=0x0
+              .Expression: KindStringLiteral [112,115) f=0x0 Text="x" TokenFlags=0x0
+          - KindReturnStatement [117,127) f=0x0
+            .Expression: KindNumericLiteral [124,126) f=0x0 Text="1" TokenFlags=0x0
+      .Parameters: list [93,93) n=0
+      .name: KindIdentifier [90,92) f=0x0 Text="f"
+  .EndOfFileToken: KindEndOfFile [129,130) f=0x0

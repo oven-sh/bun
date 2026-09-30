@@ -1,0 +1,69 @@
+file /q1.ts scriptKind=3 variant=0 dts=false textLen=128
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=58 identifiers=25 text=27 reparsedClones=0
+root KindSourceFile [0,128) f=0x0
+  .Statements: list [0,127) n=1
+    - KindForStatement [0,127) f=0x0
+      .Initializer: KindVariableDeclarationList [5,121) f=0x0
+        .Declarations: list [8,121) n=9
+          - KindVariableDeclaration [8,31) f=0x400
+            .Initializer: KindFunctionExpression [12,31) f=0x400
+              .Body: KindBlock [24,31) f=0x400
+                .Statements: list [26,29) n=1
+                  - KindExpressionStatement [26,29) f=0x400
+                    .Expression: KindIdentifier [26,28) f=0x400 Text="a"
+              .Parameters: list [23,23) n=0
+            .name: KindIdentifier [8,10) f=0x400 Text="f"
+          - KindVariableDeclaration [32,44) f=0x400
+            .Initializer: KindArrowFunction [36,44) f=0x400
+              .Body: KindIdentifier [42,44) f=0x400 Text="b"
+              .EqualsGreaterThanToken: KindEqualsGreaterThanToken [39,42) f=0x400
+              .Parameters: list [38,38) n=0
+            .name: KindIdentifier [32,34) f=0x400 Text="g"
+          - KindVariableDeclaration [45,53) f=0x400
+            .Initializer: KindArrayLiteralExpression [49,53) f=0x400
+              .Elements: list [51,52) n=1
+                - KindIdentifier [51,52) f=0x400 Text="c"
+            .name: KindIdentifier [45,47) f=0x400 Text="h"
+          - KindVariableDeclaration [54,65) f=0x400
+            .Initializer: KindObjectLiteralExpression [58,65) f=0x400
+              .Properties: list [60,64) n=1
+                - KindPropertyAssignment [60,64) f=0x400
+                  .Initializer: KindIdentifier [62,64) f=0x0 Text="k"
+                  .name: KindIdentifier [60,61) f=0x400 Text="j"
+            .name: KindIdentifier [54,56) f=0x400 Text="i"
+          - KindVariableDeclaration [66,74) f=0x400
+            .Initializer: KindParenthesizedExpression [70,74) f=0x400
+              .Expression: KindIdentifier [72,73) f=0x0 Text="m"
+            .name: KindIdentifier [66,68) f=0x400 Text="l"
+          - KindVariableDeclaration [75,89) f=0x400
+            .Initializer: KindConditionalExpression [79,89) f=0x400
+              .ColonToken: KindColonToken [85,87) f=0x400
+              .Condition: KindIdentifier [79,81) f=0x400 Text="o"
+              .QuestionToken: KindQuestionToken [81,83) f=0x400
+              .WhenFalse: KindIdentifier [87,89) f=0x400 Text="q"
+              .WhenTrue: KindIdentifier [83,85) f=0x0 Text="p"
+            .name: KindIdentifier [75,77) f=0x400 Text="n"
+          - KindVariableDeclaration [90,99) f=0x400
+            .Initializer: KindCallExpression [94,99) f=0x400
+              .Arguments: list [97,98) n=1
+                - KindIdentifier [97,98) f=0x0 Text="t"
+              .Expression: KindIdentifier [94,96) f=0x400 Text="s"
+            .name: KindIdentifier [90,92) f=0x400 Text="r"
+          - KindVariableDeclaration [100,111) f=0x400
+            .Initializer: KindTemplateExpression [104,111) f=0x400
+              .Head: KindTemplateHead [104,108) f=0x400 RawText="" TemplateFlags=0x0 Text="" TokenFlags=0x0
+              .TemplateSpans: list [108,111) n=1
+                - KindTemplateSpan [108,111) f=0x400
+                  .Expression: KindIdentifier [108,109) f=0x0 Text="v"
+                  .Literal: KindTemplateTail [109,111) f=0x400 RawText="" TemplateFlags=0x0 Text="" TokenFlags=0x0
+            .name: KindIdentifier [100,102) f=0x400 Text="u"
+          - KindVariableDeclaration [112,121) f=0x400
+            .Initializer: KindElementAccessExpression [116,121) f=0x400
+              .ArgumentExpression: KindIdentifier [119,120) f=0x0 Text="y"
+              .Expression: KindIdentifier [116,118) f=0x400 Text="x"
+            .name: KindIdentifier [112,114) f=0x400 Text="w"
+      .Statement: KindEmptyStatement [125,127) f=0x0
+  .EndOfFileToken: KindEndOfFile [127,128) f=0x0

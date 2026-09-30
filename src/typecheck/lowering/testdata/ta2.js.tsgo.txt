@@ -1,0 +1,157 @@
+file /ta2.js scriptKind=1 variant=1 dts=false textLen=224
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=152 identifiers=47 text=51 reparsedClones=0
+root KindSourceFile [0,224) f=0x10000
+  .Statements: list [0,223) n=14
+    - KindExpressionStatement [0,12) f=0x10000
+      .Expression: KindBinaryExpression [0,11) f=0x10000
+        .Left: KindBinaryExpression [0,5) f=0x10000
+          .Left: KindIdentifier [0,1) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [1,3) f=0x10000
+          .Right: KindIdentifier [3,5) f=0x10000 Text="b"
+        .OperatorToken: KindGreaterThanToken [5,7) f=0x10000
+        .Right: KindParenthesizedExpression [7,11) f=0x10000
+          .Expression: KindIdentifier [9,10) f=0x10000 Text="c"
+    - KindExpressionStatement [12,28) f=0x10000
+      .Expression: KindBinaryExpression [12,27) f=0x10000
+        .Left: KindBinaryExpression [12,18) f=0x10000
+          .Left: KindIdentifier [12,14) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [14,16) f=0x10000
+          .Right: KindIdentifier [16,18) f=0x10000 Text="b"
+        .OperatorToken: KindCommaToken [18,19) f=0x10000
+        .Right: KindBinaryExpression [19,27) f=0x10000
+          .Left: KindIdentifier [19,21) f=0x10000 Text="c"
+          .OperatorToken: KindGreaterThanToken [21,23) f=0x10000
+          .Right: KindParenthesizedExpression [23,27) f=0x10000
+            .Expression: KindIdentifier [25,26) f=0x10000 Text="d"
+    - KindExpressionStatement [28,43) f=0x10000
+      .Expression: KindBinaryExpression [28,42) f=0x10000
+        .Left: KindBinaryExpression [28,36) f=0x10000
+          .Left: KindIdentifier [28,30) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [30,32) f=0x10000
+          .Right: KindPropertyAccessExpression [32,36) f=0x10000
+            .Expression: KindIdentifier [32,34) f=0x10000 Text="b"
+            .name: KindIdentifier [35,36) f=0x10000 Text="c"
+        .OperatorToken: KindGreaterThanToken [36,38) f=0x10000
+        .Right: KindNoSubstitutionTemplateLiteral [38,42) f=0x10000 RawText="" TemplateFlags=0x0 Text="x" TokenFlags=0x0
+    - KindExpressionStatement [43,56) f=0x10000
+      .Expression: KindBinaryExpression [43,55) f=0x10000
+        .Left: KindBinaryExpression [43,49) f=0x10000
+          .Left: KindIdentifier [43,45) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [45,47) f=0x10000
+          .Right: KindNumericLiteral [47,49) f=0x10000 Text="1" TokenFlags=0x0
+        .OperatorToken: KindGreaterThanToken [49,51) f=0x10000
+        .Right: KindParenthesizedExpression [51,55) f=0x10000
+          .Expression: KindIdentifier [53,54) f=0x10000 Text="c"
+    - KindExpressionStatement [56,73) f=0x10000
+      .Expression: KindBinaryExpression [56,72) f=0x10000
+        .Left: KindBinaryExpression [56,66) f=0x10000
+          .Left: KindNewExpression [56,62) f=0x10000
+            .Expression: KindIdentifier [60,62) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [62,64) f=0x10000
+          .Right: KindIdentifier [64,66) f=0x10000 Text="b"
+        .OperatorToken: KindGreaterThanToken [66,68) f=0x10000
+        .Right: KindParenthesizedExpression [68,72) f=0x10000
+          .Expression: KindIdentifier [70,71) f=0x10000 Text="c"
+    - KindExpressionStatement [73,84) f=0x10000
+      .Expression: KindBinaryExpression [73,83) f=0x10000
+        .Left: KindBinaryExpression [73,79) f=0x10000
+          .Left: KindIdentifier [73,75) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [75,77) f=0x10000
+          .Right: KindIdentifier [77,79) f=0x10000 Text="b"
+        .OperatorToken: KindGreaterThanToken [79,81) f=0x10000
+        .Right: KindIdentifier [81,83) f=0x10000 Text="c"
+    - KindExpressionStatement [84,104) f=0x10000
+      .Expression: KindBinaryExpression [84,103) f=0x10000
+        .Left: KindBinaryExpression [84,97) f=0x10000
+          .Left: KindBinaryExpression [84,91) f=0x10000
+            .Left: KindIdentifier [84,86) f=0x10000 Text="x"
+            .OperatorToken: KindLessThanLessThanToken [86,89) f=0x10000
+            .Right: KindIdentifier [89,91) f=0x10000 Text="y"
+          .OperatorToken: KindGreaterThanToken [91,93) f=0x10000
+          .Right: KindParenthesizedExpression [93,97) f=0x10000
+            .Expression: KindIdentifier [95,96) f=0x10000 Text="z"
+        .OperatorToken: KindGreaterThanToken [97,99) f=0x10000
+        .Right: KindParenthesizedExpression [99,103) f=0x10000
+          .Expression: KindIdentifier [101,102) f=0x10000 Text="w"
+    - KindExpressionStatement [104,118) f=0x10000
+      .Expression: KindBinaryExpression [104,117) f=0x10000
+        .Left: KindBinaryExpression [104,111) f=0x10000
+          .Left: KindIdentifier [104,106) f=0x10000 Text="x"
+          .OperatorToken: KindLessThanLessThanToken [106,109) f=0x10000
+          .Right: KindNumericLiteral [109,111) f=0x10000 Text="2" TokenFlags=0x0
+        .OperatorToken: KindGreaterThanToken [111,113) f=0x10000
+        .Right: KindParenthesizedExpression [113,117) f=0x10000
+          .Expression: KindIdentifier [115,116) f=0x10000 Text="y"
+    - KindExpressionStatement [118,134) f=0x10000
+      .Expression: KindBinaryExpression [118,133) f=0x10000
+        .Left: KindBinaryExpression [118,127) f=0x10000
+          .Left: KindIdentifier [118,120) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [120,122) f=0x10000
+          .Right: KindElementAccessExpression [122,127) f=0x10000
+            .ArgumentExpression: KindIdentifier [125,126) f=0x10000 Text="c"
+            .Expression: KindIdentifier [122,124) f=0x10000 Text="b"
+        .OperatorToken: KindGreaterThanToken [127,129) f=0x10000
+        .Right: KindParenthesizedExpression [129,133) f=0x10000
+          .Expression: KindIdentifier [131,132) f=0x10000 Text="d"
+    - KindExpressionStatement [134,151) f=0x10000
+      .Expression: KindBinaryExpression [134,150) f=0x10000
+        .Left: KindBinaryExpression [134,140) f=0x10000
+          .Left: KindIdentifier [134,136) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [136,138) f=0x10000
+          .Right: KindIdentifier [138,140) f=0x10000 Text="b"
+        .OperatorToken: KindBarToken [140,142) f=0x10000
+        .Right: KindBinaryExpression [142,150) f=0x10000
+          .Left: KindIdentifier [142,144) f=0x10000 Text="c"
+          .OperatorToken: KindGreaterThanToken [144,146) f=0x10000
+          .Right: KindParenthesizedExpression [146,150) f=0x10000
+            .Expression: KindIdentifier [148,149) f=0x10000 Text="d"
+    - KindExpressionStatement [151,171) f=0x10000
+      .Expression: KindBinaryExpression [151,170) f=0x10000
+        .Left: KindBinaryExpression [151,164) f=0x10000
+          .Left: KindIdentifier [151,153) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [153,155) f=0x10000
+          .Right: KindTypeOfExpression [155,164) f=0x10000
+            .Expression: KindIdentifier [162,164) f=0x10000 Text="b"
+        .OperatorToken: KindGreaterThanToken [164,166) f=0x10000
+        .Right: KindParenthesizedExpression [166,170) f=0x10000
+          .Expression: KindIdentifier [168,169) f=0x10000 Text="c"
+    - KindExpressionStatement [171,185) f=0x10000
+      .Expression: KindBinaryExpression [171,184) f=0x10000
+        .Left: KindBinaryExpression [171,178) f=0x10000
+          .Left: KindIdentifier [171,173) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [173,175) f=0x10000
+          .Right: KindPrefixUnaryExpression [175,178) f=0x10000 Operator=KindMinusToken
+            .Operand: KindNumericLiteral [177,178) f=0x10000 Text="1" TokenFlags=0x0
+        .OperatorToken: KindGreaterThanToken [178,180) f=0x10000
+        .Right: KindParenthesizedExpression [180,184) f=0x10000
+          .Expression: KindIdentifier [182,183) f=0x10000 Text="b"
+    - KindExpressionStatement [185,201) f=0x10000
+      .Expression: KindBinaryExpression [185,200) f=0x10000
+        .Left: KindBinaryExpression [185,194) f=0x10000
+          .Left: KindIdentifier [185,187) f=0x10000 Text="a"
+          .OperatorToken: KindLessThanToken [187,189) f=0x10000
+          .Right: KindPropertyAccessExpression [189,194) f=0x10000
+            .Expression: KindIdentifier [189,191) f=0x10000 Text="b"
+            .name: KindIdentifier [192,194) f=0x10000 Text="c"
+        .OperatorToken: KindGreaterThanToken [194,196) f=0x10000
+        .Right: KindParenthesizedExpression [196,200) f=0x10000
+          .Expression: KindIdentifier [198,199) f=0x10000 Text="d"
+    - KindExpressionStatement [201,223) f=0x10000
+      .Expression: KindBinaryExpression [201,222) f=0x10000
+        .Left: KindBinaryExpression [201,216) f=0x10000
+          .Left: KindIdentifier [201,203) f=0x10000 Text="g"
+          .OperatorToken: KindLessThanToken [203,205) f=0x10000
+          .Right: KindBinaryExpression [205,216) f=0x10000
+            .Left: KindIdentifier [205,207) f=0x10000 Text="h"
+            .OperatorToken: KindLessThanLessThanToken [207,210) f=0x10000
+            .Right: KindBinaryExpression [210,216) f=0x10000
+              .Left: KindIdentifier [210,212) f=0x10000 Text="i"
+              .OperatorToken: KindPlusToken [212,214) f=0x10000
+              .Right: KindIdentifier [214,216) f=0x10000 Text="j"
+        .OperatorToken: KindGreaterThanToken [216,218) f=0x10000
+        .Right: KindParenthesizedExpression [218,222) f=0x10000
+          .Expression: KindIdentifier [220,221) f=0x10000 Text="k"
+  .EndOfFileToken: KindEndOfFile [223,224) f=0x10000

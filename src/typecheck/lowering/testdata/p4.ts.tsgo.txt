@@ -1,0 +1,36 @@
+file /p4.ts scriptKind=3 variant=0 dts=false textLen=91
+externalModuleIndicator <nil>
+commonJSModuleIndicator <nil>
+usesUriStyleNodeCoreModules 0
+counts nodes=30 identifiers=0 text=14 reparsedClones=0
+root KindSourceFile [0,91) f=0x0
+  .Statements: list [0,90) n=14
+    - KindExpressionStatement [0,5) f=0x0
+      .Expression: KindNumericLiteral [0,4) f=0x0 Text="31" TokenFlags=0x40
+    - KindExpressionStatement [5,11) f=0x0
+      .Expression: KindNumericLiteral [5,10) f=0x0 Text="3" TokenFlags=0x80
+    - KindExpressionStatement [11,17) f=0x0
+      .Expression: KindNumericLiteral [11,16) f=0x0 Text="15" TokenFlags=0x100
+    - KindExpressionStatement [17,24) f=0x0
+      .Expression: KindNumericLiteral [17,23) f=0x0 Text="1000" TokenFlags=0x200
+    - KindExpressionStatement [24,29) f=0x0
+      .Expression: KindNumericLiteral [24,28) f=0x0 Text="1000" TokenFlags=0x10
+    - KindExpressionStatement [29,35) f=0x0
+      .Expression: KindNumericLiteral [29,34) f=0x0 Text="1.5" TokenFlags=0x0
+    - KindExpressionStatement [35,39) f=0x0
+      .Expression: KindNumericLiteral [35,38) f=0x0 Text="0.5" TokenFlags=0x0
+    - KindExpressionStatement [39,43) f=0x0
+      .Expression: KindNumericLiteral [39,42) f=0x0 Text="5" TokenFlags=0x0
+    - KindExpressionStatement [43,48) f=0x0
+      .Expression: KindBigIntLiteral [43,47) f=0x0 Text="10n" TokenFlags=0x0
+    - KindExpressionStatement [48,55) f=0x0
+      .Expression: KindBigIntLiteral [48,54) f=0x0 Text="0x1fn" TokenFlags=0x40
+    - KindExpressionStatement [55,62) f=0x0
+      .Expression: KindStringLiteral [55,61) f=0x0 Text="a\n" TokenFlags=0x10000
+    - KindExpressionStatement [62,72) f=0x0
+      .Expression: KindStringLiteral [62,71) f=0x0 Text="A" TokenFlags=0x400
+    - KindExpressionStatement [72,85) f=0x0
+      .Expression: KindStringLiteral [72,84) f=0x0 Text="\U0001f600" TokenFlags=0x8
+    - KindExpressionStatement [85,90) f=0x0
+      .Expression: KindStringLiteral [85,89) f=0x0 Text="q" TokenFlags=0x10000
+  .EndOfFileToken: KindEndOfFile [90,91) f=0x0

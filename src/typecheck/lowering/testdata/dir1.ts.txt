@@ -1,0 +1,7 @@
+("foo");
+/*1*/(/*2*/ "bar" /*3*/)/*4*/
+;
+(("baz"));
+"use strict";
+("use strict");
+function f() { "use strict"; ("x"); return 1; }

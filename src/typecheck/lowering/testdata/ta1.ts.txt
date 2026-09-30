@@ -1,0 +1,21 @@
+for (i = 0; i < n; i++) {}
+a < b && c > d;
+i < arr[i + 1];
+x = a < b ? c > d : e;
+a < b.c > d;
+a < b | c > d;
+a < 1 > c;
+f(a << b, c);
+1 << 20;
+a < b[c] > d;
+a < (b + c);
+a < -1 > b;
+a < typeof b > c;
+a < this > b;
+a < b >= c;
+a < b >> c;
+a++ < b > (c);
+a < b > c.d;
+a < b > !c;
+a < b > [c];
+a < b ? c : d > (e);

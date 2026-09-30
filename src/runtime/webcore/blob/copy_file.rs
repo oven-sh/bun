@@ -179,13 +179,12 @@ impl CopyFile {
             self.read_len = SizeType::try_from(dest.st_size).expect("int cast");
             return Ok(true);
         }
-        if dest.st_size != 0 {
-            bun_sys::ftruncate(self.destination_fd, 0)?;
-        } else if source.st_size == 0 {
-            // An empty source writes nothing, so this is what updates the times.
-            let _ = bun_sys::ftruncate(self.destination_fd, 0);
+        // Also for a size of 0: a network mount can report a stale size.
+        match bun_sys::ftruncate(self.destination_fd, 0) {
+            // ceph-fuse refuses this on a file that was just created read-only. libuv ignores it too.
+            Err(err) if dest.st_size != 0 || err.get_errno() != bun_sys::E::EACCES => Err(err),
+            _ => Ok(false),
         }
-        Ok(false)
     }
 
     pub(crate) fn do_close(&mut self) {
@@ -789,8 +788,8 @@ impl CopyFile {
         let stat: Stat = match bun_sys::fstat(self.source_fd) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                self.do_close();
                 self.system_error = Some(err.to_system_error());
+                self.do_close();
                 return;
             }
         };

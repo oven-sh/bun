@@ -434,6 +434,20 @@ const IS_UV_FS_COPYFILE_DISABLED =
       },
     );
 
+    it.skipIf(isWindows)("a source fd that is not open rejects before the destination changes", async () => {
+      using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content });
+      const dest = join(String(dir), "dest.txt");
+      fs.chmodSync(dest, 0o644);
+
+      await expect(Bun.write(dest, Bun.file(987_654), { mode: 0o600 })).rejects.toThrow(
+        expect.objectContaining({ code: "EBADF" }),
+      );
+      expect({ mode: fs.statSync(dest).mode & 0o777, intact: fs.readFileSync(dest, "utf8") === content }).toEqual({
+        mode: 0o644,
+        intact: true,
+      });
+    });
+
     // In a child process: the closed fd number is free, and another test in this process could take it.
     it.skipIf(!isLinux)("a source fd that is already closed rejects and leaves the destination intact", async () => {
       using dir = tempDir("bun-write-closed-source-fd", { "src.txt": "source", "dest.txt": content });

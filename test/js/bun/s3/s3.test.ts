@@ -1553,11 +1553,40 @@ describe.concurrent("s3 missing credentials", () => {
       await Bun.s3.presign("test");
     });
   });
+  // In a child without the S3_ and AWS_ variables: this case awaits its result, so it must
+  // not take credentials, a bucket or an endpoint from the machine that runs the test.
   it("writer", async () => {
-    await assertMissingCredentials(async () => {
-      const writer = Bun.s3.file("test").writer();
-      writer.write("test");
-      await writer.end();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const writer = Bun.s3.file("test").writer();
+         writer.write("test");
+         console.log(await Promise.resolve(writer.end()).then(n => "resolved " + n, e => "rejected " + e.code));`,
+      ],
+      env: {
+        ...bunEnv,
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        S3_REGION: undefined,
+        S3_ENDPOINT: undefined,
+        S3_BUCKET: undefined,
+        S3_SESSION_TOKEN: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+        AWS_REGION: undefined,
+        AWS_ENDPOINT: undefined,
+        AWS_BUCKET: undefined,
+        AWS_SESSION_TOKEN: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "rejected ERR_S3_MISSING_CREDENTIALS",
+      stderr: "",
+      exitCode: 0,
     });
   });
   it("file", async () => {

@@ -7161,8 +7161,12 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eq_ascii(b"cause") {
+                // An own `cause` is queued at every level, like one from the
+                // constructor. Printed in place, the fallback below would
+                // queue it again and each level would double the renders.
+                let is_cause = field.eq_ascii(b"cause");
+                if kind == JSType::ErrorInstance && (is_cause || !prev_had_errors) {
+                    if is_cause {
                         saw_cause = true;
                     }
                     value.protect();

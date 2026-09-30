@@ -13,6 +13,10 @@ pub(crate) struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
+    /// A side printed `[Object]` for a value it had already printed in full.
+    abbreviated: bool,
+    /// A side nests deeper than the native stack allows.
+    stopped_early: bool,
 }
 
 impl<'a> DiffFormatter<'a> {
@@ -22,14 +26,22 @@ impl<'a> DiffFormatter<'a> {
         expected: JSValue,
         not: bool,
     ) -> JsResult<DiffFormatter<'static>> {
-        let mut received_buf: Vec<u8> = Vec::new();
-        Formatter::diff(global_this).format_value::<false>(received, &mut received_buf)?;
-        let mut expected_buf: Vec<u8> = Vec::new();
-        Formatter::diff(global_this).format_value::<false>(expected, &mut expected_buf)?;
+        let mut abbreviated = false;
+        let mut stopped_early = false;
+        let mut side = |value: JSValue| -> JsResult<Cow<'static, [u8]>> {
+            let mut buf: Vec<u8> = Vec::new();
+            let mut formatter = Formatter::diff(global_this);
+            formatter.format_value::<false>(value, &mut buf)?;
+            abbreviated |= formatter.abbreviated_shared_references();
+            stopped_early |= formatter.stopped_early();
+            Ok(Cow::Owned(trim_one_newline(buf)))
+        };
         Ok(DiffFormatter {
-            received_string: Cow::Owned(trim_one_newline(received_buf)),
-            expected_string: Cow::Owned(trim_one_newline(expected_buf)),
+            received_string: side(received)?,
+            expected_string: side(expected)?,
             not,
+            abbreviated,
+            stopped_early,
         })
     }
 
@@ -38,6 +50,8 @@ impl<'a> DiffFormatter<'a> {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),
             not,
+            abbreviated: false,
+            stopped_early: false,
         }
     }
 }
@@ -62,7 +76,14 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             &self.expected_string,
             f,
             &diff_config,
-        )
+        )?;
+        if self.abbreviated {
+            f.write_str("\n\nnote: [Array], [Object], [Map], [Set] and [Error] stand for values that are printed in full earlier in the same output.")?;
+        }
+        if self.stopped_early {
+            f.write_str("\n\nnote: a value is nested too deeply to print in full.")?;
+        }
+        Ok(())
     }
 }
 

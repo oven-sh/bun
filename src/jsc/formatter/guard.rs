@@ -254,6 +254,12 @@ impl<'a> Formatter<'a> {
         self.abbreviated
     }
 
+    /// Whether the print stopped early: the value nests deeper than the native
+    /// stack allows, or the sink stopped accepting bytes.
+    pub fn stopped_early(&self) -> bool {
+        self.failed
+    }
+
     /// `Ok(None)` when there is nothing left for a printer to do. Outlined so
     /// its locals live in a leaf frame that is popped before the descent: the
     /// 512-deep `Bun.inspect` test cannot afford them per level under ASAN.

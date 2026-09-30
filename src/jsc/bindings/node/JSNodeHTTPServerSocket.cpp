@@ -303,42 +303,6 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobal
     return JSC::JSValue::encode(array);
 }
 
-template<bool SSL>
-static std::string& responseTrailersFor(us_socket_t* socket)
-{
-    /* node:http compat connections always carry the derived ext block. */
-    auto* httpResponseData = (uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket);
-    return httpResponseData->nodeHttpResponseTrailers;
-}
-
-void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
-{
-    if (!socket || us_socket_is_closed(socket) || trailers.isEmpty()) {
-        return;
-    }
-    // Node writes trailers with encoding 'latin1' (lib/_http_outgoing.js);
-    // checkInvalidHeaderChar has already rejected any code point > 0xFF,
-    // so 16-bit chars truncate 1:1 to bytes. UTF-8 would emit two bytes for
-    // obs-text (0x80–0xFF) where Node emits one.
-    std::string& dest = is_ssl ? responseTrailersFor<true>(socket) : responseTrailersFor<false>(socket);
-    dest.resize(trailers.length());
-    if (trailers.is8Bit()) {
-        auto span = trailers.span8();
-        memcpy(dest.data(), span.data(), span.size());
-    } else {
-        auto span = trailers.span16();
-        for (size_t i = 0; i < span.size(); i++)
-            dest[i] = static_cast<char>(span[i]);
-    }
-    /* internalEnd() decides the response framing from this base-struct mirror
-     * so the shared path never touches the node-only string. */
-    if (is_ssl) {
-        ((uWS::HttpResponseData<true>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<true>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
-    } else {
-        ((uWS::HttpResponseData<false>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<false>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
-    }
-}
-
 bool JSNodeHTTPServerSocket::isClosed() const
 {
     return !socket || us_socket_is_closed(socket);
@@ -669,7 +633,6 @@ static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     if (isAncient) {
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST;
     }
-    httpResponseData->nodeHttpResponseTrailers.clear();
 
     if (httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
         httpResponseData->nodeHttpQueuedPipelinedCount--;

@@ -931,6 +931,23 @@ extern "C"
     }
   }
 
+  void uws_res_end_with_trailers(int ssl, uws_res_r res, const char *data, size_t length,
+                                 const char *trailer_section, size_t trailer_section_length)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->clearOnWritableAndAborted();
+      uwsRes->endWithTrailers(stringViewFromC(data, length), stringViewFromC(trailer_section, trailer_section_length));
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->clearOnWritableAndAborted();
+      uwsRes->endWithTrailers(stringViewFromC(data, length), stringViewFromC(trailer_section, trailer_section_length));
+    }
+  }
+
   void uws_res_pause(int ssl, uws_res_r res)
   {
     /* No-op on a closed socket; see uws_res_on_aborted. */

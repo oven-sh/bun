@@ -1206,3 +1206,264 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     expect(fired).toBe(1);
   });
 });
+
+describe("EventEmitter.prototype", () => {
+  // The methods are builtins on an object that native code creates. A fresh process reports the object as
+  // node:events exports it, before a test of this file can change it.
+  test("has the same own properties as when events.ts defined the methods", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const EventEmitter = require("node:events");
+          const prototype = EventEmitter.prototype;
+          const properties = Reflect.ownKeys(prototype).map(key => {
+            const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(prototype, key);
+            return [
+              String(key),
+              typeof value === "function" ? value.name + "/" + value.length : value,
+              [writable, enumerable, configurable].join(),
+            ];
+          });
+          console.log(JSON.stringify({
+            properties,
+            aliases: [prototype.on === prototype.addListener, prototype.off === prototype.removeListener],
+            constructor: prototype.constructor === EventEmitter,
+            constructors: Object.keys(prototype).filter(key => key !== "constructor" && "prototype" in Object(prototype[key])),
+            class: Object.prototype.toString.call(prototype),
+            parent: Object.getPrototypeOf(prototype) === Object.prototype,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      properties: [
+        ["setMaxListeners", "setMaxListeners/1", "true,true,true"],
+        ["constructor", "EventEmitter/1", "true,true,true"],
+        ["getMaxListeners", "getMaxListeners/0", "true,true,true"],
+        ["emit", "emit/1", "true,true,true"],
+        ["addListener", "addListener/2", "true,true,true"],
+        ["on", "addListener/2", "true,true,true"],
+        ["prependListener", "prependListener/2", "true,true,true"],
+        ["once", "once/2", "true,true,true"],
+        ["prependOnceListener", "prependOnceListener/2", "true,true,true"],
+        ["removeListener", "removeListener/2", "true,true,true"],
+        ["off", "removeListener/2", "true,true,true"],
+        ["removeAllListeners", "removeAllListeners/1", "true,true,true"],
+        ["listeners", "listeners/1", "true,true,true"],
+        ["rawListeners", "rawListeners/1", "true,true,true"],
+        ["listenerCount", "listenerCount/2", "true,true,true"],
+        ["eventNames", "eventNames/0", "true,true,true"],
+        ["_eventsCount", 0, "true,true,true"],
+        ["Symbol(kCapture)", false, "true,true,true"],
+      ],
+      aliases: [true, true],
+      constructor: true,
+      constructors: [],
+      class: "[object Object]",
+      parent: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the source text of a method is hidden", () => {
+    const shown = Object.keys(EventEmitter.prototype).filter(
+      key => key !== "constructor" && !String(EventEmitter.prototype[key]).includes("[native code]"),
+    );
+    expect(shown).toEqual([]);
+  });
+
+  test("the methods work on an object that the constructor did not initialize", () => {
+    const emitter = Object.create(EventEmitter.prototype);
+    const calls: unknown[][] = [];
+    const listener = (...args: unknown[]) => calls.push(["on", ...args]);
+    const onceListener = (...args: unknown[]) => calls.push(["once", ...args]);
+
+    expect(emitter.eventNames()).toEqual([]);
+    expect(emitter.listenerCount("x")).toBe(0);
+    expect(emitter.emit("x")).toBe(false);
+    expect(emitter.on("x", listener)).toBe(emitter);
+    expect(emitter.prependOnceListener("x", onceListener)).toBe(emitter);
+    expect(emitter.eventNames()).toEqual(["x"]);
+    expect(emitter.listeners("x")).toEqual([onceListener, listener]);
+    expect(emitter.rawListeners("x")[0].listener).toBe(onceListener);
+    expect(emitter.listenerCount("x", listener)).toBe(1);
+    expect(emitter.emit("x", 1, 2)).toBe(true);
+    expect(emitter.emit("x", 3, 4, 5, 6, 7)).toBe(true);
+    expect(calls).toEqual([
+      ["once", 1, 2],
+      ["on", 1, 2],
+      ["on", 3, 4, 5, 6, 7],
+    ]);
+    expect(emitter.off("x", listener)).toBe(emitter);
+    expect(emitter.eventNames()).toEqual([]);
+    expect(emitter.setMaxListeners(3).getMaxListeners()).toBe(3);
+    expect(Object.keys(emitter)).toEqual(["_events", "_eventsCount", "_maxListeners"]);
+  });
+
+  test("a method calls the other methods through the receiver", () => {
+    const calls: string[] = [];
+    class Traced extends EventEmitter {
+      on(type, fn) {
+        calls.push(`on ${String(type)}`);
+        return super.on(type, fn);
+      }
+      prependListener(type, fn) {
+        calls.push(`prependListener ${String(type)}`);
+        return super.prependListener(type, fn);
+      }
+      removeListener(type, fn) {
+        calls.push(`removeListener ${String(type)}`);
+        return super.removeListener(type, fn);
+      }
+      emit(type, ...args) {
+        calls.push(`emit ${String(type)}`);
+        return super.emit(type, ...args);
+      }
+    }
+    const emitter = new Traced();
+    const noop = () => {};
+    emitter.addListener("newListener", noop);
+    emitter.addListener("removeListener", noop);
+    calls.length = 0;
+
+    emitter.once("a", noop);
+    emitter.prependOnceListener("a", noop);
+    emitter.emit("a");
+    emitter.addListener("b", noop);
+    emitter.addListener("b", noop);
+    emitter.removeAllListeners("b");
+    expect(calls).toEqual([
+      // once() adds through on(), and the add reports to 'newListener' through emit()
+      "on a",
+      "emit newListener",
+      "prependListener a",
+      "emit newListener",
+      // each wrapper removes itself through removeListener(), which reports through emit()
+      "emit a",
+      "removeListener a",
+      "emit removeListener",
+      "removeListener a",
+      "emit removeListener",
+      "emit newListener",
+      "emit newListener",
+      "removeListener b",
+      "emit removeListener",
+      "removeListener b",
+      "emit removeListener",
+    ]);
+  });
+
+  test.each([
+    [
+      "on",
+      ["x", 1],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received type number (1)',
+    ],
+    [
+      "prependListener",
+      ["x", null],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received null',
+    ],
+    ["once", ["x"], "ERR_INVALID_ARG_TYPE", 'The "listener" argument must be of type function. Received undefined'],
+    [
+      "prependOnceListener",
+      ["x", "f"],
+      "ERR_INVALID_ARG_TYPE",
+      `The "listener" argument must be of type function. Received type string ('f')`,
+    ],
+    [
+      "off",
+      ["x", {}],
+      "ERR_INVALID_ARG_TYPE",
+      'The "listener" argument must be of type function. Received an instance of Object',
+    ],
+    [
+      "setMaxListeners",
+      [-1],
+      "ERR_OUT_OF_RANGE",
+      'The value of "setMaxListeners" is out of range. It must be >= 0. Received -1',
+    ],
+    [
+      "setMaxListeners",
+      [NaN],
+      "ERR_OUT_OF_RANGE",
+      'The value of "setMaxListeners" is out of range. It must be >= 0. Received NaN',
+    ],
+    [
+      "setMaxListeners",
+      ["1"],
+      "ERR_INVALID_ARG_TYPE",
+      `The "setMaxListeners" argument must be of type number. Received type string ('1')`,
+    ],
+  ] as const)("%s(%j) throws %s", (method, args, code, message) => {
+    const emitter = new EventEmitter();
+    let error: any;
+    try {
+      emitter[method](...args);
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, message: error?.message }).toEqual({ code, message });
+    expect(emitter.eventNames()).toEqual([]);
+  });
+
+  test("defaultMaxListeners is one value for the emitters that exist and the ones to come", () => {
+    const before = EventEmitter.defaultMaxListeners;
+    const existing = new EventEmitter();
+    const limited = new EventEmitter().setMaxListeners(2);
+    try {
+      EventEmitter.defaultMaxListeners = 7;
+      expect([existing.getMaxListeners(), new EventEmitter().getMaxListeners(), getMaxListeners(existing)]).toEqual([
+        7, 7, 7,
+      ]);
+      expect(limited.getMaxListeners()).toBe(2);
+      setMaxListeners(4);
+      expect([EventEmitter.defaultMaxListeners, existing.getMaxListeners()]).toEqual([4, 4]);
+    } finally {
+      EventEmitter.defaultMaxListeners = before;
+    }
+    expect(existing.getMaxListeners()).toBe(before);
+  });
+
+  test("a Worker has its own defaultMaxListeners", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("node:worker_threads");
+          const EventEmitter = require("node:events");
+          EventEmitter.defaultMaxListeners = 3;
+          const worker = new Worker(
+            \`
+              const EventEmitter = require("node:events");
+              const inherited = new EventEmitter().getMaxListeners();
+              EventEmitter.defaultMaxListeners = 20;
+              require("node:worker_threads").parentPort.postMessage([inherited, new EventEmitter().getMaxListeners()]);
+            \`,
+            { eval: true },
+          );
+          worker.on("message", inWorker => {
+            console.log(JSON.stringify({ inWorker, after: EventEmitter.defaultMaxListeners }));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ inWorker: [10, 20], after: 3 });
+    expect(exitCode).toBe(0);
+  });
+});

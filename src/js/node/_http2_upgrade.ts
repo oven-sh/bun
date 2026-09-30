@@ -202,7 +202,7 @@ function socketHandshake(
   const ctx = tlsSocket._ctx;
 
   if (!success) {
-    const err = verifyError || new Error("TLS handshake failed");
+    const err = require("internal/tls").tlsHandshakeError(verifyError);
     ctx.server.emit("tlsClientError", err, tlsSocket);
     tlsSocket.destroy(err);
     return;

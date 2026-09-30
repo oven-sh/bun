@@ -461,6 +461,35 @@ describe("HTTP/2 upgrade — server TLS options", () => {
   });
 });
 
+describe("HTTP/2 upgrade — failed handshake", () => {
+  test("tlsClientError reports the TLS failure as ERR_SSL_*", async () => {
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("error", () => {});
+    const tlsClientError = once(h2Server, "tlsClientError");
+
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    await once(netServer.listen(0, "127.0.0.1"), "listening");
+
+    const client = net.connect((netServer.address() as net.AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("not a TLS record\r\n\r\n");
+
+    try {
+      const [err] = await tlsClientError;
+      assert.deepStrictEqual(
+        { code: err.code, library: err.library },
+        { code: "ERR_SSL_WRONG_VERSION_NUMBER", library: "SSL routines" },
+      );
+    } finally {
+      client.destroy();
+      netServer.close();
+    }
+  });
+});
+
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {

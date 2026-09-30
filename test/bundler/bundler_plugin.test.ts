@@ -142,27 +142,81 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
-  itBundled("plugin/LoadContentsStringConversionThrows", {
-    files: loadFixture,
-    plugins(builder) {
-      builder.onLoad({ filter: /\.magic$/ }, () => {
-        // A 16-bit rope string of the maximum length (2^31 - 1 chars). Building
-        // it only allocates rope nodes, but flattening it needs a 4GB buffer
-        // that WTF::StringImpl refuses to allocate, so the first thing to read
-        // it (the bundler, converting `contents` to bytes) gets JSC's
-        // "Out of memory" RangeError. That used to panic inside onLoadAsync.
-        let contents = "\u0100";
-        for (let i = 0; i < 30; i++) contents = contents + contents + "\u0100";
-        expect(contents.length).toBe(2 ** 31 - 1);
-        return { contents, loader: "js" };
-      });
-    },
-    bundleErrors: {
-      "/foo.magic": [`Out of memory`],
-    },
-    onAfterApiBundle(build) {
-      expect(build.success).toBe(false);
-    },
+  // A plugin answer whose string passes the JS-side type check can still fail
+  // to convert: a 16-bit rope of the maximum length (2^31 - 1 chars) only
+  // allocates rope nodes, but flattening it asks WTF for a buffer it refuses,
+  // so the first reader gets JSC's "Out of memory" RangeError. The reader is
+  // the native thunk that answers the request, which used to panic. Each
+  // callback prints that it returned normally, so the error is known to come
+  // from the conversion and not from the callback itself. The resolve answers
+  // are external so that the JS-side path and namespace checks do not read the
+  // string first. Spawned because the unfixed binary takes the whole test
+  // process down.
+  test.concurrent("plugin/string answer that cannot be flattened fails the build", async () => {
+    using dir = tempDir("plugin-string-answer-cannot-flatten", {
+      "entry.ts": `import { foo } from "./foo.magic"; console.log(foo);`,
+      "foo.magic": `hello world`,
+      "build.mjs": `
+        let huge = "\\u0100";
+        for (let i = 0; i < 30; i++) huge = huge + huge + "\\u0100";
+        console.log("length=" + (huge.length === 2 ** 31 - 1));
+
+        async function run(name, answer) {
+          const { success, logs } = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            throw: false,
+            plugins: [{
+              name,
+              setup(build) {
+                build.onResolve({ filter: /foo\\.magic$/ }, args => {
+                  console.log(name + ": resolve returned");
+                  return answer.resolve ? answer.resolve(args.path) : undefined;
+                });
+                build.onLoad({ filter: /\\.magic$/ }, () => {
+                  console.log(name + ": load returned");
+                  return answer.load ? answer.load() : undefined;
+                });
+              },
+            }],
+          });
+          const errors = logs.map(l => l.level + " " + JSON.stringify(l.message) + " " + l.position?.file.split(/[\\\\/]/).pop());
+          console.log(name + ": success=" + success + " " + errors.join(", "));
+        }
+
+        await run("contents", { load: () => ({ contents: huge, loader: "js" }) });
+        await run("path", { resolve: () => ({ path: huge, external: true }) });
+        await run("namespace", { resolve: path => ({ path, namespace: huge, external: true }) });
+        await run("ok", { load: () => ({ contents: "export const foo = 1;", loader: "js" }) });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({
+      stdout: [
+        "length=true",
+        "contents: resolve returned",
+        "contents: load returned",
+        'contents: success=false error "Out of memory" foo.magic',
+        "path: resolve returned",
+        'path: success=false error "Out of memory" entry.ts',
+        "namespace: resolve returned",
+        'namespace: success=false error "Out of memory" entry.ts',
+        "ok: resolve returned",
+        "ok: load returned",
+        "ok: success=true ",
+        "",
+      ].join("\n"),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {

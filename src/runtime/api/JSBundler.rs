@@ -1570,22 +1570,28 @@ pub(crate) mod js_bundler {
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            let global = bv2_plugin(resolve.bv2).global_object();
-            let path = path_value
-                .to_bun_string(global)
-                .expect("Unexpected: path is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            let namespace = namespace_value
-                .to_bun_string(global)
-                .expect("Unexpected: namespace is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            resolve.value = ResolveValue::Success(ResolveSuccess {
-                path,
-                namespace,
-                external: external_value.to_boolean(),
+            let plugin = bv2_plugin(resolve.bv2);
+            let global = plugin.global_object();
+            let strings = path_value.to_bun_string(global).and_then(|path| {
+                let namespace = namespace_value.to_bun_string(global)?;
+                Ok((path, namespace))
             });
+            resolve.value = match strings {
+                Ok((path, namespace)) => ResolveValue::Success(ResolveSuccess {
+                    path: path.to_owned_slice().into_boxed_slice(),
+                    namespace: namespace.to_owned_slice().into_boxed_slice(),
+                    external: external_value.to_boolean(),
+                }),
+                // A type-checked `path` or `namespace` string can still throw on flatten.
+                Err(err) => {
+                    let exception = global.take_exception(err);
+                    ResolveValue::Err(plugin_msg_from_js(
+                        plugin,
+                        &resolve.import_record.source_file,
+                        exception,
+                    ))
+                }
+            };
         }
 
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
@@ -1704,11 +1710,7 @@ pub(crate) mod js_bundler {
                     loader: bun_ast::Loader::from_api(loader),
                     source_code: source_code.into(),
                 }),
-                // `contents` passed the JS-side type check but converting it
-                // threw (JSC throws its Out of memory error when a rope string
-                // cannot be flattened). Answer the load with that error the way
-                // `JSBundlerPlugin__addError` does: the bundler is still waiting
-                // on this request, so it must be answered either way.
+                // A type-checked `contents` string can still throw on flatten.
                 Err(err) => {
                     let exception = plugin.global_object().take_exception(err);
                     LoadValue::Err(plugin_msg_from_js(plugin, &this.path, exception))

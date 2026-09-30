@@ -1320,6 +1320,10 @@ pub struct JavaScriptChunk {
     // for code splitting
     /// The file of a pinned entry point, which is in another chunk. Its part ranges here print only what their `import` statements run (`LinkerContext::entry_imports_in_parent`).
     pub(crate) repeats_imports_of: Option<IndexInt>,
+    /// The file of the entry point in `LinkerContext::parents_of_pinned_entries`, in whose place this chunk took the fold.
+    pub(crate) took_fold_of: Option<IndexInt>,
+    /// Not empty: goes in place of the `./` of an external module's relative path, which then counts from the directory of that entry point's chunk.
+    pub(crate) relative_imports_from: Box<[u8]>,
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with
     /// side effects: the order the unbundled modules would run them in.

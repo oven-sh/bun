@@ -4,7 +4,7 @@ use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
-use crate::linker_context_mod::debug;
+use crate::linker_context_mod::{debug, is_relative_external};
 use crate::options::{Loader, Target};
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
 
@@ -180,8 +180,8 @@ struct Group {
     recheck: bool,
     wants_inits: bool,
     pin: Pin,
-    /// The parent of the class of an entry point that only its name pins.
-    parent_of_pinned_entry: bool,
+    /// The parent of the class of this entry point, which only its name pins.
+    parent_of_pinned_entry: Option<u32>,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -230,7 +230,7 @@ impl Group {
             recheck: false,
             wants_inits: false,
             pin,
-            parent_of_pinned_entry: false,
+            parent_of_pinned_entry: None,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -866,21 +866,11 @@ fn files_that_leave_entry_chunk<'a>(
     // What one `import` of the entry point's file loads goes or stays as a whole, with what it imports. No chunk may import a pinned chunk, so a file that leads back there ends the list.
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
-    // Printed as written, so it names a file next to the chunk that holds it.
-    let records = this.graph.ast.items_import_records();
-    let is_relative_external = |record: &bun_ast::ImportRecord| {
-        !record.source_index.is_valid()
-            && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
-            && (record.path.text.starts_with(b"./") || record.path.text.starts_with(b"../"))
-    };
     // An external `import` goes to the top of its chunk, ahead of what the parent runs.
     let (mut limit, mut first_to_repeat) = (u32::MAX, u32::MAX);
-    this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, record, x| {
+    this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, _, x| {
         first_to_repeat = first_to_repeat.min(part);
-        if x.is_none()
-            && (parent_gains_no_import
-                || is_relative_external(&records[entry_source as usize][record as usize]))
-        {
+        if x.is_none() && parent_gains_no_import {
             limit = limit.min(part);
         }
     });
@@ -907,8 +897,11 @@ fn files_that_leave_entry_chunk<'a>(
                     pending.push(other);
                 }
             });
-            stuck |= records[file as usize].iter().any(is_relative_external);
             if parent_gains_no_import {
+                // Such a parent prints a relative path as written, so the path would name another file there.
+                stuck |= this.graph.ast.items_import_records()[file as usize]
+                    .iter()
+                    .any(is_relative_external);
                 this.for_each_import_that_runs(file, 0..parts_len(file), &mut |_, _, x| {
                     stuck |= x.is_none();
                 });
@@ -1474,16 +1467,16 @@ pub(crate) fn merge_small_chunks(
         // A member that stays out can import the parent, so the parent must not start to import it.
         let mut takes_entry_files = false;
         if class.count() == 1 && pin_entry_chunk(class.find_first_set().expect("one bit set")) {
+            let entry_id = class.find_first_set().expect("one bit set");
             groups.values_mut()[target_index].parent_of_pinned_entry =
-                !takes_no_fold_under_any_name(class.find_first_set().expect("one bit set"));
+                (!takes_no_fold_under_any_name(entry_id)).then_some(entry_id as u32);
             takes_entry_files = members.iter().all(|&member| {
                 let group = &groups.values()[member];
                 group.pin == Pin::Entry
                     || (group.target == Some(target_platform) && !group.loads_entry_of(class))
             });
             if takes_entry_files
-                && let Some(repeated) =
-                    entry_imports_in_parent.get_mut(class.find_first_set().expect("one bit set"))
+                && let Some(repeated) = entry_imports_in_parent.get_mut(entry_id)
                 && repeated.0 > 0
             {
                 repeated.1 = groups.values()[target_index].first_source;
@@ -1942,11 +1935,18 @@ fn rekey_files(
     entry_imports_in_parent: Vec<(u32, u32)>,
 ) -> crate::Result<()> {
     this.entry_imports_in_parent = entry_imports_in_parent;
-    if groups.iter().any(|group| group.parent_of_pinned_entry) {
+    this.parents_of_pinned_entries = groups
+        .iter()
+        .filter(|group| group.merged_into.is_none())
+        .filter_map(|group| Some((group.parent_of_pinned_entry?, group.first_source)))
+        .collect();
+    if !this.parents_of_pinned_entries.is_empty() {
         let mut ranks_chunk_again = AutoBitSet::init_empty(group_of_file.len())?;
         for (source_index, &group_index) in group_of_file.iter().enumerate() {
             if group_index != usize::MAX
-                && groups[resolve(groups, group_index)].parent_of_pinned_entry
+                && groups[resolve(groups, group_index)]
+                    .parent_of_pinned_entry
+                    .is_some()
                 && !this.loading_file_only_declares(source_index as u32)
             {
                 ranks_chunk_again.set(source_index);

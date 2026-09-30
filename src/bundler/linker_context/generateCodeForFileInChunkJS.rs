@@ -9,7 +9,7 @@ use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::generic_path_with_pretty_initialized;
-use crate::linker_context_mod::{StmtList, StmtListWhich};
+use crate::linker_context_mod::{StmtList, StmtListWhich, is_relative_external};
 use crate::options::Format as OutputFormat;
 use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
@@ -295,7 +295,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             writer,
             stmts.all_stmts.as_mut_slice(),
             &ast,
-            external_records.as_slice(),
+            import_records_for_chunk(chunk, external_records.as_slice(), temp_arena),
             flags,
             to_esm_ref,
             to_common_js_ref,
@@ -1050,7 +1050,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         writer,
         out_stmts,
         &ast,
-        ast.import_records.as_slice(),
+        import_records_for_chunk(chunk, ast.import_records.as_slice(), temp_arena),
         flags,
         to_esm_ref,
         to_common_js_ref,
@@ -1059,6 +1059,32 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         source,
         module_info,
     )
+}
+
+/// `records`, with the relative paths of external modules as `JavaScriptChunk::relative_imports_from` asks.
+fn import_records_for_chunk<'a>(
+    chunk: &Chunk,
+    records: &'a [bun_ast::ImportRecord],
+    arena: &'a Bump,
+) -> &'a [bun_ast::ImportRecord] {
+    let from = &*chunk.content.javascript().relative_imports_from;
+    if from.is_empty() || !records.iter().any(is_relative_external) {
+        return records;
+    }
+    arena.alloc_slice_fill_iter(records.iter().map(|record| {
+        let text = record.path.text;
+        if !is_relative_external(record) {
+            return bun_ast::ImportRecord { ..*record };
+        }
+        let text = [from, text.strip_prefix(b"./").unwrap_or(text)].concat();
+        bun_ast::ImportRecord {
+            path: bun_paths::fs::Path {
+                text: bun_ast::StoreStr::new(arena.alloc_slice_copy(&text)).slice(),
+                ..record.path
+            },
+            ..*record
+        }
+    }))
 }
 
 fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {

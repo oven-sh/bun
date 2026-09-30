@@ -283,13 +283,23 @@ impl WalkPlan {
             }
             rank = load_rank(c, &plan.entry_id_of_file);
         }
+        // Per chunk: the entry point whose imports it repeats. It loads first, also when a fold of rule 2 gives one of its `import()` targets a lower rank.
+        let mut repeats_imports_of = vec![u32::MAX; chunks.len()];
+        for (entry_id, &(parts_end, parent_file)) in c.entry_imports_in_parent.iter().enumerate() {
+            if parts_end > 0 && plan.chunk_of_file[parent_file as usize] != u32::MAX {
+                repeats_imports_of[plan.chunk_of_file[parent_file as usize] as usize] =
+                    entry_id as u32;
+            }
+        }
         let mut walk_of_entry = vec![u32::MAX; entry_points.len()];
         let mut walks: Vec<EntryWalk> = Vec::new();
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let owner = if code_splitting {
+            let owner = if repeats_imports_of[chunk_index] != u32::MAX {
+                repeats_imports_of[chunk_index]
+            } else if code_splitting {
                 let mut bits = chunk.entry_bits().iterator::<true, true>();
                 let mut owner = u32::MAX;
                 while let Some(entry_id) = bits.next() {

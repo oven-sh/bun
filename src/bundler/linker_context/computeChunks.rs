@@ -409,6 +409,14 @@ pub(crate) fn compute_chunks(
         }
     }
 
+    for &(entry_id, parent_file) in this.parents_of_pinned_entries.iter() {
+        let key = file_entry_bits[parent_file as usize].bytes(this.graph.entry_points.len());
+        if let Some(parent) = js_chunks.get_mut(&key) {
+            parent.content.javascript_mut().took_fold_of =
+                Some(this.graph.entry_points.items_source_index()[entry_id as usize]);
+        }
+    }
+
     // Sort the chunks for determinism. This matters because we use chunk indices
     // as sorting keys in a few places.
     let mut sorted_chunks: Vec<Chunk> = 'sort_chunks: {
@@ -727,6 +735,41 @@ pub(crate) fn compute_chunks(
 
             let root_dir = &this.resolver().opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
+        }
+    }
+
+    // With the fold, a relative path of an external module counted from the entry point's chunk.
+    let sanitize_parent_dirs = !this.options.compile_mode.is_executable();
+    for chunk_id in 0..chunks.len() {
+        let chunk::Content::Javascript(js) = &chunks[chunk_id].content else {
+            continue;
+        };
+        let Some(entry_file) = js.took_fold_of else {
+            continue;
+        };
+        let entry_chunk = this.graph.files.items_entry_point_chunk_index()[entry_file as usize];
+        let to = chunks[entry_chunk as usize]
+            .template
+            .rel_path(sanitize_parent_dirs);
+        // The directory can hold `[hash]`. Its text does not matter: the way out of it is `..`.
+        let mut template = chunks[chunk_id].template.clone();
+        template.placeholder.hash = Some(template.content_hash(0));
+        let from = template.rel_path(sanitize_parent_dirs);
+        let from_dir = resolve_path::dirname::<bun_paths::platform::Posix>(&from);
+        let [dot, path] = bun_core::cheap_prefix_normalizer(
+            b"",
+            if from_dir == b"." {
+                &to
+            } else {
+                resolve_path::relative_platform::<bun_paths::platform::Posix, false>(from_dir, &to)
+            },
+        );
+        let dir = &path[..strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)];
+        if !(dot == b"./" && dir.is_empty()) {
+            chunks[chunk_id]
+                .content
+                .javascript_mut()
+                .relative_imports_from = [dot, dir].concat().into_boxed_slice();
         }
     }
 

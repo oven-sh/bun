@@ -70,6 +70,14 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
+/// The path of an external module that counts from the directory of the chunk that holds the import. It is printed as written.
+pub(crate) fn is_relative_external(record: &ImportRecord) -> bool {
+    let path = record.path.text;
+    !record.source_index.is_valid()
+        && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+        && (path.starts_with(b"./") || path.starts_with(b"../") || path == b"." || path == b"..")
+}
+
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -143,6 +151,8 @@ pub struct LinkerContext<'a> {
     pub(crate) ranks_chunk_again: Option<AutoBitSet>,
     /// Per entry point id (or empty): that chunk also runs what the `import` statements in the parts below `.0` of the entry point's file run. `.1` is a file of the chunk.
     pub(crate) entry_imports_in_parent: Vec<(u32, u32)>,
+    /// The chunks that took the fold in place of the chunk of an entry point that only its name pins: the entry point id, and a file of the chunk.
+    pub(crate) parents_of_pinned_entries: Vec<(u32, u32)>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -186,6 +196,7 @@ impl<'a> Default for LinkerContext<'a> {
             inits_already_done: None,
             ranks_chunk_again: None,
             entry_imports_in_parent: Vec::new(),
+            parents_of_pinned_entries: Vec::new(),
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -616,6 +627,7 @@ impl<'a> LinkerContext<'a> {
         self.inits_already_done = None;
         self.ranks_chunk_again = None;
         self.entry_imports_in_parent = Vec::new();
+        self.parents_of_pinned_entries = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.

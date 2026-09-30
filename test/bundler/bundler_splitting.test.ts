@@ -1093,58 +1093,97 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nconfig 1\nboth\nouter 1\nindex\nlazy" },
   });
-  itBundled("splitting/SharedFileThatPrintsNothingHasNoChunkToRepeatImportsIn", {
+  // The path is printed as written. With the fold it named a file next to api/index.js, and it still does in the chunk that took the fold.
+  const relativeExternal = (imports: string, store: string, exports = "") => ({
     files: {
-      "/index.js": `import "./styles.js"; console.log("index"); import("./route.js");`,
-      "/styles.js": `import "./app.css";`,
-      "/route.js": `import "./styles.js"; console.log("route");`,
-      "/app.css": `.a { color: red }`,
+      "/src/api/index.js": /* js */ `
+        ${imports}
+        import { Store } from "./store.js";
+        ${exports}
+        console.log("api", new Store().name);
+        import("./route.js");
+      `,
+      "/src/api/first.js": `console.log("first");`,
+      "/src/api/reader.js": `console.log("reader");`,
+      "/src/api/uses.js": `import "./local.js"; console.log("uses");`,
+      "/src/api/lazy.js": `console.log("lazy"); globalThis.load = () => import("./local.js");`,
+      "/src/api/store.js": `${store} console.log("store"); export class Store { name = "s"; }`,
+      "/src/api/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name); globalThis.load?.();`,
+      "/src/jobs/index.js": `console.log("jobs");`,
     },
-    entryPoints: ["/index.js"],
+    external: ["*local.js", "..*"],
+    runtimeFiles: {
+      "/out/api/local.js": `console.log("local");`,
+      "/out/above.js": `console.log("above");`,
+      "/out/index.js": `console.log("directory");`,
+    },
+    entryPoints: ["/src/api/index.js", "/src/jobs/index.js"],
+    outputPaths: ["/out/api/index.js", "/out/jobs/index.js"],
     splitting: true,
+    target: "bun",
     outdir: "/out",
     format: "esm",
-    run: { file: "/out/index.js", stdout: "index\nroute" },
   });
-  // Printed as written, so it names a file next to the chunk that holds it.
-  for (const [name, imports, stdout] of [
+  for (const [name, imports, store, chunkNaming, path, stdout] of [
     [
       "OfEntryFile",
       `import "./first.js"; import "./local.js"; import "./reader.js";`,
-      "first\nstore\nlocal\nreader\napi s\nroute s",
+      "",
+      undefined,
+      "./api/local.js",
+      "local\nfirst\nreader\nstore\napi s\nroute s",
     ],
-    ["OfFileThatWouldMove", `import "./first.js"; import "./uses.js";`, "first\nstore\nlocal\nuses\napi s\nroute s"],
+    [
+      "OfFileThatMoves",
+      `import "./first.js"; import "./uses.js";`,
+      "",
+      undefined,
+      "./api/local.js",
+      "local\nfirst\nuses\nstore\napi s\nroute s",
+    ],
+    ["OfSharedFile", "", `import "./local.js";`, undefined, "./api/local.js", "local\nstore\napi s\nroute s"],
+    ["AboveEntry", "", `import "../above.js";`, undefined, "./api/../above.js", "above\nstore\napi s\nroute s"],
+    ["DirectoryAboveEntry", "", `require("..");`, undefined, "./api/..", "directory\nstore\napi s\nroute s"],
+    [
+      "ChunkInOtherDirectory",
+      "",
+      `import "./local.js";`,
+      "chunks/[name]-[hash].[ext]",
+      "../api/local.js",
+      "local\nstore\napi s\nroute s",
+    ],
+    [
+      "ChunkInDirectoryWithHash",
+      "",
+      `import "./local.js";`,
+      "[hash]/[name].[ext]",
+      "../api/local.js",
+      "local\nstore\napi s\nroute s",
+    ],
   ] as const) {
-    itBundled("splitting/RelativeExternalImportStaysInEntryChunk/" + name, {
-      files: {
-        "/src/api/index.js": /* js */ `
-          ${imports}
-          import { Store } from "./store.js";
-          console.log("api", new Store().name);
-          import("./route.js");
-        `,
-        "/src/api/first.js": `console.log("first");`,
-        "/src/api/reader.js": `console.log("reader");`,
-        "/src/api/uses.js": `import "./local.js"; console.log("uses");`,
-        "/src/api/store.js": `console.log("store"); export class Store { name = "s"; }`,
-        "/src/api/route.js": `import { Store } from "./store.js"; console.log("route", new Store().name);`,
-        "/src/jobs/index.js": `console.log("jobs");`,
-      },
-      external: ["*local.js"],
-      runtimeFiles: { "/out/api/local.js": `console.log("local");` },
-      entryPoints: ["/src/api/index.js", "/src/jobs/index.js"],
-      outputPaths: ["/out/api/index.js", "/out/jobs/index.js"],
-      splitting: true,
-      target: "bun",
-      outdir: "/out",
-      format: "esm",
+    itBundled("splitting/RelativeExternalImportCountsFromEntryChunk/" + name, {
+      ...relativeExternal(imports, store),
+      chunkNaming,
       onAfterBundle(api) {
-        for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("local.js");
-        api.expectFile("/out/api/index.js").toContain(`"./local.js"`);
+        const chunks = [...new Bun.Glob("**/*.js").scanSync(api.outdir)].filter(file =>
+          api.readFile("/out/" + file).includes(`"store"`),
+        );
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]).not.toBe("api/index.js");
+        api.expectFile("/out/" + chunks[0]).toContain(`"${path}"`);
       },
       run: { file: "/out/api/index.js", stdout },
     });
   }
+  // The chunk beside an entry point with exports is the same as before the fold existed, so it keeps its paths, and lazy.js stays.
+  itBundled("splitting/EntryWithExportsKeepsFileWithRelativeExternalImport", {
+    ...relativeExternal(`import "./lazy.js";`, "", `export const version = 1;`),
+    onAfterBundle(api) {
+      for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("local.js");
+      api.expectFile("/out/api/index.js").toContain(`"./local.js"`);
+    },
+    run: { file: "/out/api/index.js", stdout: "store\nlazy\napi s\nroute s\nlocal" },
+  });
   itBundled("splitting/EntryFilesStayWhenSharedCodeIsData", {
     files: {
       "/index.js": /* js */ `
@@ -1167,34 +1206,6 @@ describe("bundler", () => {
       api.expectFile("/out/index.js").toContain(`"own"`);
     },
     run: { file: "/out/index.js", stdout: "own\nindex 1 note\nroute 1 note" },
-  });
-  itBundled("splitting/MinChunkSizeKeepsChunkThatRepeatsEntryImports", {
-    files: {
-      "/admin.js": /* js */ `
-        import { util } from "./util.js";
-        import * as big from "./big.js";
-        console.log("admin", util(), Object.keys(big).length);
-      `,
-      "/index.js": /* js */ `
-        import "./setup.cjs";
-        import { x } from "pkg";
-        import { util } from "./util.js";
-        console.log("index", x(), util());
-        import("./route.js");
-      `,
-      "/setup.cjs": `console.log("setup");`,
-      "/route.js": `import { x } from "pkg"; import { util } from "./util.js"; console.log("route", x(), util());`,
-      "/util.js": `export function util() { return "util"; }`,
-      "/big.js": Array.from({ length: 3000 }, (_, i) => `export function big${i}(a) { return a + ${i}; }`).join("\n"),
-      "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false, "type": "module", "main": "index.js" }`,
-      "/node_modules/pkg/index.js": `const cache = new Map(); export const x = () => cache.size;`,
-    },
-    entryPoints: ["/admin.js", "/index.js"],
-    splitting: true,
-    minChunkSize: 100000,
-    outdir: "/out",
-    format: "esm",
-    run: { file: "/out/index.js", stdout: "setup\nindex 0 util\nroute 0 util" },
   });
   itBundled("splitting/MinChunkSizeKeepsOtherEntryFromChunkThatRepeatsEntryImports", {
     files: {
@@ -1356,6 +1367,201 @@ describe("bundler", () => {
       api.expectFile("/out/index.js").not.toContain("globalThis.APP");
     },
     run: { file: "/out/index.js", stdout: "after\nindex app declared\nsettings app" },
+  });
+  // styles.js prints nothing, so the files that index.js shares with route.js have no chunk that could repeat an import.
+  for (const [name, first, options, stdout] of [
+    ["NoImportThatRuns", "", {}, "index undefined\nroute"],
+    ["External", `import "ext-setup";`, extSetup, "index app\nroute"],
+    [
+      "CommonJSOfOtherEntry",
+      `import "./shared.cjs";`,
+      { files: { "/shared.cjs": `globalThis.APP = { name: "shared" };`, "/admin.js": `import "./shared.cjs";` } },
+      "index shared\nroute",
+    ],
+  ] as const) {
+    itBundled("splitting/SharedFilesThatPrintNothingRepeatNoImport/" + name, {
+      ...options,
+      files: {
+        "/index.js": /* js */ `
+          ${first}
+          import "./styles.js";
+          console.log("index", globalThis.APP?.name);
+          import("./route.js");
+        `,
+        "/styles.js": `import "./app.css";`,
+        "/app.css": `body { color: red; }`,
+        "/route.js": `import "./styles.js"; console.log("route");`,
+        ...("files" in options ? options.files : {}),
+      },
+      entryPoints: "files" in options ? ["/index.js", "/admin.js"] : ["/index.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle: noChunkImportsIndex,
+      run: { file: "/out/index.js", stdout },
+    });
+  }
+  // The chunk with pkg runs setup.cjs for index.js. Alone it has no side effects and would fold into the chunk of util.js, which admin.js loads too.
+  for (const [name, entryPoints] of [
+    ["AdminFirst", ["/admin.js", "/index.js"]],
+    ["IndexFirst", ["/index.js", "/admin.js"]],
+  ] as const) {
+    itBundled("splitting/MinChunkSizeKeepsChunkThatRepeatsImportOutOfChunkOfOtherEntry/" + name, {
+      files: {
+        "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+        "/index.js": /* js */ `
+          import "./setup.cjs";
+          import { x } from "pkg";
+          import { u } from "./util.js";
+          console.log("index", x(), u());
+          import("./route.js");
+        `,
+        "/route.js": /* js */ `
+          import { x } from "pkg";
+          import { u } from "./util.js";
+          console.log("route", x(), u());
+        `,
+        "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+        "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+        "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+        "/node_modules/pkg/index.js": /* js */ `
+          const cache = new Map([["app", globalThis.APP?.name]]);
+          export function x() { return "x " + cache.get("app"); }
+        `,
+      },
+      entryPoints: [...entryPoints],
+      splitting: true,
+      minChunkSize: 100000,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        api.expectFile("/out/admin.js").not.toContain(chunkContaining(api, "new Map"));
+        for (const file of jsFilesIn(api))
+          api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(index|admin)\.js"/);
+      },
+      run: [
+        { file: "/out/index.js", stdout: "setup\nindex x app u\nroute x app u" },
+        { file: "/out/admin.js", stdout: "admin u" },
+      ],
+    });
+  }
+  // Nothing that the imports of index.js run precedes pkg, so its chunk still folds.
+  itBundled("splitting/MinChunkSizeFoldsChunkBesideEntryThatRepeatsNoImport", {
+    files: {
+      "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+      "/index.js": /* js */ `
+        import { x } from "pkg";
+        import { u } from "./util.js";
+        console.log("index", x(), u());
+        import("./route.js");
+      `,
+      "/route.js": /* js */ `
+        import { x } from "pkg";
+        import { u } from "./util.js";
+        console.log("route", x(), u());
+      `,
+      "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        const cache = new Map();
+        export function x() { return "x" + cache.size; }
+      `,
+    },
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/" + chunkContaining(api, "new Map")).toContain(`return "u"`);
+    },
+    run: [
+      { file: "/out/index.js", stdout: "index x0 u\nroute x0 u" },
+      { file: "/out/admin.js", stdout: "admin u" },
+    ],
+  });
+  // h has no side effects and imports pkg. A fold of h into the chunk of util.js would make admin.js load the chunk of pkg, which runs setup.cjs.
+  itBundled("splitting/MinChunkSizeKeepsImporterOfChunkThatRepeatsImportOutOfChunkOfOtherEntry", {
+    files: {
+      "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
+      "/index.js": /* js */ `
+        import "./setup.cjs";
+        import { x } from "pkg";
+        console.log("index", x());
+        import("./route.js").then(m => console.log(m.name));
+      `,
+      "/route.js": /* js */ `
+        import { x } from "pkg";
+        import { u } from "./util.js";
+        import { h } from "h";
+        console.log("route", x(), u(), h());
+        export const name = "route";
+        import("./sub.js");
+      `,
+      "/sub.js": `import { h } from "h"; console.log("sub", h());`,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pkg/index.js": /* js */ `
+        const cache = new Map([["app", globalThis.APP?.name]]);
+        export function x() { return "x " + cache.get("app"); }
+      `,
+      "/node_modules/h/package.json": `{ "name": "h", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/h/index.js": `import { x } from "pkg"; export function h() { return "h(" + x() + ")"; }`,
+    },
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "setup\nindex x app\nroute x app u h(x app)\nroute\nsub h(x app)" },
+      { file: "/out/admin.js", stdout: "admin u" },
+    ],
+  });
+  // A fold puts go(), which holds import("./d.js"), into a chunk that admin.js loads. d.js then ranks before e.js. The chunk that e.js shares with d.js still repeats the import of e.js.
+  itBundled("splitting/MinChunkSizeChunkThatRepeatsImportIsLaidOutByItsEntryPoint", {
+    files: {
+      "/admin.js": `import { t } from "./t.js"; import { go } from "fpkg"; console.log("admin", t());`,
+      "/main.js": `console.log("main"); import("./e.js").then(m => console.log(m.name));`,
+      "/e.js": /* js */ `
+        import "./setup.cjs";
+        import { r } from "reader";
+        console.log("e", r());
+        export const name = "e";
+        import("./d.js").then(m => console.log(m.name));
+      `,
+      "/d.js": /* js */ `
+        import { r } from "reader";
+        import { t } from "./t.js";
+        import { go, v } from "fpkg";
+        console.log("d", r(), t(), v(), typeof go);
+        export const name = "d";
+        import("./d2.js");
+      `,
+      "/d2.js": `import { go, v } from "fpkg"; console.log("d2", v(), typeof go);`,
+      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
+      "/t.js": `export function t() { return "t"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
+      "/node_modules/reader/package.json": `{ "name": "reader", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/reader/index.js": /* js */ `
+        const cache = new Map([["app", globalThis.APP?.name]]);
+        export function r() { return "r " + cache.get("app"); }
+      `,
+      "/node_modules/fpkg/package.json": `{ "name": "fpkg", "type": "module", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/fpkg/index.js": /* js */ `
+        export function v() { return "v"; }
+        export function go() { return import("../../d.js"); }
+      `,
+    },
+    entryPoints: ["/admin.js", "/main.js"],
+    splitting: true,
+    minChunkSize: 100000,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main\nsetup\ne r app\ne\nd r app t v function\nd\nd2 v function" },
+      { file: "/out/admin.js", stdout: "admin t" },
+    ],
   });
 
   itFolds("splitting/FoldsSharedIntoEntry", {

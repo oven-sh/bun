@@ -1013,8 +1013,8 @@ impl BunxCommand {
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
         let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
-        // Stale or untrusted tree only: `--force` re-links every cached package,
-        // which is slow on Windows (#41211); `--no-cache` alone keeps #4981 fixed.
+        // Untrusted tree only: `--force` re-links every cached package, which is
+        // slow on Windows (#41211); `--no-cache` alone keeps #4981 fixed.
         let mut force_reinstall = false;
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;
@@ -1124,7 +1124,10 @@ impl BunxCommand {
                             }
                             #[cfg(not(windows))]
                             {
-                                let stat = match bun_sys::stat(destination) {
+                                // `lstat`: every install re-creates this link, like the
+                                // Windows shim. Its target can be a hardlink of the
+                                // install cache entry, whose mtime no install renews.
+                                let stat = match bun_sys::lstat(destination) {
                                     Ok(s) => s,
                                     Err(_) => break 'is_stale true,
                                 };
@@ -1137,7 +1140,6 @@ impl BunxCommand {
                         if is_stale {
                             bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
-                            force_reinstall = true;
                             if opts.no_install {
                                 bun_core::warn!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
@@ -1598,6 +1600,10 @@ impl BunxCommand {
                 format_args!("{}", BStr::new(&update_request.name)),
             );
         }
+        bun_core::note!(
+            "the package is installed in <b>{}<r>. Remove that directory to install it again.",
+            BStr::new(bunx_cache_dir),
+        );
         Global::exit(1);
     }
 }

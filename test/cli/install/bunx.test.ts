@@ -2,9 +2,9 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync, utimesSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lutimesSync, readdirSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "os";
-import { delimiter, join, resolve } from "path";
+import { delimiter, dirname, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -840,143 +840,178 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
   });
 });
 
-// `bunx pkg@latest` (any dist-tag) used to spawn `bun add pkg@latest
-// --no-cache --force`. `--force` re-installs every package in the cached tree
-// on every invocation, which is slow on Windows (per-file copy + AV scanning;
-// issues #41211, #23597). Only `--no-cache` is needed for a dist-tag: it
-// re-fetches the manifest, and `bun add pkg@tag` re-installs the package when
-// the tag moved (#4981).
-describe("bunx dist-tag cache", () => {
-  let port: number;
+// bunx keeps each requested package in `<temp>/bunx-<uid>-<pkg>@<version>` and
+// spawns `bun add` into it. That install passed `--force` for every dist-tag
+// run and every tree older than 24 hours, which links every file of every
+// cached package again (#41211, #23597). Now `--force` is for an untrusted
+// tree only.
+describe("bunx cache", () => {
+  const cli = (label: string) =>
+    `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)} + " with " + require("dep"));\n`;
 
-  beforeAll(() => {
-    dummyBeforeAll();
-    port = getPort()!;
-  });
-
-  afterAll(() => {
-    dummyAfterAll();
-  });
-
-  beforeEach(async () => {
-    await dummyBeforeEach();
-  });
-
-  async function makeTarball(tgzDir: string, name: string, version: string) {
-    const pkgRoot = tmpdirSync();
-    const packageDir = join(pkgRoot, "package");
-    await mkdir(packageDir, { recursive: true });
-    await writeFile(join(packageDir, "package.json"), JSON.stringify({ name, version, bin: { [name]: "cli.js" } }));
-    await writeFile(
-      join(packageDir, "cli.js"),
-      `#!/usr/bin/env node\nconsole.log(${JSON.stringify(`${name} ${version}`)});\n`,
-    );
-    chmodSync(join(packageDir, "cli.js"), 0o755);
-    await Bun.$`cd ${pkgRoot} && tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`;
-  }
-
-  const runBunx = async (...args: string[]): Promise<[err: string, out: string, exited: number]> => {
-    const subprocess = spawn({
-      cmd: [bunExe(), "x", ...args],
-      cwd: x_dir,
-      stdout: "pipe",
-      stdin: "inherit",
-      stderr: "pipe",
-      env: {
-        ...env,
-        npm_config_registry: `http://localhost:${port}/`,
+  type Versions = Record<string, { manifest: Record<string, unknown>; files: Record<string, string> }>;
+  const registryPackages: Record<string, Versions> = {
+    "tool": {
+      "1.0.0": {
+        manifest: { bin: { tool: "cli.js" }, dependencies: { dep: "1.0.0" } },
+        files: { "cli.js": cli("tool 1.0.0") },
       },
-    });
-    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
+      "1.1.0": {
+        manifest: { bin: { tool: "cli.js" }, dependencies: { dep: "1.0.0" } },
+        files: { "cli.js": cli("tool 1.1.0") },
+      },
+    },
+    "no-bin-file": {
+      "1.0.0": { manifest: { bin: { "no-bin-file": "cli.js" } }, files: { "index.js": "" } },
+    },
+    "dep": {
+      "1.0.0": { manifest: { main: "index.js" }, files: { "index.js": `module.exports = "dep 1.0.0";\n` } },
+    },
   };
 
-  // The bunx cache dir is $TMPDIR/bunx-<uid>-<pkg>@latest; resolve it by
-  // globbing so the test does not depend on how the uid is derived per OS.
-  function findBunxCacheDir(pkg: string): string {
-    const match = readdirSync(env.TMPDIR!).filter(d => d.startsWith("bunx-") && d.endsWith(`-${pkg}@latest`));
-    expect(match).toHaveLength(1);
-    return join(env.TMPDIR!, match[0]);
+  let tgzDir: string;
+
+  beforeAll(async () => {
+    tgzDir = tmpdirSync();
+    for (const [name, versions] of Object.entries(registryPackages)) {
+      for (const [version, { manifest, files }] of Object.entries(versions)) {
+        const root = tmpdirSync();
+        const all = { "package.json": JSON.stringify({ name, version, ...manifest }), ...files };
+        for (const [path, content] of Object.entries(all)) {
+          await mkdir(dirname(join(root, "package", path)), { recursive: true });
+          await writeFile(join(root, "package", path), content, { mode: 0o755 });
+        }
+        await Bun.$`tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`.cwd(root).quiet();
+      }
+    }
+  });
+
+  // Each test gets a registry, a temp directory and an install cache of its
+  // own, so the tests can run at the same time.
+  function fixture() {
+    const { x_dir, env } = setup();
+    const requests: string[] = [];
+    const latest: Record<string, string> = { tool: "1.0.0" };
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = decodeURIComponent(new URL(req.url).pathname).slice(1);
+        requests.push(path);
+        if (path.endsWith(".tgz")) return new Response(Bun.file(join(tgzDir, path)));
+        const versions = registryPackages[path];
+        if (!versions) return new Response("not found", { status: 404 });
+        return Response.json({
+          name: path,
+          "dist-tags": { latest: latest[path] ?? Object.keys(versions).at(-1) },
+          versions: Object.fromEntries(
+            Object.entries(versions).map(([version, { manifest }]) => [
+              version,
+              { name: path, version, ...manifest, dist: { tarball: `${server.url}${path}-${version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+
+    return {
+      latest,
+      // Runs `bunx`. `requests` holds what this run asked the registry for.
+      async run(...args: string[]) {
+        const first = requests.length;
+        await using proc = spawn({
+          cmd: [bunExe(), "x", ...args],
+          cwd: x_dir,
+          env: { ...env, npm_config_registry: server.url.href },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode, requests: requests.slice(first) };
+      },
+      // The directory bunx keeps `spec` in. Found by its name, so the test
+      // does not depend on how each OS derives the uid.
+      tree(spec: string) {
+        const match = readdirSync(env.TMPDIR).filter(d => d.startsWith("bunx-") && d.endsWith(`-${spec}`));
+        expect(match).toHaveLength(1);
+        return join(env.TMPDIR, match[0]);
+      },
+      [Symbol.dispose]: () => void server.stop(true),
+    };
   }
 
-  it("a warm @latest run does not re-install the cached packages", async () => {
-    const pkg = "dist-keep-pkg";
-    const tgzDir = tmpdirSync();
-    await makeTarball(tgzDir, pkg, "1.0.0");
-    setHandler(dummyRegistry([], { "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" }, latest: "1.0.0" }, 0, tgzDir));
+  // An install with `--force` removes each package directory and links it
+  // again, so a file the test adds to a package tells the two apart.
+  async function plantMarkers(tree: string, ...packages: string[]) {
+    const markers = packages.map(pkg => join(tree, "node_modules", pkg, "MARKER"));
+    for (const marker of markers) await writeFile(marker, "");
+    return () => markers.map(marker => existsSync(marker));
+  }
 
-    let [err, out, exited] = await runBunx(`${pkg}@latest`);
-    expect(err).not.toContain("error:");
-    expect(out).toContain(`${pkg} 1.0.0`);
-    expect(exited).toBe(0);
+  it.concurrent("a warm dist-tag run asks the registry and links nothing again", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
 
-    // Plant a marker inside the cached package. A `--force` re-install
-    // replaces the package directory and deletes it.
-    const marker = join(findBunxCacheDir(pkg), "node_modules", pkg, "MARKER");
-    await writeFile(marker, "keep");
+    const markers = await plantMarkers(bunx.tree("tool@latest"), "tool", "dep");
 
-    [err, out, exited] = await runBunx(`${pkg}@latest`);
-    expect(err).not.toContain("error:");
-    expect(out).toContain(`${pkg} 1.0.0`);
-    expect(exited).toBe(0);
-    expect(await Bun.file(marker).exists()).toBe(true);
+    expect(await bunx.run("tool@latest")).toMatchObject({
+      stdout: "tool 1.0.0 with dep 1.0.0\n",
+      exitCode: 0,
+      requests: ["tool"],
+    });
+    expect(markers()).toEqual([true, true]);
   });
 
-  it("a stale cached install (>24h) is still force-refreshed", async () => {
-    const pkg = "dist-stale-pkg";
-    const tgzDir = tmpdirSync();
-    await makeTarball(tgzDir, pkg, "1.0.0");
-    setHandler(dummyRegistry([], { "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" }, latest: "1.0.0" }, 0, tgzDir));
+  it.concurrent("a dist-tag run follows the tag when it moves", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
 
-    // No version: this path runs the cached bin directly unless the cached
-    // .bin entry is older than 24h, in which case it re-installs with --force.
-    let [err, out, exited] = await runBunx(pkg);
-    expect(err).not.toContain("error:");
-    expect(out).toContain(`${pkg} 1.0.0`);
-    expect(exited).toBe(0);
+    bunx.latest.tool = "1.1.0";
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.1.0 with dep 1.0.0\n", exitCode: 0 });
 
-    const cacheDir = findBunxCacheDir(pkg);
-    const marker = join(cacheDir, "node_modules", pkg, "MARKER");
-    await writeFile(marker, "keep");
+    bunx.latest.tool = "1.0.0";
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+  });
 
-    // Age every cached file bunx's staleness checks can read (the .bin entry
-    // and the root package.json) past the 24h validity window.
+  it.concurrent("a tree older than 24 hours asks the registry once and links nothing again", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+    expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", requests: [] });
+
+    // The age of a tree is the age of its `.bin` entry: a link on POSIX, a
+    // shim on Windows. `lutimes` sets the time of the link, not of its target.
+    const tree = bunx.tree("tool@latest");
     const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
-    utimesSync(join(cacheDir, "package.json"), old, old);
-    for (const entry of readdirSync(join(cacheDir, "node_modules", ".bin"))) {
-      utimesSync(join(cacheDir, "node_modules", ".bin", entry), old, old);
+    for (const entry of readdirSync(join(tree, "node_modules", ".bin"))) {
+      (isWindows ? utimesSync : lutimesSync)(join(tree, "node_modules", ".bin", entry), old, old);
     }
+    const markers = await plantMarkers(tree, "tool", "dep");
 
-    [err, out, exited] = await runBunx(pkg);
-    expect(err).not.toContain("error:");
-    expect(out).toContain(`${pkg} 1.0.0`);
-    expect(exited).toBe(0);
-    // The stale tree was force-reinstalled, so the planted marker is gone.
-    expect(await Bun.file(marker).exists()).toBe(false);
+    expect(await bunx.run("tool")).toMatchObject({
+      stdout: "tool 1.0.0 with dep 1.0.0\n",
+      exitCode: 0,
+      requests: ["tool"],
+    });
+    expect(markers()).toEqual([true, true]);
+
+    // That install made the `.bin` entry again, so the tree is new again.
+    expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", requests: [] });
   });
 
-  it("a @latest run picks up a newly published latest version", async () => {
-    const pkg = "dist-move-pkg";
-    const tgzDir = tmpdirSync();
-    await makeTarball(tgzDir, pkg, "1.0.0");
-    await makeTarball(tgzDir, pkg, "1.1.0");
-    const versions = {
-      "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" },
-      "1.1.0": { bin: { [pkg]: "cli.js" }, as: "1.1.0" },
-    };
-    setHandler(dummyRegistry([], { ...versions, latest: "1.0.0" }, 0, tgzDir));
+  it.concurrent("a package that does not ship the file its bin names is not linked again", async () => {
+    using bunx = fixture();
+    const first = await bunx.run("no-bin-file@latest");
+    const tree = bunx.tree("no-bin-file@latest");
+    expect(first.stderr).toContain("error: could not determine executable to run for package no-bin-file");
+    expect(first.stderr).toContain(`note: the package is installed in ${tree}. Remove that directory`);
+    expect(first.exitCode).toBe(1);
 
-    let [err, out, exited] = await runBunx(`${pkg}@latest`);
-    expect(err).not.toContain("error:");
-    expect(out).toContain(`${pkg} 1.0.0`);
-    expect(exited).toBe(0);
+    const markers = await plantMarkers(tree, "no-bin-file");
 
-    // The dist-tag moves; the next run must install and run 1.1.0.
-    setHandler(dummyRegistry([], { ...versions, latest: "1.1.0" }, 0, tgzDir));
-
-    [err, out, exited] = await runBunx(`${pkg}@latest`);
-    expect(err).not.toContain("error:");
-    expect(out).toContain(`${pkg} 1.1.0`);
-    expect(exited).toBe(0);
+    const second = await bunx.run("no-bin-file@latest");
+    expect(second.stderr).toContain("error: could not determine executable to run for package no-bin-file");
+    expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin-file"] });
+    expect(markers()).toEqual([true]);
   });
 });
 

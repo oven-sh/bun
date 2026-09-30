@@ -7,9 +7,12 @@
 
 use super::*;
 
-/// A hole prints as a line of `undefined`. An array can claim 2^32 - 1 of them
-/// and hold nothing.
-const MAX_HOLES_PRINTED_ONE_BY_ONE: u32 = 1000;
+/// A hole prints as a line of `undefined`, and an array can claim 2^32 - 1 of
+/// them and hold nothing. A diff prints a longer run than this as one line.
+const MAX_EXPANDED_HOLE_RUN: u32 = 8;
+/// The text of a snapshot is a file format, so it expands every run, and a
+/// longer one than this is an error.
+const MAX_SNAPSHOT_HOLE_RUN: u32 = 1000;
 
 impl<'a> Formatter<'a> {
     #[inline(always)]
@@ -276,22 +279,23 @@ impl<'a> Formatter<'a> {
             self.put(writer_, b"[");
             self.add_for_new_line(1);
 
+            let mut present = reader::PresentIndexes::default();
+            let mut expanded_until: u32 = 0;
             let mut i: u32 = 0;
             while i < len {
                 self.put(writer_, b"\n");
                 self.put_jest_indent(writer_);
-                let element = value.get_index(self.global_this, i)?;
-                if element.is_undefined() {
-                    let holes = value
-                        .next_present_index(i)
-                        .map_or(len, |next| next.min(len))
-                        - i;
-                    if holes > MAX_HOLES_PRINTED_ONE_BY_ONE {
-                        self.print_jest_holes(writer_, holes)?;
-                        i += holes;
+                if i >= expanded_until && value.get_direct_index(self.global_this, i)?.is_empty() {
+                    // At least this one, if the index was deleted since it was copied.
+                    let end = present.next(value, i, len).max(i + 1);
+                    if self.print_jest_hole_run(writer_, end - i)? {
+                        i = end;
                         continue;
                     }
+                    expanded_until = end;
                 }
+                // For a hole: `undefined`, or what the prototype chain supplies.
+                let element = value.get_index(self.global_this, i)?;
                 let tag = self.tag_of(element)?;
                 self.format::<false>(tag, writer_, element, self.global_this)?;
                 self.put_jest_comma(writer_);
@@ -311,16 +315,30 @@ impl<'a> Formatter<'a> {
         Ok(())
     }
 
-    #[cold]
-    fn print_jest_holes(&mut self, writer_: &mut dyn bun_io::Write, holes: u32) -> JsResult<()> {
+    /// `Ok(false)` when the run is to be expanded, one line to a hole.
+    fn print_jest_hole_run(
+        &mut self,
+        writer_: &mut dyn bun_io::Write,
+        holes: u32,
+    ) -> JsResult<bool> {
         if self.is_exact() {
+            if holes <= MAX_SNAPSHOT_HOLE_RUN {
+                return Ok(false);
+            }
             return Err(self.global_this.throw(format_args!(
                 "Snapshot value is too large to serialize: an array has {holes} empty items in a row. Snapshot a smaller part of the value."
             )));
         }
+        if holes <= MAX_EXPANDED_HOLE_RUN {
+            return Ok(false);
+        }
         self.putf(writer_, format_args!("{holes} x empty items"));
+        // What that many lines of `undefined,` add, less the comma below.
+        // `print_jest_promise` breaks the line on this count, and both sides
+        // of a diff have to break it in the same place.
+        self.add_for_new_line((holes as usize).saturating_mul(10) - 1);
         self.put_jest_comma(writer_);
-        Ok(())
+        Ok(true)
     }
 
     #[inline(never)]

@@ -21,7 +21,7 @@ pub enum Style {
 
 /// What the walk knows about a value that can hold other values.
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
-pub enum Mark {
+pub(super) enum Mark {
     /// An ancestor of the value being printed. Meeting it again is a cycle.
     #[default]
     OnPath,
@@ -213,7 +213,7 @@ impl<'a> Formatter<'a> {
     /// A `Printed` key can outlive its cell, and a later cell can reuse the
     /// address. The key is only compared, never dereferenced, so the worst
     /// case is a first visit charged to the budget as a repeat.
-    pub(crate) fn mark_on_path(&mut self, value: JSValue) -> Option<Mark> {
+    fn mark_on_path(&mut self, value: JSValue) -> Option<Mark> {
         self.acquire_map();
         let entry = self.map.get_or_put(value).expect("unreachable");
         if !entry.found_existing {
@@ -226,7 +226,7 @@ impl<'a> Formatter<'a> {
         self.map.get(&value) == Some(&Mark::OnPath)
     }
 
-    pub(crate) fn mark_printed(&mut self, value: JSValue) {
+    fn mark_printed(&mut self, value: JSValue) {
         if let Some(mark) = self.map.get_mut(&value) {
             *mark = Mark::Printed;
         }

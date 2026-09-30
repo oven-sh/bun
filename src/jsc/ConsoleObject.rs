@@ -1501,7 +1501,7 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
+pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult};
 
 pub mod formatter {
     use super::*;
@@ -1585,8 +1585,8 @@ pub mod formatter {
     pub(crate) mod reader;
 
     pub(crate) use guard::Entered;
-    use guard::{CountingWriter, Leave, SharedReferenceBudget};
-    pub use guard::{Mark, Style};
+    pub use guard::Style;
+    use guard::{CountingWriter, Leave, Mark, SharedReferenceBudget};
 
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
@@ -1596,12 +1596,12 @@ pub mod formatter {
         /// slice cannot express that without forcing `'a` to outlive locals;
         /// `RawSlice` carries the outlives-holder invariant instead.
         pub(crate) remaining_values: bun_ptr::RawSlice<JSValue>,
-        pub map: visited::Map,
+        map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
         /// Raw pointer (not `Box`) because `visited::Pool` owns the
         /// `heap::alloc`/`from_raw` lifecycle.
-        pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
         pub(crate) hide_native: bool,
         pub(crate) indent: u32,
         pub depth: u16,
@@ -1881,7 +1881,7 @@ pub mod formatter {
     }
 
     /// For detecting circular and shared references.
-    pub mod visited {
+    mod visited {
         use super::*;
 
         /// Newtype over `HashMap<JSValue, Mark>` so we can implement
@@ -1890,7 +1890,7 @@ pub mod formatter {
         /// `self.map.*` call sites unchanged.
         #[derive(Default)]
         #[repr(transparent)]
-        pub struct Map(bun_collections::HashMap<JSValue, Mark>);
+        pub(super) struct Map(bun_collections::HashMap<JSValue, Mark>);
 
         impl core::ops::Deref for Map {
             type Target = bun_collections::HashMap<JSValue, Mark>;
@@ -1914,17 +1914,16 @@ pub mod formatter {
 
         // Thread-local free list, capped at 16 nodes.
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-        pub type PoolNode = bun_collections::pool::Node<Map>;
+        pub(super) type PoolNode = bun_collections::pool::Node<Map>;
 
         /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
         /// so every node returned by [`Pool::get_node`] carries an initialized
         /// `data` payload, and the caller exclusively owns the node until
         /// [`Pool::release`]. Centralises the `NonNull::as_mut()` +
-        /// `assume_init_mut()` pair so the four call sites in this file (and
-        /// the cause-chain guard in `VirtualMachine::print_error_instance`)
-        /// don't each open-code two `unsafe` operations.
+        /// `assume_init_mut()` pair so the call sites don't each open-code
+        /// two `unsafe` operations.
         #[inline]
-        pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
+        pub(super) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
             // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
             // every node from `Pool::get_node()`; the caller owns `node`
             // exclusively until `Pool::release`, so forming `&mut` is sound.

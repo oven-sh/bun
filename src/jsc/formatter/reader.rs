@@ -102,6 +102,68 @@ pub(super) fn array_length(global: &JSGlobalObject, value: JSValue) -> u64 {
     Bun__FormatterReads__arrayLength(value, global)
 }
 
+/// Steps through the indexes an array or an `arguments` object holds, in time
+/// linear in what it holds, whatever length it claims.
+///
+/// The indexes of the sparse map are copied and sorted once, when the walk
+/// first goes past the vector. Printing an element can run user code that
+/// changes the array. The copy then goes stale: an index stored later counts as
+/// a hole, and one deleted later is still reported.
+#[derive(Default)]
+pub(super) struct PresentIndexes {
+    sparse: Option<Vec<u32>>,
+    pos: usize,
+}
+
+impl PresentIndexes {
+    /// The smallest index in `from..len` that `array` holds, or `len`.
+    pub(super) fn next(&mut self, array: JSValue, from: u32, len: u32) -> u32 {
+        unsafe extern "C" {
+            safe fn Bun__JSObject__nextPresentVectorIndex(this: JSValue, start: u32) -> u64;
+        }
+        if self.sparse.is_none() {
+            match Bun__JSObject__nextPresentVectorIndex(array, from) {
+                u64::MAX => self.sparse = Some(sorted_sparse_indexes(array, from, len)),
+                index => return (index as u32).min(len),
+            }
+        }
+        let Some(sparse) = &self.sparse else {
+            return len;
+        };
+        while sparse.get(self.pos).is_some_and(|&index| index < from) {
+            self.pos += 1;
+        }
+        sparse.get(self.pos).copied().unwrap_or(len)
+    }
+}
+
+fn sorted_sparse_indexes(array: JSValue, start: u32, end: u32) -> Vec<u32> {
+    use bun_core::UnwrapOrOom as _;
+    unsafe extern "C" {
+        fn Bun__JSObject__copySortedSparseIndexes(
+            this: JSValue,
+            start: u32,
+            end: u32,
+            out: *mut u32,
+            capacity: u32,
+        ) -> u32;
+    }
+    let mut out: Vec<u32> = Vec::new();
+    loop {
+        let capacity = u32::try_from(out.capacity()).unwrap_or(u32::MAX);
+        // SAFETY: `out` has room for `capacity` u32s and C++ writes at most that many.
+        let count = unsafe {
+            Bun__JSObject__copySortedSparseIndexes(array, start, end, out.as_mut_ptr(), capacity)
+        };
+        if count <= capacity {
+            // SAFETY: C++ initialized the first `count <= capacity` elements.
+            unsafe { out.set_len(count as usize) };
+            return out;
+        }
+        out.try_reserve_exact(count as usize).unwrap_or_oom();
+    }
+}
+
 /// The entry count of a `Map` or a `Set`. 0 for a `WeakMap` or a `WeakSet`,
 /// which cannot be listed.
 ///

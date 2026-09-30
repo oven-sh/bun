@@ -7081,8 +7081,8 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
 
 static constexpr uint64_t noPresentIndex = std::numeric_limits<uint64_t>::max();
 
-// Mirrors the butterfly walk in JSObject::getOwnIndexedPropertyNames.
-static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start)
+// Mirrors the butterfly walk in JSObject::getOwnIndexedPropertyNames, without the sparse map of an ArrayStorage.
+static uint64_t nextPresentVectorIndex(JSC::JSObject* object, uint32_t start)
 {
     switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -7122,20 +7122,20 @@ static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start)
                 return i;
         }
 
-        uint64_t result = noPresentIndex;
-        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
-            for (const auto& entry : *map) {
-                if (entry.index() >= start && entry.index() < result)
-                    result = entry.index();
-            }
-        }
-        return result;
+        return noPresentIndex;
     }
 
     default:
         ASSERT_NOT_REACHED();
         return start;
     }
+}
+
+static JSC::SparseArrayValueMap* sparseMapOf(JSC::JSObject* object)
+{
+    if (!hasAnyArrayStorage(object->indexingType()))
+        return nullptr;
+    return object->butterfly()->arrayStorage()->m_sparseMap.get();
 }
 
 // The arguments live outside the butterfly. Mirrors GenericArgumentsImpl::getOwnPropertyNames.
@@ -7149,13 +7149,13 @@ static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start)
     return noPresentIndex;
 }
 
-// Smallest own present index >= `start`, or UINT64_MAX when every index from `start` on is a hole.
-extern "C" uint64_t Bun__JSObject__nextPresentIndex(
+// Smallest own present index >= `start` outside the sparse map, or UINT64_MAX.
+extern "C" uint64_t Bun__JSObject__nextPresentVectorIndex(
     JSC::EncodedJSValue encodedValue,
     uint32_t start)
 {
     JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-    uint64_t result = nextPresentButterflyIndex(object, start);
+    uint64_t result = nextPresentVectorIndex(object, start);
 
     switch (object->type()) {
     case JSC::DirectArgumentsType:
@@ -7165,6 +7165,51 @@ extern "C" uint64_t Bun__JSObject__nextPresentIndex(
     default:
         return result;
     }
+}
+
+// Smallest own present index >= `start`, or UINT64_MAX when every index from `start` on is a hole.
+//
+// Walks the whole sparse map on every call. A caller that asks once per run of holes, with no
+// bound on the runs, uses the vector half above and Bun__JSObject__copySortedSparseIndexes.
+extern "C" uint64_t Bun__JSObject__nextPresentIndex(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start)
+{
+    uint64_t result = Bun__JSObject__nextPresentVectorIndex(encodedValue, start);
+    if (JSC::SparseArrayValueMap* map = sparseMapOf(JSC::JSValue::decode(encodedValue).getObject())) {
+        for (const auto& entry : *map) {
+            if (entry.index() >= start && entry.index() < result)
+                result = entry.index();
+        }
+    }
+    return result;
+}
+
+// Copies the indexes in `start..end` that the sparse map holds into `out`, ascending, and returns
+// how many there are. Nothing is sorted when they do not fit in `capacity`: ask again with room.
+extern "C" uint32_t Bun__JSObject__copySortedSparseIndexes(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t start,
+    uint32_t end,
+    uint32_t* out,
+    uint32_t capacity)
+{
+    JSC::SparseArrayValueMap* map = sparseMapOf(JSC::JSValue::decode(encodedValue).getObject());
+    if (!map)
+        return 0;
+
+    uint32_t count = 0;
+    for (const auto& entry : *map) {
+        uint32_t index = entry.index();
+        if (index < start || index >= end)
+            continue;
+        if (count < capacity)
+            out[count] = index;
+        ++count;
+    }
+    if (count <= capacity)
+        std::sort(out, out + count);
+    return count;
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

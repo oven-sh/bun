@@ -64,6 +64,80 @@ describe("--lint among the flags that bunx reads before the package name", () =>
   });
 });
 
+describe("--lint among the options that a compiled executable parses", () => {
+  const refused = { stdout: "", stderr: "error: --lint cannot be used in a compiled executable\n", exitCode: 1 };
+  // The refusal does not depend on the variable that turns `--lint` on.
+  const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+  const app = isWindows ? "app.exe" : "app";
+  // Run, the program writes the marker and prints its arguments.
+  const source = `${markerSource}console.log(JSON.stringify(process.argv.slice(2)));\n`;
+
+  /** Runs the executable `app` of `cwd` and returns what `bun` returns. */
+  async function run(cwd: string, args: string[], env: NodeJS.Dict<string>) {
+    await using proc = Bun.spawn({
+      cmd: [join(cwd, app), ...args],
+      env,
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Each test copies the Bun executable and starts the copy several times, which a debug build does slowly.
+  test.concurrent(
+    "in BUN_OPTIONS it is refused and the program is not run",
+    async () => {
+      using dir = tempDir("lint-compiled-env", { "app.ts": source });
+      const cwd = String(dir);
+      const build = await bun(cwd, ["build", "--compile", "app.ts", "--outfile", app], bunEnv);
+      expect(build.stderr).not.toContain("error:");
+      expect(build.exitCode).toBe(0);
+
+      const [set, unset, valued] = await Promise.all([
+        run(cwd, [], { ...lintEnv, BUN_OPTIONS: "--lint" }),
+        run(cwd, [], { ...withoutVariable, BUN_OPTIONS: "--lint" }),
+        run(cwd, [], { ...lintEnv, BUN_OPTIONS: "--lint=value" }),
+      ]);
+      expect(set).toEqual(refused);
+      expect(unset).toEqual(refused);
+      expect(valued).toEqual(refused);
+      expect(await markerExists(cwd)).toBe(false);
+
+      // On the command line of the executable the flag is an argument of the program, whatever BUN_OPTIONS has.
+      for (const env of [lintEnv, { ...lintEnv, BUN_OPTIONS: "--no-deprecation" }]) {
+        const after = await run(cwd, ["--lint"], env);
+        expect(after.stdout).toBe('["--lint"]\n');
+        expect(after.exitCode).toBe(0);
+      }
+      expect(await markerExists(cwd)).toBe(true);
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "built into the executable it is refused and the program is not run",
+    async () => {
+      using dir = tempDir("lint-compiled-baked", { "app.ts": source });
+      const cwd = String(dir);
+      const build = await Bun.build({
+        entrypoints: [join(cwd, "app.ts")],
+        compile: { execArgv: ["--lint"], outfile: join(cwd, app) },
+      });
+      expect(build.logs.map(String).join("\n")).toBe("");
+      expect(build.success).toBe(true);
+
+      const [set, unset] = await Promise.all([run(cwd, [], lintEnv), run(cwd, [], withoutVariable)]);
+      expect(set).toEqual(refused);
+      expect(unset).toEqual(refused);
+      expect(await markerExists(cwd)).toBe(false);
+    },
+    60_000,
+  );
+});
+
 // Every place stderr reports, as `file:line:column`. A code frame has `at bad.ts:1:9`, a plain line starts `bad.ts(1,9)`.
 function positions(stderr: string) {
   const found = new Set<string>();

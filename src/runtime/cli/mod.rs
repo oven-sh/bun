@@ -1380,6 +1380,9 @@ pub(crate) mod command {
                     bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
                 }
 
+                // The embedded entry point is what runs: `--lint` among the options parsed next is refused.
+                super::lint_command::refuse_in_compiled_executable(bun::argv().as_slice());
+
                 // Handle actual options to parse.
                 let result = init(Tag::AutoCommand, log)?;
 

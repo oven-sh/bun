@@ -50,6 +50,15 @@ pub(crate) fn refuse_in_bunx(argv: &[&'static ZStr]) {
     }
 }
 
+/// Refuses `--lint` among the options a compiled executable parses: `argv` is its name, then those built into it and those of `BUN_OPTIONS`.
+#[inline(never)]
+pub(crate) fn refuse_in_compiled_executable(argv: &[&'static ZStr]) {
+    if argv.iter().skip(1).any(|arg| is_lint_token(arg.as_bytes())) {
+        bun_core::err_generic!("--lint cannot be used in a compiled executable");
+        Global::exit(1);
+    }
+}
+
 /// Checks every operand and runs none. Exits with 1 without an operand, with 2 when a diagnostic is an error, else with 0.
 #[cold]
 #[inline(never)]

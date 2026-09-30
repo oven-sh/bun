@@ -462,7 +462,10 @@ pub(crate) fn writable_stream(
                 }
             }
         } else if let S3UploadResult::Failure(err) = &result {
-            sink.fail_unreported(err, path);
+            // `done` already: the sink failed the upload itself, so there is nothing to report.
+            if !sink.done {
+                sink.fail_unreported(err, path);
+            }
         }
         sink.finalize();
         Ok(())

@@ -241,22 +241,37 @@ describe("zlib.zstdCompress", () => {
     }
 
     // The stream gets a copy of the own enumerable options. So it decodes these strings as UTF-8.
-    test("does not pledge for a defaultEncoding that the stream does not get", async () => {
-      class Options {
-        get defaultEncoding() {
-          return "latin1";
+    for (const defaultEncoding of ["latin1", "binary", "ascii", "utf16le", "ucs2"]) {
+      test(`${defaultEncoding}: is not the encoding if the options object does not own it`, async () => {
+        class Options {
+          get defaultEncoding() {
+            return defaultEncoding;
+          }
         }
-      }
-      for (const options of [
-        Object.create({ defaultEncoding: "latin1" }),
-        Object.create({ defaultEncoding: "utf16le" }),
-        Object.defineProperty({}, "defaultEncoding", { value: "latin1", enumerable: false }),
-        new Options(),
-      ]) {
-        const frame = await compress(text, options);
-        assert.deepStrictEqual(zlib.zstdDecompressSync(frame), Buffer.from(text));
-        assertContentSize(frameContentSize(frame), null, 13);
-      }
+        for (const options of [
+          Object.create({ defaultEncoding }),
+          Object.defineProperty({}, "defaultEncoding", { value: defaultEncoding, enumerable: false }),
+          new Options(),
+        ]) {
+          const frame = await compress(text, options);
+          assert.deepStrictEqual(zlib.zstdDecompressSync(frame), Buffer.from(text));
+          assertContentSize(frameContentSize(frame), 13, 13);
+        }
+      });
+    }
+
+    test("measures the string in the encoding that the stream gets from a getter", async () => {
+      let reads = 0;
+      const options = {
+        get defaultEncoding() {
+          return reads++ === 0 ? "latin1" : "utf8";
+        },
+      };
+      const frame = await compress(text, options);
+      const decoded = zlib.zstdDecompressSync(frame);
+      if (isBun) assert.deepStrictEqual({ reads, decoded }, { reads: 1, decoded: Buffer.from(text, "latin1") });
+      else assert.ok(decoded.equals(Buffer.from(text, "latin1")) || decoded.equals(Buffer.from(text)));
+      assertContentSize(frameContentSize(frame), decoded.length, decoded.length);
     });
 
     test("does not read the encoding with a replaced String.prototype.toLowerCase", async () => {

@@ -12,7 +12,6 @@ const ArrayPrototypePush = Array.prototype.push;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
-const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
@@ -750,25 +749,25 @@ function withPledgedSrcSize(buffer, opts) {
   if (opts?.pledgedSrcSize !== undefined) {
     return opts;
   }
-  let pledgedSrcSize;
   if (typeof buffer === "string") {
-    // Node pledges only for "utf8" and "utf-8". Bun also pledges for each encoding with an exact byte length.
-    const encoding = opts?.defaultEncoding;
+    // The engine gets this copy, so the string is measured in the defaultEncoding that the stream decodes it with.
+    const pledged = { __proto__: null, ...opts };
+    const encoding = pledged.defaultEncoding;
     if (encoding == null || encoding === "utf8" || encoding === "utf-8") {
-      pledgedSrcSize = Buffer.byteLength(buffer);
-    } else if (hasExactByteLength(encoding) && ObjectPrototypePropertyIsEnumerable.$call(opts, "defaultEncoding")) {
-      // The stream gets only the own enumerable options, so it does not decode with an inherited defaultEncoding.
-      pledgedSrcSize = Buffer.byteLength(buffer, encoding);
+      pledged.pledgedSrcSize = Buffer.byteLength(buffer);
+    } else if (hasExactByteLength(encoding)) {
+      // Node pledges only for "utf8" and "utf-8". Bun also pledges for each encoding with an exact byte length.
+      pledged.pledgedSrcSize = Buffer.byteLength(buffer, encoding);
     } else {
       return opts;
     }
-  } else if (isArrayBufferView(buffer) || isAnyArrayBuffer(buffer)) {
-    pledgedSrcSize = buffer.byteLength;
-  } else {
-    // Leave invalid input to the existing validation.
-    return opts;
+    return pledged;
   }
-  return { __proto__: null, ...opts, pledgedSrcSize };
+  if (isArrayBufferView(buffer) || isAnyArrayBuffer(buffer)) {
+    return { __proto__: null, ...opts, pledgedSrcSize: buffer.byteLength };
+  }
+  // Leave invalid input to the existing validation.
+  return opts;
 }
 
 const kMaxBrotliParam = 9;

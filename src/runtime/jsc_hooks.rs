@@ -708,7 +708,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
     // Note: copy the raw ptr into a guard-owned local so the defer body
-    // doesn't borrow the fn param — later `(*vm).set_pending_internal_promise(…)`
+    // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
     // would otherwise alias the guard's capture.
     let vm_for_guard = vm;
     scopeguard::defer! {
@@ -820,7 +820,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         };
 
         // SAFETY: per fn contract.
-        unsafe { (*vm).set_pending_internal_promise(Some(promise)) };
+        unsafe { (*vm).pending_internal_promise = Some(promise) };
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
@@ -837,9 +837,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: `pending_internal_promise` was set just above (or
                     // swapped by HMR to another live cell); `status()` is a
                     // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }
-                        .pending_internal_promise()
-                        .unwrap_or(promise);
+                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
                     // SAFETY: `pip` is a live JSC heap cell (set just above or
                     // the protected `promise` fallback).
                     if unsafe { &*pip }.status() != PromiseStatus::Pending {
@@ -848,9 +846,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     // SAFETY: `el` is the live per-thread event loop.
                     unsafe { (*el).tick() };
                     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-                    let pip = unsafe { &*vm }
-                        .pending_internal_promise()
-                        .unwrap_or(promise);
+                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
                     // SAFETY: `pip` is a live JSC heap cell (see above).
                     if unsafe { &*pip }.status() == PromiseStatus::Pending {
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the

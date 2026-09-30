@@ -611,6 +611,44 @@ pub fn set_thread_name(name: &ZStr) {
     }
 }
 
+/// Write the process title to the OS so `ps`, `top` and `pgrep -f` show it,
+/// like libuv's `uv_set_process_title`: the title is copied over the kernel
+/// argv block (truncated to its original size, rest NUL-padded), and on Linux
+/// `prctl(PR_SET_NAME)` also updates `/proc/self/comm` (15 bytes max).
+/// No-op on other platforms; Windows goes through `uv_set_process_title`.
+pub fn set_process_title(title: &[u8]) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let mut comm = [0u8; 16];
+        let n = title.len().min(15);
+        comm[..n].copy_from_slice(&title[..n]);
+        // SAFETY: PR_SET_NAME reads a NUL-terminated string; `comm[15]` is 0.
+        unsafe {
+            let _ = libc::prctl(libc::PR_SET_NAME, comm.as_ptr() as usize);
+        }
+    }
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    {
+        if let Some((ptr, cap, argc)) = crate::os_argv_title_span() {
+            // Leave one NUL per original argv entry: macOS `ps` reads exactly
+            // `argc` strings from the block, so with fewer NULs it would run
+            // past argv and print the environment after the title.
+            let n = title.len().min(cap.saturating_sub(argc.max(1)));
+            // SAFETY: `os_argv_title_span` returns the writable kernel argv
+            // region of `cap` bytes; `argv()` reads owned copies, so nothing
+            // else in the process aliases it.
+            unsafe {
+                core::ptr::copy_nonoverlapping(title.as_ptr(), ptr, n);
+                core::ptr::write_bytes(ptr.add(n), 0, cap - n);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+    {
+        let _ = title;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Exit callbacks
 // ──────────────────────────────────────────────────────────────────────────

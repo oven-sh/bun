@@ -134,8 +134,8 @@ export interface BinaryExpectations {
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
    * Mach-O debug info lives in the dSYM, on PE in the PDB). `compressed`:
-   * the DWARF sections carry SHF_COMPRESSED (at link, or post-link with
-   * rust-lld — flags.ts --compress-debug-sections).
+   * the DWARF sections carry SHF_COMPRESSED (flags.ts
+   * --compress-debug-sections).
    */
   debugInfo?: { symtab: boolean; debugSections: boolean; compressed: boolean };
 }

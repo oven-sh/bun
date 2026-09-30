@@ -3,7 +3,10 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
+import { connect as netConnect } from "net";
 import { join } from "path";
+import { Duplex } from "stream";
+import { connect as tlsConnect } from "tls";
 import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
@@ -346,6 +349,97 @@ it("should terminate the connection when the peer exceeds the renegotiation limi
   // and delivers the response.
   expect(await outcome).toBe("closed");
 });
+
+// A renegotiation reports the certificate check of its own handshake. The client ends its write side while the first
+// handshake still runs, which sends nothing but marks the TLS session as shut down. That state must not turn the
+// failed check of the renegotiated handshake into a pass. Runs the client over a Duplex, the SSLWrapper path.
+// Node cannot be the client here: its own end() mid-handshake fails the connection with ERR_STREAM_WRITE_AFTER_END.
+it.concurrent.each([false, true])(
+  "a renegotiation keeps the failed certificate check (end() mid-handshake: %p)",
+  async end => {
+    await using server = Bun.spawn({
+      cmd: [
+        "node",
+        "-e",
+        `
+        const tls = require("tls");
+        const server = tls.createServer(
+          {
+            cert: process.env.SERVER_CERT,
+            key: process.env.SERVER_KEY,
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+            allowHalfOpen: true,
+          },
+          socket => {
+            socket.on("error", () => {});
+            socket.renegotiate({ rejectUnauthorized: false }, err => {
+              if (err) socket.destroy(err);
+              else socket.write("after-reneg");
+            });
+          },
+        );
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `,
+      ],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+    });
+    const { value } = await server.stdout.getReader().read();
+    const port = Number(new TextDecoder().decode(value).trim());
+
+    const raw = netConnect(port, "127.0.0.1");
+    raw.on("error", () => {});
+    let firstWrite = true;
+    const duplex = new Duplex({
+      read() {},
+      write(chunk: Buffer, encoding: string, callback: () => void) {
+        raw.write(chunk, callback);
+        if (end && firstWrite) {
+          firstWrite = false;
+          setImmediate(() => socket.end());
+        }
+      },
+      // The TLS socket's write side ends locally. The transport stays open, so the renegotiation can still run.
+      final(callback: () => void) {
+        callback();
+      },
+    });
+    raw.on("data", (chunk: Buffer) => duplex.push(chunk));
+    raw.on("end", () => duplex.push(null));
+    raw.on("close", () => duplex.destroy());
+
+    const outcome = Promise.withResolvers<string[]>();
+    const events: string[] = [];
+    const check = (event: string) =>
+      events.push(`${event} authorized=${socket.authorized} authError=${socket.authorizationError}`);
+    const socket = tlsConnect({ socket: duplex, servername: "localhost", rejectUnauthorized: false });
+    socket.on("secureConnect", () => check("secureConnect"));
+    socket.on("data", (chunk: Buffer) => {
+      check(`data ${chunk}`);
+      outcome.resolve(events);
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      events.push(`error ${err.code}`);
+      outcome.resolve(events);
+    });
+    socket.on("close", () => outcome.resolve(events));
+    try {
+      // Two handshakes, then the data the server sends once the renegotiation completed. Every observation of the
+      // client reports the self-signed certificate of the server.
+      expect(await outcome.promise).toEqual([
+        "secureConnect authorized=false authError=DEPTH_ZERO_SELF_SIGNED_CERT",
+        "secureConnect authorized=false authError=DEPTH_ZERO_SELF_SIGNED_CERT",
+        "data after-reneg authorized=false authError=DEPTH_ZERO_SELF_SIGNED_CERT",
+      ]);
+    } finally {
+      socket.destroy();
+      raw.destroy();
+    }
+  },
+);
 
 it("should fail if renegotiation fails using tls module", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();

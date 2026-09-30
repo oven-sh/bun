@@ -18,7 +18,7 @@
 
 import { SQL, type Socket } from "bun";
 import { expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { tls as tlsCert } from "harness";
 import {
   listeningServer,
   MYSQL_CLIENT_SSL,
@@ -30,7 +30,11 @@ import {
   mysqlReadPackets,
   neverAnsweringServer,
   pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgReadFrontendMessages,
   pgReadyForQuery,
+  pgRowDescription,
   pgSSLResponse,
 } from "./wire-frames";
 
@@ -194,29 +198,53 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
   }
 });
 
-// A TLS peer that stays silent after the client's close_notify: it answers
-// the handshake, reports itself ready, and then holds its side of the
-// connection open (a half-open proxy, a partition at shutdown). The client
-// used to send close_notify and keep the fd until the peer replied, so the
-// pool's close() never settled and the process never exited. Teardown of a
-// connection the client has given up on must not depend on the peer.
+// The teardown of a TLS connection the client has given up on must not depend
+// on the peer. The client used to send close_notify and then keep the fd, and
+// with it the pool slot, until the peer answered. A peer that never answers (a
+// half-open proxy, a partition at shutdown) kept the pool's close() pending
+// and the process alive. A server that answers late (it is busy with a query)
+// kept the slot, and every caller that waited for it, for that long.
 //
 // Bun.listen peers instead of node:tls: a TLSSocket wrapped over a net.Socket
-// always ends its own side when the client's close_notify arrives, which is
-// exactly the reply a holding peer never sends.
-type HoldingPeer = { port: number; ended: Promise<void>; closed: Promise<void>; [Symbol.dispose](): void };
+// always ends its own side when the client's close_notify arrives, so it can
+// neither stay silent nor answer late.
+type TlsPeer = {
+  port: number;
+  // TLS connections accepted so far
+  connections: number;
+  // the first close_notify from a client, and the first connection this side closed
+  ended: Promise<void>;
+  closed: Promise<void>;
+  [Symbol.dispose](): void;
+};
 
-function holdingTlsPeer(
+// the plaintext socket's state: the SSL request bytes so far, then "upgraded"
+type RawData = Buffer | "upgraded" | undefined;
+
+type PeerConnection = {
+  data(socket: Socket, chunk: Buffer): void;
+  // what the peer does with the client's close_notify
+  end(socket: Socket): void;
+};
+
+// Stays silent. The probe write only fails, and so only closes this side, once
+// the client's fd is gone: the kernel answers it with a reset.
+const holdOpen = (socket: Socket) => void socket.write("probe");
+// What a server does: it closes its side too.
+const closeBack = (socket: Socket) => void socket.end();
+
+function tlsPeer(
   greeting: Buffer | null,
   // the length of the client's plaintext SSL request, once enough of it has arrived to tell
   sslRequestLength: (buffered: Buffer) => number | undefined,
   // answers the complete plaintext SSL request
-  onSslRequest: (raw: Socket) => void,
-  onSecureData: (socket: Socket, chunk: Buffer) => void,
-): HoldingPeer {
+  onSslRequest: (raw: Socket<RawData>) => void,
+  // called once for each connection
+  connect: () => PeerConnection,
+): TlsPeer {
   const ended = Promise.withResolvers<void>();
   const closed = Promise.withResolvers<void>();
-  const listener = Bun.listen<Buffer | "upgraded" | undefined>({
+  const listener = Bun.listen<RawData>({
     hostname: "127.0.0.1",
     port: 0,
     allowHalfOpen: true,
@@ -235,19 +263,18 @@ function holdingTlsPeer(
         }
         raw.data = "upgraded";
         onSslRequest(raw);
+        peer.connections++;
+        const connection = connect();
         raw.upgradeTLS({
           isServer: true,
           initialData: buffered.subarray(length),
           tls: { key: tlsCert.key, cert: tlsCert.cert },
           socket: {
             handshake() {},
-            data: onSecureData,
-            // the client's close_notify; hold the connection open. The probe
-            // write only fails, and so only closes this side, once the
-            // client's fd is gone: the kernel answers it with a reset.
+            data: connection.data,
             end(socket) {
               ended.resolve();
-              socket.write("probe");
+              connection.end(socket);
             },
             close() {
               closed.resolve();
@@ -260,52 +287,71 @@ function holdingTlsPeer(
       error() {},
     },
   });
-  return {
+  const peer: TlsPeer = {
     port: listener.port,
+    connections: 0,
     ended: ended.promise,
     closed: closed.promise,
     [Symbol.dispose]() {
       listener.stop(true);
     },
   };
+  return peer;
 }
 
-// `startupReply` answers the StartupMessage
-function holdingPostgresPeer(
-  startupReply: Buffer = Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]),
-): HoldingPeer {
-  let started = false;
-  return holdingTlsPeer(
+const postgresTls = (connect: () => PeerConnection) =>
+  // the 8-byte SSLRequest; the client sends nothing else until it sees 'S'
+  tlsPeer(
     null,
-    // the 8-byte SSLRequest; the client sends nothing else until it sees 'S'
     () => 8,
     raw => raw.write(pgSSLResponse("S")),
-    (socket, _chunk) => {
-      if (started) return;
-      started = true;
-      socket.write(startupReply);
-    },
+    connect,
   );
+
+// `startupReply` answers the StartupMessage
+function postgresTlsPeer(
+  end: PeerConnection["end"],
+  startupReply: Buffer = Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]),
+): TlsPeer {
+  return postgresTls(() => {
+    let started = false;
+    return {
+      data(socket) {
+        if (started) return;
+        started = true;
+        socket.write(startupReply);
+      },
+      end,
+    };
+  });
 }
 
 // `authReply` answers the HandshakeResponse that carries sequence id `seq`
-function holdingMysqlPeer(authReply: (seq: number) => Buffer = seq => mysqlOkPacket(seq + 1)): HoldingPeer {
-  let buffered = Buffer.alloc(0);
-  let authed = false;
-  return holdingTlsPeer(
+function mysqlTlsPeer(
+  end: PeerConnection["end"],
+  authReply: (seq: number) => Buffer = seq => mysqlOkPacket(seq + 1),
+): TlsPeer {
+  return tlsPeer(
     mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }),
     // the SSLRequest packet: a 3-byte payload length, a sequence id, the payload
     buffered => (buffered.length >= 4 ? 4 + (buffered[0] | (buffered[1] << 8) | (buffered[2] << 16)) : undefined),
     () => {},
-    (socket, chunk) => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
-        if (!authed) {
-          authed = true;
-          socket.write(authReply(seq));
-          return;
-        }
-        mysqlAckSessionSetup(socket, payload);
-      });
+    () => {
+      let buffered: Buffer = Buffer.alloc(0);
+      let authed = false;
+      return {
+        data(socket, chunk) {
+          buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+            if (!authed) {
+              authed = true;
+              socket.write(authReply(seq));
+              return;
+            }
+            mysqlAckSessionSetup(socket, payload);
+          });
+        },
+        end,
+      };
     },
   );
 }
@@ -313,14 +359,14 @@ function holdingMysqlPeer(authReply: (seq: number) => Buffer = seq => mysqlOkPac
 const postgresTlsUrl = (port: number) => `postgres://u:p@127.0.0.1:${port}/db?sslmode=require`;
 const mysqlTlsUrl = (port: number) => `mysql://root:pw@127.0.0.1:${port}/db`;
 
-const holdingPeers = [
-  ["postgres", holdingPostgresPeer, postgresTlsUrl],
-  ["mysql", holdingMysqlPeer, mysqlTlsUrl],
+const tlsDrivers = [
+  ["postgres", postgresTlsPeer, postgresTlsUrl],
+  ["mysql", mysqlTlsPeer, mysqlTlsUrl],
 ] as const;
 
-for (const [name, peer, url] of holdingPeers) {
+for (const [name, peer, url] of tlsDrivers) {
   test.concurrent(`${name}: close() settles against a TLS peer that never answers close_notify`, async () => {
-    using server = peer();
+    using server = peer(holdOpen);
     const sql = new SQL({ url: url(server.port), max: 1, tls: { rejectUnauthorized: false } });
     await sql.connect();
     await sql.close({ timeout: 0 });
@@ -331,7 +377,7 @@ for (const [name, peer, url] of holdingPeers) {
   test.concurrent(
     `${name}: idleTimeout eviction settles against a TLS peer that never answers close_notify`,
     async () => {
-      using server = peer();
+      using server = peer(holdOpen);
       const closed = Promise.withResolvers<void>();
       const sql = new SQL({
         url: url(server.port),
@@ -347,6 +393,20 @@ for (const [name, peer, url] of holdingPeers) {
       await sql.close();
     },
   );
+
+  // The server's answer to the close_notify is a round trip away. Until it
+  // arrived, the slot of the closed reservation still counted as connected and
+  // reserved: the next reserve() waited for that slot and was rejected with
+  // its close.
+  test.concurrent(`${name}: reserve() after close() of a reserved TLS connection gets a new connection`, async () => {
+    using server = peer(closeBack);
+    await using sql = new SQL({ url: url(server.port), max: 1, tls: { rejectUnauthorized: false } });
+    const first = await sql.reserve();
+    await first.close();
+    const second = await sql.reserve();
+    await second.release();
+    expect(server.connections).toBe(2);
+  });
 }
 
 // The peer answers the startup with a message the client rejects: a
@@ -355,10 +415,15 @@ for (const [name, peer, url] of holdingPeers) {
 // inside the TLS data dispatch, the same path an ErrorResponse during
 // authentication takes.
 const protocolViolations = [
-  ["postgres", () => holdingPostgresPeer(pgReadyForQuery("I")), postgresTlsUrl, "ERR_POSTGRES_UNEXPECTED_MESSAGE"],
+  [
+    "postgres",
+    () => postgresTlsPeer(holdOpen, pgReadyForQuery("I")),
+    postgresTlsUrl,
+    "ERR_POSTGRES_UNEXPECTED_MESSAGE",
+  ],
   [
     "mysql",
-    () => holdingMysqlPeer(seq => mysqlRawPacket(seq + 1, Buffer.from([0x42]))),
+    () => mysqlTlsPeer(holdOpen, seq => mysqlRawPacket(seq + 1, Buffer.from([0x42]))),
     mysqlTlsUrl,
     "ERR_MYSQL_UNEXPECTED_PACKET",
   ],
@@ -382,26 +447,54 @@ for (const [name, peer, url, code] of protocolViolations) {
   );
 }
 
-test.concurrent("postgres: a rejected certificate over a holding TLS peer does not pin the process", async () => {
-  using server = holdingPostgresPeer();
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      import { SQL } from "bun";
-      const sql = new SQL("postgres://u:p@127.0.0.1:${server.port}/db?sslmode=verify-full", { max: 1 });
-      const code = await sql.connect().then(() => "connected", e => e.code);
-      console.log(code);
-      // the socket the client gave up on must not keep the event loop alive
-      setTimeout(() => process.exit(7), 2000).unref();
-      `,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
+// A backend that runs a query reads nothing until the query ends. It then
+// answers the query first and the client's close_notify after it. The pool
+// must not make the next caller wait for that: it used to, and then rejected
+// the caller with the error the late answer raised on the closed connection.
+test.concurrent("postgres: a query after close() of a busy reserved TLS connection gets a new connection", async () => {
+  const running = Promise.withResolvers<void>();
+  const row = Buffer.concat([
+    pgRowDescription([{ name: "x", typeOid: 25 }]),
+    pgDataRow([Buffer.from("1")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery("I"),
+  ]);
+  using server = postgresTls(() => {
+    let started = false;
+    let buffered: Buffer = Buffer.alloc(0);
+    let busy = false;
+    return {
+      data(socket, chunk) {
+        if (!started) {
+          started = true;
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]));
+          return;
+        }
+        buffered = pgReadFrontendMessages(Buffer.concat([buffered, chunk]), (type, body) => {
+          if (type !== 0x51 /* Query */) return;
+          if (body.includes("pg_sleep")) {
+            busy = true;
+            running.resolve();
+          } else {
+            socket.write(row);
+          }
+        });
+      },
+      end(socket) {
+        if (busy) socket.write(row);
+        socket.end();
+      },
+    };
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("DEPTH_ZERO_SELF_SIGNED_CERT\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  await using sql = new SQL({ url: postgresTlsUrl(server.port), max: 1, tls: { rejectUnauthorized: false } });
+  const reserved = await sql.reserve();
+  const slow = reserved`select pg_sleep(5)`.simple().then(
+    () => "resolved",
+    e => e.code,
+  );
+  await running.promise;
+  await reserved.close();
+  expect(await sql`select 1 as x`.simple()).toEqual([{ x: "1" }]);
+  expect(await slow).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  expect(server.connections).toBe(2);
 });

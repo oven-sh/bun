@@ -523,8 +523,8 @@ describe("bunshell", () => {
     });
 
     const { exitCode } = await $`cat < ${await fetch(server.url)}`.quiet();
-    expect(exitCode).toBe(0);
     await aborted.promise;
+    expect(exitCode).toBe(0);
   });
 
   // TODO This sometimes fails

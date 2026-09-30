@@ -861,7 +861,7 @@ where
         };
         // SAFETY: `response` is the live cell pointer; `value` is rooted by the
         // caller's frame and protect()'d below.
-        if self.reject_unsendable_response(unsafe { &*response }) {
+        if unsafe { self.reject_unsendable_response(response) } {
             return;
         }
         self.response_root.set_rooted(value, global_this);
@@ -2745,7 +2745,7 @@ where
         // for as long as `response` is used.
         if let Some(response) = as_response(response_value) {
             // SAFETY: `response` is the live, rooted cell pointer.
-            if ctx.reject_unsendable_response(unsafe { &*response }) {
+            if unsafe { ctx.reject_unsendable_response(response) } {
                 return;
             }
             ctx.response_root.clear();
@@ -2802,7 +2802,7 @@ where
                     };
 
                     // SAFETY: `response` is the live, rooted cell pointer.
-                    if ctx.reject_unsendable_response(unsafe { &*response }) {
+                    if unsafe { ctx.reject_unsendable_response(response) } {
                         return;
                     }
 
@@ -3554,9 +3554,14 @@ where
     /// has no HTTP status line, so the Response can never reach the client:
     /// report it like a thrown error rather than writing an unparseable one.
     ///
-    /// Takes the status, not the Response: `run_error_handler` below runs user
+    /// Takes the cell pointer, not a borrow: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.
-    fn reject_unsendable_response(&self, response: &Response) -> bool {
+    ///
+    /// # Safety
+    /// Same contract as [`Self::set_response`].
+    unsafe fn reject_unsendable_response(&self, response: *mut Response) -> bool {
+        // SAFETY: caller contract. Last used before `run_error_handler`.
+        let response = unsafe { &*response };
         let status = response.status_code();
         if HTTPStatusText::is_sendable(status) {
             return false;

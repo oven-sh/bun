@@ -1,4 +1,4 @@
-//! `bun --lint <files>`: reads and parses each operand and prints the diagnostics of the run, sorted and each once. No file is run.
+//! `bun --lint <files>`: parses each operand, runs the rules on JavaScript, prints the diagnostics sorted and each once. No file is run.
 
 use bstr::BStr;
 use bun_core::{Global, Output, ZBox, ZStr};
@@ -137,7 +137,7 @@ fn check_file(
     diagnostics.extend(found);
 }
 
-/// What the parser reports for one file.
+/// What is found in one file: what the parser reports and, in a JavaScript file, what the rules report.
 fn parse(file: FileId, loader: bun_ast::Loader, source: &bun_ast::Source) -> Vec<Diagnostic> {
     bun_ast::initialize_store();
     let _reset = bun_ast::StoreResetGuard::new();
@@ -151,16 +151,33 @@ fn parse(file: FileId, loader: bun_ast::Loader, source: &bun_ast::Source) -> Vec
     let define = bun_js_parser::Define::default();
     let mut log = bun_ast::Log::init();
     log.level = bun_ast::Level::Warn;
-    let parsed = bun_js_parser::Parser::init(options, &mut log, source, &define, &arena)
-        .and_then(|parser| parser.parse().map(drop));
-    if let Err(err) = parsed
-        && log.errors == 0
-    {
-        log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
-    }
+    let parser = bun_js_parser::Parser::init(options, &mut log, source, &define, &arena);
+    let parsed = parser.and_then(|parser| match loader {
+        // The rules read the statements as they were written: the visit pass of `Parser::parse` rewrites them.
+        bun_ast::Loader::Js | bun_ast::Loader::Jsx => {
+            parser.parse_only(|tree| bun_lint::lint(file, tree, source, &arena))
+        }
+        // `Parser::parse_only` is the parser without TypeScript: a TypeScript file gets the full parse and no rule.
+        _ => parser.parse().map(|_| Vec::new()),
+    });
+    let reports = match parsed {
+        Ok(reports) => reports,
+        Err(err) => {
+            if log.errors == 0 {
+                // `Parser::parse` logs a stack overflow under this text itself, `Parser::parse_only` only returns it.
+                let text: &'static [u8] = match err {
+                    bun_js_parser::Error::StackOverflow => b"Maximum call stack size exceeded",
+                    _ => err.name().as_bytes(),
+                };
+                log.add_range_error(Some(source), bun_ast::Range::None, text);
+            }
+            Vec::new()
+        }
+    };
     core::mem::take(&mut log.msgs)
         .into_iter()
         .filter_map(|msg| Diagnostic::from_msg(file, msg))
+        .chain(reports)
         .collect()
 }
 

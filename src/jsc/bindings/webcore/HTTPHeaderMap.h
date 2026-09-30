@@ -27,6 +27,7 @@
 #pragma once
 
 #include "HTTPHeaderNames.h"
+#include <bit>
 #include <utility>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
@@ -198,10 +199,10 @@ public:
         m_setCookieHeaders.appendVector(other.m_setCookieHeaders);
     }
 
-    // A producer that adds a whole list calls this at its end, so that no value keeps spare room.
+    // A producer that adds a whole list calls this at its end: no value keeps spare room, and the count of joins starts again.
     void settle()
     {
-        if (m_growing.builders) [[unlikely]]
+        if (!m_growing.isZero()) [[unlikely]]
             settleSlow();
     }
 
@@ -243,32 +244,66 @@ public:
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
-    // The builders of the values that grew past growThreshold by add(). A copy of the map starts with none.
-    struct Growing {
+    // A join that gives a value under this length is one exact-fit string.
+    static constexpr unsigned growThreshold = 4096;
+    // A map makes this many exact-fit joins past growThreshold. After them a value grows in a builder: N joins copy O(N) bytes.
+    static constexpr uintptr_t exactFitJoins = 8;
+
+    // One word: the count of exact-fit joins past growThreshold, or the builders of the values that grow. A copy of the map starts at zero.
+    class Growing {
+    public:
+        using Builders = Vector<StringBuilder, 1>;
+
         Growing() = default;
         Growing(const Growing&)
         {
         }
-        Growing(Growing&&) = default;
+        Growing(Growing&& other)
+            : m_bits { std::exchange(other.m_bits, 0) }
+        {
+        }
         Growing& operator=(const Growing&)
         {
-            builders = nullptr;
+            reset();
             return *this;
         }
-        Growing& operator=(Growing&&) = default;
+        Growing& operator=(Growing&& other)
+        {
+            reset();
+            m_bits = std::exchange(other.m_bits, 0);
+            return *this;
+        }
+        ~Growing() { reset(); }
 
-        std::unique_ptr<Vector<StringBuilder, 1>> builders;
+        bool isZero() const { return !m_bits; }
+        Builders* builders() const { return m_bits > exactFitJoins ? std::bit_cast<Builders*>(m_bits) : nullptr; }
+        StringBuilder* builderOf(const String& stored) const;
+        bool takeExactFitJoin()
+        {
+            if (m_bits >= exactFitJoins)
+                return false;
+            m_bits++;
+            return true;
+        }
+        StringBuilder& startBuilder();
+        void forget(const String& stored);
+        void reset()
+        {
+            if (m_bits > exactFitJoins) [[unlikely]]
+                deleteBuilders();
+            m_bits = 0;
+        }
+
+    private:
+        void deleteBuilders();
+
+        uintptr_t m_bits { 0 };
     };
-
-    // A join to a shorter value is one exact-fit string. A value of this length grows in a builder: N joins copy O(N) bytes.
-    static constexpr unsigned growThreshold = 4096;
 
     // Every add function joins a repeated name here.
     AddResult combine(String& stored, ASCIILiteral delimiter, const String& value);
     AddResult combineLong(String& stored, ASCIILiteral delimiter, const String& value);
-    StringBuilder* builderOf(const String& stored);
     void replace(String& stored, const String& value);
-    void forget(const String& stored);
     void settleSlow();
 
     CommonHeadersVector m_commonHeaders;

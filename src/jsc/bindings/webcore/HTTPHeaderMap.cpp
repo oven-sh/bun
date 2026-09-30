@@ -40,6 +40,33 @@ extern "C" size_t highway_index_of_first_ascii_upper(const uint8_t* input, size_
 extern "C" void highway_lower_ascii(const uint8_t* src, size_t len, uint8_t* dst);
 extern "C" size_t highway_index_of_first_ascii_upper16(const uint16_t* input, size_t len);
 extern "C" void highway_lower_ascii16(const uint16_t* src, size_t len, uint16_t* dst);
+extern "C" size_t Bun__stringSyntheticAllocationLimit;
+
+namespace WebCore {
+struct Latin1In16Bit {
+    std::span<const char16_t> characters;
+};
+}
+
+namespace WTF {
+template<> class StringTypeAdapter<WebCore::Latin1In16Bit> {
+public:
+    StringTypeAdapter(WebCore::Latin1In16Bit string)
+        : m_characters { string.characters }
+    {
+    }
+
+    unsigned length() const { return m_characters.size(); }
+    bool is8Bit() const { return true; }
+    template<typename CharacterType> void writeTo(std::span<CharacterType> destination) const
+    {
+        StringImpl::copyCharacters(destination, m_characters);
+    }
+
+private:
+    std::span<const char16_t> m_characters;
+};
+}
 
 namespace WebCore {
 
@@ -80,12 +107,13 @@ HTTPHeaderMap::HTTPHeaderMap()
 {
 }
 
-// Values are Latin-1 (isValidHTTPHeaderValue). A 16-bit builder can grow to a capacity StringImpl refuses, which aborts.
-static String as8Bit(const String& value)
+// Values are Latin-1 (isValidHTTPHeaderValue). The builder stays 8-bit: a 16-bit one can grow to a capacity StringImpl refuses, which aborts.
+static void appendLatin1(StringBuilder& builder, ASCIILiteral delimiter, const String& value)
 {
-    if (value.is8Bit())
-        return value;
-    return StringImpl::create8BitIfPossible(value.span16());
+    if (!value.is8Bit() && value.containsOnlyLatin1()) [[unlikely]]
+        builder.append(delimiter, Latin1In16Bit { value.span16() });
+    else
+        builder.append(delimiter, value);
 }
 
 static unsigned grownCapacity(unsigned capacity, unsigned required)
@@ -95,7 +123,7 @@ static unsigned grownCapacity(unsigned capacity, unsigned required)
 
 ALWAYS_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combine(String& stored, ASCIILiteral delimiter, const String& value)
 {
-    if (stored.length() >= growThreshold) [[unlikely]]
+    if (static_cast<uint64_t>(stored.length()) + delimiter.length() + value.length() >= growThreshold) [[unlikely]]
         return combineLong(stored, delimiter, value);
 
     String combined = tryMakeString(stored, delimiter, value);
@@ -108,68 +136,90 @@ ALWAYS_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combine(String& stored, AS
 NEVER_INLINE HTTPHeaderMap::AddResult HTTPHeaderMap::combineLong(String& stored, ASCIILiteral delimiter, const String& value)
 {
     uint64_t combinedLength = static_cast<uint64_t>(stored.length()) + delimiter.length() + value.length();
-    if (combinedLength > String::MaxLength)
+    if (combinedLength > std::min<uint64_t>(String::MaxLength, Bun__stringSyntheticAllocationLimit)) [[unlikely]]
         return AddResult::ValueTooLong;
 
-    String appended = as8Bit(value);
-    auto* builder = builderOf(stored);
+    auto* builder = m_growing.builderOf(stored);
     if (!builder) {
-        if (!m_growing.builders)
-            m_growing.builders = makeUnique<Vector<StringBuilder, 1>>();
-        m_growing.builders->append(StringBuilder {});
-        builder = &m_growing.builders->last();
+        if (m_growing.takeExactFitJoin()) {
+            String combined = tryMakeString(stored, delimiter, value);
+            if (!combined.isNull()) [[likely]] {
+                stored = WTF::move(combined);
+                return AddResult::Stored;
+            }
+        }
+        builder = &m_growing.startBuilder();
         builder->reserveCapacity(grownCapacity(stored.length(), combinedLength));
-        builder->append(as8Bit(stored));
+        appendLatin1(*builder, ""_s, stored);
     } else if (combinedLength > builder->capacity()) {
         // Without this reference the builder can be the one owner of its buffer, and then it reallocates in place.
         stored = String();
         builder->reserveCapacity(grownCapacity(builder->capacity(), combinedLength));
     }
 
-    builder->append(delimiter, appended);
+    appendLatin1(*builder, delimiter, value);
     stored = builder->toStringPreserveCapacity();
     return AddResult::Stored;
 }
 
 // A builder holds a reference to the last String it made, so no other String can have that address while the builder lives.
-StringBuilder* HTTPHeaderMap::builderOf(const String& stored)
+StringBuilder* HTTPHeaderMap::Growing::builderOf(const String& stored) const
 {
-    if (!m_growing.builders)
+    auto* list = builders();
+    if (!list)
         return nullptr;
-    for (auto& builder : *m_growing.builders) {
+    for (auto& builder : *list) {
         if (builder.toStringPreserveCapacity().impl() == stored.impl())
             return &builder;
     }
     return nullptr;
 }
 
-NEVER_INLINE void HTTPHeaderMap::forget(const String& stored)
+StringBuilder& HTTPHeaderMap::Growing::startBuilder()
 {
-    m_growing.builders->removeFirstMatching([&](auto& builder) {
+    if (!builders())
+        m_bits = std::bit_cast<uintptr_t>(makeUnique<Builders>().release());
+    builders()->append(StringBuilder {});
+    return builders()->last();
+}
+
+NEVER_INLINE void HTTPHeaderMap::Growing::forget(const String& stored)
+{
+    auto* list = builders();
+    list->removeFirstMatching([&](auto& builder) {
         return builder.toStringPreserveCapacity().impl() == stored.impl();
     });
-    if (m_growing.builders->isEmpty())
-        m_growing.builders = nullptr;
+    if (list->isEmpty()) {
+        deleteBuilders();
+        m_bits = exactFitJoins;
+    }
+}
+
+NEVER_INLINE void HTTPHeaderMap::Growing::deleteBuilders()
+{
+    std::unique_ptr<Builders> list { builders() };
 }
 
 ALWAYS_INLINE void HTTPHeaderMap::replace(String& stored, const String& value)
 {
-    if (m_growing.builders && stored.impl() != value.impl()) [[unlikely]]
-        forget(stored);
+    if (m_growing.builders() && stored.impl() != value.impl()) [[unlikely]]
+        m_growing.forget(stored);
     stored = value;
 }
 
 NEVER_INLINE void HTTPHeaderMap::settleSlow()
 {
-    auto settleValue = [&](String& stored) {
-        if (builderOf(stored))
-            stored = stored.is8Bit() ? String { stored.span8() } : String { stored.span16() };
-    };
-    for (auto& header : m_commonHeaders)
-        settleValue(header.value);
-    for (auto& header : m_uncommonHeaders)
-        settleValue(header.value);
-    m_growing.builders = nullptr;
+    if (m_growing.builders()) {
+        auto settleValue = [&](String& stored) {
+            if (m_growing.builderOf(stored))
+                stored = stored.is8Bit() ? String { stored.span8() } : String { stored.span16() };
+        };
+        for (auto& header : m_commonHeaders)
+            settleValue(header.value);
+        for (auto& header : m_uncommonHeaders)
+            settleValue(header.value);
+    }
+    m_growing.reset();
 }
 
 String HTTPHeaderMap::get(const StringView name) const
@@ -197,8 +247,8 @@ size_t HTTPHeaderMap::memoryCost() const
     for (auto& header : m_setCookieHeaders)
         cost += header.sizeInBytes();
 
-    if (m_growing.builders) [[unlikely]] {
-        for (auto& builder : *m_growing.builders)
+    if (auto* builders = m_growing.builders()) [[unlikely]] {
+        for (auto& builder : *builders)
             cost += sizeof(StringBuilder) + (builder.capacity() - builder.length()) * (builder.is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t));
     }
 
@@ -299,8 +349,8 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     ASSERT(!findHTTPHeaderName(name, headerName));
 #endif
 
-    if (m_growing.builders) [[unlikely]]
-        forget(getUncommonHeader(name));
+    if (m_growing.builders()) [[unlikely]]
+        m_growing.forget(getUncommonHeader(name));
 
     return m_uncommonHeaders.removeFirstMatching([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -370,8 +420,8 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
         return any;
     }
 
-    if (m_growing.builders) [[unlikely]]
-        forget(get(name));
+    if (m_growing.builders()) [[unlikely]]
+        m_growing.forget(get(name));
 
     return m_commonHeaders.removeFirstMatching([&](auto& header) {
         return header.key == name;

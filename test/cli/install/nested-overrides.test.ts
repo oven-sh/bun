@@ -911,6 +911,27 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await installOk(dir, "--linker", linker, "--frozen-lockfile");
   });
 
+  // The new rule makes the install resolve app-b's row again, and read app-b's package.json again, which replaces that
+  // row. The rule has to find the owner of the new row. With no manifest in the cache the old row is still pending then.
+  test.each([
+    ["no manifest in the cache", false],
+    ["the manifest in the cache", true],
+  ])("a rule added for a workspace parent applies to a row that bun.lock binds, %s", async (_, keepCache) => {
+    const root = (overrides: Record<string, string>) =>
+      JSON.stringify({ name: "nested-overrides", workspaces: ["packages/*"], overrides });
+    const dir = await project({ workspaces: ["packages/*"] }, linker, {
+      "packages/app-b/package.json": JSON.stringify({ name: "app-b", dependencies: { "no-deps": "^1.0.0" } }),
+    });
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.1.0");
+
+    await write(join(dir, "package.json"), root({ "app-b>no-deps": "1.0.0" }));
+    if (!keepCache) await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.0.0");
+    await installOk(dir, "--linker", linker, "--frozen-lockfile");
+  });
+
   test("a ranged parent rule matches a workspace package by its version", async () => {
     const dir = await project(
       {

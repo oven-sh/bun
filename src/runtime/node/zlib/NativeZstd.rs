@@ -458,13 +458,9 @@ mod _impl {
             }
         }
 
-        /// Starts a new session on the same context, which keeps the dictionary
-        /// and the parameters, as node does since v26.10.0:
-        /// https://github.com/nodejs/node/blob/v26.10.0/src/node_zlib.cc#L1720-L1744
-        /// https://github.com/nodejs/node/blob/v26.10.0/src/node_zlib.cc#L1822-L1839
+        /// Keeps the dictionary and parameters, as node does since v26.10.0 (nodejs/node#65867).
         pub(crate) fn reset(&mut self) -> Error {
-            // Every field is named, with no `..`: a field added to `Context`
-            // does not compile until a reset keeps it or clears it here.
+            // No `..`: a field added to `Context` must be kept or cleared here to compile.
             let Self {
                 mode,
                 state,
@@ -474,8 +470,7 @@ mod _impl {
                 output: _,
                 remaining: _,
             } = *self;
-            // A handle that was never init()ed, or whose init() failed, has no
-            // context, and zstd dereferences the pointer unconditionally.
+            // JS can reach this with no context: init() was never called, or it failed.
             let Some(state) = state else {
                 return Error::OK;
             };
@@ -487,8 +482,7 @@ mod _impl {
                     if c::ZSTD_isError(result) > 0 {
                         result
                     } else {
-                        // zstd keeps a pledged size for one frame only, so a
-                        // session reset clears it.
+                        // A session reset clears the pledged size: zstd keeps it for one frame.
                         // SAFETY: state is a valid CCtx set by init().
                         unsafe {
                             c::ZSTD_CCtx_setPledgedSrcSize(state.cast(), pledged_src_size as _)

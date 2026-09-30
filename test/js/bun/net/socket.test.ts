@@ -4075,28 +4075,53 @@ Reo=
   // server with requestCert: true must keep enforcing its rejectUnauthorized
   // default of true. The env var is read at startup, so run in a subprocess.
   describe.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0", () => {
-    async function verdictFor(fixture: string) {
-      using dir = tempDir("tls-reject-env", { "fixture.ts": fixture });
+    const SERVER_TLS = { key: SERVER_KEY, cert: SERVER_CRT, ca: CA_CRT, requestCert: true };
+    // rejectUnauthorized: false so the client can never close on its own; a
+    // "closed" verdict can only come from the server.
+    const ROGUE_CLIENT_TLS = {
+      ca: CA_CRT,
+      serverName: "localhost",
+      key: ROGUE_KEY,
+      cert: ROGUE_CRT,
+      rejectUnauthorized: false,
+    };
+
+    async function runWithEnv(script: string) {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "fixture.ts"],
+        cmd: [bunExe(), "-e", script],
         env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
-        cwd: String(dir),
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      return stdout.trim();
+      return { verdict: stdout.trim(), stderr, exitCode };
     }
 
-    it("does not disable the server's default requestCert enforcement", async () => {
-      const verdict = await verdictFor(`
+    // Bun.connect with an untrusted client certificate; prints the verdict
+    // from the client's point of view once the server has decided.
+    const rogueConnect = (port: string) => `
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${port},
+          tls: ${JSON.stringify(ROGUE_CLIENT_TLS)},
+          socket: {
+            open() {},
+            handshake(socket) { socket.write("ping"); },
+            data() { console.log("stayed-open"); process.exit(0); },
+            close() { console.log("closed"); process.exit(0); },
+            error() {},
+            connectError(_socket, err) { console.error("connectError:", err.message); process.exit(1); },
+          },
+        });
+    `;
+
+    it("does not disable the default requestCert enforcement of Bun.listen", async () => {
+      // rejectUnauthorized deliberately unset: the server default is true
+      // regardless of NODE_TLS_REJECT_UNAUTHORIZED.
+      const { verdict, stderr, exitCode } = await runWithEnv(`
         const server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
-          // rejectUnauthorized deliberately unset: the server default is true
-          // regardless of NODE_TLS_REJECT_UNAUTHORIZED.
-          tls: { key: ${JSON.stringify(SERVER_KEY)}, cert: ${JSON.stringify(SERVER_CRT)}, ca: ${JSON.stringify(CA_CRT)}, requestCert: true },
+          tls: ${JSON.stringify(SERVER_TLS)},
           socket: {
             open() {},
             handshake() {},
@@ -4105,27 +4130,66 @@ Reo=
             error() {},
           },
         });
-        await Bun.connect({
+        ${rogueConnect("server.port")}
+      `);
+      expect({ verdict, stderr }).toEqual({ verdict: "closed", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("does not disable the default requestCert enforcement of Bun.serve", async () => {
+      const { verdict, stderr, exitCode } = await runWithEnv(`
+        using server = Bun.serve({
           hostname: "127.0.0.1",
-          port: server.port,
-          // rejectUnauthorized: false so the client can never close on its
-          // own; a "closed" verdict can only come from the server.
-          tls: { ca: ${JSON.stringify(CA_CRT)}, serverName: "localhost", key: ${JSON.stringify(ROGUE_KEY)}, cert: ${JSON.stringify(ROGUE_CRT)}, rejectUnauthorized: false },
+          port: 0,
+          tls: ${JSON.stringify(SERVER_TLS)},
+          fetch() { return new Response("stayed-open"); },
+        });
+        try {
+          const res = await fetch(server.url, { tls: ${JSON.stringify(ROGUE_CLIENT_TLS)} });
+          console.log(await res.text());
+        } catch {
+          console.log("closed");
+        }
+      `);
+      expect({ verdict, stderr }).toEqual({ verdict: "closed", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("does not disable the default requestCert enforcement of upgradeTLS({ isServer: true })", async () => {
+      const { verdict, stderr, exitCode } = await runWithEnv(`
+        const listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
           socket: {
             open() {},
-            handshake(socket) { socket.write("ping"); },
-            data() { console.log("stayed-open"); server.stop(true); process.exit(0); },
-            close() { console.log("closed"); server.stop(true); process.exit(0); },
+            data(raw, chunk) {
+              raw.upgradeTLS({
+                isServer: true,
+                initialData: chunk,
+                tls: ${JSON.stringify(SERVER_TLS)},
+                socket: {
+                  open() {},
+                  handshake() {},
+                  data(secure, payload) { secure.write(payload); },
+                  close() {},
+                  error() {},
+                },
+              });
+            },
+            close() {},
             error() {},
-            connectError(_socket, err) { console.error("connectError:", err.message); process.exit(1); },
           },
         });
+        ${rogueConnect("listener.port")}
       `);
-      expect(verdict).toBe("closed");
+      expect({ verdict, stderr }).toEqual({ verdict: "closed", stderr: "" });
+      expect(exitCode).toBe(0);
     });
 
     it("still disables the client's default verification", async () => {
-      const verdict = await verdictFor(`
+      // The client can't verify the server's certificate, but its unset
+      // rejectUnauthorized defaults to false via the env var.
+      const { verdict, stderr, exitCode } = await runWithEnv(`
         const server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
@@ -4141,20 +4205,19 @@ Reo=
         await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
-          // The client can't verify the server's certificate, but its unset
-          // rejectUnauthorized defaults to false via the env var.
           tls: { ca: ${JSON.stringify(CA_CRT)}, serverName: "localhost" },
           socket: {
             open() {},
             handshake(socket) { socket.write("ping"); },
-            data() { console.log("stayed-open"); server.stop(true); process.exit(0); },
-            close() { console.log("closed"); server.stop(true); process.exit(0); },
+            data() { console.log("stayed-open"); process.exit(0); },
+            close() { console.log("closed"); process.exit(0); },
             error() {},
             connectError(_socket, err) { console.error("connectError:", err.message); process.exit(1); },
           },
         });
       `);
-      expect(verdict).toBe("stayed-open");
+      expect({ verdict, stderr }).toEqual({ verdict: "stayed-open", stderr: "" });
+      expect(exitCode).toBe(0);
     });
   });
 });

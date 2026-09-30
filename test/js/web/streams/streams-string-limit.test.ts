@@ -325,7 +325,7 @@ describe.skipIf(!isASAN)("a direct stream's text sink throws when its text canno
 describe.skipIf(!enoughMemory)("a direct stream's text sink throws when its text does not fit in a string", () => {
   const prelude = `
     ${describeError}
-    const gigabyte = Buffer.alloc(2 ** 30, "x").toString("latin1");
+    const gigabyte = Buffer.alloc(2 ** 30).toString("latin1");
     const settle = promise =>
       promise.then(
         text => ({ length: text.length, isTheFirstChunk: text === gigabyte }),
@@ -364,7 +364,7 @@ describe.skipIf(!enoughMemory)("a direct stream's text sink throws when its text
       stderr: "",
       exitCode: 0,
     });
-  }, 60_000);
+  });
 
   test("nothing catches the error", async () => {
     const result = await runParsed(`
@@ -381,7 +381,7 @@ describe.skipIf(!enoughMemory)("a direct stream's text sink throws when its text
       console.log(JSON.stringify({ ...(await settle(new Response(stream).text())), wroteTwice }));
     `);
     expect(result).toEqual({ stdout: { rejected: outOfMemory, wroteTwice: false }, stderr: "", exitCode: 0 });
-  }, 60_000);
+  });
 
   // This text fits in a string. WTF::StringBuilder asks for twice its size to hold a 16-bit
   // character, which is longer than a 16-bit string can be, and loses the text
@@ -400,7 +400,7 @@ describe.skipIf(!enoughMemory)("a direct stream's text sink throws when its text
       console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), refused }));
     `);
     expect(result).toEqual({ stdout: { rejected: outOfMemory, refused: outOfMemory }, stderr: "", exitCode: 0 });
-  }, 60_000);
+  });
 });
 
 // A text consumer of a stream that has bytes and strings rejects when a string chunk makes

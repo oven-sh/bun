@@ -403,6 +403,13 @@ impl FileSink {
             }
 
             let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
+            let resumes = was_pending || (status == WriteStatus::Drained && !has_pending_data);
+            // Opened before `run_pending` so the settle and the resume share one checkpoint.
+            let _entered = if resumes && (*this).source_pending_pull.get() {
+                (*this).completion_scope()
+            } else {
+                None
+            };
             if was_pending {
                 // `consumed` was credited when the pending operation accepted its
                 // bytes; `amount` is only what this drain pushed to the fd.
@@ -421,9 +428,7 @@ impl FileSink {
                 FileSink::run_pending(this);
             }
 
-            if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
-                && (*this).source_pending_pull.replace(false)
-            {
+            if resumes && (*this).source_pending_pull.replace(false) {
                 let mut src = *(*this).source.get();
                 src.ready(None, None);
             }
@@ -496,6 +501,12 @@ impl FileSink {
         }
     }
 
+    /// Microtask checkpoint owed for the JS a writer callback enters while a stream is piped in.
+    fn completion_scope(&self) -> Option<bun_jsc::event_loop_handle::EnteredEventLoop> {
+        self.pipe.get().cell()?;
+        Some(self.event_loop().entered())
+    }
+
     /// This sink opened its file itself, for the script that is running: if that is a
     /// `Bun.ModuleGraph`'s, the file is closed with the graph. (The host's sinks are left to
     /// flush at exit as they always have.)
@@ -517,6 +528,7 @@ impl FileSink {
         unsafe {
             // `source.close()` may drop the last ref (a Subprocess whose `.stdin` was never read).
             let _guard = RefPtr::init_ref(this);
+            let _entered = (*this).completion_scope();
 
             (*this).abort_handle.leave();
             if (*this).js_global().is_some() {

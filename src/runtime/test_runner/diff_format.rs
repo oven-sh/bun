@@ -58,9 +58,15 @@ impl<'a> DiffFormatter<'a> {
         let mut received_side = side(received, None)?;
         // One side shares an object where the other has copies of it. Abbreviated on one side
         // only, every line of it would differ. What the other side printed in full bounds this.
-        if received_side.abbreviated.is_some() && expected_side.abbreviated.is_none() {
+        let gets_more = |side: &Side, other: &Side| {
+            other.abbreviated.is_none()
+                && side
+                    .abbreviated
+                    .is_some_and(|budget| other.text.len() > budget)
+        };
+        if gets_more(&received_side, &expected_side) {
             received_side = side(received, Some(expected_side.text.len()))?;
-        } else if expected_side.abbreviated.is_some() && received_side.abbreviated.is_none() {
+        } else if gets_more(&expected_side, &received_side) {
             expected_side = side(expected, Some(received_side.text.len()))?;
         }
         Ok(DiffFormatter {

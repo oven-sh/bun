@@ -238,10 +238,12 @@ impl JSPropertyIterator<'_> {
         let Some(iter) = self.impl_ else {
             return false;
         };
-        Bun__JSPropertyIterator__isSymbol(
-            JSPropertyIteratorImpl::opaque_mut(iter.as_ptr()),
-            self.i.get() as usize,
-        )
+        // `len` once `next` returned `None`.
+        let i = self.i.get() as usize;
+        if i >= self.len {
+            return false;
+        }
+        Bun__JSPropertyIterator__isSymbol(JSPropertyIteratorImpl::opaque_mut(iter.as_ptr()), i)
     }
 }
 

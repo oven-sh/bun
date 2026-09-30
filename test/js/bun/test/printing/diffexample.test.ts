@@ -1086,8 +1086,13 @@ test("an object that one side shares and the other has copies of does not differ
     expect(message).toMatch(/- Expected  - [01]\n\+ Received  \+ [01]\n/);
     expect(message).not.toContain("note:");
   }
-  // Next to something small, it is abbreviated.
-  expect(failure(() => expect(shared).toEqual(1))).toContain("note: [Array], [Object], [Map] and [Set] stand for");
+  // Next to something small, it is abbreviated, and printed once.
+  let printed = 0;
+  const date = Object.assign(new Date(0), { toJSON: () => (printed++, "date") });
+  expect(failure(() => expect([date, ...shared]).toEqual(1))).toContain(
+    "note: [Array], [Object], [Map] and [Set] stand for",
+  );
+  expect(printed).toBe(1);
 });
 
 // A snapshot prints these the way the stored ones have them (snapshot.test.ts). A diff is not stored.

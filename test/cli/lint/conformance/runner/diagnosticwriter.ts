@@ -1,8 +1,16 @@
 // Port of internal/diagnosticwriter/diagnosticwriter.go of typescript-go 89d5d5b, the functions that an error baseline reaches (rules "tsgo"); rules "tsc" are the writers of program.ts and watch.ts of TypeScript 5848bc5.
-import { padLeft } from "./gostrings";
+import { type ByteString, decodeRune, foldKey, padLeft } from "./gostrings";
 import { computeLineOfPosition } from "./scanner";
 import { type TextModel, utf16Model, utf8Model } from "./text_model";
-import { type ComparePathsOptions, convertToRelativePath, pathIsAbsolute } from "./tspath";
+import {
+  type ComparePathsOptions,
+  convertToRelativePath,
+  getPathComponents,
+  getPathFromPathComponents,
+  isRootedDiskPath,
+  pathIsAbsolute,
+  reducePathComponents,
+} from "./tspath";
 
 // diagnostics.Category: the order of diagnostics compares these values.
 export enum Category {
@@ -93,9 +101,60 @@ export function getECMALineAndUTF16CharacterOfPosition(rules: Rules, file: FileL
   return [line, rules.model.utf16Length(file.text, lineMap[line], pos)];
 }
 
-// tspath compares JavaScript strings and the options hold such strings, so a name of the model is decoded for it and its result encoded again.
+// strings.EqualFold of two byte strings: a byte that is no UTF-8 is the rune U+FFFD.
+function equalFoldBytes(a: ByteString, b: ByteString): boolean {
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const [x, sizeX] = decodeRune(a, i);
+    const [y, sizeY] = decodeRune(b, j);
+    if (x !== y && foldKey(x) !== foldKey(y)) return false;
+    i += sizeX;
+    j += sizeY;
+  }
+  return i === a.length && j === b.length;
+}
+
+// strings.ToValidUTF8(s, "\uFFFD"): one U+FFFD for every run of bytes that are no UTF-8.
+function toValidUTF8(s: ByteString): ByteString {
+  let out = "";
+  let invalid = false;
+  for (let i = 0; i < s.length; ) {
+    const size = decodeRune(s, i)[1];
+    if (size === 1 && s.charCodeAt(i) >= 0x80) {
+      if (!invalid) out += "\xef\xbf\xbd";
+      invalid = true;
+    } else {
+      out += s.slice(i, i + size);
+      invalid = false;
+    }
+    i += size;
+  }
+  return out;
+}
+
+// tspath.ConvertToRelativePath of a name of the model, which never fails. A name of bytes is not decoded, as bytes that are no UTF-8 have no string: tspath cuts a path at ASCII only, and the comparison of two components is its one place that reads runes.
 function convertToRelativePathOf(rules: Rules, fileName: string, options: ComparePathsOptions): string {
-  return rules.model.fromString(convertToRelativePath(rules.model.toString(fileName), options));
+  if (rules.model.name === "utf16") return convertToRelativePath(fileName, options);
+  if (!isRootedDiskPath(fileName)) return fileName;
+  const directory = rules.model.fromString(options.currentDirectory);
+  // GetPathComponentsRelativeTo
+  const fromComponents = reducePathComponents(getPathComponents(directory, directory));
+  const toComponents = reducePathComponents(getPathComponents(fileName, directory));
+  let start = 0;
+  const maxCommonComponents = Math.min(fromComponents.length, toComponents.length);
+  for (; start < maxCommonComponents; start++) {
+    const fromComponent = fromComponents[start];
+    const toComponent = toComponents[start];
+    if (start === 0 || !options.useCaseSensitiveFileNames) {
+      if (!equalFoldBytes(fromComponent, toComponent)) break;
+    } else if (fromComponent !== toComponent) break;
+  }
+  if (start === 0) return getPathFromPathComponents(toComponents);
+  const result = [""];
+  for (let i = start; i < fromComponents.length; i++) result.push("..");
+  for (const component of toComponents.slice(start)) result.push(component);
+  return getPathFromPathComponents(result);
 }
 
 function getDiagnosticPath(rules: Rules, d: Diagnostic): string {
@@ -513,6 +572,8 @@ export function writeErrorSummaryText(
     formatOpts,
   );
   const numErroringFiles = errorSummary.errorsByFile.size;
+  // diagnostics.Format: an argument of a message goes through strings.ToValidUTF8.
+  const firstFileNameArgument = rules.model.name === "utf8" ? toValidUTF8(firstFileName) : firstFileName;
 
   let message: string;
   if (totalErrorCount === 1) {
@@ -520,7 +581,7 @@ export function writeErrorSummaryText(
     if (errorSummary.globalErrors.length > 0 || firstFileName === "") {
       message = "Found 1 error.";
     } else {
-      message = `Found 1 error in ${firstFileName}`;
+      message = `Found 1 error in ${firstFileNameArgument}`;
     }
   } else {
     switch (numErroringFiles) {
@@ -530,7 +591,7 @@ export function writeErrorSummaryText(
         break;
       case 1:
         // One file with errors.
-        message = `Found ${totalErrorCount} errors in the same file, starting at: ${firstFileName}`;
+        message = `Found ${totalErrorCount} errors in the same file, starting at: ${firstFileNameArgument}`;
         break;
       default:
         // Multiple files with errors.

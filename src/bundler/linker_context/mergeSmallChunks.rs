@@ -747,6 +747,13 @@ enum Runs {
     WithOtherEntry,
 }
 
+/// An `EntryImportsInParent` that can still be without a parent.
+struct EntryParts {
+    entry_id: u32,
+    parts: core::ops::Range<u32>,
+    parent_file: Option<u32>,
+}
+
 /// What the walks of `files_that_leave_entry_chunk` share.
 struct EntryChunkWalks<'a> {
     class_by_key: ArrayHashMap<&'a [u8], AutoBitSet>,
@@ -1455,8 +1462,8 @@ pub(crate) fn merge_small_chunks(
             || (!is_dynamic_entry(entry_id)
                 && host_names_url(entry_source_indices[entry_id] as usize))
     };
-    // See `LinkerContext::entry_imports_in_parent`. `parent_file` is `u32::MAX` until rule 1 finds the parent.
-    let mut entry_imports_in_parent: Vec<EntryImportsInParent> = Vec::new();
+    // By entry point id, then by part. Rule 1 finds the parents. See `LinkerContext::entry_imports_in_parent`.
+    let mut entry_parts: Vec<EntryParts> = Vec::new();
     let (leaves_entry_chunk, segment_of_file) = {
         // Only an entry point that precedes an `import()` target has a class with a parent.
         let mut precedes = AutoBitSet::init_empty(entry_points_len + 1)?;
@@ -1492,11 +1499,10 @@ pub(crate) fn merge_small_chunks(
                     let mut parts_begin = 0;
                     for &cut in walks.cuts.iter().chain(&[u32::MAX]) {
                         let parts_end = cut.min(parts_end).max(parts_begin);
-                        entry_imports_in_parent.push(EntryImportsInParent {
+                        entry_parts.push(EntryParts {
                             entry_id: entry_id as u32,
-                            parts_begin,
-                            parts_end,
-                            parent_file: u32::MAX,
+                            parts: parts_begin..parts_end,
+                            parent_file: None,
                         });
                         parts_begin = parts_end;
                     }
@@ -1737,19 +1743,18 @@ pub(crate) fn merge_small_chunks(
                     group.pin == Pin::Entry
                         || (group.target == Some(target_platform) && !group.loads_entry_of(class))
                 });
-                let first = entry_imports_in_parent
-                    .partition_point(|repeated| (repeated.entry_id as usize) < entry_id);
+                let first =
+                    entry_parts.partition_point(|repeated| (repeated.entry_id as usize) < entry_id);
                 if takes_entry_files
-                    && let Some(repeated) =
-                        entry_imports_in_parent.get_mut(first + segment as usize)
+                    && let Some(repeated) = entry_parts.get_mut(first + segment as usize)
                     && repeated.entry_id as usize == entry_id
                 {
                     let parent = &mut groups.values_mut()[target_index];
-                    repeated.parent_file = parent.first_source;
+                    repeated.parent_file = Some(parent.first_source);
                     // The parent runs these at its top level, so rule 2 must not move it into a chunk that more entry points load.
                     this.for_each_import_that_runs(
                         entry_source_indices[entry_id],
-                        repeated.parts_begin..repeated.parts_end,
+                        repeated.parts.clone(),
                         &mut |_, _, _| parent.pure = false,
                     );
                 }
@@ -1786,7 +1791,17 @@ pub(crate) fn merge_small_chunks(
             fold(groups.values_mut(), group_index, entry_chunk);
         }
     }
-    entry_imports_in_parent.retain(|repeated| repeated.parent_file != u32::MAX);
+    let mut entry_imports_in_parent: Vec<EntryImportsInParent> = entry_parts
+        .into_iter()
+        .filter_map(|repeated| {
+            Some(EntryImportsInParent {
+                entry_id: repeated.entry_id,
+                parts_begin: repeated.parts.start,
+                parts_end: repeated.parts.end,
+                parent_file: repeated.parent_file?,
+            })
+        })
+        .collect();
     if !fold_pure {
         rekey_files(
             this,

@@ -642,6 +642,8 @@ impl CopyFile {
             self.source_fd = *fd;
         }
 
+        let mut source_stat: Option<Stat> = None;
+
         // Do we need to open both files?
         if self.destination_fd == Fd::INVALID && self.source_fd == Fd::INVALID {
             // First, we attempt to clonefile() on macOS
@@ -749,16 +751,16 @@ impl CopyFile {
         } else if self.destination_fd == Fd::INVALID {
             self.source_fd = self.source_file_store.pathlike.fd();
 
-            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
-                return;
+            // Before the open below: it could take the number of an fd that the caller closed.
+            match bun_sys::fstat(self.source_fd) {
+                bun_sys::Result::Ok(result) => source_stat = Some(result),
+                bun_sys::Result::Err(err) => {
+                    self.system_error = Some(err.to_system_error());
+                    return;
+                }
             }
-            // The caller closed its source fd, and the open above reused the number.
-            if self.destination_fd == self.source_fd {
-                self.system_error = Some(
-                    bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::fstat)
-                        .to_system_error(),
-                );
-                self.do_close();
+
+            if self.do_open_file::<{ IOWhich::Destination }>().is_err() {
                 return;
             }
             // Do we need to open only one file?
@@ -785,13 +787,16 @@ impl CopyFile {
         }
 
         // From the opened fd: the source path can name another file by now.
-        let stat: Stat = match bun_sys::fstat(self.source_fd) {
-            bun_sys::Result::Ok(result) => result,
-            bun_sys::Result::Err(err) => {
-                self.system_error = Some(err.to_system_error());
-                self.do_close();
-                return;
-            }
+        let stat: Stat = match source_stat {
+            Some(stat) => stat,
+            None => match bun_sys::fstat(self.source_fd) {
+                bun_sys::Result::Ok(result) => result,
+                bun_sys::Result::Err(err) => {
+                    self.system_error = Some(err.to_system_error());
+                    self.do_close();
+                    return;
+                }
+            },
         };
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {

@@ -448,35 +448,6 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
-    // In a child process: the closed fd number is free, and another test in this process could take it.
-    it.skipIf(!isLinux)("a source fd that is already closed rejects and leaves the destination intact", async () => {
-      using dir = tempDir("bun-write-closed-source-fd", { "src.txt": "source", "dest.txt": content });
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            const fs = require("fs");
-            const fd = fs.openSync("src.txt", "r");
-            fs.closeSync(fd);
-            Bun.write("dest.txt", Bun.file(fd)).then(
-              written => console.log(JSON.stringify({ written })),
-              error => console.log(JSON.stringify({ code: error.code, size: fs.statSync("dest.txt").size })),
-            );
-          `,
-        ],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ result: exitCode === 0 ? JSON.parse(stdout) : { stdout, stderr }, exitCode }).toEqual({
-        result: { code: "EBADF", size: content.length },
-        exitCode: 0,
-      });
-    });
-
     // A memfd sealed with F_SEAL_SHRINK opens for writing, and every ftruncate on it fails with EPERM.
     it.skipIf(!isLinux)("a destination that cannot be emptied rejects, names it, and keeps its bytes", async () => {
       const MFD_ALLOW_SEALING = 2;

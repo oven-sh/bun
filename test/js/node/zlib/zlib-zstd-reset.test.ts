@@ -1,7 +1,8 @@
 /**
  * The tests of streams in this file run in both Bun and Node.js: `bun test`
- * runs them here, and the last test runs this same file under Node.js. The
- * tests of handles run in Bun only, in a new process.
+ * runs them here, and the last test runs this same file under Node.js, when
+ * the `node` of the machine is v26.10.0 or later. The tests of handles run in
+ * Bun only, in a new process.
  *
  * reset() of a zstd stream starts a new frame and keeps the dictionary and the
  * parameters of the stream. Node does this since v26.10.0
@@ -24,16 +25,6 @@ const {
   ZSTD_d_windowLogMax,
   ZSTD_e_end,
 } = zlib.constants;
-
-// An older Node skips every test here: its reset() makes a new zstd context,
-// without the dictionary and the parameters, and a Node as old as v24.3.0 has
-// no dictionary option for zstd. Bun always runs them.
-const runtimeKeepsOptions = (() => {
-  if (process.versions.bun) return true;
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  return major > 26 || (major === 26 && minor >= 10);
-})();
-const resetTest = runtimeKeepsOptions ? test : test.skip;
 
 const dictionary = Buffer.from(
   "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
@@ -77,27 +68,27 @@ function frame(options = compressOptions) {
   return run(zlib.createZstdCompress(options), half, rest);
 }
 
-resetTest("each option changes the frame that the other tests compare with", async () => {
+test("each option changes the frame that the other tests compare with", async () => {
   const expected = await frame();
   for (const without of ["dictionary", "pledgedSrcSize", "params"]) {
     assert.notDeepStrictEqual(await frame({ ...compressOptions, [without]: undefined }), expected, without);
   }
 });
 
-resetTest("ZstdCompress: _handle.reset() keeps the options", async () => {
+test("ZstdCompress: _handle.reset() keeps the options", async () => {
   const stream = zlib.createZstdCompress(compressOptions);
   stream._handle.reset();
   assert.deepStrictEqual(await run(stream, half, rest), await frame());
 });
 
-resetTest("ZstdCompress: a second reset() keeps the options", async () => {
+test("ZstdCompress: a second reset() keeps the options", async () => {
   const stream = zlib.createZstdCompress(compressOptions);
   stream.reset();
   stream.reset();
   assert.deepStrictEqual(await run(stream, half, rest), await frame());
 });
 
-resetTest("ZstdCompress: reset() after a write drops the open frame and keeps the options", async () => {
+test("ZstdCompress: reset() after a write drops the open frame and keeps the options", async () => {
   const stream = zlib.createZstdCompress(compressOptions);
   const chunks = collect(stream);
   await write(stream, Buffer.from("reset() drops this frame"));
@@ -108,7 +99,7 @@ resetTest("ZstdCompress: reset() after a write drops the open frame and keeps th
   assert.deepStrictEqual(Buffer.concat(chunks), await frame());
 });
 
-resetTest("ZstdCompress: reset() between two frames keeps the options for the second frame", async () => {
+test("ZstdCompress: reset() between two frames keeps the options for the second frame", async () => {
   const stream = zlib.createZstdCompress(compressOptions);
   const chunks = collect(stream);
   stream.write(half);
@@ -124,13 +115,13 @@ resetTest("ZstdCompress: reset() between two frames keeps the options for the se
 });
 
 // A session reset of zstd clears the pledged size. reset() sets it again.
-resetTest("ZstdCompress: pledgedSrcSize applies again after reset()", async () => {
+test("ZstdCompress: pledgedSrcSize applies again after reset()", async () => {
   const stream = zlib.createZstdCompress({ pledgedSrcSize: input.length });
   stream.reset();
   await assert.rejects(run(stream, half, rest.subarray(1)), { code: "ZSTD_error_srcSize_wrong" });
 });
 
-resetTest("ZstdCompress: reset() after a second _handle.init() keeps the options of that init()", async () => {
+test("ZstdCompress: reset() after a second _handle.init() keeps the options of that init()", async () => {
   const other = Buffer.from(dictionary).reverse();
   const stream = zlib.createZstdCompress({ dictionary: other, params: { [ZSTD_c_compressionLevel]: 1 } });
   const params = new Uint32Array(ZSTD_c_checksumFlag + 1).fill(-1);
@@ -141,7 +132,7 @@ resetTest("ZstdCompress: reset() after a second _handle.init() keeps the options
   assert.deepStrictEqual(stream._processChunk(input, ZSTD_e_end), zlib.zstdCompressSync(input, compressOptions));
 });
 
-resetTest("ZstdCompress: reset() keeps ZSTD_c_nbWorkers", async () => {
+test("ZstdCompress: reset() keeps ZSTD_c_nbWorkers", async () => {
   const job = 512 * 1024;
   const params = { [ZSTD_c_jobSize]: job, [ZSTD_c_checksumFlag]: 1 };
   const oneWorker = { params: { ...params, [ZSTD_c_nbWorkers]: 1 } };
@@ -159,7 +150,7 @@ resetTest("ZstdCompress: reset() keeps ZSTD_c_nbWorkers", async () => {
   assert.deepStrictEqual(await run(stream, first, last), expected);
 });
 
-resetTest("ZstdDecompress: reset() in the middle of a frame keeps the dictionary", async () => {
+test("ZstdDecompress: reset() in the middle of a frame keeps the dictionary", async () => {
   const compressed = zlib.zstdCompressSync(input, { dictionary });
   const stream = zlib.createZstdDecompress({ dictionary });
   const chunks = collect(stream);
@@ -170,7 +161,7 @@ resetTest("ZstdDecompress: reset() in the middle of a frame keeps the dictionary
   assert.deepStrictEqual(Buffer.concat(chunks), input);
 });
 
-resetTest("ZstdDecompress: reset() between two frames keeps the dictionary", async () => {
+test("ZstdDecompress: reset() between two frames keeps the dictionary", async () => {
   const stream = zlib.createZstdDecompress({ dictionary });
   const chunks = collect(stream);
   await write(stream, zlib.zstdCompressSync(half, { dictionary }));
@@ -180,7 +171,7 @@ resetTest("ZstdDecompress: reset() between two frames keeps the dictionary", asy
   assert.deepStrictEqual(Buffer.concat(chunks), input);
 });
 
-resetTest("ZstdDecompress: reset() after a frame keeps ZSTD_d_windowLogMax", async () => {
+test("ZstdDecompress: reset() after a frame keeps ZSTD_d_windowLogMax", async () => {
   const large = await run(
     zlib.createZstdCompress({ params: { [ZSTD_c_windowLog]: 11 } }),
     Buffer.alloc(2048),
@@ -195,7 +186,7 @@ resetTest("ZstdDecompress: reset() after a frame keeps ZSTD_d_windowLogMax", asy
   await assert.rejects(finished(stream), { code: "ZSTD_error_frameParameter_windowTooLarge" });
 });
 
-resetTest("ZstdDecompress: _processChunk() after _handle.reset() keeps the dictionary", () => {
+test("ZstdDecompress: _processChunk() after _handle.reset() keeps the dictionary", () => {
   const compressed = zlib.zstdCompressSync(input, { dictionary });
   const stream = zlib.createZstdDecompress({ dictionary });
   const handle = stream._handle;
@@ -270,7 +261,8 @@ const handleFixture = /* js */ `
   {
     // reset() in that state. The worker takes the first job. The second job
     // waits when the worker is still busy, and then the two writes have
-    // given no output.
+    // given no output. If the worker was faster, a new stream tries again.
+    // The last try counts in either state: the scheduler must not fail this.
     let stream, produced, attempts = 0;
     do {
       stream = zlib.createZstdCompress({ params });
@@ -281,8 +273,7 @@ const handleFixture = /* js */ `
       }
     } while (produced !== 0 && ++attempts < 10);
     stream._handle.reset();
-    const waits = produced === 0 ? "a job waits" : "no job waits";
-    console.log("reset() while " + waits + " for the worker: " + sameFrame(stream, { params }));
+    console.log("reset() while a job waits for the worker: " + sameFrame(stream, { params }));
   }
 
   {
@@ -313,7 +304,15 @@ const handleFixture = /* js */ `
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, bunExe, nodeExe } = await import("harness");
-  const node = nodeExe();
+  // Node.js runs this file only when it keeps the options in reset(). An
+  // older one fails the tests, and some cannot load a .ts file.
+  const node = (() => {
+    const node = nodeExe();
+    if (!node) return null;
+    const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    const [major, minor] = stdout.toString().split(".").map(Number);
+    return major > 26 || (major === 26 && minor >= 10) ? node : null;
+  })();
 
   // The process starts before the first test and runs beside the tests above.
   let fixture: ReturnType<typeof spawnHandleFixture> | undefined;

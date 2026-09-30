@@ -340,9 +340,7 @@ class Peer {
    */
   async roundTrip() {
     const payload = Buffer.concat([uint32(0), uint32(++this.#pings)]);
-    const answered = this.next(
-      f => f.type === FRAME.PING && (f.flags & FLAG.ACK) !== 0 && f.payload.equals(payload),
-    );
+    const answered = this.next(f => f.type === FRAME.PING && (f.flags & FLAG.ACK) !== 0 && f.payload.equals(payload));
     this.send(frame(FRAME.PING, 0, 0, payload));
     await answered;
     // The session writes the answer inside the read. Let that read return.

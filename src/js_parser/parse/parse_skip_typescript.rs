@@ -1056,7 +1056,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let has_index_type = self.lexer.token != T::TCloseBracket;
                     let mut index = <S::Sub as TypeSink>::NONE;
                     if has_index_type {
-                        self.parse_type::<S::Sub>(SkipTypeOptionsBitset::empty(), &mut index)?;
+                        // "A[if]": a reserved word that starts no type is no index type, as before
+                        if self.is_word_that_starts_no_type() {
+                            self.lexer.unexpected()?;
+                            if S::STRICT {
+                                return Err(Error::SyntaxError);
+                            }
+                        } else {
+                            self.parse_type::<S::Sub>(SkipTypeOptionsBitset::empty(), &mut index)?;
+                        }
                     }
                     if S::BUILDS {
                         S::b_index(&self.lexer, out, index);
@@ -1347,14 +1355,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .add_range_error(Some(self.source), r, b"Unexpected \"const\"");
             }
             return Ok(());
-        } else if self.lexer.is_identifier_or_keyword()
-            && (S::STRICT || !self.is_keyword_of_enclosing_type(opts))
-        {
-            // parseEntityNameOfTypeReference takes a reserved word as the first name
+        } else if self.is_reserved_type_name::<S>(opts) {
+            // parseEntityNameOfTypeReference takes a reserved word or a private name as the first name
+            S::keyword(out, TypeKeyword::Object);
             if S::BUILDS {
                 S::b_reference(&self.lexer, out);
             }
             self.lexer.next()?;
+            self.parse_entity_name_rest::<S>(out)?;
+            self.parse_type_arguments_of_type_reference::<S>(out)?;
+
+            // "implements class {}": before "{" the word starts an expression, as before, but in a return type
+            if !S::STRICT
+                && self.lexer.token == T::TOpenBrace
+                && !opts.contains(SkipTypeOptions::IsReturnType)
+            {
+                self.lexer.unexpected()?;
+            }
+            return Ok(());
         } else {
             // A type is missing. A parse without lint goes on where ".", "[" or an operator follows.
             self.lexer.unexpected()?;
@@ -1366,6 +1384,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.parse_entity_name_rest::<S>(out)?;
         self.parse_type_arguments_of_type_reference::<S>(out)
+    }
+
+    /// Whether the reserved word or the private name that the lexer is on is the first name of a type reference.
+    fn is_reserved_type_name<S: TypeSink>(&mut self, opts: SkipTypeOptionsBitset) -> bool {
+        let is_private_name = self.lexer.token == T::TPrivateIdentifier;
+        if !is_private_name && !self.lexer.token.is_reserved_word() {
+            return false;
+        }
+        if S::STRICT {
+            return true;
+        }
+        // "{ [if]: A }" and "[#a]": where the reference reads no type, the word is none, as before
+        if opts.contains(SkipTypeOptions::IsIndexSignature)
+            || (is_private_name && opts.contains(SkipTypeOptions::AllowTupleLabels))
+        {
+            return false;
+        }
+        // Inside an attempt a word that an expression or a new line starts or goes on with is none: `a < (super.x) > (b)` stays a comparison
+        if self.lexer.is_log_disabled
+            && (is_private_name
+                || self.lexer.has_newline_before
+                || matches!(
+                    self.lexer.token,
+                    T::TSuper | T::TDelete | T::TIn | T::TInstanceof
+                ))
+        {
+            return false;
+        }
+        !self.is_keyword_of_enclosing_type(opts)
+    }
+
+    /// isListElement for a type: whether the lexer is on a reserved word or a private name that starts no type. "const" and "extends" are read as before.
+    fn is_word_that_starts_no_type(&mut self) -> bool {
+        match self.lexer.token {
+            T::TPrivateIdentifier => true,
+            T::TConst | T::TExtends => false,
+            token => token.is_reserved_word() && !self.is_start_of_type(false),
+        }
     }
 
     /// Whether "extends" or "in" follows a missing type, as before, rather than names a type.
@@ -1437,7 +1493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "import('./foo.json', { with: { type: 'json' } })"
         if self.lexer.token == T::TComma {
             self.lexer.next()?;
-            self.skip_type_script_object_type()?;
+            self.parse_import_type_attributes()?;
 
             // "import('./foo.json', { with: { type: 'json' } }, )"
             if self.lexer.token == T::TComma {
@@ -1450,12 +1506,116 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "import('fs').promises.FileHandle"
         if self.lexer.token == T::TDot {
             self.lexer.next()?;
-            self.parse_right_side_of_dot::<S>(out)?;
+            // "import('fs').#a": the first name is an identifier name, which a private name is. Inside an attempt it ends the attempt, as before
+            if self.lexer.token == T::TPrivateIdentifier && !self.lexer.is_log_disabled {
+                self.lexer.next()?;
+            } else {
+                self.parse_right_side_of_dot::<S>(out)?;
+            }
             self.parse_entity_name_rest::<S>(out)?;
+            return self.parse_type_arguments_of_type_reference::<S>(out);
         }
 
         // "import('fs')<T>"
-        self.parse_type_arguments_of_type_reference::<S>(out)
+        self.parse_type_arguments_of_import_type::<S>(out)
+    }
+
+    /// The type arguments of an import type without a qualifier. They are read where the expression that the type may end goes on the same way behind them: `x as import("m") < y` stays a comparison.
+    fn parse_type_arguments_of_import_type<S: TypeSink>(
+        &mut self,
+        out: &mut S::Out,
+    ) -> Result<(), Error> {
+        if S::BUILDS {
+            return self.parse_type_arguments_of_type_reference::<S>(out);
+        }
+        if self.lexer.has_newline_before
+            || !matches!(self.lexer.token, T::TLessThan | T::TLessThanLessThan)
+        {
+            return Ok(());
+        }
+        let mark = self.read_mark();
+        // What an expression reads behind `x as import("m")`
+        if self.try_skip_type_script_type_arguments_with_backtracking()
+            && (self.lexer.token.is_assign()
+                || matches!(
+                    self.lexer.token,
+                    T::TOpenParen
+                        | T::TOpenBracket
+                        | T::TNoSubstitutionTemplateLiteral
+                        | T::TTemplateHead
+                        | T::TQuestionDot
+                        | T::TDot
+                        | T::TPlusPlus
+                        | T::TMinusMinus
+                ))
+        {
+            // Behind a cast these tokens go on another way than behind type arguments.
+            self.rewind_to_read_mark(&mark);
+        }
+        Ok(())
+    }
+
+    /// The second argument of an import type: an object type, as before, or else what parseImportType reads.
+    fn parse_import_type_attributes(&mut self) -> Result<(), Error> {
+        let mark = self.read_mark();
+        let result = self.skip_type_script_object_type();
+        // Inside an attempt only the first reading counts.
+        if self.lexer.is_log_disabled || (result.is_ok() && self.log().errors == mark.errors) {
+            return result;
+        }
+        self.reread_import_type_attributes(&mark, result)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn reread_import_type_attributes(
+        &mut self,
+        mark: &ReadMark<'a>,
+        result: Result<(), Error>,
+    ) -> Result<(), Error> {
+        if let Err(Error::StackOverflow | Error::Alloc(_)) = result {
+            return result;
+        }
+        let failed = self.set_aside_failed_read(mark);
+        match self.parse_import_attributes_of_import_type() {
+            Ok(()) if self.log().errors == mark.errors => Ok(()),
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+            _ => {
+                // Neither reading fits: the errors stay the ones of the first.
+                self.restore_failed_read(mark, failed);
+                result
+            }
+        }
+    }
+
+    /// `{ with: { name: value } }` of parseImportType, where parseImportAttribute reads an expression as the value.
+    fn parse_import_attributes_of_import_type(&mut self) -> Result<(), Error> {
+        self.lexer.expect(T::TOpenBrace)?;
+        // "with" or "assert"
+        if self.lexer.token != T::TWith && !self.lexer.is_contextual_keyword(b"assert") {
+            self.lexer.expected(T::TWith)?;
+        }
+        self.lexer.next()?;
+        self.lexer.expect(T::TColon)?;
+
+        // parseImportAttributes
+        self.lexer.expect(T::TOpenBrace)?;
+        while self.lexer.is_identifier_or_keyword() || self.lexer.token == T::TStringLiteral {
+            self.lexer.next()?;
+            self.lexer.expect(T::TColon)?;
+            self.parse_and_drop_in_type(Dropped::Initializer)?;
+            if self.lexer.token != T::TComma {
+                break;
+            }
+            self.lexer.next()?;
+        }
+        self.lexer.expect(T::TCloseBrace)?;
+
+        if self.lexer.token == T::TComma {
+            self.lexer.next()?;
+        }
+        self.lexer.expect(T::TCloseBrace)?;
+        Ok(())
     }
 
     /// `parseTypeQuery`
@@ -1488,8 +1648,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.parse_import_type::<S>(opts, out);
         }
 
-        // "typeof x"
-        if !self.lexer.is_identifier_or_keyword() {
+        // "typeof x" and "typeof #x": the first name is an identifier name, which a private name is. Inside an attempt it ends the attempt, as before
+        if !self.lexer.is_identifier_or_keyword()
+            && (self.lexer.token != T::TPrivateIdentifier || self.lexer.is_log_disabled)
+        {
             self.lexer.expected(T::TIdentifier)?;
         }
         if S::BUILDS {
@@ -2933,7 +3095,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// parseTypeHeritageClauseElement: a type first, then what parseExpressionWithTypeArguments reads.
     fn parse_type_heritage_clause_element(&mut self) -> Result<(), Error> {
         let mark = self.read_mark();
-        let result = self.skip_type_script_type(Level::Lowest);
+        // The reference reads an expression here: a reserved word that starts no type is reported, as before
+        let result = if !self.lexer.is_log_disabled && self.is_word_that_starts_no_type() {
+            self.lexer.unexpected().map_err(Error::from)
+        } else {
+            self.skip_type_script_type(Level::Lowest)
+        };
         // Inside an attempt only the first reading counts.
         if self.lexer.is_log_disabled
             || (result.is_ok()
@@ -3019,11 +3186,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         loop {
             let mut argument = N::NONE;
-            self.skip_type_script_type_with_opts::<N>(
-                Level::Lowest,
-                SkipTypeOptionsBitset::empty(),
-                &mut argument,
-            )?;
+            // isListElement: a reserved word that starts no type is no type argument, as before
+            if self.is_word_that_starts_no_type() {
+                self.lexer.unexpected()?;
+                if N::STRICT {
+                    return Err(Error::SyntaxError);
+                }
+            } else {
+                self.skip_type_script_type_with_opts::<N>(
+                    Level::Lowest,
+                    SkipTypeOptionsBitset::empty(),
+                    &mut argument,
+                )?;
+            }
             if N::BUILDS {
                 N::b_push_type(&mut list, N::node(&argument));
             }
@@ -3170,9 +3345,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking<N: TypeSink>(
         &mut self,
         flags: SkipTypeOptionsBitset,
+        union_lead: &mut KK<N, b::Lead>,
+        intersection_lead: &mut KK<N, b::Lead>,
     ) -> Result<N::Out, Error> {
         self.lexer.expect(T::TExtends)?;
         let mut constraint = N::NONE;
+
+        // parseUnionOrIntersectionType: one "|" and one "&" may lead the constraint
+        if self.lexer.token == T::TBar {
+            if N::BUILDS {
+                N::b_leading(&self.lexer, union_lead);
+            }
+            self.lexer.next()?;
+        }
+        if self.lexer.token == T::TAmpersand {
+            if N::BUILDS {
+                N::b_leading(&self.lexer, intersection_lead);
+            }
+            self.lexer.next()?;
+        }
 
         // The first constituent of the constraint: the caller reads the others after this attempt.
         let opts = SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes);
@@ -3342,22 +3533,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mark = self.read_mark();
+        let mut union_lead: KK<N, b::Lead> = ConstDefault::DEFAULT;
+        let mut intersection_lead: KK<N, b::Lead> = ConstDefault::DEFAULT;
         let mut constraint = self.lexer_backtracker_kept(|p| {
-            p.skip_type_script_constraint_of_infer_type_with_backtracking::<N>(flags)
+            p.skip_type_script_constraint_of_infer_type_with_backtracking::<N>(
+                flags,
+                &mut union_lead,
+                &mut intersection_lead,
+            )
         });
         if let Some(constraint_type) = &mut constraint {
             // tryParseConstraintOfInferType reads a whole type: here the other constituents.
             let opts = flags | SkipTypeOptions::DisallowConditionalTypes;
-            let mut lead: KK<N, b::Lead> = ConstDefault::DEFAULT;
             self.parse_union_or_intersection_type_rest::<N, false>(
                 opts,
                 constraint_type,
-                &mut lead,
+                &mut intersection_lead,
             )?;
             self.parse_union_or_intersection_type_rest::<N, true>(
                 opts,
                 constraint_type,
-                &mut lead,
+                &mut union_lead,
             )?;
 
             // Before "?" and a type, the "extends" belongs to a conditional type.

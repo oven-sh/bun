@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
 import { totalmem } from "node:os";
 
 // Consuming a stream as text must reject with a catchable error when the accumulated
@@ -248,21 +248,40 @@ describe("the text of string chunks is one allocation of its length", () => {
     });
   });
 
-  // This text fits in a string. It is 2 GiB in 16 bits, beside the gigabyte of the chunk.
-  test.skipIf(totalmem() < 12 * 1024 ** 3)(
-    "a 16-bit character after a gigabyte of Latin-1",
-    async () => {
-      const chunks = `[Buffer.alloc(2 ** 30, "x").toString("latin1"), "\\u20AC"]`;
-      const ends = `text => ({ length: text.length, start: text.slice(0, 3), end: text.slice(-3) })`;
-      const { stdout, stderr, exitCode } = await run(consume(chunks, "Bun.readableStreamToText(stream)", ends));
-      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-        stdout: { text: { length: 2 ** 30 + 1, start: "xxx", end: "xx\u20AC" } },
-        stderr: "",
-        exitCode: 0,
+  // This text fits in a string: it is 2 GiB in 16 bits. A debug build takes 6 s to copy it.
+  test.skipIf(!enoughMemory || isDebug)("a 16-bit character after a gigabyte of Latin-1", async () => {
+    const chunks = `[...Array(16).fill(Buffer.alloc(2 ** 26, "x").toString("latin1")), "\\u20AC"]`;
+    const ends = `text => ({ length: text.length, start: text.slice(0, 3), end: text.slice(-3) })`;
+    const { stdout, stderr, exitCode } = await run(consume(chunks, "Bun.readableStreamToText(stream)", ends));
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: { text: { length: 2 ** 30 + 1, start: "xxx", end: "xx\u20AC" } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The text without its BOM shares the buffer of the join. A copy is a second allocation of that size.
+  test("a BOM before 128 MiB of Latin-1", async () => {
+    const MIB = 1024 * 1024;
+    const fixture = `
+      const megabyte = Buffer.alloc(${MIB}, "x").toString("latin1");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue("\\uFEFF");
+          for (let i = 0; i < 128; i++) controller.enqueue(megabyte);
+          controller.close();
+        },
       });
-    },
-    60_000,
-  );
+      const text = await stream.text();
+      console.log(JSON.stringify({ length: text.length, start: text.slice(0, 3) }));
+    `;
+    const [peak, emptyPeak] = await Promise.all([
+      runFixtureMaxRSS(fixture, { length: 128 * MIB, start: "xxx" }),
+      emptyProcessMaxRSS(),
+    ]);
+    // The join is 256 MiB in 16 bits, and a copy of it makes 512 MiB.
+    expect((peak - emptyPeak) / MIB).toBeLessThan(384);
+  });
 });
 
 // TextDecoderStream joins a chunk with the bytes it carried over from an incomplete UTF-8

@@ -739,6 +739,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isSocketNew,
         socket,
         isAncientHTTP: boolean,
+        // Only for a CONNECT or an Upgrade request without a body (canHandOffHead in NodeHTTP.cpp).
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
       ) {

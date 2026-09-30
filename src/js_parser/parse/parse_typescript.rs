@@ -4,6 +4,7 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
+use crate::parse::erased;
 use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
@@ -211,6 +212,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
+        let erased_name = if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+            Some(if p.lexer.token == T::TStringLiteral {
+                let value = p.lexer.to_utf8_e_string()?;
+                erased::ModuleName::String(erased::StringLiteral::at(&p.lexer, value.slice8()))
+            } else {
+                erased::ModuleName::Identifier(erased::Name::at(&p.lexer))
+            })
+        } else {
+            None
+        };
         p.lexer.next()?;
 
         // Generate the namespace object
@@ -402,6 +413,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.scope.is_module() {
                 p.local_type_names.put(name_text, true)?;
             }
+            if let Some(name) = erased_name
+                && let Some(starts) = &mut p.starts_for_parse_only
+            {
+                starts.erased.namespace(
+                    erased::Cursor::at(&p.lexer),
+                    p.arena,
+                    loc,
+                    erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                    erased::Exported::before(opts.is_export),
+                    name,
+                    bun_ast::StoreSlice::from_bump(stmts),
+                );
+            }
             return Ok(p.s(S::TypeScript {}, loc));
         }
 
@@ -523,6 +547,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
+            } else if p.starts_for_parse_only.is_some() {
+                // The record of the statement keeps the string as its module reference.
+                value = path;
             }
         } else {
             // "import Foo = Bar"
@@ -551,6 +578,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             // "import type foo = require('bar');"
             // "import type foo = bar.baz;"
+            if let Some(starts) = &mut p.starts_for_parse_only {
+                starts.erased.import_equals(
+                    erased::Cursor::at(&p.lexer),
+                    p.arena,
+                    loc,
+                    erased::Exported::before(opts.is_export),
+                    erased::Name::of(p.source, default_name_loc, default_name),
+                    value,
+                );
+            }
             return Ok(p.s(S::TypeScript {}, loc));
         }
 
@@ -739,6 +776,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.has_non_local_export_declare_inside_namespace = true;
             }
 
+            if p.starts_for_parse_only.is_some() {
+                // The record of a declared enum keeps its name, which no symbol holds.
+                name.ref_ = p.store_name_in_ref(name_text);
+                let declared = Stmt::alloc(
+                    S::Enum {
+                        name,
+                        arg: arg_ref,
+                        values: bun_ast::StoreSlice::new_mut(values.into_bump_slice_mut()),
+                        is_export: opts.is_export,
+                    },
+                    loc,
+                );
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    starts.erased.statement(
+                        erased::Cursor::at(&p.lexer),
+                        loc,
+                        erased::ErasedFlags::AMBIENT,
+                        erased::Exported::before(opts.is_export),
+                        erased::ErasedData::Declaration(declared),
+                    );
+                }
+            }
             return Ok(p.s(S::TypeScript {}, loc));
         }
 

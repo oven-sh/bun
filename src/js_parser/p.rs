@@ -190,6 +190,7 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
+    erased: Option<crate::parse::erased::ErasedMark>,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -220,6 +221,8 @@ pub struct StartsForParseOnly {
     pub(crate) async_arrow_parameters: bun_collections::HashMap<i32, i32>,
     pub(crate) arrow_expression_bodies: bun_collections::HashMap<i32, i32>,
     pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
+    /// What a lint parse keeps of the statements and class members that leave no node.
+    pub erased: crate::parse::erased::ErasedTables,
 }
 
 #[derive(Clone, Copy)]
@@ -8335,6 +8338,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
+            erased: self
+                .starts_for_parse_only
+                .as_deref()
+                .map(|starts| starts.erased.mark()),
         }
     }
 
@@ -8392,6 +8399,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
+        if let (Some(starts), Some(mark)) = (&mut self.starts_for_parse_only, snapshot.erased) {
+            starts.erased.rewind(mark);
+        }
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really

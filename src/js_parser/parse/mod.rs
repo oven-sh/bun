@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+pub mod erased;
 pub mod parse_entry;
 pub(crate) mod parse_fn;
 pub(crate) mod parse_import_export;
@@ -259,6 +260,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Discard any scopes recorded while parsing them or the visit pass
                 // will hit a scope order mismatch.
                 p.discard_scopes_up_to(property_scope_index);
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if let Some(starts) = &mut p.starts_for_parse_only {
+                        starts.erased.member_read(
+                            erased::Cursor::at(&p.lexer),
+                            first_decorator_loc,
+                            body_loc,
+                            properties.len(),
+                            opts.is_static,
+                        );
+                    }
+                }
             }
         }
 
@@ -723,6 +735,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.as_mut().unwrap().ref_ = p
                     .declare_symbol(js_ast::symbol::Kind::Class, name_loc, name_text)
                     .expect("unreachable");
+            } else if Self::IS_TYPESCRIPT_ENABLED && p.starts_for_parse_only.is_some() {
+                // The record of a declared class keeps its name, which no symbol holds.
+                let ref_ = p.store_name_in_ref(name_text);
+                name = Some(LocRef {
+                    loc: name_loc,
+                    ref_,
+                });
             }
         }
 
@@ -754,6 +773,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let mut flags = erased::ErasedFlags::AMBIENT;
+                    if loc != class_keyword.loc {
+                        flags |= erased::ErasedFlags::ABSTRACT;
+                    }
+                    let first_decorator = opts
+                        .ts_decorators
+                        .as_ref()
+                        .and_then(|decorators| decorators.values.first())
+                        .map(|decorator| decorator.loc);
+                    starts.erased.class(
+                        erased::Cursor::at(&p.lexer),
+                        loc,
+                        first_decorator,
+                        flags,
+                        erased::Exported::before(opts.is_export),
+                        Stmt::alloc(
+                            S::Class {
+                                class,
+                                is_export: opts.is_export,
+                            },
+                            loc,
+                        ),
+                    );
+                }
                 return Ok(p.s(S::TypeScript {}, loc));
             }
         }
@@ -1494,6 +1538,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Skip TypeScript types entirely
             if Self::IS_TYPESCRIPT_ENABLED {
                 if let js_ast::stmt::Data::STypeScript(_) = stmt.data {
+                    if let Some(starts) = &mut p.starts_for_parse_only {
+                        starts.erased.dropped(
+                            stmt.loc,
+                            stmts.len(),
+                            erased::Scopes {
+                                current: p.current_scope,
+                                module: p.module_scope,
+                                in_order: p.scopes_in_order.as_slice(),
+                            },
+                        );
+                    }
                     continue;
                 }
             }

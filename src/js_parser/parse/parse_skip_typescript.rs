@@ -2163,12 +2163,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TOpenBrace => {
                     // "export type {foo}"
                     // "export type {foo} from 'bar'"
-                    let _ = self.parse_export_clause()?;
+                    let clause = self.parse_export_clause()?;
+                    let mut path = None;
                     if self.lexer.is_contextual_keyword(b"from") {
                         self.lexer.next()?;
-                        let _ = self.parse_path()?;
+                        path = Some(self.parse_path()?);
                     }
                     self.lexer.expect_or_insert_semicolon()?;
+                    if let Some(starts) = &mut self.starts_for_parse_only {
+                        starts.erased.hold(crate::parse::erased::ErasedData::export(
+                            crate::parse::erased::Cursor::at(&self.lexer),
+                            self.arena,
+                            crate::parse::erased::ExportClause::Named(
+                                bun_ast::StoreSlice::new_mut(clause.clauses),
+                            ),
+                            path,
+                        ));
+                    }
                     return Ok(());
                 }
                 T::TAsterisk => {
@@ -2176,15 +2187,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // - export type * as Foo from 'bar';
                     // - export type Foo from 'bar';
                     self.lexer.next()?;
+                    let mut clause = crate::parse::erased::ExportClause::Star;
                     if self.lexer.is_contextual_keyword(b"as") {
                         // "export type * as ns from 'path'"
                         self.lexer.next()?;
-                        let _ = self.parse_clause_alias(b"export")?;
+                        let alias = self.parse_clause_alias(b"export")?;
+                        if self.starts_for_parse_only.is_some() {
+                            clause = crate::parse::erased::ExportClause::Namespace(
+                                crate::parse::erased::Name::here(&self.lexer, alias),
+                            );
+                        }
                         self.lexer.next()?;
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;
-                    let _ = self.parse_path()?;
+                    let path = self.parse_path()?;
                     self.lexer.expect_or_insert_semicolon()?;
+                    if let Some(starts) = &mut self.starts_for_parse_only {
+                        starts.erased.hold(crate::parse::erased::ErasedData::export(
+                            crate::parse::erased::Cursor::at(&self.lexer),
+                            self.arena,
+                            clause,
+                            Some(path),
+                        ));
+                    }
                     return Ok(());
                 }
                 _ => {}

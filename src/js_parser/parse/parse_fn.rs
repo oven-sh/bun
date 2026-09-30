@@ -4,6 +4,7 @@ use bun_collections::VecExt;
 use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
+use crate::parse::erased;
 use crate::parser::{
     ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
     ParseStatementOptions, TypeParameterFlag,
@@ -121,6 +122,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    let mut flags = erased::ErasedFlags::ambient(opts.is_typescript_declare);
+                    if func.flags.contains(Flags::Function::IsForwardDeclaration) {
+                        flags |= erased::ErasedFlags::NO_BODY;
+                    }
+                    // `export async function`: the statement starts at `loc`, before `async`.
+                    let exported =
+                        if opts.is_export && async_range.is_some_and(|range| range.loc != loc) {
+                            erased::Exported::Here
+                        } else {
+                            erased::Exported::before(opts.is_export)
+                        };
+                    starts.erased.statement(
+                        erased::Cursor::at(&p.lexer),
+                        loc,
+                        flags,
+                        exported,
+                        erased::ErasedData::Declaration(Stmt::alloc(S::Function { func }, loc)),
+                    );
+                }
                 return Ok(p.s(S::TypeScript {}, loc));
             }
         }

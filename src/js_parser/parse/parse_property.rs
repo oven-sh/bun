@@ -5,6 +5,7 @@ use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
+use crate::parse::erased;
 use crate::parser::{
     AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParseStatementOptions, PropertyOpts,
     SkipTypeParameterResult, TypeParameterFlag,
@@ -122,6 +123,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if func.flags.contains(flags::Function::IsForwardDeclaration) {
             // Skip this property entirely
             p.pop_and_discard_scope(scope_index);
+            if let Some(starts) = &mut p.starts_for_parse_only {
+                let mut prop_flags = flags::PropertySet::empty();
+                if is_computed {
+                    prop_flags.insert(flags::Property::IsComputed);
+                }
+                prop_flags.insert(flags::Property::IsMethod);
+                if opts.is_static {
+                    prop_flags.insert(flags::Property::IsStatic);
+                }
+                starts.erased.member_property(
+                    p.arena,
+                    G::Property {
+                        ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
+                        kind,
+                        flags: prop_flags,
+                        key: Some(*key),
+                        value: Some(Expr::init(E::Function { func }, loc)),
+                        ts_metadata: TsMetadata::MFunction,
+                        ..Default::default()
+                    },
+                    erased::ErasedFlags::NO_BODY,
+                );
+            }
             return Ok(None);
         }
 
@@ -430,8 +454,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     prop.kind = PropertyKind::Declare;
                                                     return Ok(Some(prop));
                                                 }
+                                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                                    starts.erased.member_property(
+                                                        p.arena,
+                                                        prop,
+                                                        erased::ErasedFlags::empty(),
+                                                    );
+                                                }
                                             }
 
+                                            if let Some(starts) = &mut p.starts_for_parse_only {
+                                                starts
+                                                    .erased
+                                                    .member_modifier(erased::ErasedFlags::DECLARE);
+                                            }
                                             p.discard_scopes_up_to(scope_index);
                                             return Ok(None);
                                         }
@@ -456,6 +492,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     prop_.kind = PropertyKind::Abstract;
                                                     return Ok(Some(prop_));
                                                 }
+                                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                                    starts.erased.member_property(
+                                                        p.arena,
+                                                        prop,
+                                                        erased::ErasedFlags::empty(),
+                                                    );
+                                                }
+                                            }
+                                            if let Some(starts) = &mut p.starts_for_parse_only {
+                                                starts
+                                                    .erased
+                                                    .member_modifier(erased::ErasedFlags::ABSTRACT);
                                             }
                                             p.discard_scopes_up_to(scope_index);
                                             return Ok(None);

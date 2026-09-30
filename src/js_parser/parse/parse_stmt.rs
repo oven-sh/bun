@@ -5,6 +5,7 @@ use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
+use crate::parse::erased;
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
@@ -892,9 +893,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // "export as namespace ns;"
                         p.lexer.next()?;
                         p.lexer.expect_contextual_keyword(b"namespace")?;
+                        let name = p
+                            .starts_for_parse_only
+                            .is_some()
+                            .then(|| erased::Name::at(&p.lexer));
                         p.lexer.expect(T::TIdentifier)?;
                         p.lexer.expect_or_insert_semicolon()?;
 
+                        if let Some(name) = name
+                            && let Some(starts) = &mut p.starts_for_parse_only
+                        {
+                            starts.erased.statement(
+                                erased::Cursor::at(&p.lexer),
+                                loc,
+                                erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                                erased::Exported::No,
+                                erased::ErasedData::NamespaceExport(name),
+                            );
+                        }
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -940,7 +956,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     is_export: true,
                                     ..Default::default()
                                 };
+                                let name = p
+                                    .starts_for_parse_only
+                                    .is_some()
+                                    .then(|| erased::Name::at(&p.lexer));
                                 p.skip_type_script_type_stmt(&mut skipper)?;
+                                if let Some(name) = name
+                                    && let Some(starts) = &mut p.starts_for_parse_only
+                                {
+                                    starts.erased.statement_after_type(
+                                        erased::Cursor::at(&p.lexer),
+                                        loc,
+                                        erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                                        erased::Exported::Here,
+                                        name,
+                                    );
+                                }
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
                             StmtIdentifier::SNamespace
@@ -1000,6 +1031,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
+                            if let Some(starts) = &mut p.starts_for_parse_only {
+                                starts.erased.exported_by_default(loc, stmt.loc);
+                            }
                             return Ok(stmt);
                         }
 
@@ -1058,6 +1092,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                    starts.erased.exported_by_default(loc, stmt.loc);
+                                }
                                 return Ok(stmt);
                             }
 
@@ -1135,6 +1172,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                    starts.erased.exported_by_default(loc, stmt.loc);
+                                }
                                 return Ok(stmt);
                             }
 
@@ -1295,6 +1335,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // nothing
                         // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                         if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                            if let Some(starts) = &mut p.starts_for_parse_only {
+                                starts.erased.export(
+                                    erased::Cursor::at(&p.lexer),
+                                    p.arena,
+                                    loc,
+                                    opts.is_typescript_declare,
+                                    Some(parsed_path),
+                                );
+                            }
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
                     }
@@ -1356,6 +1405,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // nothing
                     // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                     if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
+                        if let Some(starts) = &mut p.starts_for_parse_only {
+                            starts.erased.export(
+                                erased::Cursor::at(&p.lexer),
+                                p.arena,
+                                loc,
+                                opts.is_typescript_declare,
+                                None,
+                            );
+                        }
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -1465,8 +1523,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
-                        let _ = p.parse_path()?;
+                        let path = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;
+                        if let Some(starts) = &mut p.starts_for_parse_only {
+                            starts.erased.import(
+                                erased::Cursor::at(&p.lexer),
+                                p.arena,
+                                loc,
+                                opts.is_typescript_declare,
+                                None,
+                                erased::ImportClause::Named(bun_ast::StoreSlice::EMPTY),
+                                path,
+                            );
+                        }
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -1573,15 +1642,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                                     if p.lexer.token == T::TEquals {
                                         // "import type foo = require('bar');" (foo may be "from")
+                                        let is_ambient = opts.is_typescript_declare;
                                         opts.is_typescript_declare = true;
-                                        return p.parse_type_script_import_equals_stmt(
+                                        let equals = p.parse_type_script_import_equals_stmt(
                                             loc, opts, name_loc, name,
-                                        );
+                                        )?;
+                                        if let Some(starts) = &mut p.starts_for_parse_only {
+                                            starts
+                                                .erased
+                                                .import_equals_is_type(equals.loc, is_ambient);
+                                        }
+                                        return Ok(equals);
                                     } else {
                                         // "import type foo from 'bar';" (foo may be "from")
                                         p.lexer.expect_contextual_keyword(b"from")?;
-                                        let _ = p.parse_path()?;
+                                        let path = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
+                                        if let Some(starts) = &mut p.starts_for_parse_only {
+                                            starts.erased.import(
+                                                erased::Cursor::at(&p.lexer),
+                                                p.arena,
+                                                loc,
+                                                opts.is_typescript_declare,
+                                                stmt.default_name
+                                                    .map(|type_keyword| type_keyword.loc),
+                                                erased::ImportClause::Default(erased::Name::of(
+                                                    p.source, name_loc, name,
+                                                )),
+                                                path,
+                                            );
+                                        }
                                         return Ok(p.s(S::TypeScript {}, loc));
                                     }
                                 }
@@ -1590,19 +1680,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "import type * as foo from 'bar';"
                                 p.lexer.next()?;
                                 p.lexer.expect_contextual_keyword(b"as")?;
+                                let namespace = p
+                                    .starts_for_parse_only
+                                    .is_some()
+                                    .then(|| erased::Name::at(&p.lexer));
                                 p.lexer.expect(T::TIdentifier)?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                let _ = p.parse_path()?;
+                                let path = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
+                                if let Some(namespace) = namespace
+                                    && let Some(starts) = &mut p.starts_for_parse_only
+                                {
+                                    starts.erased.import(
+                                        erased::Cursor::at(&p.lexer),
+                                        p.arena,
+                                        loc,
+                                        opts.is_typescript_declare,
+                                        stmt.default_name.map(|type_keyword| type_keyword.loc),
+                                        erased::ImportClause::Namespace(namespace),
+                                        path,
+                                    );
+                                }
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
 
                             T::TOpenBrace => {
                                 // "import type {foo} from 'bar';"
-                                let _ = p.parse_import_clause()?;
+                                let clause = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                let _ = p.parse_path()?;
+                                let path = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
+                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                    starts.erased.import(
+                                        erased::Cursor::at(&p.lexer),
+                                        p.arena,
+                                        loc,
+                                        opts.is_typescript_declare,
+                                        stmt.default_name.map(|type_keyword| type_keyword.loc),
+                                        erased::ImportClause::Named(bun_ast::StoreSlice::new_mut(
+                                            clause.items,
+                                        )),
+                                        path,
+                                    );
+                                }
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
                             _ => {}
@@ -1615,10 +1735,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || (opts.scope.is_namespace() && !opts.is_typescript_declare)
                     {
                         p.esm_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
+                        let name_loc = match stmt.default_name {
+                            // Only the record of a statement that leaves no binding reads where the name is.
+                            Some(name)
+                                if opts.is_typescript_declare
+                                    && p.starts_for_parse_only.is_some() =>
+                            {
+                                name.loc
+                            }
+                            _ => bun_ast::Loc::EMPTY,
+                        };
                         return p.parse_type_script_import_equals_stmt(
                             loc,
                             opts,
-                            bun_ast::Loc::EMPTY,
+                            name_loc,
                             default_name,
                         );
                     }
@@ -1787,7 +1917,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         scope: opts.scope,
                         ..Default::default()
                     };
+                    let name = p
+                        .starts_for_parse_only
+                        .is_some()
+                        .then(|| erased::Name::at(&p.lexer));
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;
+                    if let Some(name) = name
+                        && let Some(starts) = &mut p.starts_for_parse_only
+                    {
+                        starts.erased.statement_after_type(
+                            erased::Cursor::at(&p.lexer),
+                            loc,
+                            erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                            erased::Exported::before(opts.is_export),
+                            name,
+                        );
+                    }
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
             }
@@ -1815,7 +1960,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
 
+                    let name = p
+                        .starts_for_parse_only
+                        .is_some()
+                        .then(|| erased::Name::at(&p.lexer));
                     p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                    if let Some(name) = name
+                        && let Some(starts) = &mut p.starts_for_parse_only
+                    {
+                        starts.erased.statement(
+                            erased::Cursor::at(&p.lexer),
+                            loc,
+                            erased::ErasedFlags::ambient(opts.is_typescript_declare),
+                            erased::Exported::before(opts.is_export),
+                            erased::ErasedData::Interface(name),
+                        );
+                    }
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
                 // "interface \n Foo {}"
@@ -1847,8 +2007,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && p.lexer.token == T::TOpenBrace
                 {
                     p.lexer.next()?;
-                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
+                    if let Some(starts) = &mut p.starts_for_parse_only {
+                        starts.erased.global(
+                            erased::Cursor::at(&p.lexer),
+                            p.arena,
+                            loc,
+                            erased::ErasedFlags::AMBIENT,
+                            erased::Exported::before(opts.is_export),
+                            erased::Name::of(p.source, loc, b"global"),
+                            bun_ast::StoreSlice::from_bump(stmts),
+                            erased::Scopes {
+                                current: p.current_scope,
+                                module: p.module_scope,
+                                in_order: p.scopes_in_order.as_slice(),
+                            },
+                        );
+                    }
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
             }
@@ -1876,14 +2052,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "declare global { ... }"
                 if p.lexer.is_contextual_keyword(b"global") {
+                    let global = p
+                        .starts_for_parse_only
+                        .is_some()
+                        .then(|| erased::Name::at(&p.lexer));
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
-                    let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    let stmts = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
                     p.discard_scopes_up_to(scope_index);
+                    if let Some(global) = global
+                        && let Some(starts) = &mut p.starts_for_parse_only
+                    {
+                        starts.erased.global(
+                            erased::Cursor::at(&p.lexer),
+                            p.arena,
+                            loc,
+                            erased::ErasedFlags::DECLARE | erased::ErasedFlags::AMBIENT,
+                            erased::Exported::before(opts.is_export),
+                            global,
+                            bun_ast::StoreSlice::from_bump(stmts),
+                            erased::Scopes {
+                                current: p.current_scope,
+                                module: p.module_scope,
+                                in_order: p.scopes_in_order.as_slice(),
+                            },
+                        );
+                    }
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 
@@ -1918,6 +2116,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // mismatch (e.g. "declare foo: bar" parses a labeled statement
                     // that records a Label scope).
                     p.discard_scopes_up_to(scope_index);
+                }
+                if let Some(starts) = &mut p.starts_for_parse_only {
+                    starts.erased.declared(
+                        erased::Cursor::at(&p.lexer),
+                        loc,
+                        opts.ts_decorators
+                            .as_ref()
+                            .and_then(|decorators| decorators.values.first())
+                            .map(|decorator| decorator.loc),
+                        opts.is_export,
+                        stmt,
+                    );
                 }
 
                 // Unlike almost all uses of "declare", statements that use
@@ -1957,6 +2167,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if decls.len_u32() > 0 {
+                        if let Some(starts) = &mut p.starts_for_parse_only {
+                            starts.erased.stands_in(loc);
+                        }
                         return Ok(Some(p.s(
                             S::Local {
                                 kind: js_ast::LocalKind::KVar,

@@ -1904,6 +1904,30 @@ describe("EventEmitter.prototype", () => {
       ["the listener limit is read without getMaxListeners()", []],
     ]);
   });
+
+  test("removeAllListeners(undefined) removes the listeners of the event named 'undefined', not all of them", () => {
+    function listener() {}
+    const removed: string[] = [];
+    const plain = new EventEmitter().on("x", listener).on("undefined", listener);
+    const watched = new EventEmitter()
+      .on("x", listener)
+      .on("undefined", listener)
+      .on("removeListener", (type: unknown, fn: Function) => removed.push(`${typeof type} ${fn.name}`));
+    expect({
+      returned: [
+        plain.removeAllListeners(undefined as any) === plain,
+        watched.removeAllListeners(undefined as any) === watched,
+      ],
+      plain: plain.eventNames(),
+      watched: watched.eventNames(),
+      removed,
+    }).toEqual({
+      returned: [true, true],
+      plain: ["x"],
+      watched: ["x", "removeListener"],
+      removed: ["undefined listener"],
+    });
+  });
 });
 
 // nodeEventEmitterPrototype() is EventEmitter.prototype as native code gets it. node:events has defined every method

@@ -389,13 +389,13 @@ pub mod ssl_wrapper {
 
     /// What `trigger_handshake_callback` reports.
     #[derive(Clone, Copy)]
-    enum HandshakeOutcome {
+    enum HandshakeOutcome<'a> {
         /// A handshake or a renegotiation finished.
         Established,
         /// `set_inline_reject` stopped the handshake on the peer's chain.
         InlineRejected,
         /// `SSL_do_handshake` failed. Carries the queued reason of a fatal failure.
-        HandshakeError(Option<us_bun_verify_error_t>),
+        HandshakeError(Option<&'a core::ffi::CStr>),
         /// Closed before the handshake finished, or a renegotiation was refused.
         Aborted,
     }
@@ -933,16 +933,20 @@ pub mod ssl_wrapper {
             self.ctx.set(None);
         }
 
-        fn trigger_handshake_callback(&self, outcome: HandshakeOutcome) {
+        fn trigger_handshake_callback(&self, outcome: HandshakeOutcome<'_>) {
             if self.flags.closed_notified() {
                 return;
             }
             let (success, result) = match outcome {
                 HandshakeOutcome::Established => (true, self.verify_error()),
                 HandshakeOutcome::InlineRejected => (false, self.verify_error()),
-                HandshakeOutcome::HandshakeError(reason) => {
-                    (false, reason.unwrap_or_else(|| self.verify_error()))
-                }
+                HandshakeOutcome::HandshakeError(reason) => (
+                    false,
+                    reason.map_or_else(
+                        || self.verify_error(),
+                        us_bun_verify_error_t::protocol_failure,
+                    ),
+                ),
                 // node:tls reads a failure with no error after end() as its own close.
                 HandshakeOutcome::Aborted if self.is_shutdown() => {
                     (false, us_bun_verify_error_t::default())
@@ -995,7 +999,7 @@ pub mod ssl_wrapper {
         /// Mirrors `ssl_park_fatal_reason` in openssl.c.
         fn peek_fatal_ssl_error(
             buf: &mut [u8; FATAL_ERROR_REASON_MAX],
-        ) -> Option<us_bun_verify_error_t> {
+        ) -> Option<&core::ffi::CStr> {
             let packed = boring_sys::ERR_peek_error();
             if packed == 0 {
                 return None;
@@ -1004,11 +1008,7 @@ pub mod ssl_wrapper {
             unsafe {
                 boring_sys::ERR_error_string_n(packed, buf.as_mut_ptr().cast(), buf.len());
             }
-            Some(us_bun_verify_error_t {
-                error_no: -71,
-                code: c"EPROTO".as_ptr(),
-                reason: buf.as_ptr().cast(),
-            })
+            core::ffi::CStr::from_bytes_until_nul(buf).ok()
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.

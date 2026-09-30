@@ -940,12 +940,15 @@ pub mod ssl_wrapper {
             let (success, result) = match outcome {
                 HandshakeOutcome::Established => (true, self.verify_error()),
                 HandshakeOutcome::InlineRejected => (false, self.verify_error()),
-                HandshakeOutcome::HandshakeError(reason) => (
+                HandshakeOutcome::HandshakeError(None) => (false, self.verify_error()),
+                // The callback below copies `reason` before this borrow ends.
+                HandshakeOutcome::HandshakeError(Some(reason)) => (
                     false,
-                    reason.map_or_else(
-                        || self.verify_error(),
-                        us_bun_verify_error_t::protocol_failure,
-                    ),
+                    us_bun_verify_error_t {
+                        error_no: -71,
+                        code: c"EPROTO".as_ptr(),
+                        reason: reason.as_ptr(),
+                    },
                 ),
                 // node:tls reads a failure with no error after end() as its own close.
                 HandshakeOutcome::Aborted if self.is_shutdown() => {

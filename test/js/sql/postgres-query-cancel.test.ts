@@ -761,11 +761,13 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       err => err,
     );
     // The backend is inside pg_sleep, so the server runs the query and does not only hold its bytes.
+    const deadline = performance.now() + 4_000;
     while (true) {
-      const [{ sleeping }] = await observer`
-        select count(*)::int as sleeping from pg_stat_activity
-        where wait_event = 'PgSleep' and query like '%cancel_running_query%' and pid <> pg_backend_pid()`;
-      if (sleeping) break;
+      const seen = await observer`
+        select state, wait_event from pg_stat_activity
+        where query like '%cancel_running_query%' and pid <> pg_backend_pid()`;
+      if (seen.some((row: any) => row.wait_event === "PgSleep")) break;
+      if (performance.now() > deadline) throw new Error(`the query did not reach pg_sleep: ${JSON.stringify(seen)}`);
     }
     query.cancel();
 

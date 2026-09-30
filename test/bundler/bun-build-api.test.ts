@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  deepestAcceptedSource,
   isASAN,
   isDebug,
   isWindows,
@@ -1046,23 +1047,28 @@ describe("Bun.build", () => {
 
   test.concurrent("a deeply nested define value builds", async () => {
     // The define loader used to copy the parsed value with a recursion that
-    // had no stack guard, and the bundler thread has a small stack. The depth
-    // is above the depth where that copy overflowed and below the depth where
-    // the parser stops. SHALLOW is read by two files, after the thread reset
-    // its per-file allocations.
-    const depth = isDebug || isASAN ? 200 : 3000;
+    // had no stack check, and the bundler thread has a small stack. The child
+    // searches for the deepest value that builds: on the way, every probe must
+    // build or fail with the parser's error. The last build reads SHALLOW from
+    // two files, after the thread reset its per-file allocations.
     using dir = tempDir("build-api-deep-define", {
       "a.ts": `console.log(SHALLOW.a);`,
       "b.ts": `console.log(SHALLOW.a[1]);`,
       "build.ts": `
+        ${deepestAcceptedSource}
         const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
-        const result = await Bun.build({
-          entrypoints: ["./a.ts", "./b.ts"],
-          define: { DEEPX: nested(${depth}), SHALLOW: '{"a":[1,"two"]}' },
-          throw: false,
+        const build = (entrypoints, depth) =>
+          Bun.build({ entrypoints, define: { DEEPX: nested(depth), SHALLOW: '{"a":[1,"two"]}' }, throw: false });
+        const depth = await deepestAccepted(async depth => {
+          const result = await build(["./a.ts"], depth);
+          const logs = result.logs.map(String).join("\\n");
+          if (!result.success && !logs.includes("JSON document is too deeply nested")) throw new Error(logs);
+          return result.success;
         });
+        const result = await build(["./a.ts", "./b.ts"], depth);
         console.log(
           JSON.stringify({
+            searched: depth > 64,
             success: result.success,
             logs: result.logs.map(String),
             outputs: await Promise.all(result.outputs.map(output => output.text())),
@@ -1078,15 +1084,16 @@ describe("Bun.build", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
-    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: {
+        searched: true,
         success: true,
         logs: [],
         outputs: ['// a.ts\nconsole.log({ a: [1, "two"] }.a);\n', '// b.ts\nconsole.log({ a: [1, "two"] }.a[1]);\n'],
       },
       stderr: "",
       exitCode: 0,
+      signalCode: null,
     });
   });
 

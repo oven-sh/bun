@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, withBoundedMainThreadStack } from "harness";
 import { join } from "path";
 
 describe("pnpm-lock.yaml migration", () => {
@@ -376,6 +376,42 @@ snapshots:
     const v8ExitCode = await v8Proc.exited;
     expect(v8ExitCode).toBe(0);
     expect(fs.existsSync(join(v8Dir, "bun.lock"))).toBe(true);
+  });
+
+  test("migrates a lockfile whose aliases chain into a deep tree", async () => {
+    // Each anchor holds the one before it, so the tree is 30,000 levels deep
+    // while the parser never recurses past 100. The migration used to copy the
+    // tree with a recursion that had no stack check.
+    const level = Buffer.alloc(100, "[").toString() + "*a" + Buffer.alloc(100, "]").toString();
+    using dir = tempDir("pnpm-alias-chain", {
+      "package.json": JSON.stringify({ name: "alias-chain", version: "1.0.0" }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+chain:
+  - &a [1]
+${Buffer.alloc(300 * (level.length + 8), `  - &a ${level}\n`).toString()}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: withBoundedMainThreadStack([bunExe(), "pm", "migrate"]),
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 0, signalCode: null });
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
   });
 
   test("handles missing pnpm-lock.yaml gracefully", async () => {

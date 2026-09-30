@@ -339,6 +339,40 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
 }
 
 /**
+ * `cmd` with the stack of its main thread bounded. On Linux that stack follows
+ * `ulimit -s`, which CI leaves unlimited: native recursion then has no limit
+ * to reach. The other platforms link a fixed size into the executable.
+ */
+export function withBoundedMainThreadStack(cmd: string[]): string[] {
+  return isLinux ? ["sh", "-c", 'ulimit -s 8192 && exec "$0" "$@"', ...cmd] : cmd;
+}
+
+/**
+ * Source, for a child script, of `deepestAccepted(accepts)`: the largest depth
+ * that `accepts(depth)` returns true for, found by doubling and then bisecting.
+ * A limit that follows the stack differs by build flavor, platform and thread,
+ * so a test searches for it. A recursion with no stack check, on a depth below
+ * that limit, ends the child with a signal on the way.
+ */
+export const deepestAcceptedSource = `
+  const deepestAccepted = async accepts => {
+    let accepted = 0;
+    let rejected = 64;
+    // The ceiling bounds the run on a host with a very large stack.
+    while (rejected < 1 << 20 && (await accepts(rejected))) {
+      accepted = rejected;
+      rejected *= 2;
+    }
+    while (rejected - accepted > 1) {
+      const probe = (accepted + rejected) >> 1;
+      if (await accepts(probe)) accepted = probe;
+      else rejected = probe;
+    }
+    return accepted;
+  };
+`;
+
+/**
  * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
  * line) under bun with ASAN quarantine disabled, and asserts the delta is below
  * `release` MiB (or `debug` MiB under ASAN/debug builds).

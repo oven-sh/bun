@@ -6,8 +6,6 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
-  isASAN,
-  isDebug,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -18,6 +16,7 @@ import {
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
+  withBoundedMainThreadStack,
 } from "harness";
 import { basename, join, resolve, sep } from "path";
 import {
@@ -11929,28 +11928,32 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
 });
 
 // The package.json cache used to copy the parsed manifest with a recursion that
-// had no stack guard. The depth is above the depth where that copy overflowed
-// and below the depth where the parser stops, for a release build and for a
-// debug or sanitizer build (which has larger frames).
+// had no stack check. A manifest that the parser accepted could run that copy
+// off the stack and end the process with a signal. The depth where that
+// happened follows the frame sizes of the build, so this walks a ladder of
+// depths: each one must install or fail with the parser's error.
 it.concurrent("installs with a deeply nested value in package.json", async () => {
-  const depth = isDebug || isASAN ? 750 : 10000;
-  const deep = Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString();
-  using dir = tempDir("bun-install-deep-package-json", {
-    "package.json": `{"name":"root","version":"1.0.0","deep":${deep},"dependencies":{"dep":"file:./dep"}}`,
-    "dep/package.json": `{"name":"dep","version":"1.0.0"}`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(proc.signalCode, `child killed by ${proc.signalCode}, stderr:\n${stderr}`).toBeNull();
-  expect(stderr).not.toContain("error:");
-  expect(stdout).toContain("+ dep@dep");
-  expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual(["dep"]);
-  expect(exitCode).toBe(0);
+  const depths = Array.from({ length: 12 }, (_, i) => Math.round(384 * 1.5 ** i));
+  const outcomes = await Promise.all(
+    depths.map(async depth => {
+      const deep = Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString();
+      using dir = tempDir("bun-install-deep-package-json", {
+        "package.json": `{"name":"root","version":"1.0.0","deep":${deep},"dependencies":{"dep":"file:./dep"}}`,
+        "dep/package.json": `{"name":"dep","version":"1.0.0"}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: withBoundedMainThreadStack([bunExe(), "install"]),
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode === 0 && stdout.includes("+ dep@dep")) return "installed";
+      if (exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")) return "too deep";
+      return { depth, stdout, stderr, exitCode, signalCode: proc.signalCode };
+    }),
+  );
+  expect(outcomes.filter(outcome => typeof outcome !== "string")).toEqual([]);
+  expect(outcomes[0]).toBe("installed");
 });

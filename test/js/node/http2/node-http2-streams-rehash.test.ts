@@ -348,6 +348,16 @@ class Peer {
   }
 }
 
+/** Wraps a wait so that it rejects when the session fails or closes before the wait is over. */
+function failWith(session: http2.Http2Session) {
+  const { promise: failed, reject } = Promise.withResolvers<never>();
+  failed.catch(() => {});
+  session.on("error", reject);
+  session.on("goaway", code => reject(new Error(`the session received GOAWAY with code ${code}`)));
+  session.on("close", () => reject(new Error("the session closed before the test was done with it")));
+  return <T>(wait: Promise<T>) => Promise.race([wait, failed]);
+}
+
 function tablesOf(session: http2.Http2Session) {
   return http2StreamTables((session as any)[Symbol.for("::bunhttp2native::")]);
 }
@@ -362,6 +372,7 @@ test("a server session's stream tables stay dense after a burst of streams", asy
   const KEPT = 16;
   const peer = new Peer(0);
   const session = http2.performServerHandshake(peer.socket);
+  const orFail = failWith(session);
   try {
     const burst: http2.ServerHttp2Stream[] = [];
     const bodies = new Map<number, string>();
@@ -415,13 +426,13 @@ test("a server session's stream tables stay dense after a burst of streams", asy
       keptIds.push(id);
     }
     peer.send(...opening);
-    await allOpen.promise;
-    await peer.roundTrip();
+    await orFail(allOpen.promise);
+    await orFail(peer.roundTrip());
     expect(tablesOf(session)).toEqual(dense(BURST + KEPT));
 
     for (const stream of burst) stream.end();
-    await burstClosed.promise;
-    await peer.roundTrip();
+    await orFail(burstClosed.promise);
+    await orFail(peer.roundTrip());
     expect(tablesOf(session)).toEqual(dense(KEPT));
 
     // Close every second stream that is left. That moves the entries of the others inside
@@ -430,16 +441,16 @@ test("a server session's stream tables stay dense after a burst of streams", asy
     const second = keptIds.filter((_, i) => i % 2 === 1);
     const end = (id: number) => frame(FRAME.DATA, FLAG.END_STREAM, id, Buffer.from(`body of stream ${id}`));
     peer.send(...first.map(end));
-    await untilKeptClosed(first.length);
-    await peer.roundTrip();
+    await orFail(untilKeptClosed(first.length));
+    await orFail(peer.roundTrip());
     expect({ closed: keptClosed.toSorted((a, b) => a - b), tables: tablesOf(session) }).toEqual({
       closed: first,
       tables: dense(second.length),
     });
 
     peer.send(...second.map(end));
-    await untilKeptClosed(KEPT);
-    await peer.roundTrip();
+    await orFail(untilKeptClosed(KEPT));
+    await orFail(peer.roundTrip());
     expect({
       bodies: [...bodies].sort((a, b) => a[0] - b[0]),
       // Every stream got a response that ends: END_STREAM on a HEADERS or DATA frame.
@@ -462,8 +473,8 @@ test("a client session's stream tables stay dense after a flood of pushed stream
   const CANCEL = 0x8;
   const peer = new Peer(PREFACE.length);
   const client = http2.connect("http://localhost", { createConnection: () => peer.socket });
+  const orFail = failWith(client);
   try {
-    client.on("error", () => {});
     let pushed = 0;
     let closed = 0;
     const allClosed = Promise.withResolvers<void>();
@@ -480,7 +491,7 @@ test("a client session's stream tables stay dense after a flood of pushed stream
     req.on("error", () => {});
     const responded = Promise.withResolvers<void>();
     req.on("response", () => responded.resolve());
-    await requestSent;
+    await orFail(requestSent);
 
     // One read: the response headers, then every PUSH_PROMISE with the RST_STREAM that cancels it.
     const flood = [
@@ -495,8 +506,8 @@ test("a client session's stream tables stay dense after a flood of pushed stream
       );
     }
     peer.send(...flood);
-    await Promise.all([responded.promise, allClosed.promise]);
-    await peer.roundTrip();
+    await orFail(Promise.all([responded.promise, allClosed.promise]));
+    await orFail(peer.roundTrip());
     // Only stream 1 is left. A client roots a JS context only for a pushed stream.
     expect({ pushed, closed, tables: tablesOf(client) }).toEqual({
       pushed: PUSHES,

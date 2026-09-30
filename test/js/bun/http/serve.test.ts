@@ -374,6 +374,19 @@ describe("a pending Response body that the server does not send", () => {
     expect(response.status).toBe(502);
     await closed.promise;
   });
+
+  it("a status the server refuses to send leaves a null body unused", async () => {
+    const unsendable = Response.error();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => unsendable,
+      error: () => new Response("refused", { status: 502 }),
+    });
+
+    expect(await fetch(server.url).then(response => response.text())).toBe("refused");
+    expect(unsendable.bodyUsed).toBe(false);
+    expect(await unsendable.text()).toBe("");
+  });
 });
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {

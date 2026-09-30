@@ -3577,7 +3577,9 @@ where
             return true;
         };
         let global_this = (*server).global_this();
-        Self::cancel_unread_body(response, global_this);
+        if matches!(response.get_body_value(), Body::Value::Locked(_)) {
+            Self::cancel_unread_body(response, global_this);
+        }
         let err = global_this.create_error_instance(format_args!(
             "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
         ));

@@ -12,6 +12,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
+const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
@@ -755,7 +756,8 @@ function withPledgedSrcSize(buffer, opts) {
     const encoding = opts?.defaultEncoding;
     if (encoding == null || encoding === "utf8" || encoding === "utf-8") {
       pledgedSrcSize = Buffer.byteLength(buffer);
-    } else if (hasExactByteLength(encoding)) {
+    } else if (hasExactByteLength(encoding) && ObjectPrototypePropertyIsEnumerable.$call(opts, "defaultEncoding")) {
+      // The stream gets only the own enumerable options, so it does not decode with an inherited defaultEncoding.
       pledgedSrcSize = Buffer.byteLength(buffer, encoding);
     } else {
       return opts;

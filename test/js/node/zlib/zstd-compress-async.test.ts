@@ -42,19 +42,20 @@ function frameContentSize(frame: Buffer): number | null {
 }
 
 type Input = string | NodeJS.ArrayBufferView | ArrayBuffer | null | undefined;
-const noOptionsArgument = Symbol("noOptionsArgument");
+// No element: the call has no `options` argument. The element is unknown, because the tests pass
+// values that the types of node:zlib do not allow.
+type Options = [] | [unknown];
 
-// `options` is unknown: the tests pass values that the types of node:zlib do not allow.
-function compress(input: Input, options: unknown = noOptionsArgument): Promise<Buffer> {
+function compress(input: Input, ...options: Options): Promise<Buffer> {
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
   const callback = (error: Error | null, frame: Buffer) => (error ? reject(error) : resolve(frame));
-  if (options === noOptionsArgument) zlib.zstdCompress(input as Buffer, callback);
-  else zlib.zstdCompress(input as Buffer, options as zlib.ZstdOptions, callback);
+  if (options.length === 0) zlib.zstdCompress(input as Buffer, callback);
+  else zlib.zstdCompress(input as Buffer, options[0] as zlib.ZstdOptions, callback);
   return promise;
 }
 
-async function contentSizeOf(input: Input, options?: unknown) {
-  return frameContentSize(await compress(input, options));
+async function contentSizeOf(input: Input, ...options: Options) {
+  return frameContentSize(await compress(input, ...options));
 }
 
 // What Bun writes is fixed. A Node.js that pledges for the call has to write the decoded size.
@@ -140,8 +141,9 @@ describe("zlib.zstdCompress", () => {
 
     test("gives the same frame for each way to pass no pledge", async () => {
       const sizes: (number | null)[] = [];
-      for (const options of [noOptionsArgument, undefined, null, {}, { pledgedSrcSize: undefined }]) {
-        const frame = await compress(input, options);
+      const noPledge: Options[] = [[], [undefined], [null], [{}], [{ pledgedSrcSize: undefined }]];
+      for (const options of noPledge) {
+        const frame = await compress(input, ...options);
         assert.deepStrictEqual(zlib.zstdDecompressSync(frame), input);
         sizes.push(frameContentSize(frame));
       }
@@ -237,6 +239,25 @@ describe("zlib.zstdCompress", () => {
         assertContentSize(frameContentSize(frame), null, bytes.length);
       });
     }
+
+    // The stream gets a copy of the own enumerable options. So it decodes these strings as UTF-8.
+    test("does not pledge for a defaultEncoding that the stream does not get", async () => {
+      class Options {
+        get defaultEncoding() {
+          return "latin1";
+        }
+      }
+      for (const options of [
+        Object.create({ defaultEncoding: "latin1" }),
+        Object.create({ defaultEncoding: "utf16le" }),
+        Object.defineProperty({}, "defaultEncoding", { value: "latin1", enumerable: false }),
+        new Options(),
+      ]) {
+        const frame = await compress(text, options);
+        assert.deepStrictEqual(zlib.zstdDecompressSync(frame), Buffer.from(text));
+        assertContentSize(frameContentSize(frame), null, 13);
+      }
+    });
 
     test("does not read the encoding with a replaced String.prototype.toLowerCase", async () => {
       const { toLowerCase } = String.prototype;

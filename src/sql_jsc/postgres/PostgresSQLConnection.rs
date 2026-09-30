@@ -1889,6 +1889,11 @@ impl PostgresSQLConnection {
             let req = ParentRef::from(self.requests.get()[offset].as_non_null());
             match req.status.get() {
                 QueryStatus::Pending => {
+                    debug_assert!(
+                        offset == 0
+                            || self.requests.get()[offset - 1].status.get() != QueryStatus::Pending,
+                        "advance() passed a request that is not written yet"
+                    );
                     // Optimistically account for this request leaving Pending; the
                     // few paths below that keep it Pending (can't execute yet /
                     // Parse written but not Bind / statement still Parsing) undo

@@ -22,6 +22,7 @@ export interface Entries {
 }
 
 // What following links from a canonical path gives: the entry, the canonical path where the walk ended, and the link that led nowhere.
+// A walk that was given up ended nowhere: its path is "".
 export interface Followed {
   entry: MemEntry | undefined;
   path: string;
@@ -33,8 +34,31 @@ export interface Followed {
 // A panic of the reference: the caller makes it a status of the instance.
 export class MemFsPanic extends Error {}
 
-// The reference follows links without a bound and overflows its stack on a cycle; a longer chain reads as a broken link here.
-const maxLinks = 64;
+// The reference follows links with no bound but its stack, which a walk without end overflows. Here a walk is given up instead: at a
+// path where it has been, at one that is maxGrowth characters longer than its first, and after maxSteps paths. A walk of the reference
+// that ends beyond these two numbers is given up as well.
+const maxGrowth = 1 << 10;
+const maxSteps = 1 << 14;
+
+class Walk {
+  private readonly seen = new Set<string>();
+
+  constructor(readonly first: string) {}
+
+  // Whether the walk goes on from a path.
+  enter(p: string): boolean {
+    if (this.seen.has(p) || p.length > this.first.length + maxGrowth || this.seen.size >= maxSteps) return false;
+    this.seen.add(p);
+    return true;
+  }
+}
+
+// A link to follow and the path that it leads to.
+interface Step {
+  path: string;
+  from: string;
+  to: string;
+}
 
 // The %q of the panic messages; a character that Go does not print is escaped by Go and may not be by JSON.
 function quote(s: string): string {
@@ -170,19 +194,36 @@ export class MemFs {
     if (entry.kind === "symlink") this.symlinks.set(canonical, this.canonical(entry.target));
   }
 
-  // vfstest.go:261; the Go map walk over symlinks has no fixed order, here it is insertion order
-  getFollowingSymlinks(p: string, from = "", to = "", depth = 0): Followed {
-    if (depth > maxLinks) return { entry: undefined, path: p, broken: true, from, to };
-    const file = this.m.get(p);
-    if (file !== undefined && file.kind !== "symlink") return { entry: file, path: p, broken: false, from: "", to: "" };
+  // vfstest.go:261. Of the links above a path the reference follows the first of a map walk, whose order it draws anew at every path:
+  // it leaves a loop that one order would stay in. Here they are tried in insertion order, the next one where the walk from one is
+  // given up, and when none ends, the first link that a walk was given up at is the broken one.
+  getFollowingSymlinks(start: string): Followed {
+    let walk: Walk | undefined;
+    let lost: Followed | undefined;
+    const todo: Step[] = [{ path: start, from: "", to: "" }];
+    for (let step = todo.pop(); step !== undefined; step = todo.pop()) {
+      const { path: p, from, to } = step;
+      const entry = this.m.get(p);
+      if (entry !== undefined && entry.kind !== "symlink") return { entry, path: p, broken: false, from: "", to: "" };
+      const next = this.linksFrom(p);
+      if (next.length === 0) return { entry: undefined, path: p, broken: from !== "", from, to };
+      if ((walk ??= new Walk(start)).enter(p)) todo.push(...next.reverse());
+      else lost ??= { entry: undefined, path: "", broken: true, from, to };
+    }
+    return lost!;
+  }
+
+  // The links to follow from a path that is no entry: its own, else each link above it in insertion order.
+  private linksFrom(p: string): Step[] {
     const target = this.symlinks.get(p);
-    if (target !== undefined) return this.getFollowingSymlinks(target, p, target, depth + 1);
+    if (target !== undefined) return [{ path: target, from: p, to: target }];
+    const steps: Step[] = [];
     for (const [other, t] of this.symlinks) {
       if (other.length < p.length && other === p.slice(0, other.length) && p[other.length] === "/") {
-        return this.getFollowingSymlinks(t + p.slice(other.length), other, t, depth + 1);
+        steps.push({ path: t + p.slice(other.length), from: other, to: t });
       }
     }
-    return { entry: undefined, path: p, broken: from !== "", from, to };
+    return steps;
   }
 
   // vfstest.go:325; undefined stands for a nil error
@@ -195,7 +236,7 @@ export class MemFs {
     }
     let toCreate: string[] = [];
     let offset = 0;
-    let restarts = 0;
+    let walk: Walk | undefined;
     for (;;) {
       const idx = p.indexOf("/", offset);
       const dir = idx < 0 ? p : p.slice(0, idx);
@@ -209,7 +250,7 @@ export class MemFs {
         if (r.entry.kind !== "dir") return `mkdir ${quote(r.path)}: path exists but is not a directory`;
         if (canonical !== r.path) {
           // The reference starts again without a bound, and never ends when links lead back to the directory.
-          if (++restarts > maxLinks) return `more than ${maxLinks} linked directories on the way to ${quote(p)}`;
+          if (!(walk ??= new Walk(p)).enter(p)) return `endless linked directories on the way to ${quote(walk.first)}`;
           p = r.entry.realpath + "/" + rest;
           toCreate = [];
           offset = 0;
@@ -245,30 +286,28 @@ export class MemFs {
   }
 
   // resolveSymlinks of testing/fstest since Go 1.25: a link on the way is read again, its target taken from the directory of the link
-  private resolveSymlinks(name: string, depth: number): string | undefined {
-    if (depth > maxLinks) return undefined;
-    const file = this.m.get(name);
-    if (file !== undefined && file.kind === "symlink") {
-      if (file.target.startsWith("/")) return undefined;
-      return this.resolveSymlinks(pathClean(pathDir(name) + "/" + file.target), depth + 1);
-    }
-    for (let i = 0; i < name.length; i++) {
-      const j = name.indexOf("/", i);
-      const dir = j < 0 ? name : name.slice(0, j);
-      i = j < 0 ? name.length : j;
-      const parent = this.m.get(dir);
-      if (parent !== undefined && parent.kind === "symlink") {
-        if (parent.target.startsWith("/")) return undefined;
-        return this.resolveSymlinks(pathClean(pathDir(dir) + "/" + parent.target) + name.slice(i), depth + 1);
+  private resolveSymlinks(start: string): string | undefined {
+    let walk: Walk | undefined;
+    for (let name = start; ; ) {
+      // The first link of the name: the name itself, else its directories from the root down.
+      let link = name;
+      let file = this.m.get(link);
+      for (let i = 0; file?.kind !== "symlink" && i < name.length; i++) {
+        const j = name.indexOf("/", i);
+        link = j < 0 ? name : name.slice(0, j);
+        i = j < 0 ? name.length : j;
+        file = this.m.get(link);
       }
+      if (file?.kind !== "symlink") return validPath(name) ? name : undefined;
+      if (file.target.startsWith("/") || !(walk ??= new Walk(start)).enter(name)) return undefined;
+      name = pathClean(pathDir(link) + "/" + file.target) + name.slice(link.length);
     }
-    return validPath(name) ? name : undefined;
   }
 
   // MapFS.Open of vfstest.go:428 over MapFS.Open of testing/fstest: the canonical path of the entry that a name opens
   private open(name: string): string | undefined {
     const cp = this.getFollowingSymlinks(this.canonical(name)).path;
-    return validPath(cp) ? this.resolveSymlinks(cp, 0) : undefined;
+    return validPath(cp) ? this.resolveSymlinks(cp) : undefined;
   }
 
   stat(path: string): MemEntry | undefined {

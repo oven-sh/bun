@@ -1553,12 +1553,13 @@ describe.concurrent("s3 missing credentials", () => {
       await Bun.s3.presign("test");
     });
   });
-  // In a child without the S3_ and AWS_ variables: this case awaits its result, so it must
-  // not take credentials, a bucket or an endpoint from the machine that runs the test.
+  // In a child without the S3_ and AWS_ variables and without .env files: this case awaits its
+  // result, so it must not take credentials, a bucket or an endpoint from the machine.
   it("writer", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
+        "--no-env-file",
         "-e",
         `const writer = Bun.s3.file("test").writer();
          writer.write("test");

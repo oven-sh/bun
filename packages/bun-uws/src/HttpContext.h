@@ -523,13 +523,25 @@ private:
                 ((AsyncSocket<SSL> *) s)->cork();
             }
 
-            /* Route the method and URL */
-            selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it.
-                 * close() first sends the responses to earlier requests of this read. */
-                ((AsyncSocket<SSL> *) s)->close();
-                return nullptr;
+            const uint8_t methodId = httpRequest->getMethodId();
+            if (methodId >= HTTP_METHOD_COUNT) [[unlikely]] {
+                if constexpr (IsNodeHttp) {
+                    /* A dispatch queued behind an earlier response has no response state of its own to answer with. */
+                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH) {
+                        ((AsyncSocket<SSL> *) s)->close();
+                        return nullptr;
+                    }
+                }
+                endMethodNotImplemented((HttpResponse<SSL> *) s);
+            } else {
+                /* Route the method and URL */
+                selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
+                if (!selectedRouter->route(methodId, httpRequest->getUrlForRouting())) {
+                    /* We have to force close this socket as we have no handler for it.
+                     * close() first sends the responses to earlier requests of this read. */
+                    ((AsyncSocket<SSL> *) s)->close();
+                    return nullptr;
+                }
             }
 
             /* First of all we need to check if this socket was deleted due to upgrade */

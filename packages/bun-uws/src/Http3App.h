@@ -32,15 +32,15 @@ struct H3App {
         http3Context->onHttp(verb, pattern, std::move(handler));                         \
         return std::move(*this);                                                         \
     }
-    H3_METHOD(get, "get")
-    H3_METHOD(post, "post")
-    H3_METHOD(put, "put")
-    H3_METHOD(del, "delete")
-    H3_METHOD(patch, "patch")
-    H3_METHOD(head, "head")
-    H3_METHOD(options, "options")
-    H3_METHOD(connect, "connect")
-    H3_METHOD(trace, "trace")
+    H3_METHOD(get, "GET")
+    H3_METHOD(post, "POST")
+    H3_METHOD(put, "PUT")
+    H3_METHOD(del, "DELETE")
+    H3_METHOD(patch, "PATCH")
+    H3_METHOD(head, "HEAD")
+    H3_METHOD(options, "OPTIONS")
+    H3_METHOD(connect, "CONNECT")
+    H3_METHOD(trace, "TRACE")
     H3_METHOD(any, "*")
 #undef H3_METHOD
 

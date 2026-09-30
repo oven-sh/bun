@@ -267,6 +267,12 @@ Bun.serve({
 
 ---
 
+## Request methods
+
+`Bun.serve()` passes a request to a route or to `fetch` when Bun knows the request's method: `GET`, `HEAD`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `CONNECT`, `TRACE`, and extension methods such as `PROPFIND`, `MKCOL`, `PURGE`, and `QUERY`. Method names are case-sensitive. For any other method, such as `BREW` or lowercase `get`, Bun runs no handler and responds with `501 Not Implemented`. Over HTTP/1.1, a method with a character other than a letter or `-` gets `400 Bad Request`.
+
+---
+
 ## `fetch` request handler
 
 The `fetch` handler runs for incoming requests that no route matched. It receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and returns a [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) or [`Promise<Response>`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise).

@@ -166,12 +166,6 @@ static inline bool validFieldName(const char *p, unsigned n) {
     return true;
 }
 
-/* The methods Bun.serve can represent: the HTTP/1 parser's strict set, in
- * their RFC 9110 case-sensitive wire form. */
-static inline bool isKnownMethod(std::string_view method) {
-    return methodIdFromWire(method) != HTTP_METHOD_NONE;
-}
-
 /* The request fields validation cares about. lshpack reports the HPACK
  * static-table index when the peer used one for the name (nearly always);
  * literal names fall back to a compare. */
@@ -1706,23 +1700,21 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     stream->remoteClosed = endStream;
     streams.push_back(stream);
     progressed = true;
-    if (!http2::isKnownMethod(method)) {
-        /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
-         * which cannot represent the method and would report GET. */
-        stream->writeStatus("501 Not Implemented")->end();
-        return !closed;
-    }
     return dispatchRequest(stream, list.data(), (unsigned) list.size());
 }
 
 inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count) {
     Http2Request req(headers, count);
+    if (req.getMethodId() >= HTTP_METHOD_COUNT) {
+        endMethodNotImplemented(stream);
+        return !closed;
+    }
     if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getHeader("expect") == "100-continue") {
         stream->writeContinue();
     }
     ctx->dispatchDepth++;
     ctx->router.getUserData() = {stream, &req};
-    bool routed = ctx->router.route(req.getMethod(), req.getUrl());
+    bool routed = ctx->router.route(req.getMethodId(), req.getUrl());
     ctx->dispatchDepth--;
     if (closed) return false;
     if (!routed && !stream->dead) {

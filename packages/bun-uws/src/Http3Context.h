@@ -35,9 +35,13 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
+            if (req.getMethodId() >= HTTP_METHOD_COUNT) {
+                endMethodNotImplemented(res);
+                return;
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
-            if (!cd->router.route(req.getMethod(), req.getUrl())) {
+            if (!cd->router.route(req.getMethodId(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();
             }
         });

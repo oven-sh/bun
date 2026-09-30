@@ -166,17 +166,19 @@ struct HttpResponseData;
         bool isAncientHTTP;
         bool isConnect;
         HTTPHeaderParserError headerParserError;
+        /* methodIdFromWire() of the method, on success */
+        uint8_t methodId;
         public:
         static ConsumeRequestLineResult error(HTTPHeaderParserError error) {
-            return ConsumeRequestLineResult{nullptr, false, false, error};
+            return ConsumeRequestLineResult{nullptr, false, false, error, HTTP_METHOD_NONE};
         }
 
-        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP = false, bool isConnect = false) {
-            return ConsumeRequestLineResult{position, isAncientHTTP, isConnect, HTTP_HEADER_PARSER_ERROR_NONE};
+        static ConsumeRequestLineResult success(char *position, bool isAncientHTTP, bool isConnect, uint8_t methodId) {
+            return ConsumeRequestLineResult{position, isAncientHTTP, isConnect, HTTP_HEADER_PARSER_ERROR_NONE, methodId};
         }
 
         static ConsumeRequestLineResult shortRead(bool isAncientHTTP = false, bool isConnect = false) {
-            return ConsumeRequestLineResult{nullptr, isAncientHTTP, isConnect, HTTP_HEADER_PARSER_ERROR_NONE};
+            return ConsumeRequestLineResult{nullptr, isAncientHTTP, isConnect, HTTP_HEADER_PARSER_ERROR_NONE, HTTP_METHOD_NONE};
         }
 
         bool isErrorOrShortRead() {
@@ -198,6 +200,8 @@ struct HttpResponseData;
         bool didYield;
         /* Written right before the request handler runs; see getHasTransferEncoding(). */
         bool hasTransferEncoding;
+        /* methodIdFromWire() of the request line's method */
+        uint8_t methodId;
         unsigned int querySeparator;
         BloomFilter bf;
         std::pair<int, std::string_view *> currentParameters;
@@ -528,10 +532,10 @@ struct HttpResponseData;
             return url;
         }
 
-        /* Hack: this should be getMethod */
-        std::string_view getCaseSensitiveMethod()
+        /* The id of the method, or HTTP_METHOD_NONE for a token that is none of HTTP_METHOD_NAMES */
+        uint8_t getMethodId()
         {
-            return headers->key;
+            return methodId;
         }
 
         std::string_view getMethod()
@@ -922,7 +926,8 @@ struct HttpResponseData;
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 /* The loop above checked each byte of the method. Strict mode also requires one of HTTP_METHOD_NAMES. */
-                if (useStrictMethodValidation && methodIdFromWire(header.key) == HTTP_METHOD_NONE) {
+                const uint8_t methodId = methodIdFromWire(header.key);
+                if (useStrictMethodValidation && methodId == HTTP_METHOD_NONE) {
                     return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */
@@ -953,10 +958,10 @@ struct HttpResponseData;
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                         }
                         if (memcmp(" HTTP/1.1\r\n", data, 11) == 0) {
-                            return ConsumeRequestLineResult::success(nextPosition, false, isConnect);
+                            return ConsumeRequestLineResult::success(nextPosition, false, isConnect, methodId);
                         } else if (memcmp(" HTTP/1.0\r\n", data, 11) == 0) {
                             /*Indicates that the request line is ancient HTTP*/
-                            return ConsumeRequestLineResult::success(nextPosition, true, isConnect);
+                            return ConsumeRequestLineResult::success(nextPosition, true, isConnect, methodId);
                         }
                         /* nextPosition < end here, so data < end: any CR is real input, not the
                          * post-padding sentinel. Fall through to the version error. */
@@ -1013,7 +1018,7 @@ struct HttpResponseData;
         }
 
         /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields must not exceed MAX_HEADER_FIELDS: it bounds the writes to headers. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize, unsigned int maxHeaderFields) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize, unsigned int maxHeaderFields, uint8_t &methodId) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             /* It is critical for fallback buffering logic that we only return with success
@@ -1050,6 +1055,7 @@ struct HttpResponseData;
              * request would mis-classify a following HTTP/1.1 request. */
             isAncientHTTP = requestLineResult.isAncientHTTP;
             isConnectRequestLine = requestLineResult.isConnect;
+            methodId = requestLineResult.methodId;
             /* Mirror llhttp's TrackHeader: accumulate URL + name + value lengths only (llhttp
              * never charges method/separators/CRLF) and fail at maxHeaderSize. The fallback
              * buffer keeps its own raw bound (maxBufferedHeaderSize). github.com/nodejs/llhttp */
@@ -1245,7 +1251,7 @@ struct HttpResponseData;
                 return HttpParserResult::success(consumedTotal + length, user);
             }
             bool isConnectRequestLine = false;
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields, req->methodId);
             if(result.isError()) {
                 return result;
             }

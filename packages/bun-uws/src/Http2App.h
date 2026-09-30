@@ -31,15 +31,15 @@ struct H2App {
         http2Context->onHttp(verb, pattern, std::move(handler));                         \
         return std::move(*this);                                                         \
     }
-    H2_METHOD(get, "get")
-    H2_METHOD(post, "post")
-    H2_METHOD(put, "put")
-    H2_METHOD(del, "delete")
-    H2_METHOD(patch, "patch")
-    H2_METHOD(head, "head")
-    H2_METHOD(options, "options")
-    H2_METHOD(connect, "connect")
-    H2_METHOD(trace, "trace")
+    H2_METHOD(get, "GET")
+    H2_METHOD(post, "POST")
+    H2_METHOD(put, "PUT")
+    H2_METHOD(del, "DELETE")
+    H2_METHOD(patch, "PATCH")
+    H2_METHOD(head, "HEAD")
+    H2_METHOD(options, "OPTIONS")
+    H2_METHOD(connect, "CONNECT")
+    H2_METHOD(trace, "TRACE")
     H2_METHOD(any, "*")
 #undef H2_METHOD
 

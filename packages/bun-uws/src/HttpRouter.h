@@ -27,8 +27,10 @@
 #include <memory>
 #include <utility>
 #include <span>
+#include <exception>
 
 #include "MoveOnlyFunction.h"
+#include "HttpMethod.h"
 
 namespace uWS {
 
@@ -59,8 +61,22 @@ private:
         std::vector<uint32_t> handlers = {};
         bool isHighPriority = false;
 
+        Node() = default;
         explicit constexpr Node(std::string name) noexcept : name(std::move(name)) {}
-    } root {"rootNode"};
+    };
+
+    /* One tree per method, at the index of the method's id, then the tree of the any-method routes */
+    static constexpr unsigned int ANY_METHOD_TREE = HTTP_METHOD_COUNT;
+    Node trees[HTTP_METHOD_COUNT + 1];
+
+    /* The tree that holds the routes registered under this method name */
+    Node *treeFor(std::string_view method) {
+        if (method == ANY_METHOD_TOKEN) {
+            return &trees[ANY_METHOD_TREE];
+        }
+        uint8_t methodId = methodIdFromWire(method);
+        return methodId == HTTP_METHOD_NONE ? nullptr : &trees[methodId];
+    }
 
     /* Sort wildcards after alphanum */
     int lexicalOrder(std::string_view name) {
@@ -84,14 +100,14 @@ private:
             }
         }
 
-        /* Insert sorted, but keep order if parent is root (we sort methods by priority elsewhere) */
+        /* Insert sorted */
         auto newNode = std::make_unique<Node>(std::string(child));
         newNode->isHighPriority = isHighPriority;
-        auto iter = std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [parent, this](auto &a, auto &b) {
+        auto iter = std::upper_bound(parent->children.begin(), parent->children.end(), newNode, [this](auto &a, auto &b) {
             if (a->isHighPriority != b->isHighPriority) {
                 return a->isHighPriority;
             }
-            return !b->name.empty() && (parent != &root) && (lexicalOrder(b->name) < lexicalOrder(a->name));
+            return !b->name.empty() && (lexicalOrder(b->name) < lexicalOrder(a->name));
         });
         return parent->children.emplace(iter, std::move(newNode))->get();
     }
@@ -206,43 +222,36 @@ private:
 
     /* Scans for one matching handler, returning the handler and its priority or UINT32_MAX for not found */
     uint32_t findHandler(std::string_view method, std::string_view pattern, uint32_t priority) {
-        for (const std::unique_ptr<Node> &node : root.children) {
-            if (method == node->name) {
-                setUrl(pattern);
-                Node *n = node.get();
-                for (int i = 0; !getUrlSegment(i).second; i++) {
-                    /* Go to next segment or quit */
-                    std::string segment(getUrlSegment(i).first);
-                    Node *next = nullptr;
-                    for (const std::unique_ptr<Node> &child : n->children) {
-                        if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
-                            next = child.get();
-                            break;
-                        }
-                    }
-                    if (!next) {
-                        return UINT32_MAX;
-                    }
-                    n = next;
+        Node *n = treeFor(method);
+        if (!n) {
+            return UINT32_MAX;
+        }
+        setUrl(pattern);
+        for (int i = 0; !getUrlSegment(i).second; i++) {
+            /* Go to next segment or quit */
+            std::string segment(getUrlSegment(i).first);
+            Node *next = nullptr;
+            for (const std::unique_ptr<Node> &child : n->children) {
+                if (((segment.starts_with(':') && child->name.starts_with(':')) || child->name == segment) && child->isHighPriority == (priority == HIGH_PRIORITY)) {
+                    next = child.get();
+                    break;
                 }
-                /* Seek for a priority match in the found node */
-                for (unsigned int i = 0; i < n->handlers.size(); i++) {
-                    if ((n->handlers[i] & ~HANDLER_MASK) == priority) {
-                        return n->handlers[i];
-                    }
-                }
+            }
+            if (!next) {
                 return UINT32_MAX;
+            }
+            n = next;
+        }
+        /* Seek for a priority match in the found node */
+        for (unsigned int i = 0; i < n->handlers.size(); i++) {
+            if ((n->handlers[i] & ~HANDLER_MASK) == priority) {
+                return n->handlers[i];
             }
         }
         return UINT32_MAX;
     }
 
 public:
-    HttpRouter() {
-        /* Always have ANY route */
-        getNode(&root, std::string(ANY_METHOD_TOKEN), false);
-    }
-
     std::pair<int, std::string_view *> getParameters() {
         return {routeParameters.paramsTop, routeParameters.params};
     }
@@ -251,29 +260,23 @@ public:
         return userData;
     }
 
-    /* Fast path */
-    bool route(std::string_view method, std::string_view url) {
+    /* Fast path. methodId is the id of the request's method (methodIdFromWire). A request without one matches no route. */
+    bool route(uint8_t methodId, std::string_view url) {
+        if (methodId >= HTTP_METHOD_COUNT) [[unlikely]] {
+            return false;
+        }
+
         /* Reset url parsing cache */
         setUrl(url);
         routeParameters.reset();
 
-        /* Begin by finding the method node */
-        for (auto &p : root.children) {
-            if (p->name == method) {
-                /* Then route the url */
-                if (executeHandlers(p.get(), 0, userData)) {
-                    return true;
-                } else {
-                    break;
-                }
-            }
+        /* The routes of the method go first */
+        if (executeHandlers(&trees[methodId], 0, userData)) {
+            return true;
         }
 
-        /* Always test any route last (this check should not be necessary if we always have at least one handler) */
-        if (root.children.empty()) [[unlikely]] {
-            return false;
-        }
-        return executeHandlers(root.children.back().get(), 0, userData);
+        /* Always test any route last */
+        return executeHandlers(&trees[ANY_METHOD_TREE], 0, userData);
     }
 
     /* Adds the corresponding entires in matching tree and handler list */
@@ -283,7 +286,11 @@ public:
 
         for (const std::string_view method : methods) {
             /* Lookup method */
-            Node *node = getNode(&root, method, false);
+            Node *node = treeFor(method);
+            if (!node) {
+                /* Terminate on a name that is no method and not the any-method token */
+                std::terminate();
+            }
             /* Iterate over all segments */
             setUrl(pattern);
             for (int i = 0; !getUrlSegment(i).second; i++) {
@@ -301,21 +308,6 @@ public:
 
         /* Alloate this handler */
         handlers.emplace_back(std::move(handler));
-
-        /* ANY method must be last, GET must be first */
-        std::sort(root.children.begin(), root.children.end(), [](const auto &a, const auto &b) {
-            if (a->name == "GET" && b->name != "GET") {
-                return true;
-            } else if (b->name == "GET" && a->name != "GET") {
-                return false;
-            } else if (a->name == ANY_METHOD_TOKEN && b->name != ANY_METHOD_TOKEN) {
-                return false;
-            } else if (b->name == ANY_METHOD_TOKEN && a->name != ANY_METHOD_TOKEN) {
-                return true;
-            } else {
-                return a->name < b->name;
-            }
-        });
     }
 
     bool cullNode(Node *parent, Node *node, uint32_t handler) {
@@ -329,27 +321,24 @@ public:
             }
         }
 
-        /* Cull this node (but skip the root node) */
-        if (parent /*&& parent != &root*/) {
-            /* Scan for equal (remove), greater (lower by 1) */
-            for (auto it = node->handlers.begin(); it != node->handlers.end(); ) {
-                if ((*it & HANDLER_MASK) > (handler & HANDLER_MASK)) {
-                    *it = ((*it & HANDLER_MASK) - 1) | (*it & ~HANDLER_MASK);
-                } else if (*it == handler) {
-                    it = node->handlers.erase(it);
-                    continue;
-                }
-                it++;
+        /* Scan for equal (remove), greater (lower by 1) */
+        for (auto it = node->handlers.begin(); it != node->handlers.end(); ) {
+            if ((*it & HANDLER_MASK) > (handler & HANDLER_MASK)) {
+                *it = ((*it & HANDLER_MASK) - 1) | (*it & ~HANDLER_MASK);
+            } else if (*it == handler) {
+                it = node->handlers.erase(it);
+                continue;
             }
+            it++;
+        }
 
-            /* If we have no children and no handlers, remove us from the parent->children list */
-            if (!node->handlers.size() && !node->children.size()) {
-                parent->children.erase(std::find_if(parent->children.begin(), parent->children.end(), [node](const std::unique_ptr<Node> &a) {
-                    return a.get() == node;
-                }));
-                /* Returning true means we removed node from parent */
-                return true;
-            }
+        /* If we have no children and no handlers, remove us from the parent->children list. The first node of a tree has no parent and stays. */
+        if (parent && !node->handlers.size() && !node->children.size()) {
+            parent->children.erase(std::find_if(parent->children.begin(), parent->children.end(), [node](const std::unique_ptr<Node> &a) {
+                return a.get() == node;
+            }));
+            /* Returning true means we removed node from parent */
+            return true;
         }
 
         return false;
@@ -365,11 +354,13 @@ public:
             return false;
         }
 
-        /* Cull the entire tree */
+        /* Cull every tree */
         /* For all nodes in depth first tree traveral;
          * if node contains handler - remove the handler -
          * if node holds no handlers after removal, remove the node and return */
-        cullNode(nullptr, &root, handler);
+        for (Node &tree : trees) {
+            cullNode(nullptr, &tree, handler);
+        }
 
         /* Now remove the actual handler */
         handlers.erase(handlers.begin() + (handler & HANDLER_MASK));

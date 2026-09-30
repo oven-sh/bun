@@ -1,7 +1,10 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import net from "node:net";
+import { join } from "node:path";
+import { connect as connectQuic, QuicEndpoint } from "node:quic";
+import { connectH2, request as requestH2 } from "./serve-http2-helpers";
 
 describe("path parameters", () => {
   let server: Server;
@@ -256,6 +259,30 @@ describe("implicit HEAD for per-method route objects", () => {
     expect(await get.text()).toBe("hello-get");
     const post = await fetch(new URL("/mixed", server.url), { method: "POST" });
     expect(await post.text()).toBe("static-post-response");
+  });
+
+  // The default handler used to be registered for HEAD on "/*" over the static
+  // route's own HEAD, so fetch() answered.
+  test('a static GET Response on "/*" answers HEAD like on any other path', async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/*": { GET: new Response("star", { headers: { "x-from": "static" } }) },
+      },
+      fetch: () => new Response("from fetch", { headers: { "x-from": "fetch" } }),
+    });
+
+    const head = await fetch(new URL("/anything", server.url), { method: "HEAD" });
+    expect({
+      from: head.headers.get("x-from"),
+      length: head.headers.get("content-length"),
+      body: await head.text(),
+      status: head.status,
+    }).toEqual({ from: "static", length: "4", body: "", status: 200 });
+
+    // A method the route does not name still reaches fetch().
+    const post = await fetch(new URL("/anything", server.url), { method: "POST" });
+    expect(await post.text()).toBe("from fetch");
   });
 
   test("HEAD is not derived for route objects without a GET handler", async () => {
@@ -1105,5 +1132,367 @@ describe.concurrent("false route with no fetch handler", () => {
 
     proc.kill();
     await proc.exited;
+  });
+});
+
+describe.concurrent("a request method that is not one of Bun's 36 methods", () => {
+  type Exchange = { status: number; body: string }[];
+
+  // Sends the bytes on one connection. Resolves with every response on it, in
+  // order, once the server closes the connection. `methods` names the request
+  // methods when one of them is HEAD, whose response has no body.
+  async function exchange(port: number, bytes: string, methods: string[] = []): Promise<Exchange> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("connect", () => socket.write(bytes));
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    let rest = await promise;
+    const responses: Exchange = [];
+    while (rest.length > 0) {
+      const headEnd = rest.indexOf("\r\n\r\n");
+      if (headEnd === -1) throw new Error(`incomplete response head: ${JSON.stringify(rest)}`);
+      const head = rest.slice(0, headEnd);
+      const length =
+        methods[responses.length] === "HEAD" ? 0 : Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+      responses.push({ status: Number(head.slice(9, 12)), body: rest.slice(headEnd + 4, headEnd + 4 + length) });
+      rest = rest.slice(headEnd + 4 + length);
+    }
+    return responses;
+  }
+
+  const request = (method: string, path: string, fields = "") =>
+    `${method} ${path} HTTP/1.1\r\nHost: localhost\r\n${fields}\r\n`;
+
+  // Every handler reports the method it was given.
+  const handler = (calls: string[], name: string) => (req: Request) => {
+    calls.push(`${name} ${req.method}`);
+    return new Response(`${name} ${req.method}`);
+  };
+
+  const missingFile = "/bun-serve-routes-this-file-does-not-exist";
+
+  // Route tables. With some of them the router used to hand such a request to
+  // the routes of another method, and the handler saw it as a GET. With the
+  // others the socket closed with no response. `get` is the answer to
+  // `GET /nope`, and `getCalls` the handler calls that answer makes.
+  const tables: Record<string, { routes: (calls: string[]) => any; get: string; getCalls: string[] }> = {
+    "no routes": { routes: () => ({}), get: "fetch GET", getCalls: ["fetch GET"] },
+    "a static route": { routes: () => ({ "/x": new Response("x") }), get: "fetch GET", getCalls: ["fetch GET"] },
+    "a static route for HEAD": {
+      routes: () => ({ "/x": { HEAD: new Response("h") } }),
+      get: "fetch GET",
+      getCalls: ["fetch GET"],
+    },
+    "static routes for GET and HEAD": {
+      routes: () => ({ "/x": { GET: new Response("g"), HEAD: new Response("h") } }),
+      get: "fetch GET",
+      getCalls: ["fetch GET"],
+    },
+    "two parameter routes of one shape": {
+      routes: calls => ({ "/u/:id": handler(calls, "id"), "/u/:name": handler(calls, "name") }),
+      get: "fetch GET",
+      getCalls: ["fetch GET"],
+    },
+    "a function route and a static route for HEAD": {
+      routes: calls => ({ "/x": handler(calls, "x"), "/y": { HEAD: new Response("h") } }),
+      get: "fetch GET",
+      getCalls: ["fetch GET"],
+    },
+    "a GET function route on /*": {
+      routes: calls => ({ "/*": { GET: handler(calls, "star") } }),
+      get: "star GET",
+      getCalls: ["star GET"],
+    },
+    "static routes for GET and POST on /*": {
+      routes: () => ({ "/*": { GET: new Response("star"), POST: new Response("post") } }),
+      get: "star",
+      getCalls: [],
+    },
+    "a GET file route on /* whose file is missing": {
+      routes: () => ({ "/*": { GET: new Response(Bun.file(missingFile)) } }),
+      get: "fetch GET",
+      getCalls: ["fetch GET"],
+    },
+  };
+
+  const unknown = [
+    ["BREW", "/nope"],
+    ["BREW", "/x"],
+    ["get", "/nope"],
+    ["Get", "/x"],
+    ["GETS", "/u/1"],
+  ];
+
+  // The unknown methods get 501 and run no handler. The connection stays
+  // open: the requests after them on it are served. PROPFIND is a method Bun
+  // knows and no route names, so `fetch` takes it.
+  async function expectNotImplemented(port: number, calls: string[], table: (typeof tables)[string]) {
+    calls.length = 0;
+    const responses = await exchange(
+      port,
+      unknown.map(([method, path]) => request(method, path)).join("") +
+        request("PROPFIND", "/nope") +
+        request("GET", "/nope", "Connection: close\r\n"),
+    );
+    expect({ responses, calls }).toEqual({
+      responses: [
+        ...unknown.map(() => ({ status: 501, body: "" })),
+        { status: 200, body: "fetch PROPFIND" },
+        { status: 200, body: table.get },
+      ],
+      calls: ["fetch PROPFIND", ...table.getCalls],
+    });
+  }
+
+  test.each(Object.keys(tables))("gets 501 and runs no handler with %s", async name => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: tables[name].routes(calls),
+      fetch: handler(calls, "fetch"),
+    });
+    await expectNotImplemented(server.port, calls, tables[name]);
+  });
+
+  test("gets 501 whatever routes an earlier reload() registered", async () => {
+    const calls: string[] = [];
+    const fetch = handler(calls, "fetch");
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", routes: {}, fetch });
+    for (const name of [
+      "no routes",
+      "a static route for HEAD",
+      "a static route",
+      "static routes for GET and POST on /*",
+      "two parameter routes of one shape",
+      "no routes",
+    ]) {
+      server.reload({ routes: tables[name].routes(calls), fetch });
+      await expectNotImplemented(server.port, calls, tables[name]);
+    }
+  });
+
+  test("gets 501 before a websocket upgrade, a 100 Continue, or its body is read", async () => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/x": new Response("x") },
+      fetch: handler(calls, "fetch"),
+      websocket: {
+        open() {
+          calls.push("websocket open");
+        },
+        message() {},
+      },
+    });
+    const upgrade =
+      "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+    const responses = await exchange(
+      server.port,
+      request("BREW", "/x", upgrade) +
+        request("BREW", "/x", "Expect: 100-continue\r\nContent-Length: 5\r\n") +
+        "hello" +
+        request("BREW", "/x", "Transfer-Encoding: chunked\r\n") +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        request("GET", "/x", "Connection: close\r\n"),
+    );
+    expect({ responses, calls }).toEqual({
+      responses: [
+        { status: 501, body: "" },
+        { status: 501, body: "" },
+        { status: 501, body: "" },
+        { status: 200, body: "x" },
+      ],
+      calls: [],
+    });
+  });
+
+  // node:http turns on a strict method check in the parser, which answers 400.
+  // A server that has only node:http's request handler does not.
+  test("gets 501 from a server whose handler is onNodeHTTPRequest", async () => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      // @ts-expect-error internal option used by node:http's Server
+      onNodeHTTPRequest(_server: unknown, url: string, method: string) {
+        calls.push(`${method} ${url}`);
+      },
+    });
+    const responses = await exchange(
+      server.port,
+      request("BREW", "/x") + request("get", "/x", "Connection: close\r\n"),
+    );
+    expect({ responses, calls }).toEqual({
+      responses: [
+        { status: 501, body: "" },
+        { status: 501, body: "" },
+      ],
+      calls: [],
+    });
+  });
+
+  // With that handler a request can be dispatched while an earlier response
+  // is not complete. The unknown method then has no response state of its own
+  // to answer with, so the connection closes, as it did before.
+  test("closes the connection when the request is queued behind a pending onNodeHTTPRequest response", async () => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      // @ts-expect-error internal option used by node:http's Server
+      onNodeHTTPRequest(_server: unknown, url: string, method: string) {
+        calls.push(`${method} ${url}`);
+      },
+    });
+    const responses = await exchange(server.port, request("GET", "/first") + request("BREW", "/second"));
+    expect({ responses, calls }).toEqual({ responses: [], calls: ["GET /first"] });
+  });
+
+  // Over HTTP/3 the any-method routes used to take the request, on every
+  // server, and the handler saw a GET. "get" and "Get" are unknown too: a
+  // method is case-sensitive. HTTP/2 has its own tests for the 501.
+  test("gets 501 over HTTP/3, before any handler and before a 100 Continue", async () => {
+    using dir = tempDir("serve-routes-h3-method", { "file.txt": "file" });
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: {
+        "/any": handler(calls, "any"),
+        "/get": { GET: handler(calls, "get") },
+        "/static": new Response("static"),
+        "/file": new Response(Bun.file(join(String(dir), "file.txt"))),
+      },
+      fetch: handler(calls, "fetch"),
+    });
+
+    // One connection, one request after the other. A result names each
+    // informational response too: "info 100 200 body".
+    await using endpoint = new QuicEndpoint();
+    const client = await connectQuic(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    });
+    const closed = client.closed.then(
+      () => "closed",
+      () => "closed",
+    );
+    await client.opened;
+    async function h3(method: string, path: string, fields: Record<string, string> = {}) {
+      const seen: string[] = [];
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": method, ":path": path, ":scheme": "https", ":authority": "localhost", ...fields },
+        oninfo(received: Record<string, string>) {
+          seen.push("info " + received[":status"]);
+        },
+        onheaders(received: Record<string, string>) {
+          seen.push(received[":status"]);
+        },
+      });
+      stream.closed.catch(() => {});
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      return [...seen, body].join(" ");
+    }
+
+    const results: Record<string, string> = {};
+    for (const method of ["BREW", "GETX", "get", "Get"]) {
+      for (const path of ["/nope", "/any", "/get", "/static", "/file"]) {
+        results[`${method} ${path}`] = await Promise.race([h3(method, path), closed]);
+      }
+    }
+    results["BREW /nope, Expect"] = await Promise.race([h3("BREW", "/nope", { expect: "100-continue" }), closed]);
+    const unknown = Object.keys(results);
+    for (const [method, path] of [
+      ["PROPFIND", "/nope"],
+      ["GET", "/get"],
+      ["GET", "/static"],
+      ["GET", "/file"],
+    ]) {
+      results[`${method} ${path}`] = await Promise.race([h3(method, path), closed]);
+    }
+    if (!client.destroyed) client.close().catch(() => {});
+
+    expect({ results, calls }).toEqual({
+      results: {
+        ...Object.fromEntries(unknown.map(key => [key, "501 "])),
+        "PROPFIND /nope": "200 fetch PROPFIND",
+        "GET /get": "200 get GET",
+        "GET /static": "200 static",
+        "GET /file": "200 file",
+      },
+      calls: ["fetch PROPFIND", "get GET"],
+    });
+  });
+
+  // CONNECT is left out: its request target has another form.
+  const known = [
+    ...["ACL", "BIND", "CHECKOUT", "COPY", "DELETE", "GET", "HEAD", "LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY"],
+    ...["MKADDRESSBOOK", "MKCALENDAR", "MKCOL", "MOVE", "NOTIFY", "OPTIONS", "PATCH", "POST", "PROPFIND", "PROPPATCH"],
+    ...["PURGE", "PUT", "QUERY", "REBIND", "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE", "TRACE", "UNBIND", "UNLINK"],
+    ...["UNLOCK", "UNSUBSCRIBE"],
+  ];
+  const routed = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"];
+
+  test("each of Bun's methods reaches the route of that method, or fetch", async () => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/m": Object.fromEntries(routed.map(method => [method, handler(calls, `route ${method}`)])) },
+      fetch: handler(calls, "fetch"),
+    });
+    const responses = await exchange(
+      server.port,
+      known.map((method, i) => request(method, "/m", i === known.length - 1 ? "Connection: close\r\n" : "")).join(""),
+      known,
+    );
+    const expected = known.map(method => (routed.includes(method) ? `route ${method} ${method}` : `fetch ${method}`));
+    expect({ statuses: responses.map(response => response.status), calls }).toEqual({
+      statuses: known.map(() => 200),
+      calls: expected,
+    });
+  });
+});
+
+// A "/*" route that names one method. The default handler is an any-method
+// route: it runs after the any-method routes, for every method the "/*" route
+// does not name. Over HTTP/2 and HTTP/3 it used to be registered under POST and
+// the other eight verbs, ahead of "/any", and under none of the other methods.
+test('over HTTP/2, a "/*" route for one method leaves the other methods to the any-method routes, then to fetch', async () => {
+  const answer = (name: string) => (req: Request) => new Response(`${name} ${req.method}`);
+  await using server = Bun.serve({
+    port: 0,
+    http2: true,
+    routes: { "/*": { GET: answer("star") }, "/any": answer("any") },
+    fetch: answer("fetch"),
+  });
+  const session = await connectH2(server.port, false);
+  const results: Record<string, string> = {};
+  for (const method of ["GET", "POST", "PROPFIND"]) {
+    for (const path of ["/any", "/nope"]) {
+      const res = await requestH2(session, { ":method": method, ":path": path });
+      results[`${method} ${path}`] = `${res.status} ${res.body}`;
+    }
+  }
+  await new Promise<void>(resolve => session.close(() => resolve()));
+  expect(results).toEqual({
+    "GET /any": "200 star GET",
+    "GET /nope": "200 star GET",
+    "POST /any": "200 any POST",
+    "POST /nope": "200 fetch POST",
+    "PROPFIND /any": "200 any PROPFIND",
+    "PROPFIND /nope": "200 fetch PROPFIND",
   });
 });

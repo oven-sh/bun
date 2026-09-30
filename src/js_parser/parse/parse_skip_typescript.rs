@@ -2,7 +2,7 @@
 use crate::Error;
 use crate::lexer::LexerSnapshot;
 use crate::lexer::T;
-use crate::p::P;
+use crate::p::{P, SidecarMark};
 use crate::parse::type_sink::{
     ConstDefault, DecoratorMetadata, Discard, KK, Operand, Tag, TypeKeyword, TypeLiteral, TypeSink,
     b,
@@ -3325,6 +3325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_log_disabled = self.lexer.is_log_disabled;
         let log = self.log();
         let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+        let recorded = self.sidecar_mark();
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
         match func(self) {
@@ -3341,6 +3342,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log.msgs.truncate(old_msgs_len);
             log.errors = old_errors;
             log.warnings = old_warnings;
+            if let Some(mark) = recorded {
+                self.rewind_sidecar(mark);
+            }
         }
         self.lexer.is_log_disabled = old_log_disabled;
 
@@ -3357,6 +3361,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_log_disabled = self.lexer.is_log_disabled;
         let log = self.log();
         let (old_msgs_len, old_errors, old_warnings) = (log.msgs.len(), log.errors, log.warnings);
+        let recorded = self.sidecar_mark();
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
         let result = match func(self) {
@@ -3374,6 +3379,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log.msgs.truncate(old_msgs_len);
             log.errors = old_errors;
             log.warnings = old_warnings;
+            if let Some(mark) = recorded {
+                self.rewind_sidecar(mark);
+            }
         }
         self.lexer.is_log_disabled = old_log_disabled;
 
@@ -3389,13 +3397,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.mark_type_script_only();
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let recorded = self.sidecar_mark().map(|mark| {
+            let log = self.log();
+            (mark, (log.msgs.len(), log.errors, log.warnings))
+        });
         self.lexer.is_log_disabled = true;
         let kept = func(self).ok();
         if kept.is_none() {
             self.lexer.restore(&old_lexer);
+            if let Some((mark, logged)) = recorded {
+                self.rewind_lint_attempt(mark, logged);
+            }
         }
         self.lexer.is_log_disabled = old_log_disabled;
         kept
+    }
+
+    /// Drops the records and the messages of an attempt that a lint parse made and did not keep: such a parse logs a missing type inside an attempt too.
+    #[cold]
+    #[inline(never)]
+    fn rewind_lint_attempt(&mut self, recorded: SidecarMark, logged: (usize, u32, u32)) {
+        self.rewind_sidecar(recorded);
+        let log = self.log();
+        log.msgs.truncate(logged.0);
+        log.errors = logged.1;
+        log.warnings = logged.2;
     }
 
     pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
@@ -3661,5 +3687,297 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         Ok((skipped, constraint.unwrap_or(N::NONE)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::mem::MaybeUninit;
+
+    use super::*;
+    use crate::defines::Define;
+    use crate::p::StartsForParseOnly;
+    use crate::parse::attached::{ModuleExportName, Owner, Specifier};
+    use crate::parse::erased::{Cursor, ErasedData, ErasedFlags, Exported, Name};
+    use crate::parse::generics::TypeArgumentsOf;
+    use crate::parse::parse_entry::{Options, Parser};
+    use crate::parse::type_sink::Build;
+    use bun_alloc::Arena;
+    use bun_ast::{E, Expr, ExprData, Loc};
+
+    /// How many lists the side table of a lint parse has.
+    const LISTS: usize = 13;
+
+    /// How many records each list of the side table holds, how many errors the log holds, and the offset of the token the lexer is on.
+    type Observed = ([usize; LISTS], u32, usize);
+
+    /// Four tokens: `record_in_every_list` reads past one of them.
+    const TEXT: &[u8] = b"a b c d";
+    /// What is observed on `TEXT` after one call of `record_in_every_list`, and after two.
+    const ONCE: Observed = ([1; LISTS], 1, 2);
+    const TWICE: Observed = ([2; LISTS], 2, 4);
+
+    /// What `read` returns for a TypeScript parser that holds the side table of a lint parse and whose lexer read past `skipped` tokens of `text`.
+    fn with_parser<R>(
+        text: &'static [u8],
+        skipped: usize,
+        read: impl FnOnce(&mut P<'_, true, false>) -> Option<R>,
+    ) -> Option<R> {
+        let path: &'static [u8] = b"/a.ts";
+        let arena = Arena::new();
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        let source = bun_ast::Source::init_path_string(path, text);
+        let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
+        options.features.no_macros = true;
+        options.features.dont_bundle_twice = true;
+        let define = Define::default();
+        let mut log = bun_ast::Log::init();
+        let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+        let mut slot = MaybeUninit::<P<'_, true, false>>::uninit();
+        P::init(
+            &mut slot,
+            parser.bump,
+            parser.log,
+            parser.source,
+            parser.define,
+            parser.lexer,
+            parser.options,
+        )
+        .ok()?;
+        // SAFETY: `init` returned `Ok`, so the slot holds a parser.
+        let p = unsafe { slot.assume_init_mut() };
+        p.starts_for_parse_only = Some(StartsForParseOnly::for_lint());
+        let mut found = None;
+        if (0..skipped).all(|_| p.lexer.next().is_ok()) {
+            found = read(p);
+        }
+        // SAFETY: the slot holds the parser that `init` made, and nothing reads it after this.
+        unsafe { slot.assume_init_drop() };
+        found
+    }
+
+    /// Makes one record in every list of the side table at the token the lexer is on, logs an error there and reads past the token.
+    fn record_in_every_list(p: &mut P<'_, true, false>) -> Result<(), Error> {
+        let at = p.lexer.loc();
+        let range = p.lexer.range();
+        let start = u32::try_from(p.lexer.start).unwrap_or(u32::MAX);
+        let end = u32::try_from(p.lexer.end).unwrap_or(u32::MAX);
+        let interface = ErasedData::Interface(Name::at(&p.lexer));
+        let operand = Expr {
+            loc: at,
+            data: ExprData::EIdentifier(E::Identifier::default()),
+        };
+        let any = ts::Type::keyword(ts::KeywordKind::Any, start, end);
+        let function = Owner::function(at);
+        let clause = ts::HeritageClause {
+            start,
+            end,
+            token: ts::HeritageToken::Extends,
+            types: ts::List::empty(start, end),
+        };
+        let specifier = Specifier {
+            start,
+            end,
+            type_keyword: None,
+            property_name: None,
+            name: ModuleExportName::Identifier(ts::Name::new(b"A", start, end)),
+        };
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            let cursor = Cursor::at(&p.lexer);
+            let no_flags = ErasedFlags::empty();
+            starts
+                .erased
+                .statement(cursor, at, no_flags, Exported::No, interface);
+            starts.erased.member_read(cursor, at, at, 0, false);
+            starts.wrappers.non_null(operand, at);
+            let attached = &mut starts.attached;
+            attached.annotation(at, any);
+            attached.this_parameter(function, 0, range, None);
+            attached.type_parameter_list(function, at, end, ts::List::empty(start, end));
+            attached.return_type(function, any);
+            attached.heritage_clause(at, clause);
+            attached.jsx_type_argument_list(at, at, end, ts::List::empty(start, end));
+            attached.keyword(at, range, ts::ModifierKind::Abstract);
+            attached.type_only_specifier(0, specifier);
+            let generics = &mut starts.generics;
+            let of = TypeArgumentsOf::Expression;
+            generics.type_argument_list(operand, at, end, ts::List::empty(start, end), of);
+            generics.declaration_type_parameter_list(end, at, end, ts::List::empty(start, end));
+        }
+        p.log()
+            .add_error(Some(p.source), at, b"logged beside the lexer");
+        p.lexer.next()?;
+        Ok(())
+    }
+
+    fn observed(p: &P<'_, true, false>) -> Option<Observed> {
+        let starts = p.starts_for_parse_only.as_deref()?;
+        let (erased, attached, generics) = (&starts.erased, &starts.attached, &starts.generics);
+        let counts = [
+            erased.statements.len(),
+            erased.members.len(),
+            starts.wrappers.records.len(),
+            attached.annotations.len(),
+            attached.this_parameters.len(),
+            attached.type_parameters.len(),
+            attached.return_types.len(),
+            attached.heritage.len(),
+            attached.jsx_type_arguments.len(),
+            attached.keywords.len(),
+            attached.specifiers.len(),
+            generics.type_arguments.len(),
+            generics.type_parameters.len(),
+        ];
+        Some((counts, p.log().errors, p.lexer.start))
+    }
+
+    #[test]
+    fn an_attempt_that_fails_takes_its_records_back() {
+        let found = with_parser(TEXT, 0, |p| {
+            record_in_every_list(p).ok()?;
+            let before = observed(p)?;
+            let mut inside = None;
+            let is_kept = p.lexer_backtracker_bool(|p| {
+                record_in_every_list(p)?;
+                inside = observed(p);
+                Err::<(), Error>(Error::Backtrack)
+            });
+            let after = observed(p)?;
+            let is_next_kept = p.lexer_backtracker_bool(record_in_every_list);
+            Some((is_kept, before, inside?, after, is_next_kept, observed(p)?))
+        });
+        assert_eq!(found, Some((false, ONCE, TWICE, ONCE, true, TWICE)));
+    }
+
+    #[test]
+    fn an_attempt_at_type_parameters_that_fails_takes_its_records_back() {
+        let found = with_parser(TEXT, 0, |p| {
+            record_in_every_list(p).ok()?;
+            let before = observed(p)?;
+            let mut inside = None;
+            let result = p.lexer_backtracker_result(|p| {
+                record_in_every_list(p)?;
+                inside = observed(p);
+                Err(Error::Backtrack)
+            });
+            let is_kept = result != SkipTypeParameterResult::DidNotSkipAnything;
+            let after = observed(p)?;
+            let result = p.lexer_backtracker_result(|p| {
+                record_in_every_list(p)?;
+                Ok(SkipTypeParameterResult::CouldBeTypeCast)
+            });
+            let is_next_kept = result == SkipTypeParameterResult::CouldBeTypeCast;
+            Some((is_kept, before, inside?, after, is_next_kept, observed(p)?))
+        });
+        assert_eq!(found, Some((false, ONCE, TWICE, ONCE, true, TWICE)));
+    }
+
+    #[test]
+    fn an_attempt_that_keeps_what_it_read_takes_its_records_and_messages_back_where_it_fails() {
+        let found = with_parser(TEXT, 0, |p| {
+            record_in_every_list(p).ok()?;
+            let before = observed(p)?;
+            let mut inside = None;
+            let kept = p.lexer_backtracker_kept(|p| {
+                record_in_every_list(p)?;
+                inside = observed(p);
+                Err::<(), Error>(Error::Backtrack)
+            });
+            let after = observed(p)?;
+            let next_kept = p.lexer_backtracker_kept(record_in_every_list);
+            Some((
+                kept.is_some(),
+                before,
+                inside?,
+                after,
+                next_kept.is_some(),
+                observed(p)?,
+            ))
+        });
+        assert_eq!(found, Some((false, ONCE, TWICE, ONCE, true, TWICE)));
+    }
+
+    #[test]
+    fn a_parser_snapshot_takes_back_the_records_made_since() {
+        let found = with_parser(TEXT, 0, |p| {
+            record_in_every_list(p).ok()?;
+            let before = observed(p)?;
+            let snapshot = p.parser_snapshot();
+            record_in_every_list(p).ok()?;
+            let inside = observed(p)?;
+            p.restore_parser_snapshot(snapshot);
+            Some((before, inside, observed(p)?))
+        });
+        assert_eq!(found, Some((ONCE, TWICE, ONCE)));
+    }
+
+    /// How many annotations the side table holds.
+    fn annotations(p: &P<'_, true, false>) -> Option<usize> {
+        let starts = p.starts_for_parse_only.as_deref()?;
+        Some(starts.attached.annotations.len())
+    }
+
+    #[test]
+    fn an_attempt_that_fails_keeps_no_record_of_the_type_it_built() {
+        let found = with_parser(b"let x: A<B>[] = 1;", 3, |p| {
+            let mut inside = None;
+            let is_kept = p.lexer_backtracker_bool(|p| {
+                p.lint_type_annotation(Loc { start: 4 })?;
+                inside = annotations(p);
+                Err::<(), Error>(Error::Backtrack)
+            });
+            Some((is_kept, inside?, annotations(p)?, p.lexer.token))
+        });
+        assert_eq!(found, Some((false, 1, 0, T::TIdentifier)));
+    }
+
+    /// What the attempt at the constraint of `infer U` leaves with the lexer on the "extends" of `text`: whether it is kept, whether a node is, the token after it, and what is observed then.
+    fn constraint_of_infer(text: &'static [u8]) -> Option<(bool, bool, T, Observed)> {
+        with_parser(text, 2, |p| {
+            let flags = SkipTypeOptionsBitset::empty();
+            let (is_kept, constraint) = p
+                .try_skip_type_script_constraint_of_infer_type_with_backtracking::<Build>(flags)
+                .ok()?;
+            Some((is_kept, constraint.is_some(), p.lexer.token, observed(p)?))
+        })
+    }
+
+    #[test]
+    fn a_constraint_that_is_not_kept_leaves_no_node_and_no_message() {
+        let nothing: Observed = ([0; LISTS], 0, 8);
+        // Before "?" the "extends" is the one of a conditional type.
+        let found = constraint_of_infer(b"infer U extends A[] ? U : never");
+        assert_eq!(found, Some((false, false, T::TExtends, nothing)));
+        // The attempt logs the type that is missing after "|" and does not keep it.
+        let found = constraint_of_infer(b"infer U extends B<C | > ? 1 : 2");
+        assert_eq!(found, Some((false, false, T::TExtends, nothing)));
+        let after: Observed = ([0; LISTS], 0, 19);
+        let found = constraint_of_infer(b"infer U extends A[]]");
+        assert_eq!(found, Some((true, true, T::TCloseBracket, after)));
+    }
+
+    /// How many errors the lint parse of `text` logs. `None`: it parses.
+    fn lint_errors(text: &'static [u8]) -> Option<u32> {
+        let path: &'static [u8] = b"/a.ts";
+        let arena = Arena::new();
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        let source = bun_ast::Source::init_path_string(path, text);
+        let mut options = Options::init(Default::default(), bun_ast::Loader::Ts);
+        options.features.no_macros = true;
+        options.features.dont_bundle_twice = true;
+        let define = Define::default();
+        let mut log = bun_ast::Log::init();
+        let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+        let has_failed = parser.parse_for_lint(|_| ()).is_err();
+        has_failed.then_some(log.errors)
+    }
+
+    #[test]
+    fn a_type_that_an_attempt_misses_is_reported_once() {
+        // The attempt at the constraint logs the type that is missing after "|", sees "?" and goes back: the conditional type reports it.
+        let errors = lint_errors(b"type A = infer U extends B<C | > ? 1 : 2;");
+        assert_eq!(errors, Some(1));
     }
 }

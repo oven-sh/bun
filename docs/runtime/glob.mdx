@@ -161,18 +161,20 @@ glob.match("index.ts"); // => false
 
 ## Node.js `fs.glob()` compatibility
 
-Bun also implements Node.js's `fs.glob()` functions with additional features:
+Bun also implements Node.js's `fs.glob()` functions:
 
 ```ts
 import { glob, globSync, promises } from "node:fs";
 
 // Array of patterns
-const files = await promises.glob(["**/*.ts", "**/*.js"]);
+const files = await Array.fromAsync(promises.glob(["**/*.ts", "**/*.js"]));
 
 // Exclude patterns
-const filtered = await promises.glob("**/*", {
-  exclude: ["node_modules/**", "*.test.*"],
-});
+const filtered = await Array.fromAsync(
+  promises.glob("**/*", {
+    exclude: ["node_modules/**", "**/*.test.*"],
+  }),
+);
 ```
 
 All three functions (`fs.glob()`, `fs.globSync()`, `fs.promises.glob()`) support:

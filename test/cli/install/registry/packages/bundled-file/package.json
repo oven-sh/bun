@@ -1,0 +1,38 @@
+{
+  "_id": "bundled-file",
+  "name": "bundled-file",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-file",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-file-dep": "file:vendor/bundled-file-dep"
+      },
+      "bundleDependencies": [
+        "bundled-file-dep"
+      ],
+      "_id": "bundled-file@1.0.0",
+      "dist": {
+        "integrity": "sha512-1kQd7SfufR6wmrYo6L8J2jZm34WCaJyJj7KoskI+P3S+PuYpZ01rpuH+N15mtjUBcoVkVorPBxaOcSrX0H7ytg==",
+        "shasum": "7e59fee2055f735ed039b470f15d95c3612e99b9",
+        "tarball": "http://localhost:4873/bundled-file/-/bundled-file-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "bundled-file",
+      "version": "2.0.0",
+      "dependencies": {
+        "bundled-file-dep": "file:vendor/bundled-file-dep"
+      },
+      "_id": "bundled-file@2.0.0",
+      "dist": {
+        "integrity": "sha512-tFSzHwAOxEKDbBAHK/MY8RQEQ1KdQu6+bJYnW8/lZybGuZG2MoYWvksteDGjsWyXBimCSz7XWjo/ENEU9tsDNg==",
+        "shasum": "cd4c6b205128b53321bad299e60d7c6afb1f6c0e",
+        "tarball": "http://localhost:4873/bundled-file/-/bundled-file-2.0.0.tgz"
+      }
+    }
+  }
+}

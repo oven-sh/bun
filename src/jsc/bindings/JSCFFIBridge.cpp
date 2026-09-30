@@ -8,10 +8,12 @@
 #include <JavaScriptCore/JSFFICallback.h>
 #include <JavaScriptCore/JSFFIFunction.h>
 #include "ScriptExecutionContext.h"
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSObject.h>
 
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 
@@ -20,6 +22,13 @@ static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type ta
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::JSValue) == 19, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Buffer) == 20, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::BufferLength) == 21, "FFI::Type tag drift");
+
+// The functions a library made, which close() closes. `symbols` cannot be that list: the user can change it.
+static JSC::JSArray* functionsOfLibrary(WebCore::JSFFI* library)
+{
+    JSC::JSValue functions = library->m_functionsValue.get();
+    return functions ? dynamicDowncast<JSC::JSArray>(functions) : nullptr;
+}
 
 extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     Zig::GlobalObject* globalObject,
@@ -52,7 +61,41 @@ extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     if (!function)
         RELEASE_AND_RETURN(scope, {});
 
+    if (auto* library = dynamicDowncast<WebCore::JSFFI>(owner)) {
+        auto* functions = functionsOfLibrary(library);
+        if (!functions) {
+            functions = JSC::constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            library->m_functionsValue.set(vm, library, functions);
+        }
+        // Not push(): that is a [[Set]], and a setter on a prototype would be handed this array.
+        functions->putDirectIndex(globalObject, functions->length(), function);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(function));
+}
+
+// Returns true if one of the functions is running. Then the caller must keep the library loaded.
+extern "C" bool Bun__JSCFFILibraryCloseFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* library = dynamicDowncast<WebCore::JSFFI>(JSC::JSValue::decode(libraryValue));
+    if (!library)
+        return false;
+    auto* functions = functionsOfLibrary(library);
+    if (!functions)
+        return false;
+    bool isRunning = false;
+    for (unsigned i = 0, length = functions->length(); i < length; ++i) {
+        JSC::JSValue value = functions->tryGetIndexQuickly(i);
+        if (auto* function = value ? dynamicDowncast<JSC::JSFFIFunction>(value) : nullptr) {
+            function->close(vm);
+            isRunning = isRunning || function->isRunning(vm);
+        }
+    }
+    library->m_functionsValue.clear();
+    return isRunning;
 }
 
 static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation& invocation)

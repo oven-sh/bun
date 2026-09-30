@@ -161,3 +161,6 @@ FFI_EXPORT int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) { return cb(); }
 
 FFI_EXPORT uint64_t bl_echo_len(const void *buf, uint64_t len) { (void)buf; return len; }
 FFI_EXPORT uint32_t bl_last_byte(const uint8_t *buf, uint64_t len) { return len ? buf[len - 1] : 999u; }
+
+// Not a tail call: the callback returns into this function.
+FFI_EXPORT int32_t cb_result_plus_int32_t(int32_t (*cb)(), int32_t a) { return cb() + a; }

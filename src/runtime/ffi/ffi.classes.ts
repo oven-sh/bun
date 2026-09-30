@@ -18,6 +18,6 @@ export default [
         getter: "getSymbols",
       },
     },
-    values: ["symbolsValue"],
+    values: ["symbolsValue", "functionsValue"],
   }),
 ];

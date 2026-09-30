@@ -536,7 +536,11 @@ declare module "bun:ffi" {
      *
      * Once called, the library is no longer usable.
      *
-     * Calling a function from a library that has been closed is undefined behavior.
+     * A symbol of a closed {@link dlopen} or {@link linkSymbols} library throws a `TypeError` when called.
+     * Calling a symbol of a closed {@link cc} library is undefined behavior.
+     *
+     * `close()` keeps a {@link dlopen} library loaded when a symbol of the library is running, for
+     * example when a {@link JSCallback} that the library calls closes the library. That call then finishes.
      */
     close(): void;
   }

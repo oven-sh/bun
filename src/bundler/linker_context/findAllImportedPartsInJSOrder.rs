@@ -283,11 +283,10 @@ impl WalkPlan {
             }
             rank = load_rank(c, &plan.entry_id_of_file);
         }
-        // Per chunk: the entry point whose imports it repeats. It loads first, also when a fold of rule 2 gives one of its `import()` targets a lower rank.
-        let mut repeats_imports_of = vec![u32::MAX; chunks.len()];
+        // An entry point loads the parent of its class before the `import()` targets in the key of that chunk. `load_rank` can say otherwise once `--min-chunk-size` moved a file with such an `import()` into a chunk of an earlier entry point.
         for (entry_id, &(parts_end, parent_file)) in c.entry_imports_in_parent.iter().enumerate() {
             if parts_end > 0 && plan.chunk_of_file[parent_file as usize] != u32::MAX {
-                repeats_imports_of[plan.chunk_of_file[parent_file as usize] as usize] =
+                plan.owner_of_chunk[plan.chunk_of_file[parent_file as usize] as usize] =
                     entry_id as u32;
             }
         }
@@ -297,8 +296,8 @@ impl WalkPlan {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let owner = if repeats_imports_of[chunk_index] != u32::MAX {
-                repeats_imports_of[chunk_index]
+            let owner = if plan.owner_of_chunk[chunk_index] != u32::MAX {
+                plan.owner_of_chunk[chunk_index]
             } else if code_splitting {
                 let mut bits = chunk.entry_bits().iterator::<true, true>();
                 let mut owner = u32::MAX;
@@ -595,17 +594,13 @@ impl EntryWalk {
         };
 
         let entry_file = c.graph.entry_points.items_source_index()[entry_id as usize];
-        let (repeat_end, repeat_slot) = match c.entry_imports_in_parent.get(entry_id as usize) {
-            // No file of the parent prints code: it has no chunk, and nothing to run ahead of.
-            Some(&(parts_end, parent_file))
-                if parts_end > 0 && plan.chunk_of_file[parent_file as usize] != u32::MAX =>
-            {
-                let parent = plan.chunk_of_file[parent_file as usize] as usize;
-                debug_assert!(plan.owner_of_chunk[parent] == entry_id);
-                (parts_end, plan.slot_of_chunk[parent])
-            }
-            _ => (0, 0),
-        };
+        // A parent whose files print nothing has no chunk. Any other parent is a chunk of this walk (`WalkPlan::new`).
+        let (repeat_end, repeat_slot) = c
+            .entry_imports_in_parent
+            .get(entry_id as usize)
+            .filter(|repeated| repeated.0 > 0)
+            .and_then(|&(parts_end, parent_file)| Some((parts_end, slot_of(parent_file)?)))
+            .unwrap_or((0, 0));
         let repeated = |source_index: IndexInt, begin: u32, end: u32| {
             let begin = begin.max(bun_ast::NAMESPACE_EXPORT_PART_INDEX + 1);
             let end = end.min(repeat_end);

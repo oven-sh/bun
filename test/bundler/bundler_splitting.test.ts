@@ -1240,27 +1240,6 @@ describe("bundler", () => {
       { file: "/out/index.js", stdout: "setup\nindex 0\nr1 0 util\nr2 0 util\nr3 0" },
     ],
   });
-  itBundled("splitting/EntryWithExportsSetupImportRunsBeforeSharedCodeWhenOtherEntrySharesRuntime", {
-    files: {
-      ...setupBeforeShared("export const version = 1;"),
-      "/index.js": /* js */ `
-        import "./setup.js";
-        import { Store } from "./store.js";
-        import dep from "./dep.cjs";
-        export const version = 1;
-        console.log("index", new Store().name, dep);
-        import("./settings.js");
-      `,
-      "/dep.cjs": `module.exports = "dep";`,
-      "/admin.js": `import other from "./other.cjs"; console.log(other);`,
-      "/other.cjs": `module.exports = "other";`,
-    },
-    entryPoints: ["/index.js", "/admin.js"],
-    splitting: true,
-    outdir: "/out",
-    format: "esm",
-    run: { file: "/out/index.js", stdout: "index app dep\nsettings app" },
-  });
   // An entry point with exports takes no fold under any name. The chunk of the shared code keeps its place and gains no import.
   itBundled("splitting/EntryWithExportsKeepsExternalImportAfterSharedCode", {
     files: {
@@ -1343,6 +1322,249 @@ describe("bundler", () => {
       run: { file: "/out/index.js", stdout },
     });
   }
+  // The runtime and helper.js run nothing and import nothing, so the chunk that other.js shares has no order with the shared code.
+  for (const [name, index, other] of [
+    ["Runtime", `import dep from "./dep.cjs";`, `import other from "./other.cjs"; console.log("other", other);`],
+    [
+      "Declarations",
+      `import { helper } from "./helper.js"; const dep = helper();`,
+      `import { helper } from "./helper.js"; console.log("other", helper());`,
+    ],
+  ] as const) {
+    itBundled("splitting/EntryWithExportsFilesMoveWhenOtherEntrySharesOnlyDeclarations/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          import "./setup.js";
+          import { Store } from "./store.js";
+          ${index}
+          export const version = 1;
+          console.log("index", new Store().name, dep);
+          import("./settings.js");
+        `,
+        "/other.js": other,
+        "/setup.js": `console.log("setup"); globalThis.APP = { name: "app" };`,
+        "/store.js": `const NAME = globalThis.APP.name; export class Store { name = NAME; }`,
+        "/settings.js": `import { Store } from "./store.js"; console.log("settings", new Store().name);`,
+        "/dep.cjs": `module.exports = "dep";`,
+        "/other.cjs": `module.exports = "other";`,
+        "/helper.js": `export function helper() { return "dep"; }`,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "setup\nindex app dep\nsettings app" },
+    });
+  }
+  // A `require()` wraps api.js. Its external import is outside of the wrapper and loads with its chunk, so that chunk still ends the move, also when a file that only declares leads to it.
+  for (const [name, index, other, files] of [
+    [
+      "Direct",
+      `import { api } from "./api.js"; const get = () => api;`,
+      `const { api } = require("./api.js"); console.log("other", api);`,
+      {},
+    ],
+    [
+      "BehindDeclarations",
+      `import "./setup.js"; import { helper as get } from "./helper.js";`,
+      `import { helper } from "./helper.js"; console.log("other", helper());`,
+      {
+        "/setup.js": `import { helper } from "./helper.js"; globalThis.getApi = helper;`,
+        "/helper.js": `export function helper() { return require("./api.js").api; }`,
+      },
+    ],
+  ] as const) {
+    itBundled("splitting/EntryWithExportsKeepsOrderWithWrappedFileThatImportsExternal/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          import { config } from "./config.js";
+          ${index}
+          import { LIST } from "./list.js";
+          export const version = 1;
+          console.log("index", config.name, get(), LIST.length);
+          import("./settings.js");
+        `,
+        "/other.js": other,
+        "/config.js": `globalThis.APP = { name: "app" }; console.log("config"); export const config = globalThis.APP;`,
+        "/api.js": `import { plugin } from "ext-plugin"; export const api = plugin;`,
+        "/list.js": `globalThis.LISTED = true; export const LIST = ["a"];`,
+        "/settings.js": /* js */ `
+          import { config } from "./config.js";
+          import { LIST } from "./list.js";
+          console.log("settings", config.name, LIST.length);
+        `,
+        ...files,
+      },
+      external: ["ext-plugin"],
+      runtimeFiles: {
+        "/node_modules/ext-plugin/package.json": `{ "name": "ext-plugin", "type": "module", "main": "index.js" }`,
+        "/node_modules/ext-plugin/index.js": `console.log("ext"); export const plugin = "plugin for " + globalThis.APP.name;`,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "config\next\nindex app plugin for app 1\nsettings app 1" },
+    });
+  }
+  // styles.js prints nothing, so no chunk has its key, and the imports of index.js have no other chunk to run in.
+  itBundled("splitting/EntryImportsStayWhenSharedFilePrintsNothing", {
+    ...extSetup,
+    files: {
+      "/index.js": /* js */ `
+        import "ext-setup";
+        import "./styles.js";
+        console.log("index", globalThis.APP.name);
+        import("./route.js");
+      `,
+      "/styles.js": `import "./app.css";`,
+      "/app.css": `.a { color: red; }`,
+      "/route.js": `import "./styles.js"; console.log("route");`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "route.js"]);
+    },
+    run: { file: "/out/index.js", stdout: "index app\nroute" },
+  });
+  // --min-chunk-size folds a small chunk that runs nothing into a chunk that more entry points load. The chunk that runs setup.cjs for index.js is not one: admin.js does not import setup.cjs.
+  const pinnedEntryWithSmallSharedChunk = (imports: string) => ({
+    "/index.js": /* js */ `
+      ${imports}
+      import { x } from "pkg";
+      import { u } from "./util.js";
+      console.log("index", x, u, globalThis.APP);
+      import("./route.js");
+    `,
+    "/admin.js": `import { u } from "./util.js"; console.log("admin", u, globalThis.APP);`,
+    "/setup.cjs": `console.log("setup"); globalThis.APP = 1;`,
+    "/route.js": `import { x } from "pkg"; import { u } from "./util.js"; console.log("route", x, u);`,
+    "/util.js": `export const u = "u"; export const pad = "${Buffer.alloc(16 * 1024, "x").toString()}";`,
+    "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false, "main": "index.js" }`,
+    "/node_modules/pkg/index.js": `const cache = new Map(); export const x = cache.size;`,
+  });
+  for (const entryPoints of [
+    ["/index.js", "/admin.js"],
+    ["/admin.js", "/index.js"],
+  ]) {
+    itBundled("splitting/MinChunkSizeKeepsChunkThatRunsEntryImports/" + entryPoints[0].slice(1, -3) + "First", {
+      files: pinnedEntryWithSmallSharedChunk(`import "./setup.cjs";`),
+      entryPoints,
+      splitting: true,
+      minChunkSize: 1024 * 1024,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/admin.js", stdout: "admin u undefined" },
+        { file: "/out/index.js", stdout: "setup\nindex 0 u 1\nroute 0 u" },
+      ],
+    });
+  }
+  itBundled("splitting/MinChunkSizeFoldsSharedChunkOfPinnedEntryThatRepeatsNothing", {
+    files: pinnedEntryWithSmallSharedChunk(""),
+    entryPoints: ["/admin.js", "/index.js"],
+    splitting: true,
+    minChunkSize: 1024 * 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(4);
+    },
+    run: { file: "/out/index.js", stdout: "index 0 u undefined\nroute 0 u" },
+  });
+  // x.js loads only after e.js. --min-chunk-size folds loadx.js into the chunk of t.js, which u0.js loads, so `import("x.js")` looks as if u0.js met it first. The walk of e.js must still lay out the chunk that e.js shares with x.js.
+  for (const [name, e, x, files, stdout] of [
+    [
+      "FilesThatMove",
+      `import "./esetup.cjs"; import "./shared.js";`,
+      `import "./shared.js";`,
+      {
+        "/esetup.cjs": `console.log("esetup"); globalThis.APP = { name: "app" };`,
+        "/shared.js": `console.log("shared", globalThis.APP.name);`,
+      },
+      "esetup\nshared app",
+    ],
+    [
+      "SharedFiles",
+      `import "./a.js"; import "./b.js";`,
+      `import "./b.js"; import "./a.js";`,
+      { "/a.js": `console.log("a"); globalThis.A = { v: 1 };`, "/b.js": `console.log("b", globalThis.A.v);` },
+      "a\nb 1",
+    ],
+  ] as const) {
+    itBundled("splitting/MinChunkSizeKeepsParentChunkInOrderOfItsEntry/" + name, {
+      files: {
+        "/u0.js": `import { a } from "lib"; import { t } from "./t.js"; console.log("u0", a, t.length);`,
+        "/u1.js": `console.log("u1"); import("./e.js").then(m => m.run());`,
+        "/e.js": /* js */ `
+          ${e}
+          console.log("e");
+          export function run() { return import("./x1.js").then(() => import("./x2.js")); }
+        `,
+        "/x.js": `${x} globalThis.X = 1;`,
+        "/x1.js": `import { loadX } from "lib"; import { t } from "./t.js"; console.log("x1", t.length); loadX();`,
+        "/x2.js": `import { loadX } from "lib"; import { t } from "./t.js"; console.log("x2", t.length); loadX();`,
+        "/t.js": `export const t = "${Buffer.alloc(16 * 1024, "x").toString()}";`,
+        "/node_modules/lib/package.json": `{ "name": "lib", "sideEffects": false, "main": "index.js" }`,
+        "/node_modules/lib/index.js": `export { a } from "./a.js"; export { loadX } from "./loadx.js";`,
+        "/node_modules/lib/a.js": `export const a = "a";`,
+        "/node_modules/lib/loadx.js": `export const loadX = () => import("../../x.js");`,
+        ...files,
+      },
+      entryPoints: ["/u0.js", "/u1.js"],
+      splitting: true,
+      minChunkSize: 1024 * 1024,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/u1.js", stdout: `u1\n${stdout}\ne\nx1 16384\nx2 16384` },
+    });
+  }
+  // --min-chunk-size folds c0.js into the chunk of t.js, so u.js starts to load shared.js, and then folds c1.js into the chunk of shared.js. That chunk now has the key of g1.js and g2.js, and u.js loads it first: it is laid out for u.js, not for index.js.
+  itBundled("splitting/MinChunkSizeLaysOutChunkThatAnotherEntryStartsToLoadForThatEntry", {
+    files: {
+      "/u.js": /* js */ `
+        import { t } from "./t.js";
+        import "./g1.js";
+        import "./g2.js";
+        import { c1 } from "./c1.js";
+        console.log("u", t.length, c1());
+      `,
+      "/index.js": /* js */ `
+        import "./icfg.js";
+        import { s } from "./shared.js";
+        import "./g2.js";
+        import "./g1.js";
+        console.log("index", s());
+        import("./r1.js").then(() => import("./r2.js")).then(() => import("./r3.js"));
+      `,
+      "/v.js": `import "./icfg.js"; console.log("v");`,
+      "/icfg.js": `globalThis.CFG = { name: "icfg" }; console.log("icfg");`,
+      "/g1.js": `import "./w.cjs"; globalThis.CFG = { name: "g1" }; console.log("g1");`,
+      "/g2.js": `console.log("g2", globalThis.CFG.name);`,
+      "/shared.js": `import { base } from "./base.js"; export const s = () => base; export const pad = "${Buffer.alloc(4096, "y").toString()}";`,
+      "/base.js": `export const base = "b";`,
+      "/c0.js": `import { s } from "./shared.js"; export const c0 = () => s();`,
+      "/c1.js": `import w from "./w.cjs"; export const c1 = () => w.name;`,
+      "/w.cjs": `module.exports = { name: "w" };`,
+      "/r1.js": `import { c0 } from "./c0.js"; import { t } from "./t.js"; import "./g1.js"; import "./g2.js"; console.log("r1", c0(), t.length);`,
+      "/r2.js": `import { c0 } from "./c0.js"; import { t } from "./t.js"; import "./g1.js"; import "./g2.js"; console.log("r2", c0(), t.length);`,
+      "/r3.js": `import { c1 } from "./c1.js"; import "./g1.js"; import "./g2.js"; console.log("r3", c1());`,
+      "/t.js": `export const t = "${Buffer.alloc(320 * 1024, "x").toString()}";`,
+    },
+    entryPoints: ["/u.js", "/index.js", "/v.js"],
+    splitting: true,
+    minChunkSize: 1000,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/u.js", stdout: "g1\ng2 g1\nu 327680 w" },
+      { file: "/out/index.js", stdout: "icfg\ng1\ng2 g1\nindex b\nr1 b 327680\nr2 b 327680\nr3 w" },
+    ],
+  });
   itBundled("splitting/EntryFilesAfterSharedCodeStay", {
     files: {
       ...setupBeforeShared(""),
@@ -1371,7 +1593,6 @@ describe("bundler", () => {
   // styles.js prints nothing, so the files that index.js shares with route.js have no chunk that could repeat an import.
   for (const [name, first, options, stdout] of [
     ["NoImportThatRuns", "", {}, "index undefined\nroute"],
-    ["External", `import "ext-setup";`, extSetup, "index app\nroute"],
     [
       "CommonJSOfOtherEntry",
       `import "./shared.cjs";`,
@@ -1401,85 +1622,6 @@ describe("bundler", () => {
       run: { file: "/out/index.js", stdout },
     });
   }
-  // The chunk with pkg runs setup.cjs for index.js. Alone it has no side effects and would fold into the chunk of util.js, which admin.js loads too.
-  for (const [name, entryPoints] of [
-    ["AdminFirst", ["/admin.js", "/index.js"]],
-    ["IndexFirst", ["/index.js", "/admin.js"]],
-  ] as const) {
-    itBundled("splitting/MinChunkSizeKeepsChunkThatRepeatsImportOutOfChunkOfOtherEntry/" + name, {
-      files: {
-        "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
-        "/index.js": /* js */ `
-          import "./setup.cjs";
-          import { x } from "pkg";
-          import { u } from "./util.js";
-          console.log("index", x(), u());
-          import("./route.js");
-        `,
-        "/route.js": /* js */ `
-          import { x } from "pkg";
-          import { u } from "./util.js";
-          console.log("route", x(), u());
-        `,
-        "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
-        "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
-        "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
-        "/node_modules/pkg/index.js": /* js */ `
-          const cache = new Map([["app", globalThis.APP?.name]]);
-          export function x() { return "x " + cache.get("app"); }
-        `,
-      },
-      entryPoints: [...entryPoints],
-      splitting: true,
-      minChunkSize: 100000,
-      outdir: "/out",
-      format: "esm",
-      onAfterBundle(api) {
-        api.expectFile("/out/admin.js").not.toContain(chunkContaining(api, "new Map"));
-        for (const file of jsFilesIn(api))
-          api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/(index|admin)\.js"/);
-      },
-      run: [
-        { file: "/out/index.js", stdout: "setup\nindex x app u\nroute x app u" },
-        { file: "/out/admin.js", stdout: "admin u" },
-      ],
-    });
-  }
-  // Nothing that the imports of index.js run precedes pkg, so its chunk still folds.
-  itBundled("splitting/MinChunkSizeFoldsChunkBesideEntryThatRepeatsNoImport", {
-    files: {
-      "/admin.js": `import { u } from "./util.js"; console.log("admin", u());`,
-      "/index.js": /* js */ `
-        import { x } from "pkg";
-        import { u } from "./util.js";
-        console.log("index", x(), u());
-        import("./route.js");
-      `,
-      "/route.js": /* js */ `
-        import { x } from "pkg";
-        import { u } from "./util.js";
-        console.log("route", x(), u());
-      `,
-      "/util.js": `export function u() { return "u"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
-      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "main": "index.js", "sideEffects": false }`,
-      "/node_modules/pkg/index.js": /* js */ `
-        const cache = new Map();
-        export function x() { return "x" + cache.size; }
-      `,
-    },
-    entryPoints: ["/admin.js", "/index.js"],
-    splitting: true,
-    minChunkSize: 100000,
-    outdir: "/out",
-    format: "esm",
-    onAfterBundle(api) {
-      api.expectFile("/out/" + chunkContaining(api, "new Map")).toContain(`return "u"`);
-    },
-    run: [
-      { file: "/out/index.js", stdout: "index x0 u\nroute x0 u" },
-      { file: "/out/admin.js", stdout: "admin u" },
-    ],
-  });
   // h has no side effects and imports pkg. A fold of h into the chunk of util.js would make admin.js load the chunk of pkg, which runs setup.cjs.
   itBundled("splitting/MinChunkSizeKeepsImporterOfChunkThatRepeatsImportOutOfChunkOfOtherEntry", {
     files: {
@@ -1517,50 +1659,6 @@ describe("bundler", () => {
     run: [
       { file: "/out/index.js", stdout: "setup\nindex x app\nroute x app u h(x app)\nroute\nsub h(x app)" },
       { file: "/out/admin.js", stdout: "admin u" },
-    ],
-  });
-  // A fold puts go(), which holds import("./d.js"), into a chunk that admin.js loads. d.js then ranks before e.js. The chunk that e.js shares with d.js still repeats the import of e.js.
-  itBundled("splitting/MinChunkSizeChunkThatRepeatsImportIsLaidOutByItsEntryPoint", {
-    files: {
-      "/admin.js": `import { t } from "./t.js"; import { go } from "fpkg"; console.log("admin", t());`,
-      "/main.js": `console.log("main"); import("./e.js").then(m => console.log(m.name));`,
-      "/e.js": /* js */ `
-        import "./setup.cjs";
-        import { r } from "reader";
-        console.log("e", r());
-        export const name = "e";
-        import("./d.js").then(m => console.log(m.name));
-      `,
-      "/d.js": /* js */ `
-        import { r } from "reader";
-        import { t } from "./t.js";
-        import { go, v } from "fpkg";
-        console.log("d", r(), t(), v(), typeof go);
-        export const name = "d";
-        import("./d2.js");
-      `,
-      "/d2.js": `import { go, v } from "fpkg"; console.log("d2", v(), typeof go);`,
-      "/setup.cjs": `console.log("setup"); globalThis.APP = { name: "app" };`,
-      "/t.js": `export function t() { return "t"; }\n// ${Buffer.alloc(20000, "x").toString()}`,
-      "/node_modules/reader/package.json": `{ "name": "reader", "type": "module", "main": "index.js", "sideEffects": false }`,
-      "/node_modules/reader/index.js": /* js */ `
-        const cache = new Map([["app", globalThis.APP?.name]]);
-        export function r() { return "r " + cache.get("app"); }
-      `,
-      "/node_modules/fpkg/package.json": `{ "name": "fpkg", "type": "module", "main": "index.js", "sideEffects": false }`,
-      "/node_modules/fpkg/index.js": /* js */ `
-        export function v() { return "v"; }
-        export function go() { return import("../../d.js"); }
-      `,
-    },
-    entryPoints: ["/admin.js", "/main.js"],
-    splitting: true,
-    minChunkSize: 100000,
-    outdir: "/out",
-    format: "esm",
-    run: [
-      { file: "/out/main.js", stdout: "main\nsetup\ne r app\ne\nd r app t v function\nd\nd2 v function" },
-      { file: "/out/admin.js", stdout: "admin t" },
     ],
   });
 

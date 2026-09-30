@@ -835,10 +835,13 @@ fn files_that_leave_entry_chunk<'a>(
             // A chunk of another class runs before both, and so does what it imports.
             match when_chunk_runs(file)? {
                 Runs::WithEntry => {}
-                Runs::WithOtherEntry
-                    if parent_gains_no_import && !this.loading_file_only_declares(file) =>
-                {
-                    return Ok(0);
+                // The runtime and an unwrapped file that only declares run nothing, so the walk goes on to what they import. A wrapped file can hold an external `import`, which loads with its chunk.
+                Runs::WithOtherEntry if parent_gains_no_import => {
+                    if flags[file as usize].wrap != WrapKind::None
+                        || !this.loading_file_only_declares(file)
+                    {
+                        return Ok(0);
+                    }
                 }
                 _ => continue,
             }
@@ -867,18 +870,18 @@ fn files_that_leave_entry_chunk<'a>(
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
     // An external `import` goes to the top of its chunk, ahead of what the parent runs.
-    let (mut limit, mut first_to_repeat) = (u32::MAX, u32::MAX);
-    this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, _, x| {
-        first_to_repeat = first_to_repeat.min(part);
-        if x.is_none() && parent_gains_no_import {
-            limit = limit.min(part);
-        }
-    });
+    let mut limit = u32::MAX;
+    if parent_gains_no_import {
+        this.for_each_import_that_runs(entry_source, 0..last_part, &mut |part, _, x| {
+            if x.is_none() {
+                limit = limit.min(part);
+            }
+        });
+    }
     candidates.truncate(cut);
     candidates.truncate(candidates.partition_point(|candidate| candidate.1 < limit));
     let mut candidates = candidates.into_iter().peekable();
-    let mut moved = false;
-    'groups: while let Some(&(_, part)) = candidates.peek() {
+    while let Some(&(_, part)) = candidates.peek() {
         taken.clear();
         while let Some((file, _)) = candidates.next_if(|candidate| candidate.1 == part) {
             pending.push(file);
@@ -910,18 +913,11 @@ fn files_that_leave_entry_chunk<'a>(
                 for &file in &taken {
                     leaves.unset(file as usize);
                 }
-                limit = part;
-                break 'groups;
+                return Ok(part);
             }
         }
-        moved = true;
     }
-    let parts_end = last_part.min(limit);
-    Ok(if moved || first_to_repeat < parts_end {
-        parts_end
-    } else {
-        0
-    })
+    Ok(last_part.min(limit))
 }
 
 /// Folds code-splitting chunks into other chunks where that is unobservable,
@@ -1475,13 +1471,15 @@ pub(crate) fn merge_small_chunks(
                 group.pin == Pin::Entry
                     || (group.target == Some(target_platform) && !group.loads_entry_of(class))
             });
-            if takes_entry_files
-                && let Some(repeated) = entry_imports_in_parent.get_mut(entry_id)
-                && repeated.0 > 0
-            {
-                repeated.1 = groups.values()[target_index].first_source;
-                // It runs what it repeats, also when each of its files is side-effect free.
-                groups.values_mut()[target_index].pure = false;
+            if takes_entry_files && let Some(repeated) = entry_imports_in_parent.get_mut(entry_id) {
+                let parent = &mut groups.values_mut()[target_index];
+                repeated.1 = parent.first_source;
+                // The parent runs these at its top level, so rule 2 must not move it into a chunk that more entry points load.
+                this.for_each_import_that_runs(
+                    entry_source_indices[entry_id],
+                    0..repeated.0,
+                    &mut |_, _, _| parent.pure = false,
+                );
             }
         }
         for &member in members {
@@ -1599,6 +1597,14 @@ pub(crate) fn merge_small_chunks(
     const EXTRA_LOAD_DIVISOR: u64 = 64;
     let mut folded_pure = 0usize;
     let groups = groups.values_mut();
+    // How many entry points load each recorded parent before rule 2.
+    let parent_loaders: Vec<usize> = entry_imports_in_parent
+        .iter()
+        .map(|repeated| match repeated.0 {
+            0 => 0,
+            _ => groups[group_of_file[repeated.1 as usize]].loaded.count(),
+        })
+        .collect();
     for g in 0..group_count {
         if groups[g].merged_into.is_some() {
             continue;
@@ -1918,6 +1924,15 @@ pub(crate) fn merge_small_chunks(
             }
         }
         this.inits_already_done = Some(done);
+    }
+    // Rule 2 folded a parent that repeats nothing into a chunk that more entry points load, or made more entry points load it. That chunk is no parent.
+    for (repeated, &loaders) in entry_imports_in_parent.iter_mut().zip(&parent_loaders) {
+        if repeated.0 > 0 {
+            let parent = &groups[group_of_file[repeated.1 as usize]];
+            if parent.merged_into.is_some() || parent.loaded.count() != loaders {
+                repeated.0 = 0;
+            }
+        }
     }
 
     rekey_files(this, group_of_file, groups, entry_imports_in_parent)?;

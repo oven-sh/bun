@@ -1428,12 +1428,10 @@ extern "C"
     return value.length();
   }
 
-  size_t uws_req_get_method(uws_req_t *res, const char **dest)
+  uint8_t uws_req_get_method_id(uws_req_t *res)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view value = uwsReq->getMethod();
-    *dest = value.data();
-    return value.length();
+    return uwsReq->getMethodId();
   }
 
 size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,

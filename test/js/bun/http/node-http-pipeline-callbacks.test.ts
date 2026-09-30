@@ -73,3 +73,43 @@ test("aborting a connection settles every queued pipelined response callback onc
     }
   }
 });
+
+// rawPacket is the read as it arrived. The server used to lowercase the method
+// of a request in that buffer when it dispatched the request.
+test("'clientError' rawPacket keeps an earlier request of the same read as the client sent it", async () => {
+  const payload = "GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nno colon here\r\n\r\n";
+  const errored = Promise.withResolvers<{ code: string; rawPacket: string }>();
+  const requests: string[] = [];
+  const server = createServer((req, res) => {
+    requests.push(`${req.method} ${req.url}`);
+    res.end("ok");
+  });
+  server.on("clientError", (err: any, socket) => {
+    errored.resolve({ code: err.code, rawPacket: err.rawPacket.toString("latin1") });
+    socket.destroy();
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => server.once("listening", resolve));
+  const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  client.on("error", errored.reject);
+
+  try {
+    await new Promise<void>(resolve => client.once("connect", resolve));
+    client.write(payload);
+
+    const { code, rawPacket } = await errored.promise;
+    // One write is one read here. If the kernel splits it, rawPacket is the
+    // later part of the payload.
+    expect({ code, rawPacket, requests }).toEqual({
+      code: "HPE_INVALID_HEADER_TOKEN",
+      rawPacket: payload.slice(payload.length - rawPacket.length),
+      requests: ["GET /a"],
+    });
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    if (server.listening) {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+});

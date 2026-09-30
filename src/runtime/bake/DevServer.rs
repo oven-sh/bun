@@ -1760,11 +1760,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return resp.corked(move || on_outdated_js_corked(resp));
     }
 
-    dev.on_js_request_with_bundle(
-        route_bundle_index,
-        resp,
-        Method::which(req.method()).unwrap_or(Method::POST),
-    );
+    dev.on_js_request_with_bundle(route_bundle_index, resp, req.method());
 }
 
 fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
@@ -2088,7 +2084,7 @@ impl ReqOrSaved {
         match self {
             ReqOrSaved::Req(req) => {
                 // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
-                Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST)
+                unsafe { &**req }.method()
             }
             ReqOrSaved::Aborted => unreachable!(),
         }
@@ -2118,7 +2114,7 @@ impl DevServer {
 
         let method = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-            ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
+            ReqOrSaved::Req(r) => unsafe { &**r }.method(),
             _ => unreachable!(),
         };
 
@@ -2156,7 +2152,6 @@ impl DevServer {
                                     unsafe { &mut *r },
                                     resp,
                                     global,
-                                    Some(method),
                                 )? {
                                 Some(saved) => saved,
                                 // Abort the deferral on failure.

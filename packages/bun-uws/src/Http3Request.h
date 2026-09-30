@@ -14,7 +14,7 @@ namespace uWS {
 /* Mirrors uWS::HttpRequest's surface so the same router/handler shape works.
  * Backed by an already-decoded header list (QPACK for HTTP/3, HPACK for
  * HTTP/2 — both hand us the same us_quic_header_t array); pseudo headers
- * (:method, :path, :authority) become method/url/host. */
+ * (:method, :path, :authority) become the method id, url and host. */
 struct Http3Request {
 
     Http3Request(us_quic_stream_t *s)
@@ -26,7 +26,6 @@ struct Http3Request {
             std::string_view name{h->name, h->name_len};
             std::string_view value{h->value, h->value_len};
             if (name == ":method") {
-                method = value;
                 methodId = methodIdFromWire(value);
             } else if (name == ":path") {
                 fullUrl = value;
@@ -56,17 +55,6 @@ struct Http3Request {
     std::string_view getQuery() { return query.empty() ? query : query.substr(1); }
     std::string_view getQuery(std::string_view key) {
         return getDecodedQueryValue(key, query);
-    }
-
-    /* HttpRequest::getMethod() lowercases in place; we own no writable
-     * buffer, so write into a per-request scratch instead. */
-    std::string_view getMethod() {
-        size_t n = method.size() < sizeof(methodLower) ? method.size() : sizeof(methodLower);
-        for (size_t i = 0; i < n; i++) {
-            char c = method[i];
-            methodLower[i] = (char) (c | ((unsigned char) (c - 'A') < 26 ? 0x20 : 0));
-        }
-        return {methodLower, n};
     }
 
     /* The id of :method, or HTTP_METHOD_NONE for a token that is none of HTTP_METHOD_NAMES */
@@ -117,9 +105,8 @@ private:
 
     const us_quic_header_t *headers;
     unsigned int headerCount;
-    std::string_view method, url, fullUrl, query, authority;
+    std::string_view url, fullUrl, query, authority;
     std::pair<int, std::string_view *> params{-1, nullptr};
-    char methodLower[32];
     bool yield = false;
     uint8_t methodId = HTTP_METHOD_NONE;
 };

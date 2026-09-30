@@ -1400,30 +1400,14 @@ where
         }
     }
 
-    #[inline]
-    fn req_method(r: *mut Req<SSL_ENABLED, MUX>) -> &'static [u8] {
-        // SAFETY: r is a live uWS/lsquic request handle for the duration of
-        // the request callback; both surfaces return request-owned slices.
-        unsafe {
-            if MUX {
-                (*r.cast::<bun_uws_sys::h3::Request>()).method()
-            } else {
-                (*r.cast::<bun_uws_sys::Request>()).method()
-            }
-        }
-    }
-
     pub(crate) fn create(
         this: &mut core::mem::MaybeUninit<Self>,
         server: *mut ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
-        method: Option<Method>,
+        method: Method,
     ) {
-        let resolved_method = method
-            .or_else(|| Method::which(Self::req_method(req)))
-            .unwrap_or(Method::GET);
         let any_req = Self::any_request(req);
         let range = RangeRequest::raw_from_request(&any_req);
         let if_range = RangeRequest::if_range_from_request(&any_req, range);
@@ -1434,7 +1418,7 @@ where
                 root: Cell::new(slot),
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
-                method: resolved_method,
+                method,
                 server: Cell::new(
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
                 ),

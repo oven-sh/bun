@@ -263,9 +263,9 @@ size_t uws_h3_req_get_url(uws_h3_req_t* req, const char** dest)
     return ffi_sv(((Http3Request*)req)->getFullUrl(), dest);
 }
 
-size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
+uint8_t uws_h3_req_get_method_id(uws_h3_req_t* req)
 {
-    return ffi_sv(((Http3Request*)req)->getMethod(), dest);
+    return ((Http3Request*)req)->getMethodId();
 }
 
 size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_len, const char** dest)

@@ -1,5 +1,7 @@
 use core::ffi::c_ushort;
 
+use bun_http_types::Method::Method;
+
 use crate::h3::Request as H3Request;
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
@@ -20,7 +22,7 @@ impl AnyRequest {
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
-    pub fn method(&self) -> &[u8] {
+    pub fn method(&self) -> Method {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).method(),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).method(),
@@ -40,6 +42,15 @@ impl AnyRequest {
     }
 }
 
+/// The method of a request that reached a route handler, from the id uWS
+/// resolved when it parsed the request. `HttpRouter::route()` runs a handler
+/// only for an id that is a `Method` discriminant
+/// (packages/bun-uws/src/HttpRouter.h).
+#[inline]
+pub(crate) fn method_from_id(id: u8) -> Method {
+    Method::from_repr(id).expect("uWS ran a route handler for a request with no method id")
+}
+
 bun_opaque::opaque_ffi! {
     /// uWS::Request C++ -> Rust bindings.
     pub struct Request;
@@ -56,12 +67,8 @@ impl Request {
         // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
-    pub fn method(&self) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        let len = c::uws_req_get_method(self, &mut ptr);
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no method is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
+    pub fn method(&self) -> Method {
+        method_from_id(c::uws_req_get_method_id(self))
     }
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
         debug_assert!(name[0].is_ascii_lowercase());
@@ -102,7 +109,7 @@ mod c {
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through-ptr precondition, so `safe fn`.
         pub(super) safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
-        pub(super) safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
+        pub(super) safe fn uws_req_get_method_id(res: &Request) -> u8;
         pub(super) fn uws_req_get_header(
             res: *const Request,
             lower_case_header: *const u8,

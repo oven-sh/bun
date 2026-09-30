@@ -538,17 +538,6 @@ struct HttpResponseData;
             return methodId;
         }
 
-        std::string_view getMethod()
-        {
-            /* Compatibility hack: lower case method (todo: remove when major version bumps) */
-            for (unsigned int i = 0; i < headers->key.length(); i++)
-            {
-                ((char *)headers->key.data())[i] |= 32;
-            }
-
-            return headers->key;
-        }
-
         /* Finds and decodes the URI component. */
         std::string_view getQuery(std::string_view key)
         {

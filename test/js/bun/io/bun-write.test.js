@@ -891,6 +891,18 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    // On POSIX main empties the destination for a directory source, with or without a window.
+    it.skipIf(!isWindows)("a window of a directory rejects and leaves the destination alone", async () => {
+      using dir = tempDir("bun-write-src-slice-dir", { "dst.txt": content, "sub/keep.txt": "" });
+      const dst = join(String(dir), "dst.txt");
+
+      const error = await Bun.write(dst, Bun.file(join(String(dir), "sub")).slice(0, 10)).then(
+        () => null,
+        e => e,
+      );
+      expect({ code: error?.code, kept: fs.readFileSync(dst, "utf8") }).toEqual({ code: "EISDIR", kept: content });
+    });
+
     it("a window of a file descriptor", async () => {
       using dir = tempDir("bun-write-src-slice-fd", { "src.txt": content });
       const dst = join(String(dir), "dst.txt");

@@ -1190,17 +1190,6 @@ impl<'a> CopyFileWindows<'a> {
     }
 }
 
-/// Two descriptors of one file have the volume and the file index in common.
-#[cfg(windows)]
-fn is_same_file(a: Fd, b: Fd) -> bool {
-    match (bun_sys::fstat(a), bun_sys::fstat(b)) {
-        (bun_sys::Result::Ok(a), bun_sys::Result::Ok(b)) => {
-            a.st_ino != 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino
-        }
-        _ => false,
-    }
-}
-
 #[cfg(windows)]
 impl ReadWriteLoop {
     pub(crate) fn close(&mut self) {
@@ -1461,20 +1450,10 @@ impl<'a> CopyFileWindows<'a> {
     fn prepare_pathlike(
         pathlike: &mut PathOrFileDescriptor,
         must_close: &mut bool,
-        is_reading: bool,
+        flags: i32,
     ) -> bun_sys::Result<Fd> {
         if let PathOrFileDescriptor::Path(path) = pathlike {
-            let fd = match bun_sys::openat_windows_a(
-                Fd::INVALID,
-                path.slice(),
-                if is_reading {
-                    bun_sys::O::RDONLY
-                } else {
-                    // No `O_TRUNC`: the destination can be the file that the loop reads.
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT
-                },
-                0,
-            ) {
+            let fd = match bun_sys::openat_windows_a(Fd::INVALID, path.slice(), flags, 0) {
                 bun_sys::Result::Ok(result) => match result.make_libuv_owned() {
                     Ok(fd) => fd,
                     Err(_) => {
@@ -1499,6 +1478,20 @@ impl<'a> CopyFileWindows<'a> {
         }
     }
 
+    /// The destination path names the file of `source`. `uv_fs_copyfile` compares the same two fields.
+    fn destination_is(&self, source: &bun_sys::Stat) -> bool {
+        let PathOrFileDescriptor::Path(path) = &self.destination_file_store.data.as_file().pathlike
+        else {
+            return false;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        bun_sys::stat(path.slice_z(&mut buf)).is_ok_and(|destination| {
+            source.st_ino != 0
+                && destination.st_dev == source.st_dev
+                && destination.st_ino == source.st_ino
+        })
+    }
+
     fn prepare_read_write_loop(&mut self) {
         // A source that cannot be opened must leave the destination untouched.
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
@@ -1506,7 +1499,7 @@ impl<'a> CopyFileWindows<'a> {
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_source_fd,
-            true,
+            bun_sys::O::RDONLY,
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
@@ -1515,12 +1508,34 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
+        let source_stat = bun_sys::fstat(self.read_write_loop.source_fd).ok();
+        if source_stat.as_ref().is_some_and(|stat| {
+            bun_sys::kind_from_mode(stat.st_mode as _) == bun_sys::FileKind::Directory
+        }) {
+            self.throw(bun_sys::Error::from_code(
+                bun_sys::E::EISDIR,
+                bun_sys::Tag::open,
+            ));
+            return;
+        }
+        self.apply_source_view(self.read_write_loop.source_fd);
+        // For one file, the loop must read the window before anything cuts the file.
+        self.read_write_loop.same_file = self.read_write_loop.remaining != 0
+            && source_stat
+                .as_ref()
+                .is_some_and(|stat| self.destination_is(stat));
+        let truncate = if self.read_write_loop.same_file {
+            0
+        } else {
+            bun_sys::O::TRUNC
+        };
+
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
             &mut Store::data_mut(&self.destination_file_store)
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
-            false,
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | truncate,
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
@@ -1536,22 +1551,6 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
-        self.apply_source_view(self.read_write_loop.source_fd);
-        if self.read_write_loop.must_close_destination_fd {
-            let same_file = is_same_file(
-                self.read_write_loop.source_fd,
-                self.read_write_loop.destination_fd,
-            );
-            self.read_write_loop.same_file = same_file;
-            if !same_file || self.read_write_loop.remaining == 0 {
-                if let bun_sys::Result::Err(err) =
-                    bun_sys::ftruncate(self.read_write_loop.destination_fd, 0)
-                {
-                    self.throw(err);
-                    return;
-                }
-            }
-        }
         if self.read_write_loop.remaining == 0 {
             // An empty window: the destination is already truncated.
             self.on_complete(0);

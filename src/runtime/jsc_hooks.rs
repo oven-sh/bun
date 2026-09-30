@@ -1932,7 +1932,8 @@ fn console_print_runtime_object_inner<const C: bool>(
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
         let printed = unsafe { &mut *response }.write_format::<C>(formatter, writer_);
         formatter.printed(printed)?;
-        return Ok(true);
+        // A stored snapshot goes on to print it as an object too: `Response {}`.
+        return Ok(!formatter.is_exact());
     }
     if let Some(request) = value.as_::<Request>() {
         // SAFETY: `as_` returned a non-null `*mut Request` to the live native

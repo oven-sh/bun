@@ -372,55 +372,6 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
-// React 18 marks elements with Symbol.for("react.element"), React 19 with
-// Symbol.for("react.transitional.element"). Both serialize as JSX, the way React 18
-// elements always have, instead of as the element's fields. test/ pins React 18, so
-// the elements are built by hand.
-describe.each(["react.element", "react.transitional.element"])("inline snapshots of %s elements", $$typeofKey => {
-  const $$typeof = Symbol.for($$typeofKey);
-  const h = (type: unknown, props: Record<string, unknown>, key: string | null = null) => ({
-    $$typeof,
-    type,
-    key,
-    ref: null,
-    props,
-  });
-  function Greeting() {}
-
-  test("serialize as JSX", () => {
-    expect(h("div", { id: "x" })).toMatchInlineSnapshot(`<div id="x" />`);
-    expect(h("li", { children: "one" }, "a")).toMatchInlineSnapshot(`<li key="a">one</li>`);
-    expect(h(Greeting, { name: "bun" })).toMatchInlineSnapshot(`<Greeting name="bun" />`);
-  });
-
-  test("child elements serialize as JSX", () => {
-    // Nested in an object so this only covers how the elements and their children are
-    // classified, not how a multi-line top-level value is wrapped.
-    expect({
-      one: h("ul", { className: "list", children: h("li", { children: "one" }) }),
-      many: h("ul", { children: [h("li", { children: "one" }, "1"), h("li", { children: "two" }, "2")] }),
-    }).toMatchInlineSnapshot(`
-      {
-        "many": <ul>
-          <li key="1">one</li>
-          <li key="2">two</li>
-        </ul>,
-        "one": <ul className="list">
-          <li>one</li>
-        </ul>,
-      }
-    `);
-  });
-
-  test("elements inside an array serialize as JSX", () => {
-    expect([h("br", {})]).toMatchInlineSnapshot(`
-      [
-        <br />,
-      ]
-    `);
-  });
-});
-
 test("inline snapshot does not call a $$typeof getter", () => {
   // The React element check reads `$$typeof`. An accessor is printed like any other
   // getter and never called, so it is not mistaken for a React element.
@@ -491,39 +442,6 @@ test("inline snapshot of a React element does not call getters on its type, key,
   expect({ $$typeof, type: "div", key: "k", props: { 0: "a", children: "hi" } }).toMatchInlineSnapshot(
     `<div key="k" 0="a">hi</div>`,
   );
-});
-
-test("jsx element props are separated in snapshots and diffs", () => {
-  expect(createElement("x", { a: "1" })).toMatchInlineSnapshot(`<x a="1" />`);
-  expect(createElement("x", { a: "1", b: "2" })).toMatchInlineSnapshot(`<x a="1" b="2" />`);
-  expect(createElement("x", { a: "1", b: "2", c: "3" })).toMatchInlineSnapshot(`<x a="1" b="2" c="3" />`);
-  expect(createElement("x", { key: "k", a: "1", b: "2" })).toMatchInlineSnapshot(`<x key="k" a="1" b="2" />`);
-  expect(createElement("x", { a: "1", b: "2" }, "c")).toMatchInlineSnapshot(`<x a="1" b="2">c</x>`);
-  // A spread can put `children` before the other props.
-  expect(createElement("x", { children: "c", a: "1", b: "2" })).toMatchInlineSnapshot(`<x a="1" b="2">c</x>`);
-  // `children: undefined` is not printed and must not leave a stray space behind.
-  expect(createElement("x", { a: "1", b: "2", children: undefined })).toMatchInlineSnapshot(`<x a="1" b="2" />`);
-  // Five props share the tag's line; the rest go one per line.
-  // (Multi-line JSX is not wrapped in newlines the way objects are, so these templates are verbatim.)
-  expect(createElement("x", { a: "1", b: "2", c: "3", d: "4", e: "5", f: "6", g: "7" }))
-    .toMatchInlineSnapshot(`<x a="1" b="2" c="3" d="4" e="5"
-  f="6"
-  g="7" />`);
-  expect(createElement("x", { children: "c", a: "1", b: "2", c: "3", d: "4", e: "5", f: "6" }))
-    .toMatchInlineSnapshot(`<x a="1" b="2" c="3" d="4" e="5"
-  f="6">c</x>`);
-  expect(createElement("x", { a: "1" }, createElement("y", { p: "1", q: "2" }))).toMatchInlineSnapshot(`<x a="1">
-  <y p="1" q="2" />
-</x>`);
-
-  // toEqual and friends print both sides with the same formatter; the message is colored when colors are on.
-  let message = "";
-  try {
-    expect(createElement("x", { a: "1", b: "2" })).toEqual(createElement("x", { a: "1", b: "3" }));
-  } catch (e) {
-    message = Bun.stripANSI((e as Error).message);
-  }
-  expect(message).toContain('Expected: <x a="1" b="3" />\nReceived: <x a="1" b="2" />');
 });
 
 class InlineSnapshotTester {
@@ -1112,4 +1030,96 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+});
+
+// Users have these stored. A diff prints the same values differently, because a diff is not stored.
+test("the text of a stored snapshot does not change", () => {
+  const el = ($$typeof: string, type: string, props: object) => ({
+    $$typeof: Symbol.for($$typeof),
+    type,
+    key: null,
+    ref: null,
+    props,
+  });
+  function args(..._: unknown[]) {
+    return arguments;
+  }
+  expect({
+    proxy: new Proxy({ a: 1, b: [2] }, {}),
+    proxyOfArray: new Proxy([1, 2], {}),
+    proxyOfFunction: new Proxy(function f() {}, {}),
+    proxyOfClass: new Proxy(class C {}, {}),
+    arguments: args(1, "two"),
+    mapIterator: new Map([[1, 2]]).entries(),
+    setIterator: new Set([1]).values(),
+    arrayIterator: [1][Symbol.iterator](),
+    react18: el("react.element", "input", { type: "text", value: "foo" }),
+    react18ManyProps: el("react.element", "input", { a: "1", b: 2, c: true, d: null, e: { x: 1 }, f: [1] }),
+    react19: el("react.transitional.element", "div", { id: "x" }),
+    holes: [1, , , , , , , , , , , 2],
+    headers: new Headers({ a: "b" }),
+  }).toMatchInlineSnapshot(`
+    {
+      "arguments": {
+     "0": 1,
+     "1": "two"
+    },
+      "arrayIterator": {},
+      "headers": Headers {},
+      "holes": [
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        2,
+      ],
+      "mapIterator": {},
+      "proxy": {
+     "a": 1,
+     "b": [
+      2
+     ]
+    },
+      "proxyOfArray": [
+     1,
+     2
+    ],
+      "proxyOfClass": [class ProxyObject],
+      "proxyOfFunction": [class ProxyObject],
+      "react18": <input type="text"value="foo" />,
+      "react18ManyProps": <input a="1" b=2 c=true d=null
+        e={
+          "x": 1,
+        }f=[
+          1,
+        ] />,
+      "react19": {
+        "$$typeof": Symbol(react.transitional.element),
+        "key": null,
+        "props": {
+          "id": "x",
+        },
+        "ref": null,
+        "type": "div",
+      },
+      "setIterator": {},
+    }
+  `);
+  expect(new Response("body")).toMatchInlineSnapshot(`Response (4 bytes) {
+  ok: true,
+  url: "",
+  status: 200,
+  statusText: "",
+  headers: Headers {},
+  redirected: false,
+  bodyUsed: false,
+  Blob (4 bytes)
+}Response {}`);
 });

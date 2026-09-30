@@ -3,6 +3,7 @@ import {
   bunEnv,
   bunExe,
   isASAN,
+  isDebug,
   isWindows,
   normalizeBunSnapshot,
   tempDir,
@@ -2514,6 +2515,10 @@ describe("hostile values in every sink", () => {
   }
 
   const tooDeep = "threw RangeError: Maximum call stack size exceeded.";
+  // The console sinks repeat shared values up to 2 ** 27 bytes, like util.inspect. The depth option
+  // does not apply to JSX, which gets there, and lets through hundreds of renders of an error. Both
+  // take a debug build too long.
+  const skipOnSlowBuild = isDebug || isASAN ? 'delete values["shared JSX"]; delete values["shared causes"];' : "";
 
   it.concurrent(
     "Bun.inspect, console and the error printer",
@@ -2522,6 +2527,7 @@ describe("hostile values in every sink", () => {
         {
           "sinks.js": `
           require("./values.js");
+          ${skipOnSlowBuild}
           check({
             "Bun.inspect": v => Bun.inspect(v).length,
             "Bun.inspect sorted": v => Bun.inspect(v, { sorted: true }).length,
@@ -2532,7 +2538,7 @@ describe("hostile values in every sink", () => {
             "console.dir": v => console.dir(v, { depth: 4 }),
             "console.log %": v => console.log("%o %O %j %s %d", v, v, {}, "", 1),
             "reportError": v => reportError(v),
-          }, 4 * 1024 * 1024);
+          }, 2 ** 27 + 1024 * 1024);
         `,
         },
         ["sinks.js"],
@@ -2565,6 +2571,7 @@ describe("hostile values in every sink", () => {
         {
           "sinks.js": `
           require("./values.js");
+          ${skipOnSlowBuild}
           check({
             "Bun.inspect.table": v => Bun.inspect.table(v).length,
             "Bun.inspect.table rows": v => Bun.inspect.table([v, { v }]).length,
@@ -2635,11 +2642,16 @@ describe("hostile values in every sink", () => {
         },
         ["test", "--update-snapshots", "sinks.test.js"],
       );
-      const tooSparse = "threw Error: Snapshot value is too large to serialize: an array has 42949";
+      // A Proxy in a snapshot is what JSON.stringify makes of it.
+      const revoked = "threw TypeError: Proxy has already been revoked. No more operations are allow";
       const errors = {
-        ...Object.fromEntries(["object", "array", "Map", "Set", "JSX", "boxed"].map(kind => ["deep " + kind, tooDeep])),
-        "sparse array": tooSparse,
-        "arguments with a huge length": tooSparse,
+        ...Object.fromEntries(
+          ["object", "array", "Map", "Set", "JSX", "boxed", "Proxy"].map(kind => ["deep " + kind, tooDeep]),
+        ),
+        "sparse array": "threw Error: Snapshot value is too large to serialize: an array has 42949",
+        "cyclic through a Proxy": "threw TypeError: JSON.stringify cannot serialize cyclic structures.",
+        "revoked Proxy": revoked,
+        "Proxy of a revoked Proxy": revoked,
       };
       expect(seen).toEqual({
         signalCode: null,

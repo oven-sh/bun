@@ -48,7 +48,14 @@ pub(crate) struct SharedReferenceBudget {
 }
 
 impl SharedReferenceBudget {
-    pub(crate) const DISPLAY: Self = Self {
+    /// Where `util.inspect` stops descending, though it counts all output.
+    pub(crate) const CONSOLE: Self = Self {
+        bytes: 1 << 27,
+        past: PastBudget::Abbreviate,
+    };
+    /// The text of an error, which someone has to read, and a diff, which is
+    /// compared line by line.
+    pub(crate) const MESSAGE: Self = Self {
         bytes: 1024 * 1024,
         past: PastBudget::Abbreviate,
     };
@@ -359,7 +366,7 @@ impl<'a> Formatter<'a> {
 
     /// Whether the output is stored and compared, so that it is complete or it
     /// is an error.
-    pub(super) fn is_exact(&self) -> bool {
+    pub fn is_exact(&self) -> bool {
         self.shared_reference_budget.past == PastBudget::Throw
     }
 

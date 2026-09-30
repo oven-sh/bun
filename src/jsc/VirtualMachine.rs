@@ -7338,15 +7338,11 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                // How far down a chain of errors it sits is not nesting of its own.
-                let chain_depth = core::mem::take(&mut formatter.depth);
-                let result = if allow_ansi_color {
-                    formatter.format::<true>(tag, writer, error_instance, global_ref)
+                if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)?;
                 } else {
-                    formatter.format::<false>(tag, writer, error_instance, global_ref)
-                };
-                formatter.depth = chain_depth;
-                result?;
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)?;
+                }
                 writer.write_all(b"\n")?;
             }
         }

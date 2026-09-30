@@ -1660,7 +1660,7 @@ pub mod formatter {
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
                 style: Style::Console,
-                shared_reference_budget: SharedReferenceBudget::DISPLAY,
+                shared_reference_budget: SharedReferenceBudget::MESSAGE,
                 repeat_depth: 0,
                 repeat_bytes: None,
                 abbreviated: false,
@@ -1677,6 +1677,7 @@ pub mod formatter {
             this.indent = u32::from(options.default_indent);
             this.can_throw_stack_overflow = true;
             this.error_display_level = options.error_display_level;
+            this.shared_reference_budget = SharedReferenceBudget::CONSOLE;
             this
         }
 
@@ -1686,17 +1687,15 @@ pub mod formatter {
             this.single_line = true;
             this.max_depth = 5;
             this.can_throw_stack_overflow = true;
+            this.shared_reference_budget = SharedReferenceBudget::CONSOLE;
             this
         }
 
         /// A value Bun reports on its own: an uncaught exception, an unhandled
-        /// rejection, `reportError()`. It prints at the depth
-        /// `console.error(value)` prints at. The `cause` and `errors` walks
-        /// keep their own cap.
+        /// rejection, `reportError()`.
         pub fn error_handler(global_this: &'a JSGlobalObject) -> Self {
             let mut this = Self::new(global_this);
-            this.outer_max_depth = Some(this.max_depth);
-            this.max_depth = console_depth();
+            this.shared_reference_budget = SharedReferenceBudget::CONSOLE;
             this
         }
 
@@ -2139,6 +2138,9 @@ pub mod formatter {
         pub struct TagOptions: u8 {
             const HIDE_GLOBAL = 1 << 0;
             const DISABLE_INSPECT_CUSTOM = 1 << 1;
+            /// Classify like the formatter that wrote the snapshots users have
+            /// stored: what it did not know goes to `JSON.stringify`.
+            const STORED_SNAPSHOT = 1 << 2;
         }
     }
 
@@ -2239,7 +2241,8 @@ pub mod formatter {
 
             // If we check an Object has a method table and it does not it will crash
             if js_type != jsc::JSType::Object
-                && js_type != jsc::JSType::ProxyObject
+                && (js_type != jsc::JSType::ProxyObject
+                    || opts.contains(TagOptions::STORED_SNAPSHOT))
                 && value.is_callable()
             {
                 if value.is_class(global_this) {
@@ -2282,14 +2285,17 @@ pub mod formatter {
                     if typeof_symbol.is_same_value(
                         JSValue::symbol_for(global_this, b"react.element"),
                         global_this,
-                    )? || typeof_symbol.is_same_value(
-                        // For React 19 - https://github.com/oven-sh/bun/issues/17223
-                        JSValue::symbol_for(global_this, b"react.transitional.element"),
-                        global_this,
-                    )? || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, b"react.fragment"),
-                        global_this,
-                    )? {
+                    )? || (!opts.contains(TagOptions::STORED_SNAPSHOT)
+                        && typeof_symbol.is_same_value(
+                            // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                            JSValue::symbol_for(global_this, b"react.transitional.element"),
+                            global_this,
+                        )?)
+                        || typeof_symbol.is_same_value(
+                            JSValue::symbol_for(global_this, b"react.fragment"),
+                            global_this,
+                        )?
+                    {
                         return Ok(TagResult {
                             tag: TagPayload::JSX,
                             cell: js_type,
@@ -2300,6 +2306,22 @@ pub mod formatter {
 
             use jsc::JSType as T;
             let tag = match js_type {
+                T::DirectArguments
+                | T::ScopedArguments
+                | T::ClonedArguments
+                | T::MapIterator
+                | T::SetIterator
+                | T::WrapForValidIterator
+                | T::RegExpStringIterator
+                | T::JSArrayIterator
+                | T::Iterator
+                | T::IteratorHelper
+                | T::ProxyObject
+                    if opts.contains(TagOptions::STORED_SNAPSHOT) =>
+                {
+                    TagPayload::JSON
+                }
+
                 T::ErrorInstance => TagPayload::Error,
                 T::NumberObject => TagPayload::Double,
                 T::DerivedArray
@@ -3430,6 +3452,9 @@ pub mod formatter {
             };
             if self.disable_inspect_custom {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
+            }
+            if self.is_exact() {
+                opts |= TagOptions::STORED_SNAPSHOT;
             }
             opts
         }
@@ -5200,8 +5225,16 @@ pub mod formatter {
                         self.indent += 1;
                         let _ind = defer_decrement!(self.indent);
                         let mut printed_props: usize = 0;
+                        // Stored snapshots separate props by the slot of the
+                        // property, counted from 1 and compared as if from 0,
+                        // so the last two have nothing between them.
+                        let stored_snapshot = tag_opts.contains(TagOptions::STORED_SNAPSHOT);
+                        let mut slot: usize = 0;
+                        let slots_without_children =
+                            props_iter.len - usize::from(children_prop.is_some());
 
                         while let Some((prop, property_value)) = props_iter.next()? {
+                            slot += 1;
                             if prop.eq_ascii(b"children") {
                                 continue;
                             }
@@ -5214,7 +5247,11 @@ pub mod formatter {
                             }
 
                             // Five props fit on the tag's line; the rest go one per line.
-                            if !self.single_line && printed_props >= 5 {
+                            if stored_snapshot {
+                                if printed_props == 0 {
+                                    writer.space();
+                                }
+                            } else if !self.single_line && printed_props >= 5 {
                                 writer.write_all(b"\n");
                                 write_indent_n(self.indent, writer.ctx).expect("unreachable");
                             } else {
@@ -5246,6 +5283,15 @@ pub mod formatter {
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r>", true).as_bytes());
+                            }
+
+                            if stored_snapshot && slot + 1 < slots_without_children {
+                                if slot > 3 {
+                                    writer.write_all(b"\n");
+                                    write_indent_n(self.indent, writer.ctx).expect("unreachable");
+                                } else {
+                                    writer.space();
+                                }
                             }
                         }
                     }

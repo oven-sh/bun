@@ -11,6 +11,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 #include "VectorSizeLimit.h"
+#include "WebStreamsInternals.h"
 
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
@@ -36,9 +37,11 @@ struct BunTextAccumulator {
     bool hasString { false };
     bool hasBuffer { false };
 
-    // Appends a string chunk to the rope. On false the rope did not take it and the caller throws.
+    // On false the rope did not take the chunk, and the caller throws.
     ALWAYS_INLINE bool tryAppendString(const WTF::String& chunk)
     {
+        if (m_rope.hasOverflowed() || exceedsStringLimit(static_cast<size_t>(m_rope.length()) + chunk.length())) [[unlikely]]
+            return false;
         m_rope.append(chunk);
         if (m_rope.hasOverflowed()) [[unlikely]]
             return false;
@@ -47,10 +50,19 @@ struct BunTextAccumulator {
         return true;
     }
 
-    // The rope holds the string chunks that came after the last binary chunk.
+    // The rope holds the string chunks that came after the last binary chunk. A rope that overflowed counts.
     bool hasRope() const { return !m_rope.isEmpty(); }
-    unsigned ropeLength() const { return m_rope.length(); }
-    WTF::String ropeString() { return m_rope.toString(); }
+    // Null for a rope that overflowed, and the caller throws.
+    WTF::String tryRopeString()
+    {
+        if (m_rope.hasOverflowed()) [[unlikely]]
+            return {};
+        // toString() shrinks the buffer first, and asserts when that overflows the rope.
+        m_rope.shrinkToFit();
+        if (m_rope.hasOverflowed()) [[unlikely]]
+            return {};
+        return m_rope.toString();
+    }
 
     // Script adds a piece per write(), so growth is fallible. On false the caller throws after it drops the lock.
     bool tryAppendPieces(const WTF::AbstractLocker&, JSC::VM& vm, JSC::JSCell* owner, JSC::JSString* flushedRope, JSC::JSValue chunk)
@@ -99,7 +111,7 @@ struct BunTextAccumulator {
     }
 
 private:
-    // RecordOverflow: an append past the string limit is an error at the write site, not an abort.
+    // An overflowed builder has lost its text and asserts in length() and toString(): check hasOverflowed() first.
     WTF::StringBuilder m_rope { WTF::OverflowPolicy::RecordOverflow };
 };
 

@@ -425,7 +425,12 @@ static JSValue writeToTextSink(JSGlobalObject* globalObject, JSDirectStreamContr
         accumulator.hasBuffer = true;
         JSString* ropeString = nullptr;
         if (accumulator.hasRope()) {
-            ropeString = jsString(vm, accumulator.ropeString());
+            String rope = accumulator.tryRopeString();
+            if (rope.isNull()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            ropeString = jsString(vm, rope);
             RETURN_IF_EXCEPTION(scope, {});
         }
         // GC-allocation is done; the barrier container is only mutated under the cell lock, and the throw waits for the unlock.
@@ -484,11 +489,11 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Pure-string rope: the ONLY arm of the direct Text sink that strips a leading BOM.
     if (hasString && !hasBuffer) {
-        if (Bun::WebStreams::exceedsStringLimit(accumulator.ropeLength())) [[unlikely]] {
+        String rope = accumulator.tryRopeString();
+        if (rope.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return String();
         }
-        String rope = accumulator.ropeString();
         if (rope.length() && rope[0] == 0xFEFF)
             return rope.substring(1);
         return rope;
@@ -527,7 +532,11 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         }
     }
     if (accumulator.hasRope()) {
-        String rope = accumulator.ropeString();
+        String rope = accumulator.tryRopeString();
+        if (rope.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
+        }
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
         if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {

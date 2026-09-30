@@ -3566,6 +3566,261 @@ describe("script-sized stream containers throw when they cannot grow", () => {
   });
 });
 
+// write() throws when the text sink of a direct stream cannot take a string. The sink keeps the
+// text it has, so the caller can catch the error and continue. The child runs with a 64 KiB
+// synthetic allocation limit, which makes 64 KiB the longest text.
+describe("a direct stream's text sink keeps its text when it refuses a string", () => {
+  const LIMIT_BYTES = 64 * 1024;
+  const CHUNK = LIMIT_BYTES / 4;
+  const outOfMemory = "RangeError: Out of memory";
+  // What runs() in the child prints for the chunks of writeThreeChunks().
+  const threeChunks = `a${CHUNK} b${CHUNK} c${CHUNK}`;
+
+  const prelude = `
+    const describeError = e => e.name + ": " + e.message;
+    const chunk = letter => Buffer.alloc(${CHUNK}, letter).toString();
+    const tooLong = chunk("z") + chunk("z");
+    // "aaabbc" is "a3 b2 c1".
+    const runs = text => text.replace(/(.)\\1*/gs, (run, character) => character + run.length + " ").trim();
+    const writeThreeChunks = controller => {
+      for (const letter of "abc") controller.write(chunk(letter));
+    };
+    const tryWrite = (controller, value) => {
+      try {
+        controller.write(value);
+        return null;
+      } catch (e) {
+        return describeError(e);
+      }
+    };
+    const settle = promise => promise.then(text => ({ text: runs(text) }), e => ({ rejected: describeError(e) }));
+  `;
+  const runInSubprocess = async source => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${prelude}\n${source}`],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+  };
+
+  test.concurrent.each([
+    ["Bun.readableStreamToText(stream)", "Bun.readableStreamToText(stream)"],
+    ["stream.text()", "stream.text()"],
+    ["new Response(stream).text()", "new Response(stream).text()"],
+  ])("%s resolves with the text before the refused string", async (_name, consume) => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          writeThreeChunks(controller);
+          refused = tryWrite(controller, tooLong);
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(${consume})), refused }));
+    `);
+    expect(result).toEqual({ stdout: { text: threeChunks, refused: outOfMemory }, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent.each([
+    ["Bun.readableStreamToJSON(stream)", "Bun.readableStreamToJSON(stream)"],
+    ["stream.json()", "stream.json()"],
+    ["new Response(stream).json()", "new Response(stream).json()"],
+  ])("%s parses the text before the refused string", async (_name, consume) => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write('"' + chunk("a"));
+          controller.write(chunk("b"));
+          refused = tryWrite(controller, tooLong + tooLong);
+          controller.write('"');
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(${consume})), refused }));
+    `);
+    expect(result).toEqual({
+      stdout: { text: `a${CHUNK} b${CHUNK}`, refused: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a sink that is full takes no more characters", async () => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          writeThreeChunks(controller);
+          controller.write(chunk("d"));
+          refused = tryWrite(controller, "e");
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused }));
+    `);
+    expect(result).toEqual({
+      stdout: { text: `${threeChunks} d${CHUNK}`, refused: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a string after the refused string", async () => {
+    const result = await runInSubprocess(`
+      let refused, wrote;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          writeThreeChunks(controller);
+          refused = tryWrite(controller, tooLong);
+          wrote = controller.write("tail");
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused, wrote }));
+    `);
+    expect(result).toEqual({
+      stdout: { text: `${threeChunks} t1 a1 i1 l1`, refused: outOfMemory, wrote: 4 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("bytes after the refused string", async () => {
+    const result = await runInSubprocess(`
+      let refused, wrote;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          writeThreeChunks(controller);
+          refused = tryWrite(controller, tooLong);
+          wrote = controller.write(new TextEncoder().encode("yz"));
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused, wrote }));
+    `);
+    expect(result).toEqual({
+      stdout: { text: `${threeChunks} y1 z1`, refused: outOfMemory, wrote: 2 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an async pull() that returns after the refused string", async () => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          writeThreeChunks(controller);
+          await Promise.resolve();
+          refused = tryWrite(controller, tooLong);
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused }));
+    `);
+    expect(result).toEqual({ stdout: { text: threeChunks, refused: outOfMemory }, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("writes from a later task", async () => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          const { promise, resolve } = Promise.withResolvers();
+          setImmediate(() => {
+            writeThreeChunks(controller);
+            refused = tryWrite(controller, tooLong);
+            controller.write("tail");
+            controller.end();
+            resolve();
+          });
+          return promise;
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused }));
+    `);
+    expect(result).toEqual({
+      stdout: { text: `${threeChunks} t1 a1 i1 l1`, refused: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each([
+    ["close(error)", "controller.close(new Error('boom'))"],
+    ["error(e)", "controller.error(new Error('boom'))"],
+  ])("%s after the refused string rejects with that error", async (_name, fail) => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          writeThreeChunks(controller);
+          refused = tryWrite(controller, tooLong);
+          ${fail};
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused }));
+    `);
+    expect(result).toEqual({ stdout: { rejected: "Error: boom", refused: outOfMemory }, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent.each([
+    ["a sync pull()", "pull(controller)", ""],
+    ["an async pull()", "async pull(controller)", "await Promise.resolve();"],
+  ])("%s that does not catch the error rejects the consumer with it", async (_name, pull, wait) => {
+    const result = await runInSubprocess(`
+      let wroteTooLong = false;
+      const stream = new ReadableStream({
+        type: "direct",
+        ${pull} {
+          writeThreeChunks(controller);
+          ${wait}
+          controller.write(tooLong);
+          wroteTooLong = true;
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), wroteTooLong }));
+    `);
+    expect(result).toEqual({ stdout: { rejected: outOfMemory, wroteTooLong: false }, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("new Response(async generator).text() throws the error into the generator", async () => {
+    const result = await runInSubprocess(`
+      let thrown = null;
+      let yieldedTooLong = false;
+      async function* body() {
+        for (const letter of "abc") yield chunk(letter);
+        try {
+          yield tooLong;
+          yieldedTooLong = true;
+        } catch (e) {
+          thrown = describeError(e);
+          throw e;
+        }
+      }
+      console.log(JSON.stringify({ ...(await settle(new Response(body()).text())), thrown, yieldedTooLong }));
+    `);
+    expect(result).toEqual({
+      stdout: { rejected: outOfMemory, thrown: outOfMemory, yieldedTooLong: false },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the
 // destination and aborts the pipe's signal must not touch the released writer afterwards.
 // https://github.com/oven-sh/bun/pull/33193

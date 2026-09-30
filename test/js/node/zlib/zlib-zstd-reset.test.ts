@@ -25,8 +25,9 @@ const {
   ZSTD_e_end,
 } = zlib.constants;
 
-// An older Node makes a new zstd context in reset(), without the dictionary and
-// the parameters, so it skips the cases that need them. Bun always runs them.
+// An older Node skips every test here: its reset() makes a new zstd context,
+// without the dictionary and the parameters, and a Node as old as v24.3.0 has
+// no dictionary option for zstd. Bun always runs them.
 const runtimeKeepsOptions = (() => {
   if (process.versions.bun) return true;
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -76,7 +77,7 @@ function frame(options = compressOptions) {
   return run(zlib.createZstdCompress(options), half, rest);
 }
 
-test("each option changes the frame that the other tests compare with", async () => {
+resetTest("each option changes the frame that the other tests compare with", async () => {
   const expected = await frame();
   for (const without of ["dictionary", "pledgedSrcSize", "params"]) {
     assert.notDeepStrictEqual(await frame({ ...compressOptions, [without]: undefined }), expected, without);
@@ -122,8 +123,8 @@ resetTest("ZstdCompress: reset() between two frames keeps the options for the se
   assert.deepStrictEqual(Buffer.concat(chunks), await frame());
 });
 
-// The old reset() kept the pledged size too, so this holds on every Node.
-test("ZstdCompress: pledgedSrcSize applies again after reset()", async () => {
+// A session reset of zstd clears the pledged size. reset() sets it again.
+resetTest("ZstdCompress: pledgedSrcSize applies again after reset()", async () => {
   const stream = zlib.createZstdCompress({ pledgedSrcSize: input.length });
   stream.reset();
   await assert.rejects(run(stream, half, rest.subarray(1)), { code: "ZSTD_error_srcSize_wrong" });

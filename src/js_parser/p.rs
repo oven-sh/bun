@@ -228,6 +228,8 @@ pub struct StartsForParseOnly {
     pub wrappers: crate::parse::wrappers::Wrappers,
     /// What a lint parse keeps of the TypeScript syntax of the nodes that stay.
     pub attached: crate::parse::attached::Attached,
+    /// What a lint parse keeps of the type arguments after an expression and of the type parameters of an interface or of a type alias.
+    pub generics: crate::parse::generics::Generics,
     /// What the reference reports for the syntax errors of a lint parse, while the parse runs.
     pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
     /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
@@ -8436,6 +8438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if let Some(starts) = &mut self.starts_for_parse_only {
             starts.wrappers.rewind_to(snapshot.lexer.start);
+            starts.generics.rewind_to(snapshot.lexer.start);
         }
     }
 

@@ -779,10 +779,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
-                if !has_definite_assignment_assertion_operator {
-                    has_type_parameters = p.skip_type_script_type_parameters(
-                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
-                    )? != SkipTypeParameterResult::DidNotSkipAnything;
+                if !has_definite_assignment_assertion_operator && p.lexer.token == T::TLessThan {
+                    has_type_parameters = if p.starts_for_parse_only.is_some() {
+                        p.lint_type_parameters(None)?
+                    } else {
+                        p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?
+                            != SkipTypeParameterResult::DidNotSkipAnything
+                    };
                 }
             }
 

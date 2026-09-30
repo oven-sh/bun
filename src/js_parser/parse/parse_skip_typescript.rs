@@ -3063,10 +3063,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.local_type_names.put(name, true)?;
         }
 
-        let _ = self.skip_type_script_type_parameters(
-            TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
-        )?;
+        if self.lexer.token == T::TLessThan {
+            if self.starts_for_parse_only.is_some() {
+                self.lint_declaration_type_parameters()?;
+            } else {
+                let _ = self.skip_type_script_type_parameters(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+                )?;
+            }
+        }
 
         self.lexer.expect(T::TEquals)?;
         self.skip_type_script_type(Level::Lowest)?;
@@ -3086,10 +3092,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.local_type_names.put(name, true)?;
         }
 
-        let _ = self.skip_type_script_type_parameters(
-            TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
-        )?;
+        if self.lexer.token == T::TLessThan {
+            if self.starts_for_parse_only.is_some() {
+                self.lint_declaration_type_parameters()?;
+            } else {
+                let _ = self.skip_type_script_type_parameters(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
+                )?;
+            }
+        }
 
         self.parse_heritage_clauses()?;
         self.parse_object_type_members()
@@ -3553,6 +3565,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_type_arguments_with_backtracking)
+    }
+
+    /// `try_skip_type_script_type_arguments_with_backtracking` of a lint parse: the list that is built and the offset after its ">", where type arguments stand there.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn try_build_type_script_type_arguments_with_backtracking(
+        &mut self,
+    ) -> Option<(ts::List<ts::Type>, u32)> {
+        let mut arguments = None;
+        let is_kept = self.lexer_backtracker_bool(|p| {
+            arguments = p.build_type_script_type_arguments::<false, true>()?;
+            // Check the token after this and backtrack if it's the wrong one
+            if arguments.is_some() && !p.can_follow_type_arguments_in_expression() {
+                return Err(crate::Error::Backtrack);
+            }
+            Ok(())
+        });
+        if is_kept { arguments } else { None }
     }
 
     pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {

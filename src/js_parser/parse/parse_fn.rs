@@ -67,8 +67,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous functions can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                p.lint_type_parameters(None)?;
+            } else {
+                let _ =
+                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            }
         }
 
         // Introduce a fake block scope for function declarations inside if statements
@@ -561,8 +566,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous functions can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                p.lint_type_parameters(None)?;
+            } else {
+                let _ =
+                    p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            }
         }
 
         let func = p.parse_fn(

@@ -5,6 +5,7 @@ pub mod attached;
 pub mod erased;
 #[cfg(test)]
 mod erased_tests;
+pub mod generics;
 pub mod parse_entry;
 pub(crate) mod parse_fn;
 pub(crate) mod parse_import_export;
@@ -173,7 +174,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_auto_accessor: bool = false;
         let mut auto_accessor_loc = bun_ast::Loc::EMPTY;
 
-        if p.lexer.token == T::TExtends {
+        if p.lexer.token == T::TExtends
+            && Self::IS_TYPESCRIPT_ENABLED
+            && p.starts_for_parse_only.is_some()
+        {
+            extends = Some(p.lint_class_extends(class_keyword.loc)?);
+        } else if p.lexer.token == T::TExtends {
             p.lexer.next()?;
             extends = Some(p.parse_expr(Level::New)?);
 
@@ -191,14 +197,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if Self::IS_TYPESCRIPT_ENABLED {
             if p.lexer.is_contextual_keyword(b"implements") {
-                p.lexer.next()?;
-
-                loop {
-                    p.skip_class_implements_entry()?;
-                    if p.lexer.token != T::TComma {
-                        break;
-                    }
+                if p.starts_for_parse_only.is_some() {
+                    p.lint_class_implements(class_keyword.loc)?;
+                } else {
                     p.lexer.next()?;
+
+                    loop {
+                        p.skip_class_implements_entry()?;
+                        if p.lexer.token != T::TComma {
+                            break;
+                        }
+                        p.lexer.next()?;
+                    }
                 }
             }
         }
@@ -1316,11 +1326,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Even anonymous classes can have TypeScript type parameters
-        if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_parameters(
-                TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
-                    | TypeParameterFlag::ALLOW_CONST_MODIFIER,
-            )?;
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TLessThan {
+            if p.starts_for_parse_only.is_some() {
+                let owner = attached::Owner::class(class_keyword.loc);
+                p.lint_type_parameters(Some(owner))?;
+            } else {
+                let _ = p.skip_type_script_type_parameters(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                )?;
+            }
         }
         let mut class_opts = ParseClassOptions {
             allow_ts_decorators: true,
@@ -2336,9 +2351,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if Self::IS_TYPESCRIPT_ENABLED
                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
-                        match p
-                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            ) {
+                        let mut lint_type_lists = None;
+                        let skipped = if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                            p.lint_try_async_type_parameters(&mut lint_type_lists)?
+                        } else {
+                            p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()
+                        };
+                        match skipped {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
@@ -2353,11 +2372,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 };
                                 if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
-                                    return p.parse_paren_expr_for_lint_cold(
+                                    let value = p.parse_paren_expr_for_lint_cold(
                                         async_range.loc,
                                         level,
                                         opts,
-                                    );
+                                    )?;
+                                    let lists = lint_type_lists;
+                                    p.lint_async_type_lists(async_range.loc, value, lists);
+                                    return Ok(value);
                                 }
                                 return p.parse_paren_expr(async_range.loc, level, opts);
                             }

@@ -23,9 +23,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
-        if TYPESCRIPT {
-            // Pass a flag to the type argument skipper because we need to call
-            let _ = p.skip_type_script_type_arguments::<true, false>()?;
+        if TYPESCRIPT && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan) {
+            if p.starts_for_parse_only.is_some() {
+                p.lint_jsx_type_arguments(loc)?;
+            } else {
+                // Pass a flag to the type argument skipper because we need to call
+                let _ = p.skip_type_script_type_arguments::<true, false>()?;
+            }
         }
 
         let mut previous_string_with_backslash_loc = bun_ast::Loc::default();

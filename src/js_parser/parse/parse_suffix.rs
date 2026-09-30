@@ -211,7 +211,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                if p.starts_for_parse_only.is_some() {
+                    let of = crate::parse::generics::TypeArgumentsOf::OptionalCall;
+                    p.lint_type_arguments_after(*left, of)?;
+                } else {
+                    let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                }
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }
@@ -892,6 +897,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
+    /// Whether type arguments stand at the `<` after `left`: a parse without lint skips them, a lint parse builds and records them.
+    #[inline]
+    fn sfx_type_arguments(p: &mut Self, left: &Expr) -> bool {
+        if p.starts_for_parse_only.is_some() {
+            return p.lint_type_arguments_in_expression(*left);
+        }
+        p.try_skip_type_script_type_arguments_with_backtracking()
+    }
+
     fn sfx_t_less_than(
         p: &mut Self,
         level: Level,
@@ -902,8 +916,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
-        {
+        if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }
@@ -993,8 +1006,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
-        {
+        if Self::IS_TYPESCRIPT_ENABLED && Self::sfx_type_arguments(p, left) {
             *optional_chain = old_optional_chain;
             return Ok(Continuation::Next);
         }

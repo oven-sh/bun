@@ -200,9 +200,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     // "@x<y>" / "@x.y<z>"
                     if Self::IS_TYPESCRIPT_ENABLED
-                        && p.skip_type_script_type_arguments::<false, false>()?
+                        && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan)
                     {
-                        continue;
+                        let has_type_arguments = if p.starts_for_parse_only.is_some() {
+                            let of = crate::parse::generics::TypeArgumentsOf::Expression;
+                            p.lint_type_arguments_after(expr, of)?
+                        } else {
+                            p.skip_type_script_type_arguments::<false, false>()?
+                        };
+                        if has_type_arguments {
+                            continue;
+                        }
                     }
                     break;
                 }

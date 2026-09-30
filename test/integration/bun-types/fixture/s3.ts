@@ -29,3 +29,6 @@ doFileOps(
     type: "application/octet-stream",
   }),
 );
+
+s3.list({ prefix: "uploads/" }, { requestPayer: true });
+Bun.S3Client.list(null, { bucket: "my-bucket", requestPayer: true });

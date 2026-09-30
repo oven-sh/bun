@@ -176,6 +176,7 @@ pub(crate) fn list_objects(
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
+    request_payer: bool,
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
@@ -262,7 +263,7 @@ pub(crate) fn list_objects(
             content_encoding: None,
             acl: None,
             storage_class: None,
-            request_payer: false,
+            request_payer,
         },
         None,
     ) {

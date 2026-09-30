@@ -1,5 +1,6 @@
 import { S3Client, type S3Options } from "bun";
 import { describe, expect, it } from "bun:test";
+import { DEFAULT_CREDENTIALS, serve, SigningClient, type S3Server } from "s3-server";
 
 describe("s3 - Requester Pays", () => {
   const s3Options: S3Options = {
@@ -247,5 +248,63 @@ describe("s3 - Requester Pays", () => {
     const url = new URL(presignedUrl);
 
     expect(url.searchParams.get("x-amz-request-payer")).toBeNull();
+  });
+});
+
+describe("s3 - Requester Pays bucket", () => {
+  // An account that does not own the bucket. The bucket serves it only when it accepts the charge.
+  const requester = {
+    accessKeyId: "AKIAREQUESTER",
+    secretAccessKey: "requester-secret",
+    owner: { id: Buffer.alloc(64, "b").toString(), displayName: "requester", accountId: "222222222222" },
+  };
+  const payment = `<RequestPaymentConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Payer>Requester</Payer></RequestPaymentConfiguration>`;
+
+  /** A server with the bucket `bucket`, which has Requester Pays, and the object `key` in it. */
+  async function start(): Promise<S3Server> {
+    const server = serve({ buckets: ["bucket"], credentials: [DEFAULT_CREDENTIALS, requester] });
+    const owner = new SigningClient({ endpoint: server.url, ...DEFAULT_CREDENTIALS });
+    const setup = [
+      await owner.fetch("PUT", "/bucket", { query: { acl: "" }, headers: { "x-amz-acl": "public-read" } }),
+      await owner.fetch("PUT", "/bucket/key", { headers: { "x-amz-acl": "public-read" }, body: "Hello Bun!" }),
+      await owner.fetch("PUT", "/bucket", { query: { requestPayment: "" }, body: payment }),
+    ];
+    expect(setup.map(response => response.status)).toEqual([200, 200, 200]);
+    return server;
+  }
+
+  /** The options of a client for the account that does not own the bucket. */
+  const options = (server: S3Server): S3Options => ({
+    endpoint: server.url,
+    accessKeyId: requester.accessKeyId,
+    secretAccessKey: requester.secretAccessKey,
+    bucket: "bucket",
+  });
+
+  it("list() accepts the charge with requestPayer", async () => {
+    await using server = await start();
+    const keys = (response: Bun.S3ListObjectsResponse) => response.contents?.map(object => object.key);
+
+    expect(keys(await new S3Client({ ...options(server), requestPayer: true }).list({ prefix: "k" }))).toEqual(["key"]);
+    expect(keys(await new S3Client(options(server)).list(null, { requestPayer: true }))).toEqual(["key"]);
+    expect(keys(await S3Client.list(null, { ...options(server), requestPayer: true }))).toEqual(["key"]);
+
+    await expect(new S3Client(options(server)).list()).rejects.toMatchObject({ code: "AccessDenied" });
+    await expect(
+      new S3Client({ ...options(server), requestPayer: true }).list(null, { requestPayer: false }),
+    ).rejects.toMatchObject({ code: "AccessDenied" });
+  });
+
+  it("new Response(s3File) accepts the charge with requestPayer", async () => {
+    await using server = await start();
+    const redirect = (file: Bun.S3File) => fetch(new Response(file).headers.get("location")!);
+
+    const paid = await redirect(new S3Client({ ...options(server), requestPayer: true }).file("key"));
+    expect(await paid.text()).toBe("Hello Bun!");
+    expect(paid.status).toBe(200);
+
+    const refused = await redirect(new S3Client(options(server)).file("key"));
+    await refused.arrayBuffer();
+    expect(refused.status).toBe(403);
   });
 });

@@ -2165,11 +2165,7 @@ impl Lockfile {
         self.loaded_package_count = self.packages.len() as PackageID;
     }
 
-    /// Registers the `npm:` aliases of the dependency rows. No loader registers an alias, so a
-    /// lockfile that bun discards leaves none behind. The caller that keeps a lockfile of the
-    /// binary format calls this: bun.lockb, and what package-lock.json and yarn.lock migrate to.
-    /// A plain dependency follows the alias of a row of those, and not of bun.lock or pnpm-lock.yaml.
-    /// A row that the loader linked to a workspace is not an `npm:` row any more and registers none.
+    /// For the caller that keeps a lockfile of the binary format. No loader registers an alias.
     #[cold]
     pub(crate) fn record_dependency_row_aliases(
         &self,
@@ -2179,9 +2175,7 @@ impl Lockfile {
         record_npm_aliases(registry, &self.buffers.dependencies, buf);
     }
 
-    /// Registers the `npm:` aliases of the flat overrides and of the catalogs, for the caller
-    /// that keeps the lockfile and reads no overrides or catalogs from package.json. The parse
-    /// of those registers them otherwise.
+    /// For the caller that keeps the lockfile and reads no overrides or catalogs from package.json.
     #[cold]
     pub(crate) fn record_override_and_catalog_aliases(
         &self,

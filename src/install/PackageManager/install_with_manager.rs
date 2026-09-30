@@ -77,9 +77,7 @@ pub fn install_with_manager(
     let load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile() {
         let mgr: *mut PackageManager = manager;
         // SAFETY: `mgr` is the sole provenance root; `lockfile`, `*mgr`, and
-        // `*log` are disjoint storage. The bun.lock and bun.lockb loaders only
-        // read `manager`. A migration also writes to it, for example to the
-        // package.json cache and the manifest cache.
+        // `*log` are disjoint storage.
         unsafe {
             let log = (*mgr).log;
             (*mgr)

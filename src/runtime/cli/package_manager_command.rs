@@ -724,9 +724,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
             // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-            // cannot alias. `detect_and_load_other_lockfile` runs a migration,
-            // which reads `manager` and also writes to it, for example to the
-            // package.json cache and the manifest cache.
+            // cannot alias.
             let mut load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;

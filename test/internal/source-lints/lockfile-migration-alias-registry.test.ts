@@ -11,6 +11,10 @@ import path from "node:path";
 // compiler keeps them from it. These migrations hold one for other work. A new migration joins the list.
 const migrations = ["src/install/yarn.rs", "src/install/pnpm.rs"];
 const parserCall = /\b(?:[Dd]ependency::parse|parse_with_tag|parse_with_optional_tag)\s*\(/g;
+// A clone of a dependency, of the overrides or of the catalogs takes the registry as an argument (`Clone::clone`
+// takes none). The last two names are the alias map itself.
+const otherWay =
+  /\.clone_in\s*\(|\.clone_with_different_buffers\s*\(|\.clone\((?=\s*[^)\s])|\brecord_npm_alias\b|\bknown_npm_aliases\b/g;
 
 /** The arguments of the call whose "(" is at `open`. */
 function callArguments(code: string, open: number): string[] {
@@ -31,27 +35,52 @@ function callArguments(code: string, open: number): string[] {
   return args;
 }
 
-test("callArguments splits at the commas of the call itself", () => {
-  const code = "parse(name, Some(hash), &sliced.sub(&str[0..i]), None,\n)";
-  expect(callArguments(code, code.indexOf("("))).toEqual(["name", "Some(hash)", "&sliced.sub(&str[0..i])", "None"]);
+/** The number of parser calls in `source`, and each place that can register an alias, as "line: what". */
+function registryUses(source: string) {
+  // The whole file, so that a call broken over several lines is seen. Line comments go, newlines stay.
+  const code = source.replace(/\/\/.*$/gm, "");
+  const line = (index: number) => code.slice(0, index).split("\n").length;
+  const uses: string[] = [];
+  let parserCalls = 0;
+  for (const match of code.matchAll(parserCall)) {
+    parserCalls++;
+    const registry = callArguments(code, match.index + match[0].length - 1).at(-1);
+    if (registry !== "None") uses.push(`${line(match.index)}: ${registry}`);
+  }
+  for (const match of code.matchAll(otherWay)) uses.push(`${line(match.index)}: ${match[0]}`);
+  return { parserCalls, uses };
+}
+
+test("registryUses finds each way to the alias registry", () => {
+  const source = `Dependency::parse(name, Some(hash), &sliced.sub(&str[0..i]), None);
+dependency::parse_with_tag(
+    name, tag, &sliced, // Some(&mut *manager) in a comment
+    Some(&mut *manager),
+);
+dep.clone_in(manager, buf, &mut builder);
+dep.clone_with_different_buffers(manager, name_buf, version_buf, &mut builder);
+old.overrides.clone(
+    manager, old, this, &mut builder);
+manager.record_npm_alias(hash, &version);
+manager.known_npm_aliases.insert(hash, version);
+let name = name.clone();`;
+  expect(registryUses(source)).toEqual({
+    parserCalls: 2,
+    uses: [
+      "2: Some(&mut *manager)",
+      "6: .clone_in(",
+      "7: .clone_with_different_buffers(",
+      "8: .clone(",
+      "10: record_npm_alias",
+      "11: known_npm_aliases",
+    ],
+  });
 });
 
-test("a lockfile migration gives the dependency parser no alias registry", () => {
+test("a lockfile migration registers no alias", () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
-  const violations: string[] = [];
-  let calls = 0;
-  for (const file of migrations) {
-    // The whole file, so that a call broken over several lines is seen. Line comments go, newlines stay.
-    const code = readFileSync(path.join(repoRoot, file), "utf8").replace(/\/\/.*$/gm, "");
-    for (const match of code.matchAll(parserCall)) {
-      calls++;
-      const registry = callArguments(code, match.index + match[0].length - 1).at(-1);
-      if (registry !== "None") {
-        violations.push(`${file}:${code.slice(0, match.index).split("\n").length}: ${registry}`);
-      }
-    }
-  }
-  // The two migrations have eleven calls. None at all means they moved and this lint checks nothing.
-  expect(calls).toBeGreaterThan(5);
-  expect(violations).toEqual([]);
+  const found = migrations.map(file => ({ file, ...registryUses(readFileSync(path.join(repoRoot, file), "utf8")) }));
+  // The two migrations have eleven parser calls. None at all means they moved and this lint checks nothing.
+  expect(found.reduce((sum, { parserCalls }) => sum + parserCalls, 0)).toBeGreaterThan(5);
+  expect(found.flatMap(({ file, uses }) => uses.map(use => `${file}:${use}`))).toEqual([]);
 });

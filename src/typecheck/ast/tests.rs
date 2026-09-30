@@ -4,6 +4,7 @@ use crate::ast::*;
 use crate::core::{List, new_text_range};
 use crate::internal::FaultKind;
 use crate::tspath::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 const SOURCE: &[u8] = b"const x = 1;\nfunction f(a) { return a + x; }\n";
 
@@ -599,6 +600,62 @@ fn the_files_of_a_context_come_from_one_allocator() {
     };
     assert_eq!(overlap, Some(expected));
     assert!(IdAllocator::new().alloc(u32::MAX).is_none());
+}
+
+#[test]
+fn a_file_is_bound_once_whoever_asks() {
+    let ids = IdAllocator::new();
+    let file = build(&ids);
+    let runs = AtomicU32::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                let bound = file.bind_once(&ids, |a| {
+                    runs.fetch_add(1, Ordering::Relaxed);
+                    let root = file.source_file.root;
+                    a.set_symbol(root, a.new_symbol(SymbolFlags::VALUE_MODULE, b"m"));
+                });
+                assert_eq!(bound.symbol_count(), 1);
+            });
+        }
+    });
+    assert_eq!(runs.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn a_store_is_published_as_a_file_of_its_own() {
+    let ids = IdAllocator::new();
+    let arena = Arena::new();
+    let open = Open::new(&arena, &ids);
+    let none = Frozen::none();
+    let a = Ast::new(&none, &open);
+    let name = Factory::new(a).new_identifier(b"undefined");
+    let symbol = a.new_symbol(SymbolFlags::PROPERTY, b"undefined");
+    a.update_symbol(symbol, |s| s.value_declaration = name);
+    let globals = a.new_table();
+    a.table_set(globals, b"undefined", symbol);
+    let file = some(File::of_open(&open, &ids).ok());
+    let again = file.publish(&open, &ids).err();
+    assert_eq!(again, Some(PublishError::AlreadyPublished));
+
+    let reader_arena = Arena::new();
+    let reader_store = Open::new(&reader_arena, &ids);
+    let frozen = some(Frozen::of_files(&[&file]).ok());
+    let b = Ast::new(&frozen, &reader_store);
+    let base = some(file.bound()).base();
+    let published = b.table_get(SymbolTableId(base + 1), b"undefined");
+    assert_eq!(published, SymbolId(base + 1));
+    assert_eq!(b.sym(published).name, b"undefined");
+    let declaration = b.sym(published).value_declaration;
+    assert_eq!(declaration, NodeId(base + 1));
+    assert_eq!(b.kind(declaration), Kind::Identifier);
+    assert_eq!(b.text(declaration), b"undefined");
+    assert!(b.source_file_of(declaration).is_nil());
+
+    // A store with a list stays a store.
+    Factory::new(a).new_node_list(&[name]);
+    let with_list = File::of_open(&open, &ids).err();
+    assert_eq!(with_list, Some(PublishError::HasLists));
 }
 
 #[test]

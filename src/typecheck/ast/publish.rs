@@ -108,6 +108,13 @@ impl File {
         self.bound.get().ok_or(PublishError::AlreadyPublished)
     }
 
+    // A file that holds only the objects of an open store: what a program makes beside its source files.
+    pub fn of_open(open: &Open<'_>, ids: &IdAllocator) -> Result<File, PublishError> {
+        let file = File::default();
+        file.publish(open, ids)?;
+        Ok(file)
+    }
+
     // The objects of the open store as the bind result keeps them, with the ids of a new range.
     fn collect(&self, open: &Open<'_>, ids: &IdAllocator) -> Result<Bound, PublishError> {
         let (

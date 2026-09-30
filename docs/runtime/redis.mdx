@@ -423,6 +423,7 @@ When a connection is lost, the client automatically attempts to reconnect with e
 4. While disconnected, the client:
    - Queues commands if `enableOfflineQueue` is true (default)
    - Rejects commands immediately if `enableOfflineQueue` is false
+5. An attempt that fails before the server accepts the handshake counts as one attempt. This includes an error reply to `HELLO` (for example a wrong password or `max number of clients reached`), a failed TLS handshake, and an expired `connectionTimeout`. If the last attempt fails this way, the client rejects the queued commands with that error.
 
 ---
 

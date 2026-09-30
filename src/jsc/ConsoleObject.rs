@@ -3981,7 +3981,7 @@ pub mod formatter {
                 adapter.interface(),
                 C,
                 false,
-                false,
+                crate::virtual_machine::AggregateErrorHeader::Omitted,
             );
             Ok(())
         }

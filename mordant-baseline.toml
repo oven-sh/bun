@@ -114,7 +114,6 @@
 "always_unwrapped_option:src/runtime/node/node_fs.rs" = 1
 "always_unwrapped_option:src/runtime/webcore/streams.rs" = 1
 "bool_beside_option:src/runtime/shell/subproc.rs" = 1
-"defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "discarded_error:src/runtime/ffi/mod.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 29
@@ -146,7 +145,6 @@
 "generic_body_not_generic:src/runtime/socket/socket_body.rs" = 8
 "generic_body_not_generic:src/runtime/test_runner/diff/text_diff.rs" = 3
 "generic_body_not_generic:src/runtime/test_runner/expect.rs" = 1
-"generic_body_not_generic:src/runtime/test_runner/pretty_format.rs" = 1
 "generic_body_not_generic:src/runtime/webcore/Blob.rs" = 2
 "generic_body_not_generic:src/runtime/webcore/ReadableStream.rs" = 2
 "generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1

@@ -99,6 +99,16 @@ fn opt_js(v: JSValue) -> Option<JSValue> {
     }
 }
 
+fn displayed_endpoint(credentials: &S3Credentials) -> &[u8] {
+    if !credentials.endpoint.is_empty() {
+        &credentials.endpoint
+    } else if credentials.virtual_hosted_style {
+        b"https://<bucket>.s3.<region>.amazonaws.com"
+    } else {
+        b"https://s3.<region>.amazonaws.com"
+    }
+}
+
 pub(crate) fn write_format_credentials<const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
@@ -115,13 +125,7 @@ pub(crate) fn write_format_credentials<const ENABLE_ANSI_COLORS: bool>(
         // formatting).
         let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
-        let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
-            &credentials.endpoint
-        } else if credentials.virtual_hosted_style {
-            b"https://<bucket>.s3.<region>.amazonaws.com"
-        } else {
-            b"https://s3.<region>.amazonaws.com"
-        };
+        let endpoint = displayed_endpoint(credentials);
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;

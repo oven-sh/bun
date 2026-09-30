@@ -338,31 +338,33 @@ impl<'a> Formatter<'a> {
 
     /// The gate for an `Error` the error printer reached on its own: an
     /// uncaught exception, a `cause`, a member of `AggregateError.errors`.
-    /// `None` when there is nothing left to print. It runs with an exception
-    /// pending, which the error printer clears as it goes.
+    /// `Ok(None)` when there is nothing left to print. It runs with an
+    /// exception pending, which the error printer clears as it goes.
     pub(crate) fn with_error_entered<R>(
         &mut self,
         writer: &mut bun_core::io::Writer,
         error: JSValue,
         enable_ansi_colors: bool,
         print: impl FnOnce(&mut Self, &Entered, &mut bun_core::io::Writer) -> R,
-    ) -> Option<R> {
+    ) -> JsResult<Option<R>> {
         let entered = if enable_ansi_colors {
-            self.enter_holder::<true>(Tag::Error, writer, error)
+            self.enter_holder::<true>(Tag::Error, writer, error)?
         } else {
-            self.enter_holder::<false>(Tag::Error, writer, error)
-        }
-        .ok()??;
+            self.enter_holder::<false>(Tag::Error, writer, error)?
+        };
+        let Some(entered) = entered else {
+            return Ok(None);
+        };
         let _leave = Leave::new(self, &entered, error);
         if !entered.opens_repeat() {
-            return Some(print(self, &entered, writer));
+            return Ok(Some(print(self, &entered, writer)));
         }
         let mut counting = CountingWriter {
             inner: writer,
             written: self.repeat_counter(),
         };
         let mut adapter = DynWriteAdapter::new(&mut counting);
-        Some(print(self, &entered, adapter.interface()))
+        Ok(Some(print(self, &entered, adapter.interface())))
     }
 
     /// Whether the output is stored and compared, so that it is complete or it

@@ -5896,7 +5896,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
-            false,
+            AggregateErrorHeader::Omitted,
         );
     }
 
@@ -5909,7 +5909,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
-        aggregate_error_header_first: bool,
+        header: AggregateErrorHeader,
     ) {
         if !is_error_instance(value) {
             // The formatter guards any other value under its own tag.
@@ -5922,10 +5922,10 @@ impl VirtualMachine {
                 writer,
                 allow_ansi_color,
                 allow_side_effects,
-                aggregate_error_header_first,
+                header,
             );
         }
-        formatter.with_error_entered(
+        let entered = formatter.with_error_entered(
             writer,
             value,
             allow_ansi_color,
@@ -5939,10 +5939,12 @@ impl VirtualMachine {
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
-                    aggregate_error_header_first,
+                    header,
                 );
             },
         );
+        // A stack overflow stays pending for the sink that asked to have it thrown.
+        debug_assert!(entered.is_ok() || self.global().has_exception());
     }
 
     /// `entered` is `None` only for a value that is not an `Error`.
@@ -5956,7 +5958,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
-        aggregate_error_header_first: bool,
+        header: AggregateErrorHeader,
     ) {
         // Note: the post-print stack/exception_list block is handled at the
         // tail instead of via a drop guard (the body has no early-`?` returns
@@ -5977,7 +5979,7 @@ impl VirtualMachine {
         if let Some(errors) = errors {
             let members_past_cap =
                 formatter.depth.saturating_add(1) > formatter.error_chain_max_depth();
-            if members_past_cap || aggregate_error_header_first {
+            if members_past_cap || header == AggregateErrorHeader::First {
                 self.print_error_from_maybe_private_data(
                     entered,
                     value,
@@ -6097,7 +6099,7 @@ impl VirtualMachine {
                 Ok(false) => {}
                 Err(_) => global_ref.clear_exception(),
             }
-            if ctx.printed_member || members_past_cap || aggregate_error_header_first {
+            if ctx.printed_member || members_past_cap || header == AggregateErrorHeader::First {
                 return;
             }
             // `errors` is empty or not iterable: print the AggregateError itself.
@@ -6751,24 +6753,28 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
         if entered.is_none() && is_error_instance(error_instance) {
-            return formatter
-                .with_error_entered(
-                    writer,
-                    error_instance,
-                    allow_ansi_color,
-                    |formatter, entered, writer| {
-                        self.print_error_instance_js(
-                            Some(entered),
-                            error_instance,
-                            exception_list,
-                            formatter,
-                            writer,
-                            allow_ansi_color,
-                            allow_side_effects,
-                        )
-                    },
-                )
-                .unwrap_or(Ok(()));
+            let printed = formatter.with_error_entered(
+                writer,
+                error_instance,
+                allow_ansi_color,
+                |formatter, entered, writer| {
+                    self.print_error_instance_js(
+                        Some(entered),
+                        error_instance,
+                        exception_list,
+                        formatter,
+                        writer,
+                        allow_ansi_color,
+                        allow_side_effects,
+                    )
+                },
+            );
+            return match printed {
+                Ok(printed) => printed.unwrap_or(Ok(())),
+                // A stack overflow stays pending for the sink that asked to have
+                // it thrown. The caller clears what comes back as a `JSError`.
+                Err(_) => Ok(()),
+            };
         }
 
         // Note: stack-safety guard for the Error recursion path.
@@ -7374,7 +7380,7 @@ impl VirtualMachine {
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
-                    true,
+                    AggregateErrorHeader::First,
                 );
                 Ok(())
             } else {
@@ -7847,6 +7853,15 @@ impl Drop for ContextScope<'_> {
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }
     }
+}
+
+/// Whether an AggregateError prints itself when it has members to print.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum AggregateErrorHeader {
+    /// Its members stand in for it.
+    Omitted,
+    /// Itself, then its members.
+    First,
 }
 
 fn is_error_instance(value: JSValue) -> bool {

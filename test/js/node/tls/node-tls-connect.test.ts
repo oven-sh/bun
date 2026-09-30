@@ -3123,6 +3123,23 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     }
   });
 
+  it("an own `rejectUnauthorized: undefined` still rejects with NODE_TLS_REJECT_UNAUTHORIZED=0, as for tls.connect()", async () => {
+    // An own `undefined` is not an omitted key: the environment gives the default only for an omitted key.
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      using _ = rejectUnauthorizedScope(false);
+      const socket = new TLSSocket(raw, { rejectUnauthorized: undefined });
+      const events: string[] = [];
+      socket.on("secure", () => events.push("secure"));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      await new Promise(resolve => socket.once("close", resolve).once("secure", resolve));
+      expect(events).toEqual(["error DEPTH_ZERO_SELF_SIGNED_CERT"]);
+    } finally {
+      server.close();
+    }
+  });
+
   it("NODE_TLS_REJECT_UNAUTHORIZED=0 gives the warning of tls.connect() for a wrap too", async () => {
     // In a process of its own: the warning comes one time for each process.
     const script = `
@@ -3147,6 +3164,59 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       stderr: stderr.replace(/^\(node:\d+\) /, "").replace(/\(Use `.*` to show where the warning was created\)\n/, ""),
       exitCode,
     }).toEqual({ stdout: `${warning}\n`, stderr: `Warning: ${warning}\n`, exitCode: 0 });
+  });
+
+  it("an inherited rejectUnauthorized cannot turn the check of a wrap off", async () => {
+    // The rule of tls.connect(): only an own `rejectUnauthorized: false` of the caller accepts an untrusted certificate.
+    // In a process of its own, so that the test process keeps its Object.prototype.
+    const script = `
+      Object.prototype.rejectUnauthorized = false;
+      const net = require("node:net");
+      const tls = require("node:tls");
+      const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, socket => socket.on("error", () => {}));
+      server.listen(0, "127.0.0.1", async () => {
+        const cases = [
+          ["default options", undefined],
+          ["{ rejectUnauthorized: true }", { rejectUnauthorized: true }],
+          ["{ rejectUnauthorized: false }", { rejectUnauthorized: false }],
+        ];
+        const verdicts = await Promise.all(
+          cases.map(
+            ([name, options]) =>
+              new Promise(resolve => {
+                const raw = net.connect(server.address().port, "127.0.0.1", () => {
+                  const socket = new tls.TLSSocket(raw, options);
+                  let verdict;
+                  socket.on("error", error => (verdict = "error " + error.code));
+                  socket.on("secure", () => {
+                    verdict = "secure";
+                    socket.destroy();
+                  });
+                  socket.on("close", () => resolve(name + ": " + verdict));
+                });
+              }),
+          ),
+        );
+        for (const verdict of verdicts) console.log(verdict);
+        server.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ verdicts: stdout.trim().split("\n"), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+      verdicts: [
+        "default options: error DEPTH_ZERO_SELF_SIGNED_CERT",
+        "{ rejectUnauthorized: true }: error DEPTH_ZERO_SELF_SIGNED_CERT",
+        "{ rejectUnauthorized: false }: secure",
+      ],
+      exitCode: 0,
+      failureDetail: "",
+    });
   });
 
   it("verifies the chain but, unlike tls.connect({ socket }), not the hostname", async () => {

@@ -2673,7 +2673,12 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 // Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.
 Socket.prototype[kUpgradeClientTLS] = function (connection, servername) {
   this[kStandaloneWrap] = true;
-  Socket.prototype.connect.$call(this, { socket: connection, servername });
+  // Own, as in tls.connect(): connect() takes an inherited `rejectUnauthorized` for the caller's choice.
+  Socket.prototype.connect.$call(this, {
+    socket: connection,
+    servername,
+    rejectUnauthorized: this._rejectUnauthorized,
+  });
 };
 
 Socket.prototype.read = function read(size) {

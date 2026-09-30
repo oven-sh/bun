@@ -607,6 +607,10 @@ impl Options {
             self.enable.set(Enable::GLOBAL_VIRTUAL_STORE, val != b"0");
         }
 
+        if env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true) {
+            self.enable.set(Enable::BUNX_INSTALL, true);
+        }
+
         let default_disable_progress_bar: bool = 'brk: {
             if let Some(prog) = env.get(b"BUN_INSTALL_PROGRESS") {
                 break 'brk prog == b"0";
@@ -1009,7 +1013,9 @@ bitflags::bitflags! {
         /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
         /// `install.globalStore = true` in bunfig to enable.
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
-        // _: u6 padding
+        /// This process is the `bun add` that `bunx` spawns into its cache directory.
+        const BUNX_INSTALL           = 1 << 10;
+        // _: u5 padding
     }
 }
 
@@ -1116,5 +1122,9 @@ impl Enable {
     #[inline]
     pub(crate) fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
+    }
+    #[inline]
+    pub(crate) fn bunx_install(self) -> bool {
+        self.contains(Enable::BUNX_INSTALL)
     }
 }

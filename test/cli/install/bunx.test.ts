@@ -844,7 +844,8 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
 // spawns `bun add` into it. That install passed `--force` for every dist-tag
 // run and every tree older than 24 hours, which links every file of every
 // cached package again (#41211, #23597). Now `--force` is for an untrusted
-// tree only.
+// tree only, and the install repairs the one thing it can see without a pass
+// over the files: a bin target of the requested package that is gone.
 describe("bunx cache", () => {
   const cli = (label: string) =>
     `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)} + " with " + require("dep"));\n`;
@@ -859,6 +860,12 @@ describe("bunx cache", () => {
       "1.1.0": {
         manifest: { bin: { tool: "cli.js" }, dependencies: { dep: "1.0.0" } },
         files: { "cli.js": cli("tool 1.1.0") },
+      },
+    },
+    "nested-tool": {
+      "1.0.0": {
+        manifest: { bin: { "nested-tool": "bin/cli.js" }, dependencies: { dep: "1.0.0" } },
+        files: { "bin/cli.js": cli("nested-tool 1.0.0") },
       },
     },
     "no-bin-file": {
@@ -997,6 +1004,42 @@ describe("bunx cache", () => {
     // That install made the `.bin` entry again, so the tree is new again.
     expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", requests: [] });
   });
+
+  // On Windows the `.bin` shim stays when its target goes. For a spec that does
+  // not install on every run, bunx finds the shim and starts it.
+  const installsOnEveryRun = [
+    { args: ["tool@latest"], tree: "tool@latest", target: "tool/cli.js", stdout: "tool 1.0.0 with dep 1.0.0\n" },
+    {
+      args: ["nested-tool@latest"],
+      tree: "nested-tool@latest",
+      target: "nested-tool/bin/cli.js",
+      stdout: "nested-tool 1.0.0 with dep 1.0.0\n",
+    },
+  ];
+  const installsWhenBinIsMissing = [
+    { args: ["tool"], tree: "tool@latest", target: "tool/cli.js", stdout: "tool 1.0.0 with dep 1.0.0\n" },
+    { args: ["tool@1.0.0"], tree: "tool@1.0.0", target: "tool/cli.js", stdout: "tool 1.0.0 with dep 1.0.0\n" },
+    { args: ["-p", "tool", "tool"], tree: "tool@latest", target: "tool/cli.js", stdout: "tool 1.0.0 with dep 1.0.0\n" },
+  ];
+
+  it.concurrent.each([...installsOnEveryRun, ...(isWindows ? [] : installsWhenBinIsMissing)])(
+    "bunx $args installs the requested package again when its bin target is gone",
+    async ({ args, tree, target, stdout }) => {
+      using bunx = fixture();
+      expect(await bunx.run(...args)).toMatchObject({ stdout, exitCode: 0 });
+
+      const markers = await plantMarkers(bunx.tree(tree), "dep");
+      const binTarget = join(bunx.tree(tree), "node_modules", target);
+      await rm(binTarget);
+
+      const repaired = await bunx.run(...args);
+      expect(repaired).toMatchObject({ stdout, exitCode: 0 });
+      // From the install cache, and only the package that lost the file.
+      expect(repaired.requests.filter(path => path.endsWith(".tgz"))).toEqual([]);
+      expect(markers()).toEqual([true]);
+      expect(existsSync(binTarget)).toBe(true);
+    },
+  );
 
   it.concurrent("a package that does not ship the file its bin names is not linked again", async () => {
     using bunx = fixture();

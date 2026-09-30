@@ -730,6 +730,60 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// `bunx` only. `verify()` accepts the package the user asked for, but a file its
+    /// `bin` names is gone from `node_modules` and the cache has it. bunx cannot run
+    /// that package, so install it again. A package that never shipped the file is
+    /// left alone, or every run would install it again.
+    fn requested_package_lost_bin_target(
+        &self,
+        package_id: PackageID,
+        alias: &[u8],
+        installer: &PackageInstall<'_>,
+        resolution: &Resolution,
+    ) -> bool {
+        let manager = self.manager();
+        if !manager.options.enable.bunx_install()
+            || !resolution.tag.can_enqueue_install_task()
+            || !manager
+                .update_requests
+                .iter()
+                .any(|request| request.package_id == package_id)
+        {
+            return false;
+        }
+
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let mut cache_path_buf = bun_paths::path_buffer_pool::get();
+        let mut is_lost = |target: &[u8]| -> bool {
+            !target.is_empty()
+                && !bin::bin_target_escapes_package_dir(target)
+                && !Syscall::exists(join_abs_string_z::<platform::Auto>(
+                    self.node_modules.path.as_slice(),
+                    &[alias, target],
+                ))
+                && Syscall::exists_at(
+                    installer.cache_dir,
+                    join_z_buf::<platform::Auto>(
+                        cache_path_buf.as_mut_slice(),
+                        &[installer.cache_dir_subpath.as_bytes(), target],
+                    ),
+                )
+        };
+
+        let bin = self.bins[package_id as usize];
+        match bin.tag {
+            bin::Tag::File => is_lost(bin.file().slice(string_buf)),
+            bin::Tag::NamedFile => is_lost(bin.named_file()[1].slice(string_buf)),
+            bin::Tag::Map => bin
+                .map()
+                .get(lockfile.buffers.extern_strings.as_slice())
+                .chunks_exact(2)
+                .any(|entry| is_lost(entry[1].slice(string_buf))),
+            bin::Tag::Dir | bin::Tag::None => false,
+        }
+    }
+
     pub(crate) fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
@@ -1560,7 +1614,13 @@ impl<'a> PackageInstaller<'a> {
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
-            || !installer.verify(resolution, &self.root_node_modules_folder);
+            || !installer.verify(resolution, &self.root_node_modules_folder)
+            || self.requested_package_lost_bin_target(
+                package_id,
+                alias.slice(string_buf!()),
+                &installer,
+                resolution,
+            );
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()

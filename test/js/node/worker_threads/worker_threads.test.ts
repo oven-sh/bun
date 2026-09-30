@@ -693,6 +693,28 @@ describe("environmentData", () => {
     if (errors.length > 0) throw new Error(errors);
     expect(proc.exitCode).toBe(0);
   });
+
+  // The worker renders its uncaught error to text before it reports the error.
+  // The render of each cause must not render the rest of the chain twice.
+  test("is fired for an error with a chain of 30 assigned causes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const worker = new Worker(
+           'let e = new Error("leaf"); for (let i = 0; i < 30; i++) { const x = new Error("l" + i); x.cause = e; e = x; } throw e;',
+           { eval: true },
+         );
+         worker.on("error", error => console.log(error.name + ": " + error.message));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Error: l29\n", stderr: "", exitCode: 0 });
+  });
 });
 
 describe("error event", () => {

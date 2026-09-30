@@ -4,7 +4,7 @@
 #include "headers.h"
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
-#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/GetterSetter.h>
 
 namespace Bun {
 
@@ -245,29 +245,33 @@ static JSC::EncodedJSValue timersPromisesExport(JSGlobalObject* lexicalGlobalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(timersPromises.get(lexicalGlobalObject, Identifier::fromString(vm, name))));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+JSC_DEFINE_HOST_FUNCTION(setTimeoutPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
     return timersPromisesExport(globalObject, "setTimeout"_s);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+JSC_DEFINE_HOST_FUNCTION(setIntervalPromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
     return timersPromisesExport(globalObject, "setInterval"_s);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue, PropertyName))
+JSC_DEFINE_HOST_FUNCTION(setImmediatePromisifyCustomGetter, (JSGlobalObject * globalObject, CallFrame*))
 {
     return timersPromisesExport(globalObject, "setImmediate"_s);
 }
 
-static JSValue createTimerFunction(VM& vm, JSObject* globalObject, ASCIILiteral name, NativeFunction function, JSC::CustomGetterSetter::CustomGetter promisifyCustomGetter)
+static JSValue createTimerFunction(VM& vm, JSObject* owner, ASCIILiteral name, NativeFunction function, NativeFunction promisifyCustomGetter)
 {
-    auto* timerFunction = JSFunction::create(vm, globalObject->globalObject(), 1, name, function, ImplementationVisibility::Public);
-    // Same shape as Node's lib/timers.js: an enumerable, non-configurable accessor.
-    timerFunction->putDirectCustomAccessor(vm,
+    auto* globalObject = owner->globalObject();
+    auto* timerFunction = JSFunction::create(vm, globalObject, 1, name, function, ImplementationVisibility::Public);
+    // Same shape as Node's lib/timers.js: an enumerable, non-configurable accessor whose getter is named "get".
+    // Not a CustomGetterSetter: the three timer functions share one Structure, and the inline cache
+    // keys a CustomAccessor getter on the Structure, so a warm cache served another timer's getter.
+    auto* getter = JSFunction::create(vm, globalObject, 0, "get"_s, promisifyCustomGetter, ImplementationVisibility::Public);
+    timerFunction->putDirectAccessor(globalObject,
         Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s)),
-        CustomGetterSetter::create(vm, promisifyCustomGetter, nullptr),
-        PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete | 0);
+        GetterSetter::create(vm, globalObject, getter, jsUndefined()),
+        PropertyAttribute::Accessor | PropertyAttribute::DontDelete | 0);
     return timerFunction;
 }
 

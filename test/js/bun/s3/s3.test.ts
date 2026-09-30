@@ -1,10 +1,10 @@
 import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, SigningClient, spawnServer, type S3Server } from "s3-server";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -1511,6 +1511,164 @@ describe("s3-server", () => {
         });
       }
     }
+  });
+});
+
+describe("fetch with acl, storageClass and requestPayer", () => {
+  const bucket = "fetch-options";
+  let server: S3Server;
+  beforeAll(() => {
+    server = serve({ buckets: [bucket] });
+  });
+  afterAll(() => server.stop());
+
+  const bodies: Record<string, (dir: string) => BodyInit> = {
+    "string": () => "Hello Bun!",
+    "ArrayBuffer": () => new TextEncoder().encode("Hello Bun!").buffer,
+    "Uint8Array": () => new TextEncoder().encode("Hello Bun!"),
+    "Blob": () => new Blob(["Hello Bun!"]),
+    "URLSearchParams": () => new URLSearchParams({ hello: "bun" }),
+    "FormData": () => {
+      const form = new FormData();
+      form.append("hello", "bun");
+      return form;
+    },
+    "Bun.file": dir => Bun.file(path.join(dir, "body.txt")),
+    "ReadableStream": () =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("Hello Bun!"));
+          controller.close();
+        },
+      }),
+  };
+
+  const s3Options = (): S3Options => ({
+    ...server.clientOptions(),
+    acl: "public-read",
+    storageClass: "STANDARD_IA",
+    requestPayer: true,
+  });
+
+  /**
+   * What the last request for the key sent of the three options. The server
+   * refuses an `x-amz-*` header that the signature does not cover.
+   */
+  function sent(key: string) {
+    const request = server.requests.findLast(request => request.key === key)!;
+    return {
+      operation: request.operation,
+      acl: request.headers.get("x-amz-acl"),
+      storageClass: request.headers.get("x-amz-storage-class"),
+      requestPayer: request.headers.get("x-amz-request-payer"),
+    };
+  }
+
+  for (const method of ["PUT", "POST"]) {
+    for (const [name, body] of Object.entries(bodies)) {
+      it(`${method} with a ${name} body sends the three options`, async () => {
+        using dir = tempDir("s3-fetch-options", { "body.txt": "Hello Bun!" });
+        const key = `${method}-${name}`;
+        const response = await fetch(`s3://${bucket}/${key}`, { method, body: body(String(dir)), s3: s3Options() });
+        expect(await response.text()).toBe("");
+        expect(response.status).toBe(200);
+        expect(sent(key)).toEqual({
+          operation: "PutObject",
+          acl: "public-read",
+          storageClass: "STANDARD_IA",
+          requestPayer: "requester",
+        });
+
+        expect(server.buckets.get(bucket)!.current(key)!.storageClass).toBe("STANDARD_IA");
+        // The ACL `public-read` lets a request without a signature read the object.
+        const anonymous = await fetch(`${server.url}/${bucket}/${key}`);
+        await anonymous.arrayBuffer();
+        expect(anonymous.status).toBe(200);
+      });
+    }
+  }
+
+  const withoutBody: [name: string, init: RequestInit, status: number, operation: string][] = [
+    ["GET", {}, 200, "GetObject"],
+    ["GET with a range", { headers: { range: "bytes=0-4" } }, 206, "GetObject"],
+    ["HEAD", { method: "HEAD" }, 200, "HeadObject"],
+    ["DELETE", { method: "DELETE" }, 204, "DeleteObject"],
+  ];
+  for (const [index, [name, init, status, operation]] of withoutBody.entries()) {
+    it(`${name} sends requestPayer and not the options of an object`, async () => {
+      const key = `without-body-${index}`;
+      const put = await fetch(`s3://${bucket}/${key}`, {
+        method: "PUT",
+        body: "Hello Bun!",
+        s3: server.clientOptions(),
+      });
+      expect(put.status).toBe(200);
+
+      const response = await fetch(`s3://${bucket}/${key}`, { ...init, s3: s3Options() });
+      await response.arrayBuffer();
+      expect(response.status).toBe(status);
+      expect(sent(key)).toEqual({ operation, acl: null, storageClass: null, requestPayer: "requester" });
+    });
+  }
+
+  it("sends none of the options when the caller gives none", async () => {
+    const key = "no-options";
+    const none = { acl: null, storageClass: null, requestPayer: null };
+
+    const put = await fetch(`s3://${bucket}/${key}`, {
+      method: "PUT",
+      body: "Hello Bun!",
+      s3: { ...server.clientOptions(), requestPayer: false },
+    });
+    expect(put.status).toBe(200);
+    expect(sent(key)).toEqual({ operation: "PutObject", ...none });
+
+    const get = await fetch(`s3://${bucket}/${key}`, { s3: server.clientOptions() });
+    expect(await get.text()).toBe("Hello Bun!");
+    expect(sent(key)).toEqual({ operation: "GetObject", ...none });
+  });
+
+  it("PUT sends the ACL that the policy of a bucket requires", async () => {
+    const name = "acl-required";
+    server.createBucket(name);
+    const policy = {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Effect: "Deny",
+          Principal: "*",
+          Action: "s3:PutObject",
+          Resource: `arn:aws:s3:::${name}/*`,
+          Condition: { StringNotEquals: { "s3:x-amz-acl": "bucket-owner-full-control" } },
+        },
+      ],
+    };
+    const owner = new SigningClient({ endpoint: server.url, ...server.credentials });
+    const configured = await owner.fetch("PUT", `/${name}`, { query: { policy: "" }, body: JSON.stringify(policy) });
+    expect(configured.status).toBe(204);
+
+    const put = (s3: S3Options) => fetch(`s3://${name}/${name}`, { method: "PUT", body: "Hello Bun!", s3 });
+    const refused = await put(server.clientOptions());
+    await refused.arrayBuffer();
+    expect(refused.status).toBe(403);
+    const accepted = await put({ ...server.clientOptions(), acl: "bucket-owner-full-control" });
+    await accepted.arrayBuffer();
+    expect(accepted.status).toBe(200);
+  });
+
+  it("PUT with an ACL to a bucket that has ACLs disabled resolves with the error of S3", async () => {
+    const name = "acls-disabled";
+    server.createBucket(name).ownership = "BucketOwnerEnforced";
+
+    const response = await fetch(`s3://${name}/${name}`, {
+      method: "PUT",
+      body: "Hello Bun!",
+      s3: { ...server.clientOptions(), acl: "public-read" },
+    });
+    expect(await response.text()).toContain("<Code>AccessControlListNotSupported</Code>");
+    expect(response.status).toBe(400);
+    expect(sent(name)).toEqual({ operation: "PutObject", acl: "public-read", storageClass: null, requestPayer: null });
+    expect(server.buckets.get(name)!.current(name)).toBeUndefined();
   });
 });
 

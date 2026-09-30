@@ -1824,12 +1824,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if method == Method::POST {
             method = Method::PUT;
         }
+        // Only a PUT writes an object, so only a PUT sends `acl` and `storageClass`.
+        let (acl, storage_class) = if method == Method::PUT {
+            (
+                credentials_with_options.acl,
+                credentials_with_options.storage_class,
+            )
+        } else {
+            (None, None)
+        };
 
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
                 path: url.s3_path(),
                 method,
-                ..Default::default()
+                acl,
+                storage_class,
+                request_payer: credentials_with_options.request_payer,
+                content_hash: None,
+                content_md5: None,
+                search_params: None,
+                content_disposition: None,
+                content_type: None,
+                content_encoding: None,
             },
             None,
         ) {

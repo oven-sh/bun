@@ -1057,6 +1057,7 @@ pub struct SignQueryOptions {
 
 // transient param-pack struct; lifetime added because every field is a caller-owned
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
+// No `Default`: a caller names every field, so a new option stops the build at each sign site.
 #[derive(Clone, Copy)]
 pub struct SignOptions<'a> {
     pub path: &'a [u8],
@@ -1211,24 +1212,6 @@ pub enum SignError {
     FailedToGenerateSignature,
     #[error("NoSpaceLeft")]
     NoSpaceLeft,
-}
-
-impl<'a> Default for SignOptions<'a> {
-    fn default() -> Self {
-        Self {
-            path: b"",
-            method: Method::GET,
-            content_hash: None,
-            content_md5: None,
-            search_params: None,
-            content_disposition: None,
-            content_type: None,
-            content_encoding: None,
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -280,26 +280,41 @@ impl<'a> Formatter<'a> {
             self.add_for_new_line(1);
 
             let mut present = reader::PresentIndexes::default();
-            let mut expanded_until: u32 = 0;
+            // The element that ended a run of holes, so that it is read once.
+            let mut read_ahead = JSValue::ZERO;
             let mut i: u32 = 0;
             while i < len {
-                self.put(writer_, b"\n");
-                self.put_jest_indent(writer_);
-                if i >= expanded_until && value.get_direct_index(self.global_this, i)?.is_empty() {
-                    // At least this one, if the index was deleted since it was copied.
-                    let end = present.next(value, i, len).max(i + 1);
-                    if self.print_jest_hole_run(writer_, end - i)? {
-                        i = end;
-                        continue;
-                    }
-                    expanded_until = end;
+                let element = match core::mem::take(&mut read_ahead) {
+                    JSValue::ZERO => value.get_direct_index(self.global_this, i)?,
+                    element => element,
+                };
+                if !element.is_empty() {
+                    self.print_jest_array_item(writer_, element)?;
+                    i += 1;
+                    continue;
                 }
-                // For a hole: `undefined`, or what the prototype chain supplies.
-                let element = value.get_index(self.global_this, i)?;
-                let tag = self.tag_of(element)?;
-                self.format::<false>(tag, writer_, element, self.global_this)?;
-                self.put_jest_comma(writer_);
-                i += 1;
+
+                let mut end = i + 1;
+                while end < len {
+                    end = present.next(value, end, len);
+                    if end == len {
+                        break;
+                    }
+                    read_ahead = value.get_direct_index(self.global_this, end)?;
+                    if !read_ahead.is_empty() {
+                        break;
+                    }
+                    // Deleted since the indexes were copied: one more hole.
+                    end += 1;
+                }
+                if !self.print_jest_hole_run(writer_, end - i)? {
+                    for hole in i..end {
+                        // `undefined`, or what the prototype chain supplies.
+                        let element = value.get_index(self.global_this, hole)?;
+                        self.print_jest_array_item(writer_, element)?;
+                    }
+                }
+                i = end;
             }
         }
 
@@ -312,6 +327,19 @@ impl<'a> Formatter<'a> {
         }
         self.reset_line();
         self.add_for_new_line(1);
+        Ok(())
+    }
+
+    fn print_jest_array_item(
+        &mut self,
+        writer_: &mut dyn bun_io::Write,
+        element: JSValue,
+    ) -> JsResult<()> {
+        self.put(writer_, b"\n");
+        self.put_jest_indent(writer_);
+        let tag = self.tag_of(element)?;
+        self.format::<false>(tag, writer_, element, self.global_this)?;
+        self.put_jest_comma(writer_);
         Ok(())
     }
 
@@ -332,6 +360,8 @@ impl<'a> Formatter<'a> {
         if holes <= MAX_EXPANDED_HOLE_RUN {
             return Ok(false);
         }
+        self.put(writer_, b"\n");
+        self.put_jest_indent(writer_);
         self.putf(writer_, format_args!("{holes} x empty items"));
         // What that many lines of `undefined,` add, less the comma below.
         // `print_jest_promise` breaks the line on this count, and both sides

@@ -158,15 +158,11 @@ impl<R> StyleRule<R> {
     }
 
     fn to_css_base(&self, dest: &mut Printer, is_final_prefix_pass: bool) -> Result<(), PrintErr> {
-        use css::error::PrinterErrorKind;
-        use css::properties::Property;
-
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
         let supports_nesting = self.rules.v.len() == 0
             || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
 
-        let len =
-            self.declarations.declarations.len() + self.declarations.important_declarations.len();
+        let len = self.declarations.len();
         let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
         if has_declarations {
@@ -188,62 +184,14 @@ impl<R> StyleRule<R> {
             dest.whitespace()?;
             dest.write_char(b'{')?;
             dest.indent();
-
-            let mut i: usize = 0;
-            // A pair of (slice, important) tuples; declarations first, then
-            // important declarations.
-            let decls_groups: [(&[Property], bool); 2] = [
-                (self.declarations.declarations.as_slice(), false),
-                (self.declarations.important_declarations.as_slice(), true),
-            ];
-            for (decls, important) in decls_groups {
-                for decl in decls {
-                    // The CSS modules `composes` property is handled specially, and omitted during printing.
-                    // We need to add the classes it references to the list for the selectors in this rule.
-                    if let Property::Composes(composes) = decl {
-                        if dest.is_nested() && dest.css_module.is_some() {
-                            return dest.new_error(
-                                PrinterErrorKind::invalid_composes_nesting,
-                                Some(composes.cssparser_loc),
-                            );
-                        }
-
-                        if dest.css_module.is_some() {
-                            // `handle_composes` needs `&mut dest` while the
-                            // module also lives in `dest.css_module`. Move the
-                            // module out for the duration of the call, then put
-                            // it back before any `dest.new_error` early return.
-                            let mut cm = dest.css_module.take();
-                            let err = if let Some(css_module) = &mut cm {
-                                css_module
-                                    .handle_composes(
-                                        dest,
-                                        &self.selectors,
-                                        composes,
-                                        self.loc.source_index,
-                                    )
-                                    .err()
-                            } else {
-                                None
-                            };
-                            dest.css_module = cm;
-                            if let Some(error_kind) = err {
-                                return dest.new_error(error_kind, Some(composes.cssparser_loc));
-                            }
-                            continue;
-                        }
-                    }
-
-                    dest.newline()?;
-                    decl.to_css(dest, important)?;
-                    if i != len - 1 || !dest.minify || (supports_nesting && self.rules.v.len() > 0)
-                    {
-                        dest.write_char(b';')?;
-                    }
-
-                    i += 1;
-                }
-            }
+            let trailing_semicolon = !dest.minify || (supports_nesting && self.rules.v.len() > 0);
+            write_declarations(
+                &self.declarations,
+                Some(&self.selectors),
+                dest,
+                true,
+                trailing_semicolon,
+            )?;
         }
 
         fn helpers_newline<R>(
@@ -307,6 +255,58 @@ impl<R> StyleRule<R> {
         }
         Ok(())
     }
+}
+
+/// Writes a rule body's declarations, one per line; `composes` is validated against `selectors`.
+pub(crate) fn write_declarations(
+    declarations: &DeclarationBlock<'_>,
+    selectors: Option<&selector::parser::SelectorList>,
+    dest: &mut Printer,
+    newline_before_first: bool,
+    trailing_semicolon: bool,
+) -> Result<(), PrintErr> {
+    use css::error::PrinterErrorKind;
+    use css::properties::Property;
+
+    let len = declarations.len();
+    let mut i: usize = 0;
+    let decls_groups: [(&[Property], bool); 2] = [
+        (declarations.declarations.as_slice(), false),
+        (declarations.important_declarations.as_slice(), true),
+    ];
+    for (decls, important) in decls_groups {
+        for decl in decls {
+            // CSS modules consume `composes` instead of printing it.
+            if let Property::Composes(composes) = decl {
+                if dest.is_nested() && dest.css_module.is_some() {
+                    return dest.new_error(
+                        PrinterErrorKind::invalid_composes_nesting,
+                        Some(composes.cssparser_loc),
+                    );
+                }
+
+                if let Some(css_module) = &dest.css_module {
+                    let err =
+                        selectors.and_then(|selectors| css_module.handle_composes(selectors).err());
+                    if let Some(error_kind) = err {
+                        return dest.new_error(error_kind, Some(composes.cssparser_loc));
+                    }
+                    continue;
+                }
+            }
+
+            if newline_before_first || i > 0 {
+                dest.newline()?;
+            }
+            decl.to_css(dest, important)?;
+            if i != len - 1 || trailing_semicolon {
+                dest.write_char(b';')?;
+            }
+
+            i += 1;
+        }
+    }
+    Ok(())
 }
 
 impl<R> StyleRule<R> {
@@ -377,33 +377,12 @@ impl<R> StyleRule<R> {
         Ok(false)
     }
 
-    /// Charge this rule's selectors against the selector-expansion budget.
-    ///
-    /// Compiling the enclosing nesting away for the targets repeats this rule's
-    /// selectors once per combination of the enclosing style rules' selectors.
-    /// That expansion is multiplicative across nesting levels, so bound it —
-    /// otherwise a few hundred bytes of deeply nested multi-selector rules
-    /// expand into gigabytes of cloned rules and output. See
-    /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
+    /// See [`MinifyContext::charge_selector_expansion`].
     pub(crate) fn charge_selector_expansion(
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
-        if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
-                context.err = Some(crate::error::MinifyError {
-                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
-                    loc: self.loc,
-                });
-                return Err(MinifyErr::minify_err);
-            }
-        }
-        Ok(())
+        context.charge_selector_expansion(self.selectors.v.len(), self.loc)
     }
 
     /// Minify this rule's nested rules, bumping the selector-expansion

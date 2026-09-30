@@ -394,10 +394,6 @@ function endNT(socket, callback, err) {
   socket.shutdown();
   callback(err);
 }
-// On the native socket: an upgrade assigns `_handle` after `open`, and the handshake starts when `open` returns.
-function applySession(socket, session) {
-  socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
-}
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
@@ -765,7 +761,9 @@ const SocketHandlers = {
 
     if (options) {
       const { session } = options;
-      if (session) applySession(socket, session);
+      if (session) {
+        (self as TLSSocketInstance).setSession(session);
+      }
     }
 
     if (self[kSetNoDelay]) {
@@ -1506,7 +1504,10 @@ const SocketHandlers2 = {
       const options = self[bunTLSConnectOptions];
       if (options) {
         const { session } = options;
-        if (session) applySession(socket, session);
+        if (session) {
+          // On the native socket: an fd upgrade assigns `_handle` after `open`.
+          socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
+        }
       }
     }
     if (!self[kupgraded]) req.oncomplete(0, self._handle, req, true, true);

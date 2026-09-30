@@ -733,7 +733,6 @@ const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
-const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
@@ -1080,9 +1079,8 @@ TLSSocket.prototype.setServername = function setServername(name) {
 
 TLSSocket.prototype.setSession = function setSession(session) {
   this[ksession] = session;
-  // Only stored for `open`: BoringSSL aborts the process when a session is set after the handshake started.
-  const options = this[bunTLSConnectOptions];
-  if (options) options.session = session;
+  if (typeof session === "string") session = Buffer.from(session, "latin1");
+  return this._handle?.setSession?.(session);
 };
 
 TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(detailed) {

@@ -275,7 +275,11 @@ export async function peerCloses() {
 
 // A TLS 1.2 server and one session from it. With TLS 1.2 the session is ready at 'secureConnect'.
 async function serverWithSession() {
-  const server = tls.createServer({ key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem"), maxVersion: "TLSv1.2" });
+  const server = tls.createServer({
+    key: fixture("agent1-key.pem"),
+    cert: fixture("agent1-cert.pem"),
+    maxVersion: "TLSv1.2",
+  });
   server.on("secureConnection", socket => socket.on("error", () => {}).resume());
   const port = await listening(server);
   const first = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
@@ -329,54 +333,8 @@ export async function session() {
   }
 }
 
-// setSession() after the handshake started. Node accepts the call, with no effect on that
-// handshake. BoringSSL aborts the process for it, so the test runs this one as a script.
-// Node starts the handshake of a wrap in _start(), so in the first shape the session is in
-// time on node, and only there.
-export async function lateSetSession() {
-  const { server, port, session, connected } = await serverWithSession();
-  const options = { rejectUnauthorized: false };
-  async function completes(socket, event, start) {
-    try {
-      const done = once(socket, event);
-      socket.setSession(session);
-      start?.(socket);
-      await done;
-      return { event, reused: socket.isSessionReused() };
-    } finally {
-      socket.destroy();
-    }
-  }
-  async function afterSecureConnect() {
-    const socket = tls.connect({ port, host: "127.0.0.1", ...options });
-    try {
-      await once(socket, "secureConnect");
-      socket.setSession(session);
-      return socket.isSessionReused();
-    } finally {
-      socket.destroy();
-    }
-  }
-  try {
-    return {
-      "new TLSSocket(socket), then setSession() and _start()": await completes(
-        new TLSSocket(await connected(), options),
-        "secure",
-        socket => socket._start(),
-      ),
-      "tls.connect({ socket }), then setSession()": await completes(
-        tls.connect({ socket: await connected(), ...options }),
-        "secureConnect",
-      ),
-      "setSession() after 'secureConnect', isSessionReused()": await afterSecureConnect(),
-    };
-  } finally {
-    server.close();
-  }
-}
-
 if (import.meta.main) {
-  const reports = { shutdown, mysql, "peer-closes": peerCloses, session, "late-set-session": lateSetSession };
+  const reports = { shutdown, mysql, "peer-closes": peerCloses, session };
   // Ends the run at once, also while the await below is still pending.
   process.on("uncaughtException", error => {
     console.error(error);

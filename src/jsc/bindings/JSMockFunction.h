@@ -1,8 +1,13 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Strong.h>
+
+namespace JSC {
+class JSModuleNamespaceObject;
+}
 
 namespace WebCore {
 }
@@ -13,6 +18,14 @@ using namespace JSC;
 using namespace WebCore;
 
 class JSMockFunction;
+
+// A spyOn() of a module export: the namespace the spy went through and the value it replaced.
+struct ModuleExportSpy {
+    JSC::JSModuleNamespaceObject* ns;
+    JSC::Identifier exportName;
+    JSC::JSValue original;
+};
+std::optional<ModuleExportSpy> moduleExportSpy(JSC::JSValue);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {

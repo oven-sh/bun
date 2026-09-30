@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { type Suite, corpusPaths, suites } from "./runner/paths";
 
 const usage = `usage: bun test/cli/lint/conformance/update-reference.ts [options] <typescript-go clone>
@@ -84,6 +84,9 @@ interface Options {
   clone: string;
 }
 
+// askGo starts the go command in a directory of its own: a path is resolved against the working directory, a bare name is left to PATH.
+const commandOf = (text: string) => (basename(text) === text ? text : resolve(text));
+
 function parseArguments(argv: readonly string[]): Options {
   const o: Options = { check: false, enumerate: false, log: undefined, goVersion: undefined, go: undefined, clone: "" };
   const rest: string[] = [];
@@ -97,7 +100,7 @@ function parseArguments(argv: readonly string[]): Options {
     else if (arg === "--enumerate") o.enumerate = true;
     else if (arg === "--log") o.log = resolve(value());
     else if (arg === "--go-version") o.goVersion = value();
-    else if (arg === "--go") o.go = value();
+    else if (arg === "--go") o.go = commandOf(value());
     else if (arg.startsWith("-")) stop(2, `unknown option ${arg}\n\n${usage}`);
     else rest.push(arg);
   }
@@ -137,13 +140,17 @@ function git(clone: string, args: readonly string[]): { ok: boolean; out: Buffer
     if (value !== undefined && !key.startsWith("GIT_")) env[key] = value;
   }
   Object.assign(env, { LC_ALL: "C", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "" });
-  const p = Bun.spawnSync(["git", "-C", clone, "-c", "core.quotePath=false", ...args], {
-    env,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  return { ok: p.exitCode === 0, out: p.stdout, err: p.stderr.toString().trim() };
+  try {
+    const p = Bun.spawnSync(["git", "-C", clone, "-c", "core.quotePath=false", ...args], {
+      env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { ok: p.exitCode === 0, out: p.stdout, err: p.stderr.toString().trim() };
+  } catch (e) {
+    return stop(2, `cannot start git: ${(e as Error).message}`);
+  }
 }
 
 function gitText(clone: string, args: readonly string[]): string {
@@ -564,9 +571,13 @@ interface GoAnswers {
   directives: { inputs: string; expected: string };
 }
 
+// What the go command or the program that it built could not do. It is thrown and not given to stop, which ends the process before a finally runs.
+class GoFailure extends Error {}
+
 // Builds the program in a temporary directory and runs it: the tables, and the reference's parser on the inputs.
 function askGo(go: string, program: GoProgram): { answers: GoAnswers; expected: Buffer } {
   const directory = mkdtempSync(join(tmpdir(), "lint-conformance-reference-"));
+  let failure: string;
   try {
     for (const [name, text] of program.files) writeFileSync(join(directory, name), text);
     const env = {
@@ -577,11 +588,17 @@ function askGo(go: string, program: GoProgram): { answers: GoAnswers; expected: 
       GOFLAGS: "-mod=mod",
       GOWORK: "off",
     };
+    const spawn = (cmd: string[]) => {
+      try {
+        return Bun.spawnSync(cmd, { cwd: directory, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      } catch (e) {
+        throw new GoFailure(`cannot start ${cmd[0]}: ${(e as Error).message}`);
+      }
+    };
     const run = (cmd: string[]) => {
-      const p = Bun.spawnSync(cmd, { cwd: directory, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const p = spawn(cmd);
       if (p.exitCode !== 0) {
-        stop(
-          2,
+        throw new GoFailure(
           `${cmd.join(" ")} failed in a copy of the program (${program.files.map(f => f[0]).join(", ")}):\n${p.stderr}`,
         );
       }
@@ -601,9 +618,13 @@ function askGo(go: string, program: GoProgram): { answers: GoAnswers; expected: 
       },
       expected,
     };
+  } catch (e) {
+    if (!(e instanceof GoFailure)) throw e;
+    failure = e.message;
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+  return stop(2, failure);
 }
 
 // What the clone says of the list: the cases that are left out by name, and the names that its baseline files confirm.
@@ -802,6 +823,7 @@ async function main(): Promise<number> {
   const o = parseArguments(process.argv.slice(2));
   const corpusParts = [
     paths.cases,
+    ...suites.map(suite => `${paths.cases}/${suite}`),
     paths.typescriptBaselines,
     ...suites.map(suite => paths.typescriptGoBaselines[suite]),
     paths.noErrors,
@@ -1000,4 +1022,10 @@ async function main(): Promise<number> {
   return 0;
 }
 
-process.exit(await main());
+// An error of the system that no check above names, as a directory that cannot be listed, is still an input that cannot be used.
+try {
+  process.exit(await main());
+} catch (e) {
+  if (e instanceof Error && typeof (e as NodeJS.ErrnoException).errno === "number") stop(2, e.message);
+  throw e;
+}

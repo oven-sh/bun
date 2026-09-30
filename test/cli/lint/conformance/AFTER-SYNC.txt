@@ -1,0 +1,62 @@
+What is written again in this directory when sync.sh moves UPSTREAM to other commits, in this order.
+
+H is this directory, test/cli/lint/conformance. GO and TS are the clones that sync.sh reads, OLD and NEW the commits
+of typescript-go before and after. No step uses the network. Every script prints what it changes, and its --help
+says the rest.
+
+1. The corpus
+     bash H/sync.sh GO TS NEW
+   writes corpus/, the licence texts and the commits of UPSTREAM.
+
+2. The ports
+   runner/*.ts holds ports of the reference's harness, and a port is right for the commit that it was made from
+   (runner/UPSTREAM_PORTED). With both commits in the clone,
+     git -C GO diff --stat OLD NEW -- internal/testrunner internal/testutil internal/diagnosticwriter \
+       internal/tsoptions internal/tspath internal/vfs internal/stringutil internal/scanner/scanner.go internal/core
+   names what moved below them. The hunks are ported by hand, as for src/react_compiler
+   (scripts/sync-react-compiler.sh), and the commits of runner/UPSTREAM_PORTED move with them. A port that stayed
+   behind shows in step 5, where the runner is held against the answers of the reference.
+
+3. The instances of the reference: fixtures/instances.tsv and reference_counts.json
+   The list is the reference's own run of its suite. With the toolchain that typescript-go is built with (the go
+   directive and the modules of its go.mod), in a checkout of NEW with its submodule:
+     go test ./internal/testrunner -run '^TestSubmodule$' -count=1 -v > run.log
+     bun H/update-reference.ts --log run.log --go-version "$(go env GOVERSION)" GO
+   reference_counts.json then records the digests of that run (suiteRun), and the list has to match them from then
+   on. Without that toolchain:
+     bun H/update-reference.ts --enumerate GO
+   The list is then what the runner enumerates, and reference_counts.json has no suiteRun: the commit says so.
+   The files that upstream committed still hold most of such a list, and the script stops where they contradict
+   it. Every baseline file of typescript-go has the name of an instance that runs: at 89d5d5b these files name
+   12,763 of the 12,797. An instance that the reference skips cannot run in the list when TypeScript has an error
+   baseline of its name: 2,081 of the 2,118. Whether an instance that runs is E or C is read from typescript-go's
+   files in every case. The other 71 instances and the reason of every skip have no witness but a run.
+   The diff of the list is what a reviewer reads: a line for each instance that came, went, changed between E and
+   C, or changed its skip.
+
+4. What only Go can answer: fixtures/directives-expected.json and the member go of reference_counts.json
+   Step 3 stops with "Go's answers were not made of what is there now" when the functions of the reference that
+   answered have changed, or the go directive of typescript-go. Then the command of step 3 is given a Go of at
+   least that directive; it needs the standard library only and fetches nothing:
+     bun H/update-reference.ts ... --go <go command> GO
+   The script cuts those functions out of the clone (its list goSources), builds them beside update-reference.go
+   and writes what the reference's parser makes of fixtures/directives-inputs.json, and the digests of Go's case
+   and space tables. Where upstream renamed or split one of the functions the build stops, and goSources follows.
+   A new vector of the directive parser is a new entry of fixtures/directives-inputs.json (name, fileName, and
+   the bytes of the file in base64), and then this step.
+   The tables LOWER_RUNS and FOLD_RUNS of runner/gostrings.ts are Go's as well: when the digests lower or foldKey
+   change, the test "the case and space tables are those of Go" fails until the tables follow.
+
+5. The proof
+     bun H/update-reference.ts --check GO                          nothing changes
+     bun H/sweep.ts --round-trip                                   every error baseline is written back with its bytes
+     bun bd test test/cli/lint/conformance.test.ts                 the enumerator against the list, the parser
+                                                                   against the vectors, the listed instances
+     bun H/sweep.ts --no-run --since <revision before the sync>    the lists of expectations.json on the new corpus:
+                                                                   a listed name that has no instance any more
+
+The digest of the corpus in reference_counts.json (corpus.sha256) is over one line "<blob id> <path below corpus/>"
+for each of its files, in the byte order of the paths. A commit has that digest when git holds the bytes that
+sync.sh wrote:
+     (cd H && git ls-tree -r <revision> corpus) |
+       awk -F'\t' '{ sub(/^corpus\//, "", $2); if ($2 !~ /^\.[^\/]*$/) print substr($1, 13), $2 }' | sha256sum

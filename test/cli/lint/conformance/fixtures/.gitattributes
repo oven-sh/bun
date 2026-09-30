@@ -1,0 +1,2 @@
+# conformance.test.ts hashes the bytes of the list: no checkout may give it other line ends.
+*.tsv text eol=lf

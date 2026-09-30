@@ -110,10 +110,6 @@ impl Expr {
     }
 }
 
-// `Expr::fromBlob` is JSC-tier — it parses JSON via `bun_parsers` and
-// reads `jsc::webcore::Blob`. Lives at its sole call site:
-// `bun_js_parser_jsc::macro_::expr_from_blob`.
-
 #[derive(Clone, Copy)]
 pub struct Query {
     pub expr: Expr,

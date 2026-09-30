@@ -485,14 +485,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // The YAML parser builds its nodes with `Expr::init`. Later
-    // `workspace_package_json_cache.get_with_path` calls (with default
-    // `init_reset_store: true`) reset the thread-local `Store`, so the parse
-    // runs in a scope that puts the nodes in `yaml_arena`, which lives for the
-    // whole function. `yaml_ast` holds the list buffers of the tree and must
-    // live as long as `root` is read.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
+    // Parsed into `yaml_arena`: later package.json reads reset the thread-local AST store.
     let mut yaml_ast = bun_ast::ASTMemoryAllocator::borrowing(&yaml_arena);
     let parsed = {
         let _scope = yaml_ast.enter();

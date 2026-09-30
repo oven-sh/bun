@@ -416,11 +416,7 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        // `parse_env_json` parses through the thread-local AST `Expr`/`Stmt`
-        // stores before it builds the value in `bump`, so create them now — done
-        // lazily here (idempotent no-ops once created) instead of eagerly in
-        // `Transpiler::configure_defines`, since most inits resolve every define
-        // through the fast path above and never need an AST store.
+        // `parse_env_json` needs the AST stores. The fast path above does not.
         bun_ast::Expr::data_store_create();
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
@@ -434,8 +430,7 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        // The value is built in `bump`: the next parse resets the thread-local
-        // AST store, and every later parse reads the define table.
+        // Built in `bump`: later parses reset the AST store and still read the define table.
         let data: ExprData = bun_parsers::json_parser::parse_env_json(&source, log, bump)?.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {

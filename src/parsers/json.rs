@@ -63,8 +63,7 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
     ..JSONOptions::DEFAULT
 };
 
-/// The root of an empty source: a private `{}` for each call, because owners
-/// edit the root they get.
+/// A private `{}` for each call: owners edit the root they get.
 #[inline]
 fn empty_object_expr<D: Dest>(bump: &Bump) -> Expr {
     D::expr(bump, E::Object::default(), bun_ast::Loc { start: 0 })
@@ -80,18 +79,13 @@ trait Dest {
     }
 }
 
-/// Nodes through `Expr::init`: the thread-local AST store, or the
-/// `ASTMemoryAllocator` in scope. The tree lives until that resets.
+/// Nodes through `Expr::init`, lists through `AstAlloc`.
 struct InStore;
 
-/// Nodes and lists in the caller's arena. An owner that keeps the arena and
-/// `source.contents` (strings without escapes borrow it) keeps the tree
-/// without a copy.
+/// Nodes and lists in the caller's arena.
 struct InArena;
 
-/// Nodes in the caller's arena, lists from `AstAlloc`. For an owner with one
-/// arena per document: a list in the arena opens a mimalloc page per list size
-/// in every arena.
+/// Nodes in the caller's arena, lists through `AstAlloc`: for one arena per document.
 struct NodesInArena;
 
 impl Dest for InStore {
@@ -395,8 +389,7 @@ fn parse_classic(
     Ok(out)
 }
 
-/// [`parse_classic`] with the nodes built in `arena`, for an owner that keeps
-/// the arena and the tree.
+/// [`parse_classic`] with the nodes built in `arena`.
 fn parse_classic_into_arena<D: Dest>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -573,10 +566,7 @@ pub fn parse_package_json_utf8_with_opts(
     })
 }
 
-/// [`parse_package_json_utf8_with_opts`] with the nodes built in `arena`, for
-/// an owner that caches the root beside the arena and `source.contents`. The
-/// lists go to the global heap, which nothing frees, so an editor of the root
-/// can keep a list past the arena.
+/// [`parse_package_json_utf8_with_opts`] for an owner that keeps `arena` and `source.contents`.
 pub fn parse_package_json_utf8_with_opts_into_arena(
     opts: JSONOptions,
     source: &bun_ast::Source,
@@ -622,7 +612,6 @@ pub fn parse_ts_config(
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
-/// The tree is built in `bump` and borrows `source.contents`.
 pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

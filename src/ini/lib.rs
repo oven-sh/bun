@@ -436,8 +436,7 @@ mod draft {
                         };
                         offset += 1;
                     }
-                    // JSON.parse("") would throw. Fall through to the string
-                    // path instead.
+                    // JSON.parse("") would throw: fall through to the string path.
                     if val.is_empty() {
                         break 'out;
                     }

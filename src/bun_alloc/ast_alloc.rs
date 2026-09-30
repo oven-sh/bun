@@ -519,10 +519,7 @@ impl AstAlloc {
         v
     }
 
-    /// An empty `AstVec` whose first buffer, room for `cap` elements, is a
-    /// block of `arena`, freed with the arena. A list that grows past `cap`
-    /// moves to a buffer from [`AstAlloc`] (the active state or the global
-    /// heap), so only a list that never grows shares the arena's lifetime.
+    /// An empty `AstVec` whose first buffer is a block of `arena`. A grow moves it to `AstAlloc`.
     #[inline]
     pub fn vec_with_capacity_in_arena<T>(cap: usize, arena: &MimallocArena) -> AstVec<T> {
         if cap == 0 || core::mem::size_of::<T>() == 0 {

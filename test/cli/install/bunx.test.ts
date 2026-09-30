@@ -1,10 +1,19 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, existsSync, lutimesSync, readdirSync, symlinkSync, utimesSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lutimesSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+} from "node:fs";
 import { tmpdir } from "os";
-import { delimiter, dirname, join, resolve } from "path";
+import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -840,11 +849,8 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
   });
 });
 
-// bunx keeps each requested package in `<temp>/bunx-<uid>-<pkg>@<version>` and
-// spawns `bun add` into it. That install passed `--force` for every dist-tag
-// run and every tree older than 24 hours, which links every file of every
-// cached package again (#41211, #23597). Now `--force` is for an untrusted
-// tree only.
+// The `bun add` that bunx spawns into `<temp>/bunx-<uid>-<pkg>@<version>` passes
+// `--force` only for an untrusted tree or when the first install left no bin.
 describe("bunx cache", () => {
   const cli = (label: string) =>
     `#!/usr/bin/env node\nconsole.log(${JSON.stringify(label)} + " with " + require("dep"));\n`;
@@ -869,22 +875,30 @@ describe("bunx cache", () => {
     },
   };
 
+  // `<tgzDir>/<name>-<version>.tgz`, each packed from `<tgzDir>/<name>-<version>/package/`.
+  let staging: ReturnType<typeof tempDir>;
   let tgzDir: string;
 
   beforeAll(async () => {
-    tgzDir = tmpdirSync();
+    const staged: Record<string, string> = {};
     for (const [name, versions] of Object.entries(registryPackages)) {
       for (const [version, { manifest, files }] of Object.entries(versions)) {
-        const root = tmpdirSync();
-        const all = { "package.json": JSON.stringify({ name, version, ...manifest }), ...files };
-        for (const [path, content] of Object.entries(all)) {
-          await mkdir(dirname(join(root, "package", path)), { recursive: true });
-          await writeFile(join(root, "package", path), content, { mode: 0o755 });
-        }
-        await Bun.$`tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`.cwd(root).quiet();
+        staged[`${name}-${version}/package/package.json`] = JSON.stringify({ name, version, ...manifest });
+        for (const [path, content] of Object.entries(files)) staged[`${name}-${version}/package/${path}`] = content;
+      }
+    }
+    staging = tempDir("bunx-registry", staged);
+    tgzDir = String(staging);
+    for (const [name, versions] of Object.entries(registryPackages)) {
+      for (const version of Object.keys(versions)) {
+        await Bun.$`tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`
+          .cwd(join(tgzDir, `${name}-${version}`))
+          .quiet();
       }
     }
   });
+
+  afterAll(() => staging[Symbol.dispose]());
 
   // Each test gets a registry, a temp directory and an install cache of its
   // own, so the tests can run at the same time.
@@ -998,20 +1012,36 @@ describe("bunx cache", () => {
     expect(await bunx.run("tool")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", requests: [] });
   });
 
-  it.concurrent("a package that does not ship the file its bin names is not linked again", async () => {
+  it.concurrent("a tree an earlier install left without its bin file is linked again", async () => {
+    using bunx = fixture();
+    expect(await bunx.run("tool@latest")).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+
+    // The package keeps its package.json, so an install without `--force`
+    // skips it. A second install with `--force` puts the file back.
+    const tree = bunx.tree("tool@latest");
+    rmSync(join(tree, "node_modules", "tool", "cli.js"));
+    const markers = await plantMarkers(tree, "tool", "dep");
+
+    expect(await bunx.run("tool@latest")).toMatchObject({
+      stdout: "tool 1.0.0 with dep 1.0.0\n",
+      exitCode: 0,
+      requests: ["tool", "tool"],
+    });
+    expect(markers()).toEqual([false, false]);
+  });
+
+  it.concurrent("a package that does not ship the file its bin names fails after one forced install", async () => {
     using bunx = fixture();
     const first = await bunx.run("no-bin-file@latest");
-    const tree = bunx.tree("no-bin-file@latest");
     expect(first.stderr).toContain("error: could not determine executable to run for package no-bin-file");
-    expect(first.stderr).toContain(`note: the package is installed in ${tree}. Remove that directory`);
     expect(first.exitCode).toBe(1);
 
-    const markers = await plantMarkers(tree, "no-bin-file");
+    const markers = await plantMarkers(bunx.tree("no-bin-file@latest"), "no-bin-file");
 
     const second = await bunx.run("no-bin-file@latest");
     expect(second.stderr).toContain("error: could not determine executable to run for package no-bin-file");
-    expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin-file"] });
-    expect(markers()).toEqual([true]);
+    expect(second).toMatchObject({ exitCode: 1, requests: ["no-bin-file", "no-bin-file"] });
+    expect(markers()).toEqual([false]);
   });
 });
 

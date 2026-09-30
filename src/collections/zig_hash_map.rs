@@ -1,14 +1,8 @@
-//! Open-addressing hash map — linear-probe, backward-shift delete,
-//! power-of-two capacity, 80% max load. The layout of a map that only inserts
-//! (and therefore its iteration order) is load-bearing: callers snapshot the
-//! iteration sequence (e.g. `bun.lock`, lockfile debug stringify). A removal
-//! moves the later entries of its run back by one or more slots, so the order
-//! after a removal is unspecified.
-//!
-//! A removal walks its run to the next free slot and hashes every key it
-//! passes. Runs are short only when the hash spreads the keys: use
-//! `IdentityContext` for keys that are hashes already, never for dense
-//! integers.
+//! Open-addressing hash map — linear-probe, backward-shift delete, power-of-two
+//! capacity, 80% max load. The layout of a map that only inserts (and
+//! therefore its iteration order) is load-bearing: callers snapshot the
+//! iteration sequence (e.g. lockfile debug stringify). A removal walks and
+//! reorders its run, so `IdentityContext` is only for keys that are hashes.
 //!
 //! Storage is split: `Vec<u8>` for metadata + `Vec<Option<(K, V)>>` for
 //! slots. This costs an `Option` discriminant per slot but keeps the
@@ -292,8 +286,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         self.size += 1;
     }
 
-    /// Probe for `key`. A run of used slots always ends at a free one: the
-    /// table is never more than 80% full and a removal leaves no tombstone.
+    /// Probe for `key`, stop on free. A run always ends at a free slot.
     fn get_index<Q>(&self, key: &Q) -> Option<usize>
     where
         K: Borrow<Q>,
@@ -456,10 +449,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         Ok(())
     }
 
-    /// Takes the entry at `idx` and closes the gap (Knuth, TAOCP 6.4,
-    /// Algorithm R), so that no tombstone is left for later probes to walk
-    /// over. Each later entry of the run moves back into the hole when the
-    /// hole lies on its probe path, between its home slot and its own.
+    /// Backward-shift delete (Knuth, TAOCP 6.4, Algorithm R): leaves no tombstone.
     fn remove_by_index(&mut self, idx: usize) -> Option<(K, V)> {
         let kv = self.slots[idx].take();
         let mask = self.metadata.len() - 1;
@@ -467,6 +457,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         let mut next = (idx + 1) & mask;
         while let Some((key, _)) = &self.slots[next] {
             let home = (C::ctx_hash(key) as usize) & mask;
+            // Move `next` into the hole only if the hole is on its probe path.
             if (hole.wrapping_sub(home) & mask) < (next.wrapping_sub(home) & mask) {
                 self.metadata[hole] = self.metadata[next];
                 self.slots[hole] = self.slots[next].take();
@@ -734,9 +725,7 @@ mod tests {
             .collect()
     }
 
-    /// What a probe relies on: each entry is reachable from its home slot
-    /// without crossing a free slot, and each slot without an entry is free.
-    /// `model[key]` is the value the map must hold for `key`.
+    /// Each entry is reachable from its home slot, and every other slot is free.
     fn check<C: HashContext<u64>>(map: &HashMap<u64, u64, C>, model: &[Option<u64>]) {
         let expected = model.iter().flatten().count();
         assert_eq!(map.len(), expected);

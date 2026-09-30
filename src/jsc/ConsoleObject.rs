@@ -5793,9 +5793,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
     this.counts.remove(&hash);
 }
 
-/// The timers that `console.time` started and `console.timeEnd` has not ended.
-/// The value is an `Option` only because `get_or_put` needs a `Default`: an
-/// entry always holds `Some`.
+/// `Option` only because `get_or_put` needs `Default`: an entry always holds `Some`.
 type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
 thread_local! {
     static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::default());
@@ -5916,8 +5914,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let _ = bun_io::Write::flush(&mut writer);
 }
 
-/// `consoleTableSizes()` in `bun:internal-for-testing`: entries and slots of
-/// this thread's `console.time` table and of this VM's `console.count` table.
+/// `consoleTableSizes()` in `bun:internal-for-testing`.
 pub fn table_sizes_for_testing(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let (timer_entries, timer_capacity) =
         PENDING_TIME_LOGS.with_borrow(|map| (map.len(), map.capacity()));

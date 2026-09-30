@@ -1,13 +1,4 @@
-//! Test-only bridge exposing `bun_collections::HashMap` to
-//! `bun:internal-for-testing` (see `src/js/internal-for-testing.ts`).
-//!
-//! The map has no JS-visible surface of its own, and the cost of a lookup
-//! shows from JS only as time. This bridge counts it instead: its hash context
-//! gives every key the same fingerprint, so the map calls `ctx_eql` once for
-//! each stored entry a lookup walks past, and the context counts those calls.
-//!
-//! Lives in `bun_runtime` (not `bun_collections`) because it needs the JSC
-//! types.
+//! `hashMapChurnProbe` in `bun:internal-for-testing` (in `bun_runtime` for the JSC types).
 
 use core::cell::Cell;
 
@@ -18,6 +9,7 @@ thread_local! {
     static COMPARISONS: Cell<u64> = const { Cell::new(0) };
 }
 
+/// Gives every key one fingerprint, so `ctx_eql` runs for each stored entry a lookup passes.
 struct CountingContext;
 
 impl HashContext<u64> for CountingContext {
@@ -33,13 +25,7 @@ impl HashContext<u64> for CountingContext {
 
 const MISSES: u64 = 1000;
 
-/// `hashMapChurnProbe(live, cycles)`: inserts the keys `0..live`, then
-/// `cycles` times removes the oldest key and inserts the next integer, so the
-/// map always holds `live` entries. With no live key there is nothing to
-/// replace. Then looks up 1,000 keys that were never inserted. Returns
-/// `{ capacity, length, maxComparisons }`, where `maxComparisons` is the
-/// largest number of stored entries that one of those lookups was compared
-/// against.
+/// Keeps `live` keys, replaces the oldest `cycles` times, then looks up 1,000 absent keys.
 pub(crate) fn churn_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let live = frame.argument(0).coerce_to_i32(global)?.clamp(0, 1 << 20) as u64;
     let cycles = frame.argument(1).coerce_to_i32(global)?.clamp(0, 1 << 24) as u64;

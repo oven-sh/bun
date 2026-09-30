@@ -573,17 +573,13 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
-/** Entries and slots of this thread's `console.time` table and of this VM's `console.count` table. */
 export const consoleTableSizes = $newRustFunction("ConsoleObject.rs", "tableSizesForTesting", 0) as () => {
   timerEntries: number;
   timerCapacity: number;
   countEntries: number;
   countCapacity: number;
 };
-/**
- * Keeps `live` keys in a `bun_collections::HashMap`, replaces the oldest with a new key `cycles` times, then looks
- * up 1,000 absent keys. `maxComparisons` is the most stored entries one of those lookups was compared against.
- */
+/** `maxComparisons`: the most stored entries that a lookup of an absent key is compared against. */
 export const hashMapChurnProbe = $newRustFunction("runtime/hash_map_testing.rs", "churnProbe", 2) as (
   live: number,
   cycles: number,

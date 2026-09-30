@@ -324,10 +324,56 @@ describe("a pending Response body that the server does not send", () => {
         },
       });
 
-      expect(fetch(proxy.url, { signal: client.signal })).rejects.toThrow();
+      await expect(fetch(proxy.url, { signal: client.signal })).rejects.toThrow("The operation was aborted");
       await allAborted;
     });
   }
+
+  it("a null-body status closes the upstream request", async () => {
+    const { server: upstream, allAborted } = serveEndlessBody(2);
+    await using _ = upstream;
+    await using proxy = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { body } = await fetch(upstream.url);
+        const status = Number(new URL(request.url).pathname.slice(1));
+        return new HTMLRewriter().transform(new Response(body, { status }));
+      },
+    });
+
+    for (const status of [204, 304]) {
+      const response = await fetch(new URL(`/${status}`, proxy.url));
+      expect(response.status).toBe(status);
+      expect(await response.text()).toBe("");
+    }
+    await allAborted;
+  });
+
+  it("a status the server refuses to send closes the upstream request", async () => {
+    const closed = Promise.withResolvers<void>();
+    using upstream = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 099 Unsendable\r\nTransfer-Encoding: chunked\r\n\r\n7\r\npending\r\n");
+        },
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+    await using proxy = Bun.serve({
+      port: 0,
+      fetch: () => fetch(`http://127.0.0.1:${upstream.port}/`),
+      error: error => new Response(error.message, { status: 502 }),
+    });
+
+    const response = await fetch(proxy.url);
+    expect(await response.text()).toStartWith("Cannot send a Response with status 99.");
+    expect(response.status).toBe(502);
+    await closed.promise;
+  });
 });
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {

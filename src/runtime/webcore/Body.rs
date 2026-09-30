@@ -1300,7 +1300,7 @@ impl Value {
         let was_null = matches!(self, Value::Null);
         // `Value` has `Drop`, so we cannot `mem::replace` then
         // destructure by value (E0509). Match by `&mut` and `mem::take` the
-        // payload; the trailing `*self = Used/Null` runs `Value::drop` on the
+        // payload; the trailing `discard()` runs `Value::drop` on the
         // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
         // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
         let any_blob: AnyBlob = match self {
@@ -1329,7 +1329,9 @@ impl Value {
             _ => AnyBlob::Blob(Blob::default()),
         };
 
-        *self = if was_null { Value::Null } else { Value::Used };
+        if !was_null {
+            self.discard().cancel(JSValue::UNDEFINED);
+        }
         any_blob
     }
 
@@ -1351,7 +1353,9 @@ impl Value {
             _ => AnyBlob::Blob(Blob::default()),
         };
 
-        *self = if was_null { Value::Null } else { Value::Used };
+        if !was_null {
+            self.discard().cancel(JSValue::UNDEFINED);
+        }
         any_blob
     }
 

@@ -385,7 +385,7 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     // Read after the stream calls: the check observes the post-detach state.
     let body_value = response.get_body_value();
     if matches!(body_value, Body::Value::Locked(_)) {
-        *body_value = Body::Value::Used;
+        body_value.discard().cancel(JSValue::UNDEFINED);
     }
 }
 
@@ -861,7 +861,7 @@ where
         };
         // SAFETY: `response` is the live cell pointer; `value` is rooted by the
         // caller's frame and protect()'d below.
-        if self.reject_unsendable_response(unsafe { (*response).status_code() }) {
+        if self.reject_unsendable_response(unsafe { &*response }) {
             return;
         }
         self.response_root.set_rooted(value, global_this);
@@ -2745,7 +2745,7 @@ where
         // for as long as `response` is used.
         if let Some(response) = as_response(response_value) {
             // SAFETY: `response` is the live, rooted cell pointer.
-            if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+            if ctx.reject_unsendable_response(unsafe { &*response }) {
                 return;
             }
             ctx.response_root.clear();
@@ -2802,7 +2802,7 @@ where
                     };
 
                     // SAFETY: `response` is the live, rooted cell pointer.
-                    if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
+                    if ctx.reject_unsendable_response(unsafe { &*response }) {
                         return;
                     }
 
@@ -3556,7 +3556,8 @@ where
     ///
     /// Takes the status, not the Response: `run_error_handler` below runs user
     /// JS, which may write through the cell pointer the caller holds.
-    fn reject_unsendable_response(&self, status: u16) -> bool {
+    fn reject_unsendable_response(&self, response: &Response) -> bool {
+        let status = response.status_code();
         if HTTPStatusText::is_sendable(status) {
             return false;
         }
@@ -3565,6 +3566,7 @@ where
             return true;
         };
         let global_this = (*server).global_this();
+        Self::cancel_unread_body(response, global_this);
         let err = global_this.create_error_instance(format_args!(
             "Cannot send a Response with status {status}. HTTP status codes must be between 100 and 999 (Response.error() returns status 0).",
         ));

@@ -505,6 +505,28 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  test("redirect from a fetch() Response with a pending body closes the request", async () => {
+    const aborted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => aborted.resolve());
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("pending"));
+            },
+          }),
+        );
+      },
+    });
+
+    const { exitCode } = await $`cat < ${await fetch(server.url)}`.quiet();
+    expect(exitCode).toBe(0);
+    await aborted.promise;
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);

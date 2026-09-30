@@ -33,9 +33,7 @@ JSC::JSValue nodeEventEmitterState(Zig::GlobalObject*, NodeEventEmitterState);
 // `EventEmitter.prototype` of node:events, created with the state by the first call. Only reading `constructor` evaluates a module.
 JSC::JSObject* nodeEventEmitterPrototype(Zig::GlobalObject*);
 
-// The same object for src/js/node/events.ts, with every method an own property in node:events' order, whatever the
-// program did with the object before. A method that it assigned keeps that value, and one that it deleted stays
-// deleted. Empty when creating `emit` threw.
+// The same object for src/js/node/events.ts, with every method an own property in node:events' order. Empty when creating `emit` threw.
 JSC::JSValue nodeEventEmitterPrototypeForModule(Zig::GlobalObject*);
 
 // A new object like the prototype, from which nothing has read a method.

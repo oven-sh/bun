@@ -238,15 +238,13 @@ static void moveToEnd(VM& vm, JSGlobalObject* globalObject, JSObject* object, co
     object->putDirect(vm, key, value, attributes);
 }
 
-// What reifyAllStaticProperties() makes of `constructor` and of `emit`: the getter of the table, as a property. A value
-// can take its place, unless the property cannot be deleted.
+// The getter that reifyAllStaticProperties() defines for `constructor` and for `emit`, while it can be deleted.
 static bool isLazyValue(unsigned attributes)
 {
     return (attributes & PropertyAttribute::CustomValue) && !(attributes & PropertyAttribute::DontDelete);
 }
 
-// The global object has a property of this name once src/js/node/events.ts has the prototype. No builtin reads it,
-// which is why it is not one of BunBuiltinNames.
+// On the global object once src/js/node/events.ts has the prototype. Not one of BunBuiltinNames: no builtin reads it.
 static WTF::SymbolImpl::StaticSymbolImpl prototypeAdoptedPrivateName { "nodeEventsPrototypeAdopted"_s, WTF::SymbolImpl::s_flagIsPrivate };
 
 JSValue nodeEventEmitterPrototypeForModule(Zig::GlobalObject* globalObject)
@@ -254,15 +252,12 @@ JSValue nodeEventEmitterPrototypeForModule(Zig::GlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = nodeEventEmitterPrototype(globalObject);
-    // node:events is evaluated again when it threw after this call. It has defined properties of its own by then,
-    // and a second pass would move the methods behind them.
+    // node:events is evaluated again when it threw after this call. A second pass would move the methods behind `_eventsCount`.
     auto adopted = Identifier::fromUid(prototypeAdoptedPrivateName);
     if (globalObject->getDirect(vm, adopted))
         return prototype;
 
-    // JavaScriptCore itself defines every name of the table, all at once, for the `delete` of one of them and for a
-    // copy of the object (Object.assign(), Object.values(), a spread). A name that the object does not have after
-    // that was deleted.
+    // JavaScriptCore defines every name at once for a `delete` or a copy of the object: one that is absent after that was deleted.
     bool wasReified = prototype->staticPropertiesReified();
 
     auto emitName = Identifier::fromString(vm, "emit"_s);

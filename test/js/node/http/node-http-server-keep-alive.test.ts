@@ -1110,9 +1110,11 @@ describe("rules that only Bun has", () => {
         const secure = transport === "tls";
         const body = Buffer.alloc(32 * 1024 * 1024, "a");
         const seen: string[] = [];
+        let first: http.ServerResponse | undefined;
         const listener: Listener = (req, res) => {
           if (req.url === "/ping") return void res.end("pong");
           seen.push(req.url!);
+          first ??= res;
           res.shouldKeepAlive = false;
           res.setHeader("Content-Length", body.length);
           res.end(body);
@@ -1139,13 +1141,21 @@ describe("rules that only Bun has", () => {
           socket.pause();
           socket.write(asksToPersist("/1"));
           await ping();
-          socket.write(asksToPersist("/2"));
-          await ping();
-          let received = 0;
-          socket.on("data", chunk => (received += chunk.length));
+          // If the kernel took the whole body (Windows does, from one write to a TCP socket), nothing waits: the
+          // server has sent the response and closed the connection. A request on it now gets a reset.
+          if (first!.writableLength > 0) {
+            socket.write(asksToPersist("/2"));
+            await ping();
+          }
+          const chunks: Buffer[] = [];
+          socket.on("data", chunk => chunks.push(chunk));
           socket.resume();
           await once(socket, "end");
-          assert.deepStrictEqual({ seen, body: received > body.length }, { seen: ["/1"], body: true });
+          const bytes = Buffer.concat(chunks);
+          assert.deepStrictEqual(
+            { seen, body: bytes.length - bytes.indexOf("\r\n\r\n") - 4 },
+            { seen: ["/1"], body: body.length },
+          );
         } finally {
           socket.destroy();
           server.closeAllConnections();

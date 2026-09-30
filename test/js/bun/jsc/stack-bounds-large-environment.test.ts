@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
-import { closeSync, openSync, readSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 
 // oven-sh/WebKit#556. The Linux kernel lets the main thread's stack mapping reach RLIMIT_STACK, measured from the
 // end of the mapping. The argument and environment strings are at that end. A bound measured from below them is too
@@ -23,6 +23,12 @@ const largeEnvironment = {
 function withStackLimit(kilobytes: number, cmd: string[]) {
   return ["sh", "-c", `ulimit -S -s ${kilobytes} && exec "$0" "$@"`, ...cmd];
 }
+
+// The soft limit cannot go above the hard limit, which /proc/self/limits gives in bytes after the soft limit.
+const hardStackLimit = isLinux
+  ? /^Max stack size\s+\S+\s+(\S+)/m.exec(readFileSync("/proc/self/limits", "utf8"))?.[1]
+  : "";
+const canSetStackLimit = hardStackLimit === "unlimited" || Number(hardStackLimit) >= 8192 * 1024;
 
 async function run(cmd: string[], cwd?: string) {
   await using proc = Bun.spawn({ cmd, cwd, env: largeEnvironment, stdout: "pipe", stderr: "pipe" });
@@ -51,7 +57,7 @@ function programInterpreter(path: string): string | undefined {
   }
 }
 
-describe.concurrent.skipIf(!isLinux)("with 700 KB of environment", () => {
+describe.concurrent.skipIf(!isLinux || !canSetStackLimit)("with 700 KB of environment", () => {
   test("native recursion checks trip before the stack ends", async () => {
     const script = `
       const open = Buffer.alloc(100_000, "[").toString();
@@ -94,22 +100,26 @@ describe.concurrent.skipIf(!isLinux)("with 700 KB of environment", () => {
       "bunfig.toml": `[define]\nK = '${Buffer.alloc(40_000, "[")}1${Buffer.alloc(40_000, "]")}'\n`,
       "index.js": `console.log("ran");`,
     });
-  const deepDefineError = { stdout: "", exitCode: 1, signalCode: null };
+  const deepDefineError = {
+    stdout: "",
+    // The column is the depth that the parser reached, which is not the same in every build.
+    stderr: expect.stringMatching(
+      /^1 \| \[+\n +\^\nerror: JSON document is too deeply nested\n    at defines\.json:1:\d+\n$/,
+    ),
+    exitCode: 1,
+    signalCode: null,
+  };
 
   test("a deeply nested [define] value is an error", async () => {
     using dir = deepDefine();
-    const { stderr, ...rest } = await run(withStackLimit(8192, [bunExe(), "index.js"]), String(dir));
-    expect(stderr).toContain("error: JSON document is too deeply nested");
-    expect(rest).toEqual(deepDefineError);
+    expect(await run(withStackLimit(8192, [bunExe(), "index.js"]), String(dir))).toEqual(deepDefineError);
   });
 
   // glibc's loader points AT_EXECFN, which marks the end of the stack mapping, at argv[0].
   const loader = isLinux ? programInterpreter(bunExe()) : undefined;
   test.skipIf(!loader)("a deeply nested [define] value is an error when the loader starts bun", async () => {
     using dir = deepDefine();
-    const { stderr, ...rest } = await run(withStackLimit(8192, [loader!, bunExe(), "index.js"]), String(dir));
-    expect(stderr).toContain("error: JSON document is too deeply nested");
-    expect(rest).toEqual(deepDefineError);
+    expect(await run(withStackLimit(8192, [loader!, bunExe(), "index.js"]), String(dir))).toEqual(deepDefineError);
   });
 
   // The RegExp parser checks the stack against JavaScriptCore's copy of the bound. A debug JavaScriptCore takes
@@ -134,9 +144,9 @@ describe.concurrent.skipIf(!isLinux)("with 700 KB of environment", () => {
     });
   });
 
-  // JavaScriptCore keeps its own use of an 8 MB stack under 5 MB, so its limit comes from the bound only when
-  // RLIMIT_STACK is lower.
-  test("JS recursion is a RangeError under a 4 MB stack limit", async () => {
+  // JavaScriptCore keeps its own use of the stack under 5 MB, so its limit comes from the bound only when
+  // RLIMIT_STACK is about that or lower.
+  test("JS recursion is a RangeError under a 5 MB stack limit", async () => {
     const script = `
       function recurse() {
         return recurse() + 1;
@@ -148,7 +158,7 @@ describe.concurrent.skipIf(!isLinux)("with 700 KB of environment", () => {
         console.log(e.constructor.name + ": " + e.message);
       }
     `;
-    expect(await run(withStackLimit(4096, [bunExe(), "-e", script]))).toEqual({
+    expect(await run(withStackLimit(5120, [bunExe(), "-e", script]))).toEqual({
       stdout: "RangeError: Maximum call stack size exceeded.\n",
       stderr: "",
       exitCode: 0,

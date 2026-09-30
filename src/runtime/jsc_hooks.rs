@@ -1928,31 +1928,31 @@ fn console_print_runtime_object_inner<const C: bool>(
     // live `T` cell; conservative stack scan keeps `value` alive for the
     // duration of each branch.
     if let Some(response) = value.as_::<Response>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Response` to the live native
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let _ = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
+        let printed = unsafe { &mut *response }.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if let Some(request) = value.as_::<Request>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Request` to the live native
         // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let _ = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        let printed = unsafe { &mut *request }.write_format::<C>(value, formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if let Some(build) = value.as_::<BuildArtifact>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
         // native wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
+        let printed = unsafe { &*build }.write_format::<C>(value, formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if let Some(blob) = value.as_::<Blob>() {
-        let mut w = AsFmt::new(writer_);
         // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
         // wrapper backing `value`; GC keeps it alive (see above).
-        let _ = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        let printed = unsafe { &mut *blob }.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     // A stored snapshot prints these three as `Name {}`.
@@ -1960,13 +1960,13 @@ fn console_print_runtime_object_inner<const C: bool>(
         return console_print_shared_runtime_object::<C>(formatter, writer_, value);
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
-        let mut w = AsFmt::new(writer_);
-        let _ = s3client.write_format::<_, _, C>(formatter, &mut w);
+        let printed = s3client.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if let Some(archive) = value.as_class_ref::<Archive>() {
-        let mut w = AsFmt::new(writer_);
-        let _ = archive.write_format::<_, _, C>(formatter, &mut w);
+        let printed = archive.write_format::<C>(formatter, writer_);
+        formatter.printed(printed)?;
         return Ok(true);
     }
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
@@ -1976,14 +1976,9 @@ fn console_print_runtime_object_inner<const C: bool>(
             let result = to_json_function.call(formatter.global_this, value, &[])?;
             let prev_quote_keys = formatter.quote_keys;
             formatter.quote_keys = true;
-            let mut w = AsFmt::new(writer_);
-            // UFCS — `Formatter` has an inherent `print_as` (const-generic
-            // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
-            // runtime-tag overload that accepts our `core::fmt::Write` adapter.
-            let r = bun_jsc::ConsoleFormatter::print_as::<_, C>(
-                formatter,
+            let r = formatter.print_as::<C>(
                 bun_jsc::FormatTag::Object,
-                &mut w,
+                writer_,
                 result,
                 bun_jsc::JSType::Object,
             );

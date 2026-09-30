@@ -2141,16 +2141,12 @@ impl BuildArtifact {
         JSValue::NULL
     }
 
-    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         this_value: JSValue,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: bun_jsc::ConsoleFormatter,
-        W: core::fmt::Write,
-    {
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         write!(
             writer,
             "{}",
@@ -2165,10 +2161,7 @@ impl BuildArtifact {
         )?;
 
         {
-            formatter.indent_inc();
-            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
-            // `formatter` while it is also borrowed for the body; decrement
-            // after the block instead.
+            let mut formatter = formatter.indented();
 
             formatter.write_indent(writer)?;
             bun_core::write_pretty!(
@@ -2178,7 +2171,7 @@ impl BuildArtifact {
                 bstr::BStr::new(&self.path),
             )?;
             formatter
-                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                .print_comma::<ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
@@ -2191,7 +2184,7 @@ impl BuildArtifact {
             )?;
 
             formatter
-                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                .print_comma::<ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
@@ -2206,7 +2199,7 @@ impl BuildArtifact {
 
             if self.hash.value != 0 {
                 formatter
-                    .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                    .print_comma::<ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
                 writer.write_str("\n")?;
 
@@ -2220,18 +2213,18 @@ impl BuildArtifact {
             }
 
             formatter
-                .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                .print_comma::<ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
             formatter.reset_line();
             self.blob
-                .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                .write_format::<ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
 
             if self.output_kind != OutputKind::Sourcemap {
                 formatter
-                    .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
+                    .print_comma::<ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
@@ -2250,7 +2243,7 @@ impl BuildArtifact {
                     // `write_format` is `&self` so a shared borrow of `sm_ptr`
                     // is sound even if it aliases `self`.
                     unsafe { &*sm_ptr }
-                        .write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
+                        .write_format::<ENABLE_ANSI_COLORS>(sm_value, &mut formatter, writer)?;
                 } else {
                     write!(
                         writer,
@@ -2259,8 +2252,6 @@ impl BuildArtifact {
                     )?;
                 }
             }
-
-            formatter.indent_dec();
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

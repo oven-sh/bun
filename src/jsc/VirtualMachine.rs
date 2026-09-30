@@ -6039,11 +6039,25 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
-                global_ref.clear_exception();
+            // `errors` is user-assigned, so its iterator can be endless.
+            const UNSIZED_ERRORS_BUDGET: u32 = 100;
+            match crate::console_object::formatter::reader::for_each_limited(
+                errors,
+                global_ref,
+                UNSIZED_ERRORS_BUDGET,
+                (&raw mut ctx).cast(),
+                agg_iter,
+            ) {
+                Ok(true) => {
+                    let marker = if allow_ansi_color {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", true)
+                    } else {
+                        bun_core::pretty_fmt!("<r><d>... more errors<r>\n", false)
+                    };
+                    let _ = writer.write_all(marker.as_bytes());
+                }
+                Ok(false) => {}
+                Err(_) => global_ref.clear_exception(),
             }
             if ctx.printed_member || members_past_cap {
                 return;
@@ -7263,11 +7277,11 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let _ = if allow_ansi_color {
-                    formatter.format::<true>(tag, writer, error_instance, global_ref)
+                if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)?;
                 } else {
-                    formatter.format::<false>(tag, writer, error_instance, global_ref)
-                };
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)?;
+                }
                 writer.write_all(b"\n")?;
             }
         }

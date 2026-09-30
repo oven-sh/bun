@@ -93,14 +93,20 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         js_type: jsc::JSType,
     ) -> JsResult<()> {
-        let view = value.to_js_string_view(self.global_this)?;
-        let str = view.to_encoded_slice();
-        self.add_for_new_line(str.len);
-
-        if matches!(
+        let is_string_object = matches!(
             value.js_type(),
             jsc::JSType::StringObject | jsc::JSType::DerivedStringObject
-        ) {
+        );
+        use crate::StringJsc as _;
+        let owned = if js_type == jsc::JSType::RegExpObject {
+            reader::reg_exp_source(value)
+        } else {
+            BunString::from_js(reader::boxed_primitive(value), self.global_this)?
+        };
+        let str = owned.to_encoded_slice();
+        self.add_for_new_line(str.len);
+
+        if is_string_object {
             if str.len == 0 {
                 self.put(writer_, b"String {}");
                 return Ok(());
@@ -244,7 +250,7 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
-        let len = value.get_length(self.global_this)? as u32;
+        let len = reader::array_length(self.global_this, value) as u32;
         if len == 0 {
             self.put(writer_, b"[]");
             self.add_for_new_line(2);
@@ -339,17 +345,6 @@ impl<'a> Formatter<'a> {
         Ok(())
     }
 
-    fn jest_collection_size(&self, value: JSValue) -> JsResult<i32> {
-        let size = value
-            .get(self.global_this, "size")?
-            .unwrap_or_else(|| JSValue::js_number_from_int32(0));
-        if size.is_number() {
-            size.coerce_to_i32(self.global_this)
-        } else {
-            Ok(0)
-        }
-    }
-
     #[inline(never)]
     fn print_jest_map(
         &mut self,
@@ -362,7 +357,7 @@ impl<'a> Formatter<'a> {
         } else {
             "Map"
         };
-        if self.jest_collection_size(value)? == 0 {
+        if reader::collection_size(value) == 0 {
             self.putf(writer_, format_args!("{name} {{}}"));
             return Ok(());
         }
@@ -379,7 +374,8 @@ impl<'a> Formatter<'a> {
                 formatter: self,
                 writer: writer_,
             };
-            value.for_each(
+            reader::for_each_entry(
+                value,
                 global_this,
                 (&raw mut iter).cast::<c_void>(),
                 JestEntries::map_entry,
@@ -397,7 +393,7 @@ impl<'a> Formatter<'a> {
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
-        let size = self.jest_collection_size(value)?;
+        let size = reader::collection_size(value);
         self.put_jest_indent(writer_);
         let name = if value.js_type() == jsc::JSType::WeakSet {
             "WeakSet"
@@ -421,7 +417,8 @@ impl<'a> Formatter<'a> {
                 formatter: self,
                 writer: writer_,
             };
-            value.for_each(
+            reader::for_each_entry(
+                value,
                 global_this,
                 (&raw mut iter).cast::<c_void>(),
                 JestEntries::set_entry,
@@ -489,8 +486,10 @@ impl<'a> Formatter<'a> {
             i: 0,
             parent: value,
         };
-        value.for_each_property_ordered(
+        reader::for_each_property(
+            value,
             global_this,
+            reader::PropertyWalk::OwnSorted,
             (&raw mut iter).cast::<c_void>(),
             JestProperties::for_each,
         )?;
@@ -632,12 +631,7 @@ impl JestEntries<'_, '_> {
             .is_ok()
     }
 
-    extern "C" fn map_entry(
-        _: *mut jsc::VM,
-        global_object: &JSGlobalObject,
-        ctx: *mut c_void,
-        next_value: JSValue,
-    ) {
+    extern "C" fn map_entry(ctx: *mut c_void, key: JSValue, value: JSValue) {
         // SAFETY: `ctx` is the stack-allocated `Self` the caller of `for_each` passed.
         let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
             return;
@@ -645,12 +639,6 @@ impl JestEntries<'_, '_> {
         if this.formatter.failed {
             return;
         }
-        let Ok(key) = next_value.get_index(global_object, 0) else {
-            return;
-        };
-        let Ok(value) = next_value.get_index(global_object, 1) else {
-            return;
-        };
         this.formatter.put_jest_indent(this.writer);
         if !this.value(key) {
             return;
@@ -663,12 +651,7 @@ impl JestEntries<'_, '_> {
         this.formatter.put(this.writer, b"\n");
     }
 
-    extern "C" fn set_entry(
-        _: *mut jsc::VM,
-        _: &JSGlobalObject,
-        ctx: *mut c_void,
-        next_value: JSValue,
-    ) {
+    extern "C" fn set_entry(ctx: *mut c_void, next_value: JSValue, _: JSValue) {
         // SAFETY: `ctx` is the stack-allocated `Self` the caller of `for_each` passed.
         let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
             return;

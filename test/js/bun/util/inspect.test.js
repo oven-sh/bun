@@ -967,15 +967,15 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         console.log("custom delete:", s.includes("z: 1"));
       }
       {
-        // A getter on a built-in subclass (Map.size) is another way the
-        // formatter runs user code for a nested value.
+        // The formatter reads the size from the Map itself, so a getter on a
+        // subclass does not run.
         const p = makeParent();
         let fired = 0;
         class M extends Map { get size() { if (!fired++) addMany(p); return super.size; } }
         p.a = new M([[1, 2]]);
         p.z = 1;
         const s = Bun.inspect(p);
-        console.log("map size getter:", s.includes("z: 1"), fired > 0);
+        console.log("map size getter:", s.includes("z: 1"), fired);
       }
       {
         // An object with no own properties is formatted by fast-walking its
@@ -1041,7 +1041,7 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
         "  z: 1,",
         "}",
         "custom delete: true",
-        "map size getter: true true",
+        "map size getter: true 0",
         "prototype walk: true true",
         "gc churn: true",
         "",

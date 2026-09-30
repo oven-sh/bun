@@ -133,14 +133,11 @@ impl Body {
 }
 
 impl Body {
-    pub(crate) fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: bun_jsc::ConsoleFormatter,
-    {
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         formatter.write_indent(writer)?;
         write!(
             writer,
@@ -148,20 +145,19 @@ impl Body {
             Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>bodyUsed<d>:<r> ")
         )?;
         formatter
-            .print_as::<W, ENABLE_ANSI_COLORS>(
+            .print_as::<ENABLE_ANSI_COLORS>(
                 jsc::FormatAs::Boolean,
                 writer,
                 JSValue::from(matches!(self.value.get(), Value::Used)),
                 jsc::JSType::BooleanObject,
-            )
-            .map_err(|_| core::fmt::Error)?;
+            )?;
 
         match self.value_mut() {
             Value::Blob(blob) => {
-                formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+                formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
-                blob.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                blob.write_format::<ENABLE_ANSI_COLORS>(formatter, writer)?;
             }
             v @ (Value::InternalBlob(_) | Value::WTFStringImpl(_)) => {
                 // Do not hoist a generic `self.value.size()` call out of this arm:
@@ -172,24 +168,23 @@ impl Body {
                     Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length(),
                     _ => unreachable!(),
                 };
-                formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+                formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
                 formatter.write_indent(writer)?;
-                blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(false, size, writer)?;
+                blob::write_format_for_size::<ENABLE_ANSI_COLORS>(false, size, writer)?;
             }
             Value::Locked(locked) => {
                 if let Some(stream) = locked.readable.get() {
-                    formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+                    formatter.print_comma::<ENABLE_ANSI_COLORS>(writer)?;
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
                     formatter
-                        .print_as::<W, ENABLE_ANSI_COLORS>(
+                        .print_as::<ENABLE_ANSI_COLORS>(
                             jsc::FormatAs::Object,
                             writer,
                             stream.value,
                             stream.value.js_type(),
-                        )
-                        .map_err(|_| core::fmt::Error)?;
+                        )?;
                 }
             }
             _ => {}

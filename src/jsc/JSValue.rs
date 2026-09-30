@@ -2233,20 +2233,9 @@ struct SerializedScriptValueExternal {
     handle: *mut c_void,
 }
 
-/// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`].
+/// Callback signature for [`JSValue::for_each`].
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
-
-/// Callback signature for [`JSValue::for_each_property`] /
-/// [`JSValue::for_each_property_non_indexed`].
-pub(crate) type ForEachPropertyCallback = extern "C" fn(
-    global: &JSGlobalObject,
-    ctx: *mut c_void,
-    key: *mut bun_core::EncodedSlice,
-    value: JSValue,
-    is_symbol: bool,
-    is_private_symbol: bool,
-);
 
 /// `JSValue.StringFormatter` — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
@@ -2455,6 +2444,12 @@ impl JSValue {
     pub fn is_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
+    /// [`is_iterable`](Self::is_iterable), but false for an array (through a
+    /// Proxy too) and for anything that iterates with the intrinsic Array
+    /// iterator, such as an `arguments` object.
+    pub fn is_non_array_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
+        crate::cpp::Bun__JSValue__isNonArrayIterable(self, global)
+    }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
     pub fn for_each(
         self,
@@ -2465,95 +2460,6 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
-    }
-    /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
-    /// `*mut c_void` directly).
-    #[inline]
-    pub(crate) fn for_each_with_context(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
-    ) -> JsResult<()> {
-        self.for_each(global, ctx, callback)
-    }
-    /// `JSValue.forEachProperty` — enumerate own props,
-    /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
-    ///
-    /// Seats the exception scope and calls the FFI directly so the deep
-    /// `print_as` recursion does not pay an extra closure frame per object level.
-    #[inline(always)]
-    pub(crate) fn for_each_property(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle
-            // (`&` is ABI-identical to non-null `*const`); `ctx` is an opaque
-            // round-trip pointer C++ only forwards to `callback` (same contract
-            // as `JSC__JSValue__forEach` above).
-            safe fn JSC__JSValue__forEachProperty(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachProperty(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
-    /// `JSValue.forEachPropertyNonIndexed` — like
-    /// [`for_each_property`](Self::for_each_property) but skips array-index
-    /// keys.
-    pub(crate) fn for_each_property_non_indexed(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyNonIndexed(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
-        scope.return_if_exception()
-    }
-    /// `JSValue.forEachPropertyOrdered` — like
-    /// [`for_each_property`](Self::for_each_property) but visits keys in
-    /// stable enumeration order (used by `console.log` with
-    /// `ordered_properties`).
-    #[inline(always)]
-    pub fn for_each_property_ordered(
-        self,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachPropertyCallback,
-    ) -> JsResult<()> {
-        unsafe extern "C" {
-            // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyOrdered(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: *mut c_void,
-                callback: ForEachPropertyCallback,
-            );
-        }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
-        JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
     }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
@@ -2578,17 +2484,16 @@ impl JSValue {
         }
         crate::call_check_slow(global, || JSC__JSValue__getDirectIndex(self, global, i))
     }
-    /// Smallest own present index of a `JSArray` that is `>= start`, or
-    /// `None` when every index from `start` to the end of the array is a
-    /// hole. Walks the array's backing storage (and sparse map) so a run of
-    /// holes is skipped in one call instead of probing each index.
-    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    /// Smallest own present index that is `>= start`, or `None` when every
+    /// index from `start` on is a hole. Walks the object's backing storage
+    /// (and sparse map) so a run of holes is skipped in one call instead of
+    /// probing each index.
     pub(crate) fn next_present_index(self, start: u32) -> Option<u32> {
-        debug_assert!(self.is_cell() && self.js_type().is_array());
+        debug_assert!(self.is_object());
         unsafe extern "C" {
-            safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
+            safe fn Bun__JSObject__nextPresentIndex(this: JSValue, start: u32) -> u64;
         }
-        match Bun__JSArray__nextPresentIndex(self, start) {
+        match Bun__JSObject__nextPresentIndex(self, start) {
             u64::MAX => None,
             index => Some(index as u32),
         }

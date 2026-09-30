@@ -518,21 +518,12 @@ unsafe extern "C" {
 }
 
 impl Request {
-    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         this_value: JSValue,
-        formatter: &mut F,
-        writer: &mut W,
-    ) -> core::fmt::Result
-    where
-        F: bun_jsc::ConsoleFormatter,
-        W: core::fmt::Write,
-    {
-        // Return type narrowed to `core::fmt::Result` (matches
-        // Response::write_format / Blob::write_format). Funnel JsError /
-        // AllocError through `fmt::Error`.
-        let js_err = |_: JsError| core::fmt::Error;
-
+        formatter: &mut bun_jsc::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_jsc::CrateResult<()> {
         let params_object = Bun__getParamsIfBunRequest(this_value);
 
         let class_label = if params_object.is_empty() {
@@ -560,14 +551,14 @@ impl Request {
             writer.write_str(self.method.as_str())?;
             writer.write_str("\"")?;
             formatter
-                .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
+                .print_comma::<ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
             writer
                 .write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> ").as_ref())?;
-            self.ensure_url().map_err(|_| core::fmt::Error)?;
+            self.ensure_url()?;
             write!(
                 writer,
                 "{}",
@@ -579,7 +570,7 @@ impl Request {
                 )
             )?;
             formatter
-                .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
+                .print_comma::<ENABLE_ANSI_COLORS>(writer)
                 .expect("unreachable");
             writer.write_str("\n")?;
 
@@ -589,15 +580,14 @@ impl Request {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>params<d>:<r> ").as_ref(),
                 )?;
                 formatter
-                    .print_as::<_, ENABLE_ANSI_COLORS>(
+                    .print_as::<ENABLE_ANSI_COLORS>(
                         bun_jsc::FormatTag::Private,
                         writer,
                         params_object,
                         bun_jsc::JSType::Object,
-                    )
-                    .map_err(js_err)?;
+                    )?;
                 formatter
-                    .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
+                    .print_comma::<ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
                 writer.write_str("\n")?;
             }
@@ -606,31 +596,30 @@ impl Request {
             writer.write_str(
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref(),
             )?;
-            let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
+            let headers_js = self.get_headers(formatter.global_this)?;
             formatter
-                .print_as::<_, ENABLE_ANSI_COLORS>(
+                .print_as::<ENABLE_ANSI_COLORS>(
                     bun_jsc::FormatTag::Private,
                     writer,
                     headers_js,
                     bun_jsc::JSType::DOMWrapper,
-                )
-                .map_err(js_err)?;
+                )?;
 
             match self.body_value_mut() {
                 BodyValue::Blob(blob) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    blob.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
+                    blob.write_format::<ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                 }
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
                     let size = self.body_value_mut().size();
                     if size == 0 {
-                        let empty = Blob::init_empty(formatter.global_this());
-                        empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
+                        let empty = Blob::init_empty(formatter.global_this);
+                        empty.write_format::<ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {
-                        crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
+                        crate::webcore::blob::write_format_for_size::<ENABLE_ANSI_COLORS>(
                             false,
                             size as usize,
                             writer,
@@ -642,13 +631,12 @@ impl Request {
                         writer.write_str("\n")?;
                         formatter.write_indent(writer)?;
                         formatter
-                            .print_as::<_, ENABLE_ANSI_COLORS>(
+                            .print_as::<ENABLE_ANSI_COLORS>(
                                 bun_jsc::FormatTag::Object,
                                 writer,
                                 stream.value,
                                 stream.value.js_type(),
-                            )
-                            .map_err(js_err)?;
+                            )?;
                     }
                 }
                 _ => {}

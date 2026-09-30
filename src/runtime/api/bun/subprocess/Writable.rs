@@ -14,7 +14,7 @@ use crate::webcore::streams::SourceHandle;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
-use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
+use super::{Flags, Source, StaticPipeWriter, StdioResult, Subprocess, js};
 
 pub(crate) enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
@@ -209,6 +209,14 @@ impl<'a> Writable<'a> {
                         super::source_from_blob(blob),
                     )));
                 }
+                Stdio::FileWindow(window) => {
+                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                        evtloop,
+                        subprocess as *mut Subprocess<'a>,
+                        result,
+                        Source::FileWindow(window.take().unwrap()),
+                    )));
+                }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -306,6 +314,12 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
+            Stdio::FileWindow(window) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                evtloop,
+                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                result,
+                Source::FileWindow(window.take().unwrap()),
+            ))),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so

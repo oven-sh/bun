@@ -238,6 +238,20 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             return;
         }
         if self.buffer.is_empty() {
+            match self.source.refill() {
+                Ok(true) => {
+                    // One chunk for each writable event, so a long source does not hold the event loop.
+                    self.buffer = RawSlice::new(self.source.slice());
+                    #[cfg(windows)]
+                    self.writer.write();
+                    #[cfg(not(windows))]
+                    self.writer.watch();
+                    return;
+                }
+                Ok(false) => {}
+                // A pipe cannot carry the error, so the child gets the end of its stdin.
+                Err(err) => self.on_error(&err),
+            }
             // Token taken before `close()` so start()'s ref outlives the owner's.
             let release_start_ref = core::mem::replace(&mut self.started, false);
             self.writer.close();

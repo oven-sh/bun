@@ -1057,6 +1057,14 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )));
                 }
+                Stdio::FileWindow(window) => {
+                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                        event_loop,
+                        subprocess,
+                        result,
+                        JscSubprocess::Source::FileWindow(window.take().unwrap()),
+                    )));
+                }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -1110,6 +1118,12 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
+                Stdio::FileWindow(window) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                    event_loop,
+                    subprocess,
+                    result,
+                    JscSubprocess::Source::FileWindow(window.take().unwrap()),
+                ))),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
@@ -1271,6 +1285,7 @@ impl Readable {
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
+                Stdio::FileWindow(_) => Readable::Ignore,
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
@@ -1305,6 +1320,7 @@ impl Readable {
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
+                Stdio::FileWindow(_) => Readable::Ignore,
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(memfd) => {
                     let fd = *memfd;

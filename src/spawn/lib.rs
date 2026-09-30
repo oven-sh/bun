@@ -28,6 +28,8 @@ pub mod process;
 #[path = "static_pipe_writer.rs"]
 pub mod static_pipe_writer;
 
+pub mod file_window;
+
 pub mod error;
 pub use error::{Error, Result};
 
@@ -133,6 +135,7 @@ pub mod subprocess {
     #[cfg(not(windows))]
     use bun_sys::Fd;
 
+    pub use crate::file_window::FileWindow;
     pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
 
@@ -158,6 +161,8 @@ pub mod subprocess {
     pub enum Source {
         OwnedBytes(Box<[u8]>),
         Any(Box<dyn SourceData>),
+        /// Holds one chunk of the payload at a time. [`Source::refill`] loads the next one.
+        FileWindow(Box<FileWindow>),
         Detached,
     }
 
@@ -182,8 +187,17 @@ pub mod subprocess {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
+                Source::FileWindow(window) => window.slice(),
                 // slice() after detach() is a bug.
                 Source::Detached => unreachable!("Source::slice on Detached"),
+            }
+        }
+
+        /// Loads the next bytes into `slice()`. `Ok(false)`: the source has no more.
+        pub(crate) fn refill(&mut self) -> bun_sys::Result<bool> {
+            match self {
+                Source::FileWindow(window) => window.refill(),
+                _ => Ok(false),
             }
         }
 
@@ -200,6 +214,7 @@ pub mod subprocess {
             match self {
                 Source::OwnedBytes(b) => b.len(),
                 Source::Any(s) => s.memory_cost(),
+                Source::FileWindow(window) => window.memory_cost(),
                 Source::Detached => 0,
             }
         }

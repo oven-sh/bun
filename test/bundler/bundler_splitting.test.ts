@@ -1012,7 +1012,11 @@ describe("bundler", () => {
     format: "esm",
     onAfterBundle(api) {
       const parent = api.readFile("/out/" + chunkContaining(api, `"reader"`));
-      expect(parent.match(/^import.*$/gm)).toEqual([`import"ext-star";`, `import"ext-names";`, `import"ext-reexport";`]);
+      expect(parent.match(/^import.*$/gm)).toEqual([
+        `import"ext-star";`,
+        `import"ext-names";`,
+        `import"ext-reexport";`,
+      ]);
     },
     run: {
       file: "/out/index.js",
@@ -1089,6 +1093,88 @@ describe("bundler", () => {
     },
     run: { file: "/out/index.js", stdout: "store\nconfig 1\nboth\nouter 1\nindex\nlazy" },
   });
+  // An entry point with exports takes no fold under any name. The chunk of the shared code keeps its place and gains no import.
+  itBundled("splitting/EntryWithExportsKeepsExternalImportAfterSharedCode", {
+    files: {
+      "/index.js": /* js */ `
+        import "./env.js";
+        import "ext-lib";
+        import "./later.js";
+        export const version = 1;
+        console.log("index");
+        import("./lazy.js");
+      `,
+      "/env.js": `console.log("env"); globalThis.ENV = 1;`,
+      "/later.js": `console.log("later");`,
+      "/lazy.js": `import "./env.js"; import "./later.js"; console.log("lazy");`,
+    },
+    external: ["ext-lib"],
+    runtimeFiles: {
+      "/node_modules/ext-lib/package.json": `{ "name": "ext-lib", "type": "module", "main": "index.js" }`,
+      "/node_modules/ext-lib/index.js": `console.log("ext", globalThis.ENV);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "env\nlater\next 1\nindex\nlazy" },
+  });
+  itBundled("splitting/EntryWithExportsKeepsExternalImportAfterModuleThatSharedCodeStarts", {
+    files: {
+      "/index.js": /* js */ `
+        import "./first.cjs";
+        import "ext-lib";
+        import "./second.js";
+        export const version = 1;
+        console.log("index");
+        import("./lazy.js");
+      `,
+      "/first.cjs": `console.log("first"); globalThis.ENV = 1;`,
+      "/second.js": `import "./first.cjs"; console.log("second");`,
+      "/lazy.js": `import "./second.js"; console.log("lazy");`,
+    },
+    external: ["ext-lib"],
+    runtimeFiles: {
+      "/node_modules/ext-lib/package.json": `{ "name": "ext-lib", "type": "module", "main": "index.js" }`,
+      "/node_modules/ext-lib/index.js": `console.log("ext", globalThis.ENV);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "first\nsecond\next 1\nindex\nlazy" },
+  });
+  for (const [name, imports, stdout] of [
+    [
+      "Wrapper",
+      `import x from "./x.cjs"; import "./init.js"; import "./config.js";`,
+      "init\nconfig 1\nx\nindex 1\nlate\nroute",
+    ],
+    [
+      "BetweenSharedFiles",
+      `import "./init.js"; import "./config.js"; import "./late.js"; const x = 1;`,
+      "init\nlate\nconfig 1\nindex 1\nroute",
+    ],
+  ] as const) {
+    itBundled("splitting/EntryWithExportsKeepsOrderWithChunkOfOtherEntry/" + name, {
+      files: {
+        "/index.js": `${imports} export const version = 1; console.log("index", x); import("./route.js");`,
+        "/other.js": `import x from "./x.cjs"; import "./config.js"; console.log("other", x);`,
+        "/x.cjs": `console.log("x"); module.exports = 1;`,
+        "/init.js": `console.log("init"); globalThis.X = 1;`,
+        "/config.js": `console.log("config", globalThis.X);`,
+        "/late.js": `console.log("late");`,
+        "/route.js": `import "./init.js"; import "./late.js"; console.log("route");`,
+      },
+      entryPoints: ["/index.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout },
+    });
+  }
   itBundled("splitting/EntryFilesAfterSharedCodeStay", {
     files: {
       ...setupBeforeShared(""),

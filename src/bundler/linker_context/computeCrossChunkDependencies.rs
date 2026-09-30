@@ -95,7 +95,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             c.for_each_import_that_runs(
                 entry_file,
                 range.part_index_begin..range.part_index_end,
-                |_, wrapped| {
+                |_, _, wrapped| {
                     if let Some(wrapped) = wrapped {
                         let _ = chunk_meta.imports.put(wrapper_refs[wrapped as usize], ()); // OOM-only Result
                     }

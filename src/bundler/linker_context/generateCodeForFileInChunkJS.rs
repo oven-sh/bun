@@ -247,7 +247,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         c.for_each_import_that_runs(
             source_index as u32,
             part_range.part_index_begin..part_range.part_index_end,
-            |record_index, wrapped| {
+            |_, record_index, wrapped| {
                 let record = &ast.import_records[record_index as usize];
                 let loc = record.range.loc;
                 stmts.all_stmts.push(if let Some(wrapped) = wrapped {

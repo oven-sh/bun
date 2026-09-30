@@ -130,7 +130,7 @@ impl LinkerContext<'_> {
             return;
         }
         let parts_len = self.graph.ast.items_parts()[source_index as usize].len() as u32;
-        self.for_each_import_that_runs(source_index, 0..parts_len, |_, wrapped| {
+        self.for_each_import_that_runs(source_index, 0..parts_len, |_, _, wrapped| {
             inits.extend(wrapped);
         });
     }
@@ -168,7 +168,7 @@ struct Group {
     recheck: bool,
     wants_inits: bool,
     pin: Pin,
-    /// The parent of a pinned entry point's class.
+    /// The parent of the class of an entry point that only its name pins.
     parent_of_pinned_entry: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
@@ -721,6 +721,17 @@ enum OrderFrame {
     EntryInit(u32),
 }
 
+/// When the chunk of a file that an entry point loads runs.
+#[derive(Clone, Copy, PartialEq)]
+enum Runs {
+    /// The class of the entry point.
+    WithEntry,
+    /// An entry point that precedes this one loads it.
+    BeforeEntry,
+    /// Another entry point that nothing orders with this one loads it too.
+    WithOtherEntry,
+}
+
 /// A pinned entry point's chunk runs after the parent of its class. Sets in `leaves` the own files that must run before a file of the parent; returns `LinkerContext::entry_imports_in_parent.0`.
 fn files_that_leave_entry_chunk(
     this: &LinkerContext,
@@ -728,6 +739,7 @@ fn files_that_leave_entry_chunk(
     load_class: &mut impl FnMut(&AutoBitSet) -> crate::Result<AutoBitSet>,
     entered: &mut [u32],
     leaves: &mut AutoBitSet,
+    parent_gains_no_import: bool,
 ) -> crate::Result<u32> {
     let entry_points_len = this.graph.entry_points.len();
     let entry_source = this.graph.entry_points.items_source_index()[entry_id];
@@ -748,7 +760,24 @@ fn files_that_leave_entry_chunk(
     let (mut last_part, mut part, mut cut) = (0, 0, 0);
     // The own files that the walk is inside of, now and at that file.
     let (mut depth, mut depth_at_cut) = (0, 0);
-    let mut in_class: ArrayHashMap<&[u8], bool> = ArrayHashMap::new();
+    let parts_len = |file: u32| this.graph.ast.items_parts()[file as usize].len() as u32;
+    let mut runs_by_key: ArrayHashMap<&[u8], Runs> = ArrayHashMap::new();
+    let mut when_chunk_runs = |file: u32| -> crate::Result<Runs> {
+        let key = bits[file as usize].bytes(entry_points_len);
+        if let Some(&known) = runs_by_key.get(&key) {
+            return Ok(known);
+        }
+        let class = load_class(&bits[file as usize])?;
+        let runs = if !class.is_set(entry_id) {
+            Runs::BeforeEntry
+        } else if class.count() == 1 {
+            Runs::WithEntry
+        } else {
+            Runs::WithOtherEntry
+        };
+        runs_by_key.put(key, runs)?;
+        Ok(runs)
+    };
     let mut stack = vec![OrderFrame::Enter(entry_source)];
     while let Some(frame) = stack.pop() {
         let file = match frame {
@@ -769,8 +798,7 @@ fn files_that_leave_entry_chunk(
                 // The walk was inside of it at that file. What its `import` statements run precedes files that go, so it goes too.
                 if depth <= depth_at_cut {
                     depth_at_cut = depth - 1;
-                    let parts_len = this.graph.ast.items_parts()[file as usize].len() as u32;
-                    this.for_each_import_that_runs(file, 0..parts_len, |_, _| {
+                    this.for_each_import_that_runs(file, 0..parts_len(file), |_, _, _| {
                         cut = candidates.len();
                     });
                 }
@@ -795,19 +823,11 @@ fn files_that_leave_entry_chunk(
             continue;
         }
         if live(file) && !own(file) {
-            let key = bits[file as usize].bytes(entry_points_len);
-            let in_class = match in_class.get(&key) {
-                Some(&known) => known,
-                None => {
-                    let class = load_class(&bits[file as usize])?;
-                    let known = class.count() == 1 && class.is_set(entry_id);
-                    in_class.put(key, known)?;
-                    known
-                }
-            };
             // A chunk of another class runs before both, and so does what it imports.
-            if !in_class {
-                continue;
+            match when_chunk_runs(file)? {
+                Runs::WithEntry => {}
+                Runs::WithOtherEntry if parent_gains_no_import => return Ok(0),
+                _ => continue,
             }
         } else if live(file) && file != entry_source {
             depth += 1;
@@ -833,7 +853,17 @@ fn files_that_leave_entry_chunk(
     // What one `import` of the entry point's file loads goes or stays as a whole, with what it imports. No chunk may import a pinned chunk, so a file that leads back there ends the list.
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
+    // An external `import` goes to the top of its chunk, ahead of what the parent runs.
+    let mut limit = u32::MAX;
+    if parent_gains_no_import {
+        this.for_each_import_that_runs(entry_source, 0..last_part, |part, _, x| {
+            if x.is_none() {
+                limit = limit.min(part);
+            }
+        });
+    }
     candidates.truncate(cut);
+    candidates.truncate(candidates.partition_point(|candidate| candidate.1 < limit));
     let mut candidates = candidates.into_iter().peekable();
     while let Some(&(_, part)) = candidates.peek() {
         taken.clear();
@@ -854,6 +884,11 @@ fn files_that_leave_entry_chunk(
                     pending.push(other);
                 }
             });
+            if parent_gains_no_import {
+                this.for_each_import_that_runs(file, 0..parts_len(file), |_, _, x| {
+                    stuck |= x.is_none();
+                });
+            }
             if stuck {
                 for &file in &taken {
                     leaves.unset(file as usize);
@@ -862,7 +897,7 @@ fn files_that_leave_entry_chunk(
             }
         }
     }
-    Ok(last_part)
+    Ok(last_part.min(limit))
 }
 
 /// Folds code-splitting chunks into other chunks where that is unobservable,
@@ -1159,13 +1194,18 @@ pub(crate) fn merge_small_chunks(
     let host_names_url = |source_index: usize| {
         !this.options.entry_naming_has_hash && loaders[source_index] != Loader::Html
     };
-    let pin_entry_chunk = |entry_id: usize| {
+    // The order of a fold is no reference for such an entry point: the parent of its class keeps its rank and gains no import of what ran after it.
+    let takes_no_fold_under_any_name = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;
-        (!is_dynamic_entry(entry_id)
-            && (this.options.compile_mode.is_executable() || host_names_url(source_index)))
+        (!is_dynamic_entry(entry_id) && this.options.compile_mode.is_executable())
             || flags[source_index].wrap == WrapKind::Cjs
             || flags[source_index].needs_synthetic_default_export
             || !export_aliases[source_index].is_empty()
+    };
+    let pin_entry_chunk = |entry_id: usize| {
+        takes_no_fold_under_any_name(entry_id)
+            || (!is_dynamic_entry(entry_id)
+                && host_names_url(entry_source_indices[entry_id] as usize))
     };
     let mut leaves_entry_chunk = AutoBitSet::init_empty(files_len)?;
     // See `LinkerContext::entry_imports_in_parent`.
@@ -1190,6 +1230,7 @@ pub(crate) fn merge_small_chunks(
                     &mut load_class,
                     entered,
                     &mut leaves_entry_chunk,
+                    takes_no_fold_under_any_name(entry_id),
                 )?;
                 if parts_end > 0 {
                     entry_imports_in_parent.resize(entry_points_len, (0, u32::MAX));
@@ -1400,7 +1441,8 @@ pub(crate) fn merge_small_chunks(
         // A member that stays out can import the parent, so the parent must not start to import it.
         let mut takes_entry_files = false;
         if class.count() == 1 && pin_entry_chunk(class.find_first_set().expect("one bit set")) {
-            groups.values_mut()[target_index].parent_of_pinned_entry = true;
+            groups.values_mut()[target_index].parent_of_pinned_entry =
+                !takes_no_fold_under_any_name(class.find_first_set().expect("one bit set"));
             takes_entry_files = members.iter().all(|&member| {
                 let group = &groups.values()[member];
                 group.pin == Pin::Entry

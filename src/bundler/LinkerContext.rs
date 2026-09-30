@@ -451,12 +451,12 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// What the `import` statements in live parts `parts` of an unwrapped file run, by import record: `init_x()` / `require_x()` of wrapped file `Some(x)`, or (`None`) the load of an external module.
+    /// What the `import` statements in live parts `parts` of an unwrapped file run, by part and import record: `init_x()` / `require_x()` of wrapped file `Some(x)`, or (`None`) the load of an external module.
     pub(crate) fn for_each_import_that_runs(
         &self,
         source_index: u32,
         parts: core::ops::Range<u32>,
-        mut each: impl FnMut(u32, Option<u32>),
+        mut each: impl FnMut(u32, u32, Option<u32>),
     ) {
         use bun_ast::ImportRecordFlags as Flags;
         let flags = self.graph.meta.items_flags();
@@ -477,7 +477,7 @@ impl<'a> LinkerContext<'a> {
                         .flags
                         .intersects(Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS | Flags::PHASE_DEFER)
                     {
-                        each(i, None);
+                        each(part_index, i, None);
                     }
                     continue;
                 }
@@ -486,7 +486,7 @@ impl<'a> LinkerContext<'a> {
                     && flags[other as usize].wrap != WrapKind::None
                     && self.graph.files_live.is_set(other as usize)
                 {
-                    each(i, Some(other));
+                    each(part_index, i, Some(other));
                 }
             }
         }

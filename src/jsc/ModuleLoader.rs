@@ -30,12 +30,19 @@ pub struct ModuleLoader {
     pub interactive_eval_script: Option<Box<[u8]>>,
 }
 
-pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
+static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
-pub(crate) fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
+pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
     IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.store(v, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `bun:internal-for-testing` resolves: `--expose-internals` in release builds, always in debug builds.
+#[inline]
+pub fn is_allowed_to_use_internal_testing_apis() -> bool {
+    bun_core::env::IS_DEBUG
+        || IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 impl ModuleLoader {
@@ -99,7 +106,6 @@ impl Drop for ArenaResetGuard {
 pub enum FetchFlags {
     Transpile,
     PrintSource,
-    PrintSourceAndClone,
 }
 
 impl FetchFlags {
@@ -205,6 +211,17 @@ unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> boo
     bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
 }
 
+/// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias
+/// (`"path"`, `"node:path"`, `"bun:sqlite"`) resolves to, or -1.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize) -> i32 {
+    // SAFETY: C++ guarantees `data[..len]` is a live 8-bit specifier slice.
+    let str = unsafe { bun_core::ffi::slice(data, len) };
+    HardcodedModule::Alias::get(str, bun_ast::Target::Bun, Default::default())
+        .and_then(|alias| crate::builtin_module_key_index::get(alias.path.as_bytes()))
+        .map_or(-1, i32::from)
+}
+
 /// C++ entry point: picks the loader for a specifier from its file extension and the VM's loader map.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__getDefaultLoader(
@@ -254,8 +271,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        &bun_core::String::init(namespace),
-        &bun_core::String::init(after_namespace),
+        &bun_core::String::from_bytes(namespace),
+        &bun_core::String::from_bytes(after_namespace),
         crate::BunPluginTarget::Bun,
     ) {
         Ok(Some(v)) => v,

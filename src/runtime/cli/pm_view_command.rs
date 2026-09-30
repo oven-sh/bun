@@ -12,7 +12,6 @@ use bun_install::npm::{self, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_url::URL; // bumpalo::Bump re-export
 
@@ -79,12 +78,12 @@ pub(crate) fn view(
 
     let scope = manager.scope_for_package_name(name);
 
-    let mut url_buf = PathBuffer::uninit();
+    let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
     );
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
     let url_slice = buf_print(
         path_buf.0.as_mut_slice(),
@@ -129,7 +128,6 @@ pub(crate) fn view(
         header_buf,
         b"",
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
@@ -225,8 +223,17 @@ pub(crate) fn view(
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
                     let parsed_version = Semver::Version::parse(sliced_version);
                     if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
+                        let value = prop.value.expect("infallible: prop has value");
+                        // The registry controls this value. `Expr::set` below requires an object.
+                        if !value.is_object() {
+                            Output::err_generic(
+                                "failed to parse package manifest: version <b>{}<r> is not an object",
+                                (bun_fmt::quote(version_str),),
+                            );
+                            Global::exit(1);
+                        }
                         version = version_str;
-                        manifest = prop.value.expect("infallible: prop has value");
+                        manifest = value;
                         break 'brk;
                     }
                 }

@@ -10,7 +10,7 @@ use crate::node::Encoding;
 // alias block.
 #[bun_jsc::JsClass]
 #[derive(Default)]
-pub struct Crypto {}
+pub(crate) struct Crypto {}
 
 impl Crypto {
     #[bun_jsc::host_fn(method)]
@@ -21,11 +21,6 @@ impl Crypto {
     ) -> JsResult<JSValue> {
         crate::node::crypto::timing_safe_equal(global, callframe)
     }
-
-    // DOMJIT fast path — non-standard signature (typed-array args unwrapped by codegen).
-    // DOMJIT operations report failure by throwing on the VM and returning the empty
-    // value (`JSValue::ZERO`); the generated wrapper returns the raw EncodedJSValue and
-    // the JIT checks for a pending exception after the call.
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_random_values(
@@ -76,8 +71,6 @@ impl Crypto {
         Ok(arguments[0])
     }
 
-    // DOMJIT fast path.
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn random_uuid(
         &self,
@@ -96,8 +89,6 @@ impl Crypto {
         );
         str.into_js(global)
     }
-
-    // DOMJIT fast path.
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
     pub(crate) fn constructor(
@@ -280,16 +271,13 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
-    let name: bun_core::ZigStringSlice = 'brk: {
+    let name_buffer;
+    let name: bun_core::Utf8Bytes = 'brk: {
         if name_value.is_string() {
-            let name_str = name_value.to_bun_string(global)?;
-            let result = name_str.to_utf8();
-
-            break 'brk result;
+            break 'brk name_value.to_utf8(global)?;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-            let bytes: &[u8] = array_buffer.byte_slice();
-            break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
+            name_buffer = array_buffer;
+            break 'brk bun_core::Utf8Bytes::Borrowed(name_buffer.byte_slice());
         } else {
             return Err(global
                 .err(
@@ -299,7 +287,6 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                 .throw());
         }
     };
-    // `defer name.deinit()` — Utf8Slice's Drop handles cleanup.
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {

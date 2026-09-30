@@ -12,6 +12,7 @@
 import { SQL } from "bun";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
@@ -110,6 +111,7 @@ async function mysqlServer() {
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         switch (payload[0]) {
           case COM_QUERY:
             socket.write(mysqlTextResultSet(1, columns, [values]));

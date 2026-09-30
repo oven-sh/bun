@@ -1,14 +1,16 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  isWindows,
   readdirSorted,
   runBunInstall,
+  runBunUpdate,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
 } from "harness";
@@ -309,6 +311,154 @@ test.concurrent("successfully installs workspace when path already exists in nod
   expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
     name: "pkg1",
   });
+});
+
+// A "*" locked to a registry package moves to a workspace of that name once one exists, and back
+// to the registry once it is gone: the lockfile edge records which one it linked.
+test.concurrent("star dep follows a same-name workspace being added and removed", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const installed = () => file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+  const writeRoot = (workspaces: string[]) =>
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces, dependencies: { "no-deps": "*" } }),
+    );
+
+  await Promise.all([
+    writeRoot(["app1"]),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1" })),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("2.0.0");
+
+  // versionless, so only the `*` arm of the link rule matches it
+  await Promise.all([
+    writeRoot(["app1", "no-deps"]),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
+  ]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect(await installed()).toEqual({ name: "no-deps" });
+
+  await writeRoot(["app1"]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("2.0.0");
+});
+
+// The root both lists the workspace and depends on it by `*`; a prerelease version is not
+// satisfied by `*`, but `*` links to a same-name workspace regardless of its version.
+test.concurrent("root star dep on its own prerelease workspace links the workspace", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["no-deps"], dependencies: { "no-deps": "*" } }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0-alpha" })),
+  ]);
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0-alpha",
+  });
+});
+
+// The root edge is cloned into the new lockfile when `bun update` re-resolves it; the clone must
+// keep the workspace it links to, which for an alias is not recoverable from the alias name.
+test.concurrent.each([
+  { spec: "npm:package1@*", pkg1: {} },
+  { spec: "npm:package1@^1.0.0", pkg1: { version: "1.0.0" } },
+])("root alias $spec onto a workspace survives bun update", async ({ spec, pkg1 }) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["package1"], dependencies: { aliased: spec } }),
+    ),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
+    name: "package1",
+    ...pkg1,
+  });
+
+  await runBunUpdate(env, packageDir);
+  expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
+    name: "package1",
+    ...pkg1,
+  });
+});
+
+// `$name` copies the root's spec for `name`. When that spec is a range linked to a workspace, the
+// override is still the range, which is what bun.lock records, so a reload sees no change.
+test.concurrent("$ref override of a range linked to a workspace round-trips through bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["no-deps"],
+        dependencies: { "no-deps": "^1.0.0", "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "$no-deps" },
+      }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"overrides": {\n    "no-deps": "^1.0.0"');
+
+  ({ exited } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+  expect(await exited).toBe(0);
+});
+
+// bun.lock records each workspace's version (`bun pm pack` substitutes `workspace:^` from it), so
+// bumping one rewrites the lockfile even though no dependency edge changed.
+test.concurrent("bumping a workspace version rewrites bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const writePkg = (version: string) =>
+    write(join(packageDir, "pkg", "package.json"), JSON.stringify({ name: "pkg", version }));
+  const lockedVersion = async () =>
+    (await file(join(packageDir, "bun.lock")).text()).match(/"name": "pkg",\s*"version": "([^"]+)"/)?.[1];
+
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkg"] })),
+    writePkg("1.0.0"),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.0.0");
+
+  await writePkg("1.1.0");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.1.0");
+
+  // build metadata is part of the recorded version too
+  await writePkg("1.1.0+build.2");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.1.0+build.2");
+
+  // an empty pre-release is recorded as "1.2.0"; the install after that sees no change
+  await writePkg("1.2.0-");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.2.0");
+  const settled = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(settled.err).not.toContain("Saved lockfile");
+  expect(await settled.exited).toBe(0);
 });
 
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
@@ -2669,4 +2819,67 @@ describe("packages whose version label is longer than 512 bytes", () => {
       '#! /usr/bin/env node\n\nconsole.log("patched baz");\n',
     );
   });
+});
+
+// A hardlink install leaves hardlinks of cache files in each node_modules it writes.
+// After only the root node_modules is removed, the next install does not delete
+// anything first, so a workspace's own node_modules still holds those hardlinks. A copy
+// over them must replace the files. Writing through them empties the cache files.
+test.concurrent("a copyfile install over a workspace's hardlinked files does not empty the cache", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+    ),
+  ]);
+
+  async function install(backend: "hardlink" | "copyfile") {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", `--backend=${backend}`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const readJson = (path: string) => {
+    expect(statSync(path).size).toBeGreaterThan(0);
+    return JSON.parse(readFileSync(path, "utf8"));
+  };
+
+  const nestedPkgJson = join(packageDir, "packages", "pkg1", "node_modules", "no-deps", "package.json");
+  await install("hardlink");
+  expect(readJson(nestedPkgJson)).toEqual({ name: "no-deps", version: "2.0.0" });
+  if (!isWindows) {
+    expect(statSync(nestedPkgJson).nlink).toBeGreaterThan(1);
+  }
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install("copyfile");
+
+  expect(readJson(nestedPkgJson)).toEqual({ name: "no-deps", version: "2.0.0" });
+  expect(readJson(join(packageDir, "node_modules", "no-deps", "package.json"))).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  if (!isWindows) {
+    // a new file, not the cache file's inode
+    expect(statSync(nestedPkgJson).nlink).toBe(1);
+  }
+
+  const cacheDir = join(packageDir, ".bun-cache");
+  const cached = (await readdirSorted(cacheDir)).filter(name => name.startsWith("no-deps@2.0.0@"));
+  expect(cached).toHaveLength(1);
+  expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
+  expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
 });

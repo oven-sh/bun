@@ -33,6 +33,7 @@ fn is_member(expr: &Expr) -> bool {
 /// `eachSelfAssignment`: `left` is a pattern, which Bun's tree writes as the literal it looks like.
 fn each_self_assignment(context: &mut Context<'_, '_>, left: &Expr, right: &Expr) {
     if !context.stack_check.is_safe_to_recurse() {
+        context.too_deep(right.loc);
         return;
     }
     match (&left.data, &right.data) {
@@ -126,8 +127,9 @@ fn range_of(context: &Context<'_, '_>, node: &Expr) -> Option<(Loc, u32, u32)> {
 }
 
 fn report(context: &mut Context<'_, '_>, node: &Expr) {
-    // A node whose text does not read is not reported: its name is its text.
+    // The name of a node is its text, which is not read where the stack ends the look for spans under the node.
     let Some((start, missing, end)) = range_of(context, node) else {
+        context.too_deep(node.loc);
         return;
     };
     let Some(source) = usize::try_from(start.start)

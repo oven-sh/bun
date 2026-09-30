@@ -1628,7 +1628,8 @@ const SocketHandlers2 = {
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
-    req.oncomplete(error.errno, self._handle, req, true, true);
+    // An attempt that timed out was closed with its `oncomplete` cleared.
+    req.oncomplete?.(error.errno, self._handle, req, true, true);
   },
 } satisfies InternalSocketHandler<ConnectData>;
 
@@ -3549,8 +3550,7 @@ function internalConnectMultipleTimeout(context, req, handle) {
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 
   req.oncomplete = undefined;
-  // close() on a still-connecting handle runs no terminal callback and never
-  // rejects doConnect's promise (see socket_body.rs), so end the span here.
+  // `oncomplete` is what would have ended the span.
   traceConnectEnd(req);
   ArrayPrototypePush.$call(context.errors, createConnectionError(req, uv().UV_ETIMEDOUT));
   handle.close();

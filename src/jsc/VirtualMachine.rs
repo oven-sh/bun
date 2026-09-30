@@ -5723,22 +5723,31 @@ impl VirtualMachine {
             };
             // SAFETY: process-global usockets loop is live.
             let loop_ = unsafe { &mut *uws::Loop::get() };
-            let mut maybe_group = loop_.internal_loop_data.head;
-            while let Some(group) = NonNull::new(maybe_group) {
-                // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
-                let next = unsafe { (*group.as_ptr()).next };
-                let g = group.as_ptr();
-                if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
-                    // SAFETY: see above.
-                    unsafe { (*g).close_all() };
+            // What a close handler dials (a pool that reconnects) is closed by
+            // the next round; bounded, as in `close_all_socket_groups`.
+            for _ in 0..8 {
+                let mut closed_any = false;
+                let mut maybe_group = loop_.internal_loop_data.head;
+                while let Some(group) = NonNull::new(maybe_group) {
+                    // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+                    let next = unsafe { (*group.as_ptr()).next };
+                    let g = group.as_ptr();
+                    if g != skip_spawn_ipc && g != skip_test_parallel_ipc {
+                        // SAFETY: see above.
+                        unsafe { (*g).close_all() };
+                        closed_any = true;
+                    }
+                    // SAFETY: `next` may have been unlinked by an on_close JS
+                    // callback; restart from head if so (mirrors loop.c).
+                    maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
+                        loop_.internal_loop_data.head
+                    } else {
+                        next
+                    };
                 }
-                // SAFETY: `next` may have been unlinked by an on_close JS
-                // callback; restart from head if so (mirrors loop.c).
-                maybe_group = if !next.is_null() && unsafe { (*next).linked } == 0 {
-                    loop_.internal_loop_data.head
-                } else {
-                    next
-                };
+                if !closed_any {
+                    break;
+                }
             }
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {

@@ -18,14 +18,15 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { blackholePortSource, bunEnv, bunExe, isMusl, isWindows } from "harness";
 import { listeningServer, neverAnsweringServer, pgAuthenticationOk, pgReadyForQuery } from "./wire-frames";
 
 const drivers = [
-  ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED"],
-  ["mysql", "mysql://root@", "ERR_MYSQL_CONNECTION_CLOSED"],
+  ["postgres", "postgres://postgres@", "ERR_POSTGRES_CONNECTION_CLOSED", "ERR_POSTGRES_CONNECTION_TIMEOUT"],
+  ["mysql", "mysql://root@", "ERR_MYSQL_CONNECTION_CLOSED", "ERR_MYSQL_CONNECTION_TIMEOUT"],
 ] as const;
 
-for (const [name, scheme, closedCode] of drivers) {
+for (const [name, scheme, closedCode, timeoutCode] of drivers) {
   test(`${name}: forced close() resolves while a connection is mid-handshake`, async () => {
     const { port, server, accepted } = await neverAnsweringServer();
     try {
@@ -83,6 +84,32 @@ for (const [name, scheme, closedCode] of drivers) {
       server.close();
     }
   });
+
+  // The timeout closes a socket whose TCP connect is still in flight. The event loop ref the
+  // connection holds is released by the socket event that close raises.
+  test.skipIf(isWindows || isMusl)(
+    `${name}: the process exits after the connection timeout of a dial that never completes`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          ${blackholePortSource}
+          const sql = new Bun.SQL({ url: "${scheme}127.0.0.1:" + port + "/db", max: 1, connectionTimeout: 0.05 });
+          console.log(await sql\`SELECT 1\`.catch(err => err.code));
+          filler.destroy();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe(timeoutCode + "\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 }
 
 // https://github.com/oven-sh/bun/issues/39940

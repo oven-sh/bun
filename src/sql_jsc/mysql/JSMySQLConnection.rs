@@ -583,12 +583,8 @@ impl JSMySQLConnection {
         }
         use my_sql_connection::Status as S;
         match this.connection.get().status {
-            // A close while the connect/handshake is still in flight gets no
-            // socket event (uws skips the on_close dispatch for sockets whose
-            // connect never completed), so the socket-close -> on_close ->
-            // fail chain never runs: fail directly so the JS onclose callback
-            // fires and the status goes terminal instead of staying
-            // Connecting forever.
+            // The socket event this close raises would report a connect that
+            // failed; say what happened first.
             S::Connecting
             | S::Handshaking
             | S::Authenticating
@@ -957,8 +953,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
-        // The dispatch trampoline already closed the connecting socket; it is
-        // freed at end-of-tick, so detach before any user-visible callback.
+        // As in `on_close`.
         this.connection_mut()
             .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);

@@ -1124,6 +1124,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
+        let needs_deref = !this.socket.get().is_detached();
+        Self::connect_failed(this, errno, dns_error, needs_deref)
+    }
+
+    /// `needs_deref`: the ref `connect_finish` took for the native socket is outstanding.
+    fn connect_failed(
+        this: bun_ptr::ThisPtr<Self>,
+        errno: c_int,
+        dns_error: i32,
+        needs_deref: bool,
+    ) -> JsResult<()> {
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -1142,7 +1153,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
-        let needs_deref = !this.socket.get().is_detached();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
         let vm = handlers.vm;
@@ -1163,7 +1173,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             needs_deref,
         };
 
-        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
+            || this.flags.get().contains(Flags::FINALIZING)
+        {
             drop(cleanup);
             return Ok(());
         }
@@ -1314,7 +1326,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        Self::handle_connect_error(this, errno, socket.dns_error())
+        Self::connect_failed(this, errno, socket.dns_error(), true)
     }
 
     pub(crate) fn mark_active(&self) {
@@ -3200,26 +3212,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        // Capture the in-flight-connect state before close_and_detach() sets
-        // DETACHED. Resetting a SEMI_SOCKET (Connected arm, handshake not yet
-        // established) dispatches no terminal callback in us_socket_close, so
-        // on_close/mark_inactive never runs — balance connect_finish's ref_(),
-        // downgrade the Strong this_value, and release the event-loop ref here,
-        // exactly as close() does. Without it those refs leak (LSan-caught).
-        let socket = this.socket.get();
-        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         this.close_and_detach(uws::CloseCode::Failure);
-        if is_semi_connect {
-            this.poll_ref.with_mut(|p| {
-                p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
-            this.deref();
-        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3248,21 +3241,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         let socket = this.socket.get();
-        // An in-flight `connect()` whose `on_open` has not fired yet is a
-        // SEMI_SOCKET — `us_socket_close` skips dispatch for those (firing
-        // `on_close` without a prior `on_open` is wrong, and the natural
-        // failure path delivers `on_connect_error` from the loop instead).
-        // Closing one here therefore runs *no* terminal callback, stranding
-        // the +1 `connect_finish` took on `this` (whose matching `deref()`
-        // lives in `on_close`/`handle_connect_error`) and the Strong
-        // `this_value` upgrade. node:net reaches this for every aborted /
-        // `autoSelectFamily`-timed-out attempt via `_handle.close()`.
-        //
-        // `socket.socket.get().is_some()` is `true` only for the
-        // `Connected(us_socket_t)` arm — the `Connecting` arm fires
-        // `on_connecting_error` synchronously inside `close()` and so does
-        // its own `deref()`; double-releasing it would underflow.
-        let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
         // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
         // the end() path), so `.fast_shutdown` raw-closes synchronously: a bare FIN.
@@ -3279,15 +3257,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 bun_io::AllocatorType::Js,
             ))
         });
-        if is_semi_connect {
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
-            // Balance `connect_finish`'s `socket_ref.ref_()`. The JS wrapper
-            // we were called through holds the remaining +1, so refcount
-            // stays ≥ 1 across this call.
-            this.deref();
-        }
         Ok(JSValue::UNDEFINED)
     }
 

@@ -292,7 +292,12 @@ struct us_bun_verify_error_t {
 };
 
 /* Immutable callback table. ~20 instances total (one per kind), all static
- * const / .rodata. Nullable entries are skipped by dispatch. */
+ * const / .rodata. Nullable entries are skipped by dispatch.
+ *
+ * Whoever holds a socket hears that it is gone exactly once, whoever closed it:
+ * on_close if on_open ran, on_connect_error if the connect never completed,
+ * on_connecting_error for a us_connecting_socket_t. It is already closed then,
+ * and freed after the loop iteration. */
 struct us_socket_vtable_t {
     struct us_socket_t *(*on_open)(us_socket_r, int is_client, char *ip, int ip_length);
     struct us_socket_t *(*on_data)(us_socket_r, char *data, int length);
@@ -702,7 +707,6 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
-struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;

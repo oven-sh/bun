@@ -296,16 +296,7 @@ bool parsePriority(std::string_view name, uint32_t& priority)
 
 }
 
-// Runs a script against a uWS::HttpRouter with no server around it, so a test
-// can pin which handlers a request reaches and how much work the router does.
-// One command per line, fields separated by one space:
-//   add <H|M|L> <method,method,...> <pattern> <percent of requests it yields>
-//   remove <H|M|L> <method> <pattern>    prints r1 or r0
-//   route <method> <url>                 prints 1 or 0, then " id(param,...)" per handler run
-//   steps                                prints s<loop iterations since the last "steps">
-//   sort                                 ends a registration pass
-//   reset                                a new router
-// Handlers are numbered in the order of their "add" lines.
+// One uWS::HttpRouter call per script line, for tests. test/js/bun/http/bun-serve-routes.test.ts has the line formats.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_httpRouterScript, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();

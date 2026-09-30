@@ -706,8 +706,7 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
-// Runs a script of add / remove / route / steps / sort / reset lines against a uWS::HttpRouter and returns one line of
-// output per route, remove and steps line. The script format is documented at the function in InternalForTesting.cpp.
+// One uWS::HttpRouter call per script line: add, remove, route, steps, sort or reset. Returns the output of the lines.
 export const httpRouterScript: (script: string) => string = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_httpRouterScript",

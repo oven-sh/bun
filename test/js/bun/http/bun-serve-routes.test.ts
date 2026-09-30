@@ -1109,11 +1109,18 @@ describe.concurrent("false route with no fetch handler", () => {
   });
 });
 
-// uWS::HttpRouter with no server around it. A script line is one router call, and
-// `route` prints 1 or 0 for the result and then " id(params)" for each handler
-// that ran. Handlers are numbered in the order they are added. The last field of
-// an `add` line is the share of requests the handler yields: 0 answers every
-// request, 100 yields every request to the next handler.
+// uWS::HttpRouter with no server around it. A script line is one router call:
+//
+//   add <H|M|L> <method,method,...> <pattern> <percent>   H, M, L is the priority: high, medium, low
+//   remove <H|M|L> <method> <pattern>                     prints r1 or r0
+//   route <method> <url>                                  prints 1 or 0, then " id(param,...)" for each handler that ran
+//   steps                                                 prints s and the loop iterations since the last steps line
+//   sort                                                  ends a registration pass
+//   reset                                                 a new router
+//
+// Handlers are numbered in the order they are added. The percent of an `add`
+// line is the share of requests the handler yields to the next handler: 0
+// answers every request, 100 yields every request.
 describe("uWS::HttpRouter", () => {
   const run = (...lines: string[]) => httpRouterScript(lines.join("\n")).split("\n").slice(0, -1);
 

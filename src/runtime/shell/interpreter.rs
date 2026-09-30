@@ -298,6 +298,8 @@ pub(crate) struct Interpreter {
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
 
     pub(crate) async_commands_executing: Cell<u32>,
+    /// `Response` bodies that must arrive before the script starts, plus one while `run_from_js` registers them.
+    pending_bodies: Cell<u32>,
 
     // JSC_BORROW: always borrowed, never owned. Stored raw because the struct
     // is heap-allocated and outlives any single &JSGlobalObject borrow scope.
@@ -581,6 +583,7 @@ impl Interpreter {
             keep_alive: JsCell::new(bun_io::KeepAlive::default()),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
+            pending_bodies: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
             // Starts at `None` so `async_cmd_done` only finishes once
@@ -1472,16 +1475,87 @@ impl Interpreter {
                 .map(bun_jsc::ScriptExecutionContext::id),
         );
 
-        let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
-        let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
-        Script::start(self, root).run(self);
+        self.pending_bodies.set(1);
+        for value in &self.jsobjs {
+            if let Some(response) = value.as_class_ref::<crate::webcore::Response>() {
+                self.buffer_pending_body(response);
+            }
+        }
+        if self.pending_body_settled() {
+            self.start_script();
+        }
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
         }
 
         Ok(crate::jsc::JSValue::UNDEFINED)
+    }
+
+    fn start_script(&self) {
+        let shell = self.root_shell.as_ptr();
+        let ast = &raw const self.args.get().script_ast;
+        let io = self.root_io.get().clone();
+        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        Script::start(self, root).run(self);
+    }
+
+    /// A redirect reads a whole body, so ask the producer of one that still arrives to buffer it in place.
+    fn buffer_pending_body(&self, response: &crate::webcore::Response) {
+        let crate::webcore::body::Value::Locked(locked) = response.get_body_value() else {
+            return;
+        };
+        if locked.has_consumer() || locked.readable.has() {
+            return;
+        }
+        let Some(producer_hook) = locked.on_start_buffering.take().zip(locked.task) else {
+            return;
+        };
+        self.pending_bodies.set(self.pending_bodies.get() + 1);
+        locked.task = Some(core::ptr::NonNull::from(self).cast());
+        locked.on_receive_value = Some(Self::on_pending_body_settled);
+        // Last: the producer may settle the body from inside the call.
+        let (on_start_buffering, producer_task) = producer_hook;
+        on_start_buffering(producer_task);
+    }
+
+    fn pending_body_settled(&self) -> bool {
+        let remaining = self.pending_bodies.get() - 1;
+        self.pending_bodies.set(remaining);
+        remaining == 0
+    }
+
+    fn on_pending_body_settled(
+        ctx: core::ptr::NonNull<core::ffi::c_void>,
+        _: &mut crate::webcore::body::Value,
+    ) {
+        unsafe extern "C" fn start_script(ctx: *mut core::ffi::c_void) {
+            // SAFETY: as below.
+            unsafe { &*ctx.cast::<Interpreter>() }.start_script();
+        }
+        // SAFETY: `has_pending_activity` keeps the interpreter alive until `finish`.
+        let this = unsafe { ctx.cast::<Interpreter>().as_ref() };
+        if this.pending_body_settled() {
+            // Not here: the caller holds `&mut` to a body the script reads.
+            this.global_this_ref()
+                .expect("run_from_js registered this callback")
+                .queue_microtask_callback(ctx.as_ptr().cast::<Interpreter>(), start_script);
+        }
+    }
+
+    /// Throws when a redirect cannot read `body`: it failed, or it is a stream.
+    pub(crate) fn check_redirect_body(
+        global: &crate::jsc::JSGlobalObject,
+        body: &mut crate::webcore::body::Value,
+    ) -> crate::jsc::JsResult<()> {
+        match body {
+            crate::webcore::body::Value::Error(err) => Err(global.throw_value(err.to_js(global))),
+            crate::webcore::body::Value::Locked(_) => {
+                Err(global.throw_invalid_arguments(format_args!(
+                    "A Response with a ReadableStream body cannot be used in a shell redirect yet"
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Idempotent

@@ -786,6 +786,7 @@ impl Cmd {
                     // `get_body_value` is `&self`.
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
+                    Interpreter::check_redirect_body(global, req.get_body_value())?;
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;

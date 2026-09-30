@@ -505,26 +505,73 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
-  test("redirect from a fetch() Response with a pending body closes the request", async () => {
-    const aborted = Promise.withResolvers<void>();
-    await using server = Bun.serve({
-      port: 0,
-      idleTimeout: 0,
-      fetch(request) {
-        request.signal.addEventListener("abort", () => aborted.resolve());
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode("pending"));
-            },
-          }),
-        );
-      },
+  describe("redirect from a Response with a pending body", () => {
+    const html = Buffer.alloc(1024 * 1024, "<p>a</p>");
+    const serveHTML = () => Bun.serve({ port: 0, fetch: () => new Response(html) });
+
+    test("fetch()", async () => {
+      await using server = serveHTML();
+      const stdout = await $`cat < ${await fetch(server.url)}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(html)).toBe(true);
     });
 
-    const { exitCode } = await $`cat < ${await fetch(server.url)}`.quiet();
-    await aborted.promise;
-    expect(exitCode).toBe(0);
+    test("HTMLRewriter.transform(await fetch())", async () => {
+      await using server = serveHTML();
+      const response = new HTMLRewriter().transform(await fetch(server.url));
+      const stdout = await $`cat < ${response}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(html)).toBe(true);
+    });
+
+    test("more than one in a script", async () => {
+      await using server = serveHTML();
+      const [first, second] = [await fetch(server.url), await fetch(server.url)];
+      const stdout = await $`cat < ${first}; cat < ${second}`.arrayBuffer();
+      expect(Buffer.from(stdout).equals(Buffer.concat([html, html]))).toBe(true);
+    });
+
+    test("a command that does not run leaves the body unread", async () => {
+      await using server = serveHTML();
+      const response = await fetch(server.url);
+      await $`false && cat < ${response}`.nothrow().quiet();
+      expect(response.bodyUsed).toBe(false);
+      expect(Buffer.from(await response.arrayBuffer()).equals(html)).toBe(true);
+    });
+
+    test("rejects when the body fails", async () => {
+      const connected = Promise.withResolvers<Bun.Socket>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\npartial");
+            connected.resolve(socket);
+          },
+        },
+      });
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      const failure = $`cat < ${response}`.quiet().then(
+        () => undefined,
+        error => error,
+      );
+      (await connected.promise).end();
+      expect(await failure).toMatchObject({ code: "ECONNRESET" });
+    });
+  });
+
+  test("redirect from a Response with a ReadableStream body throws", async () => {
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hi"));
+          controller.close();
+        },
+      }),
+    );
+    // A ShellPromise starts on `.then()`, which `.rejects` does not call.
+    await expect((async () => await $`cat < ${response}`.quiet())()).rejects.toThrow(
+      "A Response with a ReadableStream body cannot be used in a shell redirect yet",
+    );
   });
 
   // TODO This sometimes fails

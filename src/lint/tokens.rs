@@ -476,10 +476,7 @@ pub(crate) fn case_before(source: &[u8], own: u32) -> Option<u32> {
         return None;
     }
     if let Some(&before) = start.checked_sub(1).and_then(|index| source.get(index)) {
-        if before.is_ascii_alphanumeric()
-            || matches!(before, b'_' | b'$' | b'\\' | b'#')
-            || before >= 0x80
-        {
+        if before.is_ascii_alphanumeric() || matches!(before, b'_' | b'$' | b'\\' | b'#') {
             return None;
         }
     }

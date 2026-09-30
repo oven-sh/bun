@@ -108,10 +108,9 @@ fn of_big_int(digits: &[u8]) -> Option<Name<'_>> {
 /// `String(/a/ig)` is `/a/gi`: the flags in the order of `RegExp.prototype.flags`.
 fn of_reg_exp(reg_exp: &E::RegExp) -> Name<'_> {
     let raw = reg_exp.value.slice();
-    let flags_at = match reg_exp.flags_offset {
-        Some(offset) => usize::from(offset),
-        None => raw.len(),
-    };
+    // `flags_offset` is a `u16` and wraps in a long literal: the flags are what follows the last `/`.
+    let flags_at =
+        bun_core::strings::last_index_of_char(raw, b'/').map_or(raw.len(), |slash| slash + 1);
     let Some(flags) = raw.get(flags_at..) else {
         return Name::Borrowed(raw);
     };

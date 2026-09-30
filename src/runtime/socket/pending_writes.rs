@@ -1,45 +1,49 @@
 use bun_io::StreamBuffer;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_ptr::JsCell;
 
 /// Unsent bytes of node:net writes. A drain moves no bytes and an empty queue holds no allocation.
+/// Every edit goes through `append`, `consume` or `release`.
 #[derive(Default)]
-pub(crate) struct PendingWrites(StreamBuffer);
+pub(crate) struct PendingWrites(JsCell<StreamBuffer>);
 
 impl PendingWrites {
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        self.0.size()
+        self.0.get().size()
     }
 
     #[inline]
     pub(crate) fn slice(&self) -> &[u8] {
-        self.0.slice()
+        self.0.get().slice()
     }
 
     /// The allocation, sent prefix included.
     #[inline]
     pub(crate) fn capacity(&self) -> usize {
-        self.0.memory_cost()
+        self.0.get().memory_cost()
     }
 
     #[inline]
-    pub(crate) fn append_slice(&mut self, bytes: &[u8]) {
-        bun_core::handle_oom(self.0.write(bytes));
+    pub(crate) fn append(&self, bytes: &[u8]) {
+        self.0
+            .with_mut(|buffer| bun_core::handle_oom(buffer.write(bytes)));
     }
 
+    /// The socket took `n` bytes. `n` can exceed `len()`: one writev sends the queue and the chunk behind it.
     #[inline]
-    pub(crate) fn clear_and_free(&mut self) {
-        self.0 = StreamBuffer::default();
-    }
-
-    /// `n` can exceed `len()`: one writev sends the queue and the chunk behind it.
-    #[inline]
-    pub(crate) fn consume(&mut self, n: usize) {
+    pub(crate) fn consume(&self, n: usize) {
         if n >= self.len() {
-            self.clear_and_free();
+            self.0.set(StreamBuffer::default());
         } else {
-            self.0.wrote(n);
+            self.0.with_mut(|buffer| buffer.wrote(n));
         }
+    }
+
+    /// Drops the bytes that the socket did not take.
+    #[inline]
+    pub(crate) fn release(&self) {
+        self.0.set(StreamBuffer::default());
     }
 }
 
@@ -52,7 +56,7 @@ fn probe_byte(position: usize) -> u8 {
 pub(crate) fn replay_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut schedule = frame.argument(0).array_iterator(global)?;
 
-    let mut queue = PendingWrites::default();
+    let queue = PendingWrites::default();
     let mut appended: usize = 0;
     let mut sent: usize = 0;
     let mut intact = true;
@@ -69,7 +73,7 @@ pub(crate) fn replay_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
         let advanced = if n >= 0 {
             let bytes: Vec<u8> = (appended..appended + count).map(probe_byte).collect();
-            queue.append_slice(&bytes);
+            queue.append(&bytes);
             appended += bytes.len();
             0
         } else {

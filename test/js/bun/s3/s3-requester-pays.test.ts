@@ -260,9 +260,11 @@ describe("s3 - Requester Pays bucket", () => {
   };
   const payment = `<RequestPaymentConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Payer>Requester</Payer></RequestPaymentConfiguration>`;
 
-  /** A server with the bucket `bucket`, which has Requester Pays, and the object `key` in it. */
-  async function start(): Promise<S3Server> {
-    const server = serve({ buckets: ["bucket"], credentials: [DEFAULT_CREDENTIALS, requester] });
+  /** A server that knows the two accounts. The first one owns the bucket `bucket`. */
+  const start = () => serve({ buckets: ["bucket"], credentials: [DEFAULT_CREDENTIALS, requester] });
+
+  /** Puts the object `key` in the bucket and gives the bucket Requester Pays. Each account can read both. */
+  async function prepare(server: S3Server) {
     const owner = new SigningClient({ endpoint: server.url, ...DEFAULT_CREDENTIALS });
     const setup = [
       await owner.fetch("PUT", "/bucket", { query: { acl: "" }, headers: { "x-amz-acl": "public-read" } }),
@@ -270,7 +272,6 @@ describe("s3 - Requester Pays bucket", () => {
       await owner.fetch("PUT", "/bucket", { query: { requestPayment: "" }, body: payment }),
     ];
     expect(setup.map(response => response.status)).toEqual([200, 200, 200]);
-    return server;
   }
 
   /** The options of a client for the account that does not own the bucket. */
@@ -282,7 +283,8 @@ describe("s3 - Requester Pays bucket", () => {
   });
 
   it("list() accepts the charge with requestPayer", async () => {
-    await using server = await start();
+    await using server = start();
+    await prepare(server);
     const keys = (response: Bun.S3ListObjectsResponse) => response.contents?.map(object => object.key);
 
     expect(keys(await new S3Client({ ...options(server), requestPayer: true }).list({ prefix: "k" }))).toEqual(["key"]);
@@ -296,7 +298,8 @@ describe("s3 - Requester Pays bucket", () => {
   });
 
   it("new Response(s3File) accepts the charge with requestPayer", async () => {
-    await using server = await start();
+    await using server = start();
+    await prepare(server);
     const redirect = (file: Bun.S3File) => fetch(new Response(file).headers.get("location")!);
 
     const paid = await redirect(new S3Client({ ...options(server), requestPayer: true }).file("key"));

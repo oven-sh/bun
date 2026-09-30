@@ -249,9 +249,10 @@ impl<'a> Formatter<'a> {
     }
 
     pub(super) fn repeat_counter(&mut self) -> Rc<Cell<usize>> {
-        self.repeat_bytes
-            .get_or_insert_with(|| Rc::new(Cell::new(0)))
-            .clone()
+        Rc::clone(
+            self.repeat_bytes
+                .get_or_insert_with(|| Rc::new(Cell::new(0))),
+        )
     }
 
     pub fn style(&self) -> Style {

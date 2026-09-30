@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows } from "harness";
 import { join } from "path";
 
 // A connection has one current response. The server socket gives the connection to the next
@@ -47,6 +47,8 @@ const uses = [
   "nothing",
 ];
 const triggers = ["detachSocket", "emit-close", "emit-finish", "clear-httpMessage"];
+const head = (length: number) =>
+  `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
 
 describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to the next response (%s)", transport => {
   test.each(triggers)(
@@ -103,15 +105,18 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     "does not write into the place of the response that has the connection",
     async () => {
       expect(await run("connected", transport)).toEqual({
-        results: triggers.map(trigger => ({
-          trigger,
-          late: "returned",
-          pending: false,
-          regranted: false,
-          thirdQueued: true,
-          bodies: ["second-body", "third-body"],
-          errors: [],
-        })),
+        results: triggers.flatMap(trigger =>
+          ["end", "writeContinue", "addTrailers+end"].map(use => ({
+            trigger,
+            use,
+            late: "returned",
+            pending: false,
+            regranted: false,
+            thirdQueued: true,
+            received: head(11) + "second-body" + head(10) + "third-body",
+            errors: [],
+          })),
+        ),
         stderr: "",
         exitCode: 0,
         signalCode: null,
@@ -136,8 +141,6 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
   test(
     "a queued response does not write before it has the connection",
     async () => {
-      const head = (length: number) =>
-        `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${length}\r\n\r\n`;
       const calls = ["write", "end", "writeHead", "flushHeaders", "writeContinue", "writeInformational", "cork"];
       expect(await run("queued", transport)).toEqual({
         results: calls.map(call => ({
@@ -158,7 +161,17 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     "the write that it left in the socket buffer goes out, and its drain handler is gone",
     async () => {
       expect(await run("draining", transport)).toEqual({
-        results: [{ displaced: true, pending: false, receivedAtLeastTheWrite: true }],
+        results: [
+          {
+            displaced: true,
+            pending: false,
+            // Winsock can take the whole write in one send(). Then no tail is held and no drain handler is armed.
+            wroteAll: isWindows ? expect.any(Boolean) : false,
+            heldTail: isWindows ? expect.any(Boolean) : true,
+            collected: 1,
+            receivedAtLeastTheWrite: true,
+          },
+        ],
         stderr: "",
         exitCode: 0,
         signalCode: null,
@@ -174,12 +187,65 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
         results: uses.map(use => ({
           use,
           queued: true,
+          pendingWhileQueued: true,
           switched: true,
           // req.destroy() destroys the socket of the request, which the WebSocket has.
           open: use !== "req.destroy",
           result: "returned",
           pending: false,
         })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "a queued request whose body still arrives does not keep the server open after a WebSocket adopted the connection",
+    async () => {
+      expect(await run("adopted-with-body", transport)).toEqual({
+        results: ["req.destroy", "destroy", "nothing"].map(use => ({
+          use,
+          queued: true,
+          bodyBytes: 3,
+          switched: true,
+          open: use !== "req.destroy",
+          result: "returned",
+          serverClosed: true,
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "req.destroy() on a queued request closes the connection and writes nothing",
+    async () => {
+      expect(await run("queued-destroyed", transport)).toEqual({
+        results: ["same read", "later read"].map(secondRequest => ({
+          secondRequest,
+          queued: true,
+          result: "returned",
+          received: "",
+        })),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "a listener that throws while its response waits behind a raw write of the socket ends no response",
+    async () => {
+      expect(await run("thrown-while-queued", transport)).toEqual({
+        results: [{ queued: true, uncaught: ["boom"], rawWrite: true, afterRawWrite: "", closedByServer: true }],
         stderr: "",
         exitCode: 0,
         signalCode: null,

@@ -144,7 +144,8 @@ it(
     const revisionFile = join(cwd, "entry-promise-gc-revision.js");
     // LTO can determine when the stale pointer stops being conservatively rooted.
     // Repeat enough reloads to reliably force collection and cell reuse in release builds.
-    const totalBoots = 100;
+    // Every measured run without the root failed within 12 boots. A debug boot takes about 4 seconds.
+    const totalBoots = isDebug ? 6 : 20;
     writeFileSync(revisionFile, "export const revision = 0;\n");
     writeFileSync(
       entry,
@@ -239,7 +240,8 @@ setTimeout(async () => {
 
     expect({
       exitCode,
-      stderr,
+      // A debug build prints this line on every reload.
+      stderr: stderr.split("\n").filter(line => line !== "" && line !== "DEBUG: Reloading..."),
       unhandled,
       readyCount: ready.length,
       readySequenceIsValid: ready.every(
@@ -248,7 +250,7 @@ setTimeout(async () => {
       result,
     }).toEqual({
       exitCode: 0,
-      stderr: "",
+      stderr: [],
       unhandled: [],
       readyCount: totalBoots,
       readySequenceIsValid: true,

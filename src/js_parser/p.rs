@@ -225,6 +225,8 @@ pub struct StartsForParseOnly {
     pub erased: crate::parse::erased::ErasedTables,
     /// What a lint parse keeps of the syntax around an expression that leaves no node.
     pub wrappers: crate::parse::wrappers::Wrappers,
+    /// What the reference reports for the syntax errors of a lint parse, while the parse runs.
+    pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
     /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
     pub(crate) is_lint: bool,
 }

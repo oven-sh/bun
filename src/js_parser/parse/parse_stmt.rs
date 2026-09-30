@@ -1855,7 +1855,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
         } else {
-            let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
+            let expr_or_let = match p.parse_expr_or_let_stmt(opts) {
+                Ok(expr_or_let) => expr_or_let,
+                Err(err) => {
+                    let is_in_list = opts.lexical_decl == LexicalDecl::AllowAll;
+                    let is_at_top_level = opts.scope.is_module();
+                    return Err(p.statement_expected(loc, is_in_list, is_at_top_level, err));
+                }
+            };
             match expr_or_let.stmt_or_expr {
                 js_ast::StmtOrExpr::Stmt(stmt) => {
                     p.lexer.expect_or_insert_semicolon()?;

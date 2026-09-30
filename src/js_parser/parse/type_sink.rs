@@ -101,6 +101,11 @@ pub(crate) trait TypeSink {
     /// A type that the grammar read in one piece.
     #[inline]
     fn b_node(_out: &mut Self::Out, _node: ts::Type) {}
+    /// The node of the type in `out`, which only a sink that builds has.
+    #[inline]
+    fn b_built(_out: &Self::Out) -> Option<ts::Type> {
+        None
+    }
     /// The offset of the token the lexer is on.
     #[inline]
     fn b_start(_lx: &Lexer<'_>) -> KK<Self, u32> {
@@ -956,6 +961,10 @@ impl TypeSink for Build {
 
     fn b_node(out: &mut Self::Out, node: ts::Type) {
         *out = Some(node);
+    }
+
+    fn b_built(out: &Self::Out) -> Option<ts::Type> {
+        *out
     }
 
     fn b_start(lx: &Lexer<'_>) -> u32 {

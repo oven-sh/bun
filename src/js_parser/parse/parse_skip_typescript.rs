@@ -822,13 +822,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         if self.is_start_of_function_type_or_constructor_type() {
             self.parse_function_or_constructor_type::<S>(opts, out)?;
+            if S::STRICT {
+                self.function_or_constructor_type_to_error(S::b_built(out), IS_UNION);
+            }
             if IS_UNION {
                 let mut lead: KK<S, b::Lead> = ConstDefault::DEFAULT;
                 self.parse_union_or_intersection_type_rest::<S, false>(opts, out, &mut lead)?;
             }
             return Ok(());
         }
-        self.parse_constituent_type::<S, IS_UNION>(opts, out)
+        self.parse_constituent_type::<S, IS_UNION>(opts, out)?;
+        // "(" starts a function type too, which `parse_non_array_type` tells from a type in parentheses
+        if S::STRICT {
+            self.function_or_constructor_type_to_error(S::b_built(out), IS_UNION);
+        }
+        Ok(())
     }
 
     /// `parseTypeOperatorOrHigher`
@@ -862,6 +870,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: SkipTypeOptionsBitset,
         out: &mut S::Out,
     ) -> Result<(), Error> {
+        // parseTypeOperatorOrHigher reads no "|" and no "&": a lint parse misses a type here
+        if S::STRICT {
+            self.type_expected(opts)?;
+            return Err(Error::SyntaxError);
+        }
         let mut lead: KK<S, b::Lead> = ConstDefault::DEFAULT;
         let mut set: KK<S, b::Set> = ConstDefault::DEFAULT;
         while matches!(self.lexer.token, T::TBar | T::TAmpersand) {
@@ -1418,8 +1431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(());
         } else {
             // A type is missing. A parse without lint goes on where ".", "[" or an operator follows.
-            self.lexer.unexpected()?;
-            if S::STRICT {
+            if self.type_expected(opts)? && S::STRICT {
                 return Err(Error::SyntaxError);
             }
             return Ok(());
@@ -3239,7 +3251,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 self.skip_type_script_type_with_opts::<N>(
                     Level::Lowest,
-                    SkipTypeOptionsBitset::empty(),
+                    SkipTypeOptionsBitset::only(SkipTypeOptions::IsTypeArgument),
                     &mut argument,
                 )?;
             }

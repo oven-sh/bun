@@ -12,6 +12,7 @@ pub(crate) mod parse_skip_typescript;
 pub(crate) mod parse_stmt;
 pub mod parse_suffix;
 pub(crate) mod parse_typescript;
+pub mod syntax_errors;
 pub(crate) mod type_sink;
 pub mod wrappers;
 

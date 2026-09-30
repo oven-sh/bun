@@ -313,6 +313,8 @@ pub enum SkipTypeOptions {
     IsIndexSignature,
     AllowTupleLabels,
     DisallowConditionalTypes,
+    /// The type is an element of a list of type arguments, which a token that starts no type ends.
+    IsTypeArgument,
 }
 
 // Inherent associated types (`impl Foo { type Bar = ...; }`) are unstable

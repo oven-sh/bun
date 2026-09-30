@@ -14,6 +14,7 @@ use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
+use crate::parse::syntax_errors::SyntaxErrors;
 use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, ScopeOrder,
     StatementScope, WrapMode,
@@ -525,16 +526,27 @@ impl<'a> Parser<'a> {
         self,
         f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
     ) -> Result<R, Error> {
+        self.parse_for_lint_with_codes(&mut SyntaxErrors::default(), f)
+    }
+
+    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
+    #[cold]
+    pub fn parse_for_lint_with_codes<R>(
+        self,
+        errors: &mut SyntaxErrors,
+        f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
+    ) -> Result<R, Error> {
         if self.options.ts {
-            self._parse_for_lint::<true, R>(f)
+            self._parse_for_lint::<true, R>(errors, f)
         } else {
-            self._parse_for_lint::<false, R>(f)
+            self._parse_for_lint::<false, R>(errors, f)
         }
     }
 
     #[cold]
     fn _parse_for_lint<const TS: bool, R>(
         self,
+        errors: &mut SyntaxErrors,
         f: impl FnOnce(&ParsedForLint<'_, 'a>) -> R,
     ) -> Result<R, Error> {
         let Parser {
@@ -554,33 +566,44 @@ impl<'a> Parser<'a> {
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
         p.starts_for_parse_only = Some(crate::p::StartsForParseOnly::for_lint());
-        if p.lexer.token == js_lexer::T::THashbang {
-            p.lexer.next()?;
-        }
-        if p.log().errors > orig_error_count {
-            return Err(crate::Error::SyntaxError);
-        }
-        let mut opts = ParseStatementOptions {
-            scope: StatementScope::Module,
-            is_typescript_declare: is_declaration_file,
-            ..Default::default()
-        };
-        let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(stmts) => stmts,
-            Err(crate::Error::StackOverflow) => {
-                p.log().add_error(
-                    Some(p.source),
-                    p.lexer.loc(),
-                    b"Maximum call stack size exceeded",
-                );
-                return Err(crate::Error::SyntaxError);
+        p.start_syntax_errors(orig_error_count);
+        let parsed: Result<_, Error> = 'parse: {
+            if p.lexer.token == js_lexer::T::THashbang
+                && let Err(err) = p.lexer.next()
+            {
+                break 'parse Err(err.into());
             }
-            Err(err) => return Err(err),
+            if p.log().errors > orig_error_count {
+                break 'parse Err(crate::Error::SyntaxError);
+            }
+            let mut opts = ParseStatementOptions {
+                scope: StatementScope::Module,
+                is_typescript_declare: is_declaration_file,
+                ..Default::default()
+            };
+            match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+                // An error that the parser only logs fails the parse all the same.
+                Ok(_) if p.log().errors > orig_error_count => Err(crate::Error::SyntaxError),
+                Ok(stmts) => Ok(stmts),
+                Err(crate::Error::StackOverflow) => {
+                    p.log().add_error(
+                        Some(p.source),
+                        p.lexer.loc(),
+                        b"Maximum call stack size exceeded",
+                    );
+                    Err(crate::Error::SyntaxError)
+                }
+                Err(err) => Err(err),
+            }
         };
-        // An error that the parser only logs fails the parse all the same.
-        if p.log().errors > orig_error_count {
-            return Err(crate::Error::SyntaxError);
-        }
+        let stmts = match parsed {
+            Ok(stmts) => stmts,
+            Err(err) => {
+                // The codes of the reference for what the parse logged go to the caller.
+                p.finish_syntax_errors(errors);
+                return Err(err);
+            }
+        };
         drop(action_guard);
         let sidecar = p.starts_for_parse_only.take().unwrap_or_default();
         Ok(f(&ParsedForLint {

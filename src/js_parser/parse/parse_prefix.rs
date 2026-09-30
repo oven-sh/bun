@@ -1228,7 +1228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TNew => Self::pfx_t_new(p, flags),
             T::TSuper => Self::pfx_t_super(p, level),
             _ => {
-                p.lexer.unexpected()?;
+                p.unexpected_as(crate::parse::syntax_errors::EXPRESSION_EXPECTED)?;
                 Err(crate::Error::SyntaxError)
             }
         }

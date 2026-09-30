@@ -1064,3 +1064,96 @@ it("object loader: an error thrown by a getter on the exports object rejects the
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });
+
+it("build.module() of a module whose import() is still loading its dependencies", async () => {
+  using dir = tempDir("plugin-module-import-in-flight", {
+    "a.ts": `import "./dependency"; export const from = "file";`,
+    "dependency.ts": `export {};`,
+    "entry.ts": `
+      const dependencyRequested = Promise.withResolvers<void>();
+      const dependencyMayLoad = Promise.withResolvers<void>();
+      Bun.plugin({
+        name: "hold the dependency's load open",
+        setup(build) {
+          build.onLoad({ filter: /dependency\\.ts$/ }, async () => {
+            dependencyRequested.resolve();
+            await dependencyMayLoad.promise;
+            return { contents: "export {}", loader: "ts" };
+          });
+        },
+      });
+
+      const a = import.meta.dir + "/a.ts";
+      const inFlight = import(a);
+      await dependencyRequested.promise;
+      Bun.plugin({
+        name: "replace a.ts",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+      dependencyMayLoad.resolve();
+
+      console.log("in flight:", (await inFlight).from);
+      console.log("next:", (await import(a)).from);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "in flight: file\nnext: build.module()\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.each(["import", "require"])(
+  "a module that build.module() replaced while it was evaluating does not leave its error on the replacement (%s)",
+  async how => {
+    using dir = tempDir("plugin-module-replaced-while-evaluating", {
+      "replaces-itself.mjs": `
+        Bun.plugin({
+          name: "replace this module",
+          setup(build) {
+            build.module(import.meta.path, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+          },
+        });
+        console.log("while evaluating:", (${how === "import" ? "await import" : "require"}(import.meta.path)).from);
+        throw new Error("the replaced module threw");
+      `,
+      "import.mjs": `
+        const path = import.meta.dir + "/replaces-itself.mjs";
+        console.log("first:", await import(path).then(module => module.from, error => error.message));
+        console.log("next:", await import(path).then(module => module.from, error => error.message));
+      `,
+      "require.cjs": `
+        const path = __dirname + "/replaces-itself.mjs";
+        try {
+          console.log("first:", require(path).from);
+        } catch (error) {
+          console.log("first:", error.message);
+        }
+        import(path).then(module => console.log("next:", module.from), error => console.log("next:", error.message));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), how === "import" ? "import.mjs" : "require.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "while evaluating: build.module()\nfirst: the replaced module threw\nnext: build.module()\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

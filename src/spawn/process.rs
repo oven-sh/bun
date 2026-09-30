@@ -1061,11 +1061,7 @@ impl ExitWait {
         }
     }
 
-    unsafe extern "C" fn on_packet(
-        _loop: *mut bun_uws_sys::Loop,
-        op: *mut iocp::Op,
-        _entry: *mut iocp::OverlappedEntry,
-    ) {
+    unsafe extern "C" fn on_packet(_loop: *mut bun_uws_sys::Loop, op: *mut iocp::Op) {
         // SAFETY: `op` is the first field of the `ExitWait` allocated in
         // `Process::watch`; with its packet dequeued the loop is done with it.
         let process = unsafe {

@@ -58,7 +58,7 @@ impl Source {
                 Pipe::open_classified(loop_, fd, origin, close_fd).map(Source::Pipe)
             }
             // `NUL` and serial ports are character devices too.
-            FileKind::CharacterDevice if windows::tty::is_console(fd.native()) => {
+            FileKind::CharacterDevice if bun_sys::windows::fs::is_console(fd.native()) => {
                 Tty::open(loop_, fd, close_fd).map(Source::Tty)
             }
             _ => File::open(loop_, fd, close_fd).map(Source::File),
@@ -127,22 +127,6 @@ impl Source {
             Source::Pipe(pipe) => pipe.is_reading(),
             Source::Tty(tty) => tty.is_reading(),
             Source::File(file) => file.is_busy(),
-        }
-    }
-
-    pub(crate) fn set_raw_mode(&mut self, value: bool) -> bun_sys::Result<()> {
-        match self {
-            Source::Tty(tty) => tty.set_mode(if value {
-                windows::tty::Mode::Raw
-            } else {
-                windows::tty::Mode::Normal
-            }),
-            _ => Err(bun_sys::Error {
-                errno: bun_sys::E::NOTSUP as _,
-                syscall: bun_sys::Tag::uv_tty_set_mode,
-                fd: self.get_fd(),
-                ..Default::default()
-            }),
         }
     }
 }

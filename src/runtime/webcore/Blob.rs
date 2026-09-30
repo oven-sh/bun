@@ -4833,7 +4833,7 @@ const FAST_WRITE_TRUNCATES_AFTER: bool = cfg!(not(windows));
 fn windows_write_returns_promptly(fd: Fd) -> bool {
     use bun_sys::windows::fs;
     let own_stdio = fd.native() == Fd::stdout().native() || fd.native() == Fd::stderr().native();
-    (own_stdio || fs::is_disk_file(fd)) && fs::is_synchronous(fd)
+    (own_stdio || fs::is_disk_file(fd)) && fs::is_synchronous(fd) == Some(true)
 }
 
 fn write_bytes_to_file_fast(

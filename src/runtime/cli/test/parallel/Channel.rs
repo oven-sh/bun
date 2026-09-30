@@ -29,7 +29,7 @@ use core::marker::PhantomData;
 
 use bun_collections::VecExt;
 #[cfg(windows)]
-use bun_io::windows::{Pipe, PipeOrigin, ReadEvent};
+use bun_io::windows::{Pipe, PipeOrigin, ReadEvent, Refusal};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
@@ -276,7 +276,12 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         let bytes = self.out.replace(Vec::new());
         let submitted = self.backend.pipe.with_mut(|pipe| match pipe {
             Some(pipe) => pipe
-                .write_owned(bytes, self.root.get(), Some(Self::on_pipe_write))
+                .write_owned(
+                    bytes,
+                    Refusal::Returned,
+                    self.root.get(),
+                    Self::on_pipe_write,
+                )
                 .is_ok(),
             None => false,
         });

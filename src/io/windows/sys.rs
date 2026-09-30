@@ -15,10 +15,10 @@ pub(crate) use bun_windows_sys::{
     DUPLICATE_SAME_ACCESS, DWORD, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
     ENABLE_VIRTUAL_TERMINAL_INPUT, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
     FILE_INFORMATION_CLASS, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE,
-    GetConsoleMode, HANDLE, INPUT_RECORD, INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, KEY_EVENT,
-    LEFT_CTRL_PRESSED, NTSTATUS, OPEN_EXISTING, OVERLAPPED, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
-    PIPE_WAIT, SYNCHRONIZE, SetConsoleMode, SetEvent, WRITE_DAC, Win32Error,
+    FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE, GetConsoleMode, HANDLE, INPUT_RECORD,
+    INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, KEY_EVENT, LEFT_CTRL_PRESSED, NTSTATUS, OPEN_EXISTING,
+    OVERLAPPED, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT, SYNCHRONIZE, SetConsoleMode,
+    SetEvent, WRITE_DAC, Win32Error,
 };
 
 pub(crate) const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
@@ -26,8 +26,6 @@ pub(crate) const PIPE_UNLIMITED_INSTANCES: DWORD = 255;
 pub(crate) const PIPE_NOWAIT: DWORD = 0x0000_0001;
 pub(crate) const PIPE_READMODE_MESSAGE: DWORD = 0x0000_0002;
 pub(crate) const WT_EXECUTELONGFUNCTION: u32 = 0x0000_0010;
-
-pub(crate) const FILE_SYNCHRONOUS_IO_ALERT: u32 = 0x0000_0010;
 
 #[repr(C)]
 pub(crate) struct CONSOLE_READCONSOLE_CONTROL {
@@ -103,6 +101,27 @@ unsafe extern "system" {
 #[inline]
 pub(crate) fn last_error() -> Win32Error {
     Win32Error::get()
+}
+
+/// A duplicate of `handle` with the same access, which children do not inherit.
+pub(crate) fn duplicate(handle: HANDLE) -> Result<HANDLE, Win32Error> {
+    let mut duplicate: HANDLE = core::ptr::null_mut();
+    // SAFETY: `duplicate` is a live local; a `handle` that is not one is an error.
+    let ok = unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            handle,
+            GetCurrentProcess(),
+            &raw mut duplicate,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if ok == 0 {
+        return Err(last_error());
+    }
+    Ok(duplicate)
 }
 
 /// The Win32 error a completed overlapped operation's NTSTATUS stands for.

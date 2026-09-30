@@ -976,20 +976,6 @@ impl FileReader {
         }
     }
 
-    pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
-        #[cfg(not(windows))]
-        {
-            panic!(
-                "FileReader.setRawMode must not be called on {}",
-                std::env::consts::OS
-            );
-        }
-        #[cfg(windows)]
-        {
-            self.reader().set_raw_mode(_flag)
-        }
-    }
-
     pub(crate) fn set_flowing(&self, flag: bool) {
         bun_core::scoped_log!(
             FileReader,
@@ -1089,9 +1075,6 @@ impl readable_stream::SourceContext for FileReader {
     }
     fn memory_cost_fn(&self) -> usize {
         Self::memory_cost(self)
-    }
-    fn set_raw_mode(&mut self, flag: bool) -> Option<sys::Result<()>> {
-        Some(Self::set_raw_mode(self, flag))
     }
     fn set_flowing(&mut self, flag: bool) {
         Self::set_flowing(self, flag)

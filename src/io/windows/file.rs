@@ -16,7 +16,7 @@ use std::sync::Arc;
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task, WorkPool};
 use bun_uws_sys::Loop;
-use bun_uws_sys::iocp::{self, Op, OverlappedEntry};
+use bun_uws_sys::iocp::{self, Op};
 
 use super::pipe::ReadEvent;
 use super::{Callback, Link, Port, ReadCallback};
@@ -322,7 +322,7 @@ impl Settle {
         unsafe { iocp::us_iocp_op_ready(loop_, &raw mut (*settle).op) };
     }
 
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `Settle` posted above.
         unsafe {
             super::op_dequeued(loop_);
@@ -525,7 +525,7 @@ impl Inner {
         }
     }
 
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
         let this = op.cast::<Inner>();
         // SAFETY: `op` is the first field of the `Inner` whose worker posted
         // this packet; the worker is done with it.

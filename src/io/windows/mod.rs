@@ -79,11 +79,7 @@ pub(crate) unsafe fn settle(loop_: *mut Loop) {
     struct Settle {
         op: iocp::Op,
     }
-    unsafe extern "C" fn complete(
-        loop_: *mut Loop,
-        op: *mut iocp::Op,
-        _entry: *mut iocp::OverlappedEntry,
-    ) {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut iocp::Op) {
         // SAFETY: `op` is the first field of the `Settle` made below.
         unsafe {
             op_dequeued(loop_);
@@ -163,22 +159,8 @@ pub(crate) unsafe fn port_for(loop_: *mut Loop) -> Option<Arc<Port>> {
         if let Some((_, port)) = ports.iter().find(|(l, _)| *l == loop_) {
             return Some(port.clone());
         }
-        let mut dup: sys::HANDLE = core::ptr::null_mut();
-        // SAFETY: caller contract; both process handles are the pseudo-handle.
-        let ok = unsafe {
-            sys::DuplicateHandle(
-                sys::GetCurrentProcess(),
-                iocp::us_loop_iocp(loop_),
-                sys::GetCurrentProcess(),
-                &raw mut dup,
-                0,
-                0,
-                sys::DUPLICATE_SAME_ACCESS,
-            )
-        };
-        if ok == 0 {
-            return None;
-        }
+        // SAFETY: caller contract.
+        let dup = sys::duplicate(unsafe { iocp::us_loop_iocp(loop_) }).ok()?;
         let port = Arc::new(Port(dup));
         ports.push((loop_, port.clone()));
         Some(port)
@@ -346,16 +328,9 @@ impl ReadCallback {
 
 /// UTF-8 → NUL-terminated UTF-16 for a Win32 `W` call.
 pub(crate) fn to_wide_z(bytes: &[u8]) -> Vec<u16> {
-    match bun_core::handle_oom(bun_core::strings::to_utf16_alloc(bytes, false, true)) {
-        Some(wide) => wide,
-        // All ASCII: nothing was converted.
-        None => {
-            let mut wide: Vec<u16> = Vec::with_capacity(bytes.len() + 1);
-            wide.extend(bytes.iter().map(|b| u16::from(*b)));
-            wide.push(0);
-            wide
-        }
-    }
+    bun_core::handle_oom(bun_core::strings::to_utf16_alloc_for_real(
+        bytes, false, true,
+    ))
 }
 
 /// Run `f(context)` on one of the system's long-running worker threads: for

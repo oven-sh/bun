@@ -56,42 +56,11 @@ Object.defineProperty(ReadStream, "prototype", {
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
 
-      // On Windows the input mode belongs to the console, and is set through the
-      // process's stdin handle. On POSIX it is the file descriptor's termios.
-      if (process.platform === "win32") {
-        // Special case for stdin: the mode is set on the process's stdin
-        // handle, and its stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-            return this;
-          }
-        } else {
-          const handle = this.$bunNativePtr;
-          if (!handle) {
-            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-            return this;
-          }
-
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
-
-          const err = handle.setRawMode(flag);
-          if (err) {
-            this.emit("error", err);
-            return this;
-          }
-        }
-      } else {
-        const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-        const err = ttySetMode(this.fd, flag, state);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
+      const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
+      const err = ttySetMode(this.fd, flag, state);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
+        return this;
       }
 
       this.isRaw = flag;

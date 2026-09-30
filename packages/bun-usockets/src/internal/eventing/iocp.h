@@ -33,7 +33,7 @@ struct us_loop_t;
  * the handle only requests the completion, it does not wait for it. */
 struct us_iocp_op {
     OVERLAPPED overlapped;
-    void (*complete)(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry);
+    void (*complete)(struct us_loop_t *loop, struct us_iocp_op *op);
     /* The op behind this one in the loop's ready_ops. */
     struct us_iocp_op *next_ready;
 };
@@ -148,9 +148,8 @@ void us_iocp_op_submitted(struct us_loop_t *loop);
 /* For an op whose outcome its owner already knows (the call that would have
  * started it failed or finished on the spot) and whose `complete` has to run
  * from the loop all the same. The next tick runs it before it takes packets
- * from the port, in the order of these calls, with an entry that carries the
- * op and nothing else. Loop thread only. Counts as submitted: call
- * us_iocp_op_submitted as for a packet. */
+ * from the port, in the order of these calls. Loop thread only. Counts as
+ * submitted: call us_iocp_op_submitted as for a packet. */
 void us_iocp_op_ready(struct us_loop_t *loop, struct us_iocp_op *op);
 
 /* Loop thread only. A linked node is unlinked before the loop is freed. */

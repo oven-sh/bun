@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
 use bun_uws_sys::Loop;
-use bun_uws_sys::iocp::{self, CompleteFn, Op, OverlappedEntry, Wait};
+use bun_uws_sys::iocp::{self, CompleteFn, Op, Wait};
 
 use super::pipe::ReadEvent;
 use super::sys as win;
@@ -202,18 +202,7 @@ pub fn reset_console_mode() {
     }
     // By name: a handle the mode was changed through may have been closed
     // since, and its value reused for something else.
-    // SAFETY: plain Win32 call; the name is NUL-terminated.
-    let console = unsafe {
-        win::CreateFileW(
-            bun_core::w!("CONIN$\0").as_ptr(),
-            win::GENERIC_READ | win::GENERIC_WRITE,
-            bun_sys::windows::FILE_SHARE_READ | bun_sys::windows::FILE_SHARE_WRITE,
-            ptr::null_mut(),
-            win::OPEN_EXISTING,
-            0,
-            ptr::null_mut(),
-        )
-    };
+    let console = open_console_input();
     if console == INVALID_HANDLE_VALUE {
         return;
     }
@@ -229,6 +218,23 @@ pub fn reset_console_mode() {
     }
     // SAFETY: opened above.
     unsafe { win::CloseHandle(console) };
+}
+
+/// The input buffer of this process's console, for reading and writing;
+/// `INVALID_HANDLE_VALUE` when it has none.
+fn open_console_input() -> HANDLE {
+    // SAFETY: plain Win32 call; the name is NUL-terminated.
+    unsafe {
+        win::CreateFileW(
+            bun_core::w!("CONIN$\0").as_ptr(),
+            win::GENERIC_READ | win::GENERIC_WRITE,
+            bun_sys::windows::FILE_SHARE_READ | bun_sys::windows::FILE_SHARE_WRITE,
+            ptr::null_mut(),
+            win::OPEN_EXISTING,
+            0,
+            ptr::null_mut(),
+        )
+    }
 }
 
 /// [`set_console_mode`] for `wtf-bindings.cpp`. `mode` is 0 normal, 1 raw,
@@ -309,21 +315,11 @@ fn type_wake_key() {
         // `CreateFileW("CONIN$", GENERIC_READ)`, cmd.exe's `< CON`) refuses the
         // record with `ERROR_ACCESS_DENIED`. The input buffer is the console's,
         // not the handle's: by name it opens for writing.
-        // SAFETY: plain Win32 calls; the name is NUL-terminated.
-        unsafe {
-            let console = win::CreateFileW(
-                bun_core::w!("CONIN$\0").as_ptr(),
-                win::GENERIC_READ | win::GENERIC_WRITE,
-                bun_sys::windows::FILE_SHARE_READ | bun_sys::windows::FILE_SHARE_WRITE,
-                ptr::null_mut(),
-                win::OPEN_EXISTING,
-                0,
-                ptr::null_mut(),
-            );
-            if console != INVALID_HANDLE_VALUE {
-                typed = type_into(console);
-                win::CloseHandle(console);
-            }
+        let console = open_console_input();
+        if console != INVALID_HANDLE_VALUE {
+            typed = type_into(console);
+            // SAFETY: opened above.
+            unsafe { win::CloseHandle(console) };
         }
     }
     WAKE_TYPED.store(typed, Ordering::Release);
@@ -350,12 +346,6 @@ pub(super) fn wake_record() -> win::INPUT_RECORD {
 pub(super) fn is_wake_key(key: &bun_windows_sys::KEY_EVENT_RECORD) -> bool {
     // SAFETY: both members of the union are plain integers.
     key.wVirtualKeyCode == WAKE_VIRTUAL_KEY && unsafe { key.uChar.UnicodeChar } == WAKE_CHAR
-}
-
-/// Whether `handle` is a console (input or screen buffer).
-pub fn is_console(handle: HANDLE) -> bool {
-    let mut mode: u32 = 0;
-    win::GetConsoleMode(handle, &mut mode) != 0
 }
 
 /// The owner's handle to a console. Dropping it closes without telling anyone.
@@ -548,12 +538,6 @@ impl Tty {
         Fd::from_system(handle)
     }
 
-    /// An input handle (as opposed to a screen buffer).
-    pub fn is_readable(&self) -> bool {
-        // SAFETY: `inner` is live while the owner's `Tty` is.
-        unsafe { (*self.raw()).flags.contains(Flags::READABLE) }
-    }
-
     pub fn is_reading(&self) -> bool {
         // SAFETY: `inner` is live while the owner's `Tty` is.
         let inner = unsafe { &*self.raw() };
@@ -593,14 +577,6 @@ impl Tty {
             (*self.raw()).flags.remove(Flags::REFD);
             Inner::update_keep_alive(self.raw());
         }
-    }
-
-    /// Set the console's input mode through this (input) handle.
-    pub fn set_mode(&mut self, mode: Mode) -> sys::Result<()> {
-        if !self.is_readable() {
-            return Err(sys::Error::from_code(E::EINVAL, Tag::uv_tty_set_mode).with_fd(self.fd()));
-        }
-        set_console_mode(self.handle(), mode)
     }
 
     /// A line that starts with Ctrl-Z ends the input (`ReadEvent::Eof`), and
@@ -1131,11 +1107,7 @@ impl WaitOp {
 
     /// [`LINE_MODE`] was set: the console's input is not this reader's to wait
     /// on any more.
-    unsafe extern "C" fn line_mode_set(
-        loop_: *mut Loop,
-        op: *mut Op,
-        _entry: *mut OverlappedEntry,
-    ) {
+    unsafe extern "C" fn line_mode_set(loop_: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `WaitOp` whose wait fired.
         unsafe {
             let Some(this) = Self::fired(loop_, op) else {
@@ -1149,7 +1121,7 @@ impl WaitOp {
     }
 
     /// The console's input queue holds records.
-    unsafe extern "C" fn input_ready(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+    unsafe extern "C" fn input_ready(loop_: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `WaitOp` whose wait fired.
         unsafe {
             let Some(this) = Self::fired(loop_, op) else {
@@ -1362,7 +1334,7 @@ impl LineOp {
         0
     }
 
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
         let line = op.cast::<LineOp>();
         // SAFETY: `op` is the first field of the `LineOp` whose helper thread
         // posted this packet and is done with it; the tty outlives its
@@ -1434,7 +1406,7 @@ impl Inner {
 }
 
 impl PostedOp {
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
         // SAFETY: `op` is the first field of the `PostedOp` of a tty, which
         // outlives its packets (`pending`).
         unsafe {

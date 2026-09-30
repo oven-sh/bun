@@ -29,7 +29,7 @@ use std::io::Write as _;
 use bun_core::ZStr;
 use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
 #[cfg(windows)]
-use bun_io::windows::{Pipe, PipeOrigin, ReadEvent};
+use bun_io::windows::{Pipe, PipeOrigin, ReadEvent, Refusal};
 use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
@@ -978,8 +978,9 @@ unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
         Some(pipe) => pipe
             .write_owned(
                 bytes.to_vec(),
+                Refusal::Returned,
                 instance,
-                Some(ChromeProcess::on_command_written),
+                ChromeProcess::on_command_written,
             )
             .is_ok(),
         None => {

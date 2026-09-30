@@ -1222,16 +1222,11 @@ impl BufferedReader {
     /// See [`PipeOrigin::from_is_pollable`] for `is_pollable`. On `Err` the
     /// reader holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        self.start_with_origin(fd, PipeOrigin::from_is_pollable(is_pollable))
-    }
-
-    /// As [`start`](Self::start), by a caller that knows where `fd` came from.
-    pub fn start_with_origin(&mut self, fd: Fd, origin: PipeOrigin) -> sys::Result<()> {
-        let source = self.open_source(fd, origin)?;
+        let source = self.open_source(fd, PipeOrigin::from_is_pollable(is_pollable))?;
         self.start_with_source(source)
     }
 
-    /// The first half of [`start_with_origin`](Self::start_with_origin), for
+    /// The first half of [`start`](Self::start), for
     /// [`start_with_source`](Self::start_with_source). Once this has opened a
     /// [`PipeOrigin::Created`] `fd`, the loop's port has its file object,
     /// whatever becomes of the source.
@@ -1284,16 +1279,6 @@ impl BufferedReader {
         if let Some(mut source) = self.source.take() {
             source.disown();
         }
-    }
-
-    pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
-        let Some(source) = self.source.as_mut() else {
-            return sys::Result::Err(sys::Error::from_code(
-                sys::E::BADF,
-                sys::Tag::uv_tty_set_mode,
-            ));
-        };
-        source.set_raw_mode(value)
     }
 
     fn start_reading(&mut self) -> sys::Result<()> {

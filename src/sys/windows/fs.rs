@@ -613,11 +613,11 @@ pub fn is_disk_file(fd: Fd) -> bool {
 
 /// Whether `fd` is a synchronous file object: [`read`] and [`write`] on it
 /// return when the transfer is done. On one opened with
-/// `FILE_FLAG_OVERLAPPED` they do not. `false` when the query fails.
+/// `FILE_FLAG_OVERLAPPED` they do not. `None` when the query fails.
 ///
 /// The query takes a synchronous file object's lock, which I/O another thread
 /// or process has in flight on it holds, as the read or write would.
-pub fn is_synchronous(fd: Fd) -> bool {
+pub fn is_synchronous(fd: Fd) -> Option<bool> {
     const FILE_SYNCHRONOUS_IO_ALERT: u32 = 0x0000_0010;
     let mut mode: u32 = 0;
     let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
@@ -631,8 +631,8 @@ pub fn is_synchronous(fd: Fd) -> bool {
             win32::FILE_INFORMATION_CLASS::FileModeInformation,
         )
     };
-    status == win32::NTSTATUS::SUCCESS
-        && mode & (FILE_SYNCHRONOUS_IO_ALERT | win32::FILE_SYNCHRONOUS_IO_NONALERT) != 0
+    (status == win32::NTSTATUS::SUCCESS)
+        .then_some(mode & (FILE_SYNCHRONOUS_IO_ALERT | win32::FILE_SYNCHRONOUS_IO_NONALERT) != 0)
 }
 
 /// The `OVERLAPPED` of a synchronous `ReadFile`/`WriteFile` at `off`.
@@ -902,7 +902,8 @@ fn fstat_handle(handle: HANDLE) -> Win32Result<Stat> {
     }
 }
 
-fn is_console(handle: HANDLE) -> bool {
+/// Whether `handle` is a console (input or screen buffer).
+pub fn is_console(handle: HANDLE) -> bool {
     let mut mode: u32 = 0;
     win32::GetConsoleMode(handle, &mut mode) != 0
 }

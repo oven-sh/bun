@@ -145,13 +145,6 @@ const ClassInfo TTYWrapObject::s_info = {
 
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if OS(WINDOWS)
-    ASSERT(callFrame->argumentCount() == 1);
-    auto flag = callFrame->argument(0);
-    bool raw = flag.asBoolean();
-
-    return JSValue::encode(jsNumber(Source__setRawModeStdin(raw)));
-#else
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -183,9 +176,15 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         throwTypeError(globalObject, scope, "state must be a Uint8Array of rawModeStateSize bytes"_s);
         return {};
     }
+#if OS(WINDOWS)
+    if (fdToUse == 0)
+        return JSValue::encode(jsNumber(Source__setRawModeStdin(mode_ != 0)));
+    // As node, which asks libuv for UV_TTY_MODE_RAW_VT.
+    if (mode_)
+        mode_ = 3;
+#endif
     int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector(), 1);
     return JSValue::encode(jsNumber(err));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,

@@ -9,20 +9,20 @@ use core::ptr::{self, NonNull};
 
 use bun_sys::{self as sys, E, Tag};
 use bun_uws_sys::Loop;
-use bun_uws_sys::iocp::{self, Op, OverlappedEntry, Starved};
+use bun_uws_sys::iocp::{self, Op, Starved};
 
 use super::sys as win;
 use super::sys::{HANDLE, INVALID_HANDLE_VALUE, Win32Error};
 use super::{Callback, Link, Pipe};
 
-/// Instances kept waiting for clients unless the owner asks otherwise. A burst
-/// of more clients than this finds the pipe busy and waits for the next one.
-pub const DEFAULT_PENDING_INSTANCES: u32 = 4;
+/// Instances kept waiting for clients. A burst of more clients than this finds
+/// the pipe busy and waits for the next one.
+const PENDING_INSTANCES: usize = 4;
 
 const PIPE_BUFFER_SIZE: u32 = 65536;
 
 /// The owner's handle to a listening pipe. Dropping it stops listening without
-/// telling anyone.
+/// telling anyone. Listening does not keep the loop alive: that is the owner's.
 pub struct PipeServer {
     inner: NonNull<Inner>,
 }
@@ -38,10 +38,7 @@ struct Inner {
     /// Connected instances nobody has accepted yet.
     connected: Vec<HANDLE>,
     on_connection: Callback<()>,
-    refd: bool,
-    keeping_alive: bool,
     closing: bool,
-    detached: bool,
     owner_gone: bool,
     pending: u32,
     pins: u32,
@@ -60,16 +57,15 @@ struct AcceptOp {
 }
 
 impl PipeServer {
-    /// Create the pipe `name` and wait for clients on `pending_instances`
-    /// instances. `on_connection(ctx, ())` runs from the loop each time a
-    /// client has connected; [`accept`](Self::accept) hands it over.
+    /// Create the pipe `name` and wait for clients. `on_connection(ctx, ())`
+    /// runs from the loop each time a client has connected;
+    /// [`accept`](Self::accept) hands it over.
     ///
     /// `EADDRINUSE` when another server already owns the name, `EACCES` when
     /// the name is not one a pipe can have.
     pub fn listen<T>(
         loop_: *mut Loop,
         name: &[u8],
-        pending_instances: u32,
         ctx: *mut T,
         on_connection: unsafe fn(*mut T, ()),
     ) -> sys::Result<PipeServer> {
@@ -92,19 +88,15 @@ impl PipeServer {
             }
         };
 
-        let count = pending_instances.max(1) as usize;
         let inner = bun_core::heap::into_raw(Box::new(Inner {
             link: Link::new(loop_, Inner::shut),
             starved: Starved::new(Inner::retry),
             is_starved: false,
             name,
-            slots: Vec::with_capacity(count),
+            slots: Vec::with_capacity(PENDING_INSTANCES),
             connected: Vec::new(),
             on_connection: Callback::new(ctx, on_connection),
-            refd: true,
-            keeping_alive: false,
             closing: false,
-            detached: false,
             owner_gone: false,
             pending: 0,
             pins: 0,
@@ -113,7 +105,7 @@ impl PipeServer {
         // are owned by it and freed only from their own completions.
         unsafe {
             Link::insert(inner.cast());
-            for index in 0..count {
+            for index in 0..PENDING_INSTANCES {
                 let slot = bun_core::heap::into_raw(Box::new(AcceptOp {
                     op: Op::new(AcceptOp::complete),
                     server: inner,
@@ -129,7 +121,6 @@ impl PipeServer {
                 Inner::arm(inner, slot);
             }
             Inner::update_starved(inner);
-            Inner::update_keep_alive(inner);
             Ok(PipeServer {
                 inner: NonNull::new_unchecked(inner),
             })
@@ -143,15 +134,6 @@ impl PipeServer {
         unsafe {
             let handle = (*this).connected.pop()?;
             Some(Pipe::from_associated((*this).link.loop_, handle))
-        }
-    }
-
-    /// Listening keeps the loop alive until this is called.
-    pub fn unref(&self) {
-        // SAFETY: `inner` is live while the owner's `PipeServer` is.
-        unsafe {
-            (*self.inner.as_ptr()).refd = false;
-            Inner::update_keep_alive(self.inner.as_ptr());
         }
     }
 }
@@ -201,27 +183,6 @@ fn create_instance(loop_: *mut Loop, name: &[u16], first: bool) -> Result<HANDLE
 }
 
 impl Inner {
-    /// # Safety
-    /// `this` is live. Must run on the loop's thread.
-    unsafe fn update_keep_alive(this: *mut Inner) {
-        // SAFETY: caller contract.
-        unsafe {
-            if (*this).detached {
-                return;
-            }
-            let wanted = !(*this).closing && (*this).refd;
-            if wanted == (*this).keeping_alive {
-                return;
-            }
-            (*this).keeping_alive = wanted;
-            if wanted {
-                (*(*this).link.loop_).add_active(1);
-            } else {
-                (*(*this).link.loop_).sub_active(1);
-            }
-        }
-    }
-
     /// Wait for a client on `slot`, creating its instance first if it has none.
     /// A slot that cannot be made to wait stays idle, without an instance.
     ///
@@ -238,8 +199,7 @@ impl Inner {
                     Err(_) => return,
                 }
             }
-            (*slot).op.overlapped.Internal = 0;
-            (*slot).op.overlapped.InternalHigh = 0;
+            (*slot).op.reset(ptr::null_mut());
             // A call that succeeded at once queues its packet like one that pends.
             let queued = win::ConnectNamedPipe((*slot).handle, (&raw mut (*slot).op).cast()) != 0
                 || match win::last_error() {
@@ -315,7 +275,6 @@ impl Inner {
                 Self::stop(this);
                 (*this).closing = true;
                 Self::update_starved(this);
-                Self::update_keep_alive(this);
             }
             Self::maybe_finish(this);
         }
@@ -331,8 +290,6 @@ impl Inner {
                 (*this).closing = true;
                 Self::update_starved(this);
             }
-            Self::update_keep_alive(this);
-            (*this).detached = true;
             Link::remove(link);
             Self::maybe_finish(this);
         }
@@ -375,17 +332,14 @@ impl Inner {
             if !(*this).owner_gone {
                 return;
             }
-            if !(*this).detached {
-                Self::update_keep_alive(this);
-                Link::remove(this.cast());
-            }
+            Link::remove(this.cast());
             drop(bun_core::heap::take(this));
         }
     }
 }
 
 impl AcceptOp {
-    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op) {
         let slot = op.cast::<AcceptOp>();
         // SAFETY: `op` is the first field of the `AcceptOp` this packet was
         // submitted for. The server outlives its slots' packets (`pending`).

@@ -391,7 +391,7 @@ static ULONG afd_poll_wanted_events(struct us_internal_afd_poll *poll) {
     return events;
 }
 
-static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry);
+static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op);
 static int slow_poll_submit(struct us_internal_afd_poll *poll);
 static void slow_req_orphan(struct us_loop_t *loop, struct us_internal_slow_poll_req *req);
 static void us_internal_resume_list_add(struct us_loop_t *loop);
@@ -621,8 +621,7 @@ static void afd_poll_report(struct us_loop_t *loop, struct us_internal_afd_poll 
     afd_poll_dispatch(loop, poll, error, eof, events);
 }
 
-static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
-    (void) entry;
+static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op) {
     struct us_internal_afd_poll *poll = (struct us_internal_afd_poll *) op;
     if (poll->state == AFD_POLL_STATE_CANCELLED) {
         loop->afd_cancelled_polls--;
@@ -726,8 +725,7 @@ static void slow_req_orphan(struct us_loop_t *loop, struct us_internal_slow_poll
     InterlockedDecrement((volatile LONG *) &loop->pending_ops);
 }
 
-static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
-    (void) entry;
+static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op) {
     struct us_internal_slow_poll_req *req = (struct us_internal_slow_poll_req *) op;
     struct us_internal_afd_poll *poll = req->poll;
     int events = req->result_events;
@@ -1096,7 +1094,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         }
         InterlockedDecrement((volatile LONG *) &loop->pending_ops);
         struct us_iocp_op *op = (struct us_iocp_op *) entry.lpOverlapped;
-        op->complete(loop, op, &entry);
+        op->complete(loop, op);
     }
 }
 
@@ -1112,9 +1110,7 @@ static void us_internal_complete_ready_ops(struct us_loop_t *loop) {
         }
         loop->num_ready_ops--;
         InterlockedDecrement((volatile LONG *) &loop->pending_ops);
-        OVERLAPPED_ENTRY entry = {0};
-        entry.lpOverlapped = &op->overlapped;
-        op->complete(loop, op, &entry);
+        op->complete(loop, op);
     }
 }
 
@@ -1144,7 +1140,7 @@ static int us_internal_resubmit_cancelled_polls(struct us_loop_t *loop, int from
             struct us_internal_afd_poll *poll = (struct us_internal_afd_poll *) op;
             if (poll->owner && poll->state == AFD_POLL_STATE_CANCELLED && poll->iosb.Status == STATUS_CANCELLED) {
                 InterlockedDecrement((volatile LONG *) &loop->pending_ops);
-                afd_poll_complete(loop, op, &loop->ready_polls[i]);
+                afd_poll_complete(loop, op);
                 resubmitted++;
                 continue;
             }
@@ -1590,9 +1586,8 @@ static void acceptor_retry(struct us_iocp_starved *starved) {
     }
 }
 
-static void acceptor_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
+static void acceptor_complete(struct us_loop_t *loop, struct us_iocp_op *op) {
     (void) loop;
-    (void) entry;
     struct us_internal_acceptor *a = (struct us_internal_acceptor *) op;
     a->in_flight = 0;
 
@@ -1869,10 +1864,6 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     return -1;
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-    us_poll_start_rc(p, loop, events);
-}
-
 int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     if (us_poll_events(p) == events) {
         return 0;
@@ -1917,9 +1908,8 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     return (struct us_internal_async *) cb;
 }
 
-static void us_internal_async_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
+static void us_internal_async_complete(struct us_loop_t *loop, struct us_iocp_op *op) {
     (void) loop;
-    (void) entry;
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) ((char *) op - offsetof(struct us_internal_callback_t, op));
     /* Cleared before the callback: a wakeup sent while it runs must post again. */
     InterlockedExchange(&cb->posted, 0);

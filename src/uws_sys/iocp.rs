@@ -8,16 +8,7 @@ pub use bun_windows_sys::{HANDLE, OVERLAPPED};
 
 use crate::Loop;
 
-/// `OVERLAPPED_ENTRY`: one dequeued completion packet.
-#[repr(C)]
-pub struct OverlappedEntry {
-    pub completion_key: usize,
-    pub overlapped: *mut OVERLAPPED,
-    pub internal: usize,
-    pub bytes_transferred: u32,
-}
-
-pub type CompleteFn = unsafe extern "C" fn(*mut Loop, *mut Op, *mut OverlappedEntry);
+pub type CompleteFn = unsafe extern "C" fn(*mut Loop, *mut Op);
 
 /// `struct us_iocp_op`: anything that completes through the loop's port.
 ///
@@ -51,6 +42,19 @@ impl Op {
             complete,
             next_ready: core::ptr::null_mut(),
         }
+    }
+
+    /// Before the OVERLAPPED goes to the kernel again: no result, offset 0.
+    /// `event` is null for an operation that completes through the port.
+    #[inline]
+    pub fn reset(&mut self, event: HANDLE) {
+        self.overlapped = OVERLAPPED {
+            Internal: 0,
+            InternalHigh: 0,
+            Offset: 0,
+            OffsetHigh: 0,
+            hEvent: event,
+        };
     }
 
     /// The NTSTATUS of a completed overlapped operation.

@@ -95,26 +95,14 @@ pub fn duplicate(handle: HANDLE) -> Result<HANDLE, DWORD> {
 
 /// Whether a child created with `bInheritHandles` gets `handle`. Only a spawn
 /// holding [`InheritableHandles`](super::InheritableHandles) may set it.
-///
-/// For a handle the spawn made itself: its other flag, protect-from-close, is
-/// clear, so both are written without the read `SetHandleInformation` does
-/// first.
 pub fn set_inheritable(handle: HANDLE, inheritable: bool) -> Result<(), DWORD> {
-    let flags = win32::OBJECT_HANDLE_FLAG_INFORMATION {
-        Inherit: u8::from(inheritable),
-        ProtectFromClose: 0,
+    let flags = if inheritable {
+        win32::HANDLE_FLAG_INHERIT
+    } else {
+        0
     };
-    // SAFETY: `flags` is the structure `ObjectHandleFlagInformation` takes.
-    let status = unsafe {
-        win32::NtSetInformationObject(
-            handle,
-            win32::ObjectHandleFlagInformation,
-            ptr::from_ref(&flags).cast(),
-            size_of::<win32::OBJECT_HANDLE_FLAG_INFORMATION>() as DWORD,
-        )
-    };
-    if status != win32::NTSTATUS::SUCCESS {
-        return Err(win32::RtlNtStatusToDosError(status));
+    if win32::SetHandleInformation(handle, win32::HANDLE_FLAG_INHERIT, flags) == 0 {
+        return Err(win32::GetLastError());
     }
     Ok(())
 }

@@ -838,13 +838,6 @@ pub trait SourceContext: Sized {
         None
     }
 
-    /// Returns `None` if the context type does not support raw mode.
-    /// The `None` default is only reachable if codegen wires `setRawMode` for
-    /// a context that does not implement it (see `set_raw_mode_from_js`).
-    fn set_raw_mode(&mut self, _flag: bool) -> Option<bun_sys::Result<()>> {
-        None
-    }
-
     /// Default no-op.
     fn set_flowing(&mut self, _flag: bool) {}
 }
@@ -1295,20 +1288,6 @@ impl<C: SourceContext> NewSource<C> {
         cx: &bun_jsc::JsThread<'_>,
     ) -> JsResult<JSValue> {
         self.to_readable_stream_with(cx, ReadableStream::from_native_text)
-    }
-
-    pub fn set_raw_mode_from_js(
-        this: &mut Self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let flag = call_frame.argument(0);
-        debug_assert!(flag.is_boolean());
-        match this.context.set_raw_mode(flag == JSValue::TRUE) {
-            Some(Ok(())) => Ok(JSValue::UNDEFINED),
-            Some(Err(e)) => Ok(e.to_js(global)),
-            None => unreachable!("setRawMode is not implemented on {}", C::NAME),
-        }
     }
 
     pub fn set_flowing_from_js(

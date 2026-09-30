@@ -1566,7 +1566,7 @@ impl<Parent: BufferedWriterParent> WindowsBufferedWriter<Parent> {
             // `close_source` cannot hand the source bytes that are the
             // parent's, so a write it could not recall either gets its own.
             Source::Pipe(pipe) if pipe.writes_outlive_cancel() => {
-                pipe.write_owned_with(buffer.to_vec(), refusal, this, Some(Self::on_write_result))?;
+                pipe.write_owned(buffer.to_vec(), refusal, this, Self::on_write_result)?;
             }
             Source::File(file) => {
                 file.write_owned(buffer.to_vec(), this, Self::on_write_result)?;
@@ -2133,8 +2133,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 // is an empty buffer, whose size is 0.
                 let StreamBuffer { list, cursor } = mem::take(&mut Self::r(this).current_payload);
                 let lent_len = list.len() - cursor;
-                match pipe.write_lent(list, cursor, Refusal::Returned, this, Self::on_write_result)
-                {
+                match pipe.write_lent(list, cursor, this, Self::on_write_result) {
                     Ok(()) => {
                         Self::r(this).lent_len = lent_len;
                         Self::r(this).lent_cursor = cursor;

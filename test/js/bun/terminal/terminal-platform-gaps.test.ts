@@ -378,6 +378,38 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(Bun.stripANSI(output)).toContain("MODES=[231,231,0,2] DONE");
   });
 
+  // The input mode is the console's, whichever handle it is set through.
+  test.skipIf(!isWindows)("tty.ReadStream#setRawMode() works on a console descriptor that is not stdin", async () => {
+    const { output } = await runInTerminal(
+      `const { dlopen, ptr } = require("bun:ffi");
+       const k32 = dlopen("kernel32.dll", {
+         GetStdHandle: { args: ["i32"], returns: "ptr" },
+         GetConsoleMode: { args: ["ptr", "ptr"], returns: "i32" },
+       }).symbols;
+       // ENABLE_LINE_INPUT is what raw mode takes away.
+       const lineInput = () => {
+         const word = new Uint32Array(1);
+         if (!k32.GetConsoleMode(k32.GetStdHandle(-10), ptr(word))) throw new Error("GetConsoleMode");
+         return word[0] & 0x2;
+       };
+       const errors = [];
+       const stream = new (require("node:tty").ReadStream)(require("node:fs").openSync("CONIN$", "r+"));
+       stream.on("error", error => errors.push(error.message));
+       const seen = [lineInput()];
+       stream.setRawMode(true);
+       seen.push(stream.isRaw, lineInput());
+       stream.setRawMode(false);
+       seen.push(stream.isRaw, lineInput());
+       const file = new (require("node:tty").ReadStream)(require("node:fs").openSync(process.execPath, "r"));
+       file.on("error", error => errors.push("file: " + /^setRawMode failed with errno/.test(error.message)));
+       file.setRawMode(true);
+       process.stdout.write("SEEN=" + JSON.stringify([seen, file.isRaw, errors]) + " DONE");
+       process.exit(0);`,
+      { readyMarker: " DONE", done: o => o.includes(" DONE") },
+    );
+    expect(Bun.stripANSI(output)).toContain('SEEN=[[2,true,0,false,2],false,["file: true"]] DONE');
+  });
+
   // A Windows console hands over key records. Raw mode asks it to make VT sequences of the keys
   // itself; for one that cannot (legacy console mode), Bun does, with libuv's (so Node's) mappings.
   // The child puts the records into its own console's queue, each case followed by a key that

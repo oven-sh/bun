@@ -329,8 +329,7 @@ impl WindowsNamedPipe {
         }
         if flushed && self.with_pipe(|pipe| pipe.is_message_type()) == Some(true) {
             self.end_of_write.set(EndOfWrite::Told);
-            let root: *mut Self = self.root_ptr();
-            let _ = self.with_pipe(|pipe| pipe.write_end_marker(root, Self::on_end_marker_written));
+            let _ = self.with_pipe(|pipe| pipe.write_end_marker());
         } else {
             self.end_of_write.set(EndOfWrite::Idle);
         }
@@ -357,11 +356,6 @@ impl WindowsNamedPipe {
         }
         this.finish_end_of_write(flushed.is_ok());
     }
-
-    /// # Safety
-    /// None: `_this` is not used, because the write may end after the pipe's
-    /// owner is gone.
-    unsafe fn on_end_marker_written(_this: *mut Self, _written: bun_sys::Result<usize>) {}
 
     /// (Re)start the idle timer. It runs only while the pipe is being read: a
     /// paused pipe is not closed under its owner.

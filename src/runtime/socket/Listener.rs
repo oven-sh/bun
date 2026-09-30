@@ -1888,7 +1888,6 @@ impl WindowsNamedPipeListeningContext {
         let server = bun_io::windows::PipeServer::listen(
             global_this.bun_vm().uws_loop(),
             path,
-            bun_io::windows::pipe_server::DEFAULT_PENDING_INSTANCES,
             this,
             Self::on_connection,
         )
@@ -1898,9 +1897,6 @@ impl WindowsNamedPipeListeningContext {
         .map_err(ListenPipeError::Sys)?;
         //TODO: add readableAll and writableAll support if someone needs it
 
-        // The owning `Listener`'s `poll_ref` alone keeps the process alive,
-        // so that `server.unref()` lets it exit.
-        server.unref();
         // SAFETY: `this` is live, and clients are only reported from the loop.
         unsafe { (*this).server = Some(server) };
 

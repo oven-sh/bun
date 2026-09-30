@@ -12,7 +12,7 @@ use bun_core::{String as BunString, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 #[cfg(windows)]
-use bun_io::windows::{Pipe, PipeOrigin, ReadEvent, ipc_frame};
+use bun_io::windows::{Pipe, PipeOrigin, ReadEvent, Refusal, ipc_frame};
 use bun_jsc as jsc;
 use bun_jsc::js_value::Protected;
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
@@ -1658,7 +1658,12 @@ impl SendQueue {
             });
             let submitted = self.socket.with_mut(|socket| match socket {
                 SocketUnion::Open(pipe) => pipe
-                    .write_owned(frame, self.root_ptr(), Some(Self::on_pipe_write))
+                    .write_owned(
+                        frame,
+                        Refusal::Returned,
+                        self.root_ptr(),
+                        Self::on_pipe_write,
+                    )
                     .is_ok(),
                 _ => false,
             });

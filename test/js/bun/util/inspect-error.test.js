@@ -319,6 +319,62 @@ describe.concurrent("error.message getter that throws", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The getter's exception must not stay pending after the print either: the
+  // event loop does not call a callback while an exception is pending.
+  test("uncaught in a timer callback: the immediate it queued still runs", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `setTimeout(() => { setImmediate(() => console.log("immediate")); throw new E(); }, 0);`,
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | setTimeout(() => { setImmediate(() => console.log("immediate")); throw new E(); }, 0);
+                                                                                     ^
+      Error: 
+          at <anonymous> (file:NN:NN)
+
+      Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("after\nimmediate\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("thrown by a test that bun test retries: the retry and the next test still run", async () => {
+    using dir = tempDir("inspect-error-message-getter", {
+      "retry.test.js": [
+        `import { expect, test } from "bun:test";`,
+        `class E extends Error { get message() { throw new RangeError("from the getter"); } }`,
+        `let attempt = 0;`,
+        `test("throws on the first attempt", () => {`,
+        `  console.log("body: attempt", ++attempt);`,
+        `  if (attempt === 1) throw new E();`,
+        `}, { retry: 1 });`,
+        `test("fails an assertion", () => {`,
+        `  console.log("body: second test");`,
+        `  expect(1).toBe(2);`,
+        `});`,
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./retry.test.js"],
+      env: validateExceptionChecksEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      bodies: stdout.split("\n").filter(line => line.startsWith("body: ")),
+      results: normalizeBunSnapshot(stderr)
+        .split("\n")
+        .filter(line => line.startsWith("(pass) ") || line.startsWith("(fail) ")),
+      exitCode,
+    }).toEqual({
+      bodies: ["body: attempt 1", "body: attempt 2", "body: second test"],
+      results: ["(pass) throws on the first attempt (attempt 2)", "(fail) fails an assertion"],
+      exitCode: 1,
+    });
+  });
+
   // A worker formats its uncaught error on the worker thread before it
   // dispatches the error to the parent. The parent gets a clone of the error
   // (worker_threads) or an ErrorEvent (Web Worker); nothing is printed.

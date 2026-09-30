@@ -6728,9 +6728,11 @@ declare module "bun" {
      * Bun sends the queued data when the socket is writable again. Bun closes the socket after the
      * last byte, so the TCP FIN packet follows the data.
      *
-     * When the connection closes while a part of the chunk is still queued, Bun reports a write error:
-     * see {@link SocketHandler.error}. `terminate()`, `close()` and `listener.stop(true)` discard the
-     * queued part and report nothing.
+     * When the connection closes while a part of the chunk is still queued, that part is lost. A
+     * connection that a read error closes gives that error to the `close` handler, and to no other
+     * handler. A connection that closes with no read error gives a write error to the `error`
+     * handler: see {@link SocketHandler.error}. `terminate()`, `close()` and `listener.stop(true)`
+     * discard the queued part and report nothing.
      *
      * After `end()`, the socket accepts no more data: `write()` and `end()` return `-1`.
      *
@@ -7224,17 +7226,22 @@ declare module "bun" {
      * A `close` without an error does not prove that the other end received everything: the operating
      * system and the TLS layer can lose data that they already accepted.
      *
-     * @param error A read error that closed the connection, for example `ECONNRESET`. Without an
-     * `error` handler, a write error also arrives here: see {@link SocketHandler.error}.
+     * @param error A read error that closed the connection, for example `ECONNRESET`. Data that
+     * {@link Socket.end | end(data)} queued is lost then, and the `error` handler is not called.
+     * Without an `error` handler, a write error also arrives here: see {@link SocketHandler.error}.
      */
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     /**
      * Called when a handler throws an error, and for a write error.
      *
      * A write error means that Bun did not send all of the data that {@link Socket.end | end(data)}
-     * queued: the system rejected a send of the queued part, or the connection closed while a part
-     * was still queued. The error has `syscall: "write"`. Its `code` is the code of the rejected
-     * send, or `EPIPE` when the connection closed first.
+     * queued: the system rejected a send of the queued part, or the connection closed with no read
+     * error while a part was still queued. The error has `syscall: "write"`. Its `code` is the code
+     * of the rejected send, or `EPIPE` when the connection closed first.
+     *
+     * A connection that a read error closes (for example a reset by the other end) does not call
+     * this handler, also when queued data is lost. The `close` handler gets the read error: see
+     * {@link SocketHandler.close}.
      *
      * The report covers only the part in the queue. It does not cover data that the operating
      * system or the TLS layer already accepted: see {@link SocketHandler.close}. A TLS handshake

@@ -9,6 +9,7 @@ import {
   bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
+  isAndroid,
   isLinux,
   isWindows,
   libcPathForDlopen,
@@ -20,7 +21,7 @@ import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
-import { createSecureContext, connect as tlsConnect } from "node:tls";
+import { createSecureContext, connect as tlsConnect, createServer as tlsCreateServer } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -6292,4 +6293,520 @@ it.concurrent("end(data) without an end handler keeps the process alive until th
     mismatchAt: -1,
   });
   expect(exitCode).toBe(0);
+});
+
+// Bun.listen and Bun.connect: end(data) queued a part of its chunk, and the connection closed before Bun sent
+// that part. That is a write error. It is reported once: to `error`, or to `close` when there is no `error`
+// handler. A close that the application asked for reports nothing.
+describe.concurrent("end(data) whose queued tail is lost with the connection", () => {
+  type Transport = "tcp" | "tls" | "tls over unix";
+  type Side = "listen" | "connect";
+  const STEP = 256 * 1024;
+  const TAIL = 1024 * 1024;
+  const REQUEST = "request\n";
+  const source = randomFillSync(Buffer.allocUnsafe(8 * 1024 * 1024));
+
+  function closeEvent(error: unknown) {
+    const { code, syscall } = (error ?? {}) as NodeJS.ErrnoException;
+    return error === undefined ? "close" : `close ${code} ${syscall}`;
+  }
+  // What the socket under test gets for a lost tail, after its end().
+  const lostTail = (withError: boolean) => (withError ? ["error EPIPE write", "close"] : ["close EPIPE write"]);
+
+  // The socket under test. It answers the request with write()s that fill the kernel, then with end(TAIL).
+  function answering({ withError = false, withClose = true, afterEnd = (_socket: Socket<unknown>) => {} } = {}) {
+    const events: string[] = [];
+    const answered = Promise.withResolvers<Socket<unknown>>();
+    const closed = Promise.withResolvers<void>();
+    let request = "";
+    let kernelFull = false;
+    let sent = 0;
+    // `name` tells the handlers that a reload() installed from the first ones.
+    const handlers = (name: string): SocketHandler => ({
+      data(socket, chunk) {
+        request += chunk.toString();
+        if (request !== REQUEST) return;
+        // Windows takes a first send of any size whole.
+        let took = STEP;
+        while (took === STEP && sent + STEP + TAIL <= source.length) {
+          took = socket.write(source.subarray(sent, sent + STEP));
+          sent += Math.max(took, 0);
+        }
+        kernelFull = took !== STEP;
+        events.push(`end ${socket.end(source.subarray(sent, sent + TAIL))}`);
+        sent += TAIL;
+        afterEnd(socket);
+        answered.resolve(socket);
+      },
+      end() {},
+      ...(withClose
+        ? {
+            close(_socket: Socket<unknown>, error?: Error) {
+              events.push(name + closeEvent(error));
+              closed.resolve();
+            },
+          }
+        : {}),
+      ...(withError
+        ? {
+            error(_socket: Socket<unknown>, error: NodeJS.ErrnoException) {
+              events.push(`${name}error ${error.code} ${error.syscall}`);
+              // Without a close handler, this is the last event of the socket.
+              if (!withClose) closed.resolve();
+            },
+          }
+        : {}),
+    });
+    return {
+      handlers: handlers(""),
+      reloaded: handlers("reloaded "),
+      events,
+      answered: answered.promise,
+      closed: closed.promise,
+      kernelFull: () => kernelFull,
+      sent: () => sent,
+    };
+  }
+  type Subject = ReturnType<typeof answering>;
+
+  // A peer that sends the request, and its FIN with it when `fin`. It reads to the end of the stream.
+  // `paused`: it reads nothing until resume(). `next`: it reads one chunk, then waits for `next` before the chunk after it.
+  function reading(
+    secure: boolean,
+    { paused = false, fin = false, next = undefined as (() => Promise<void>) | undefined } = {},
+  ) {
+    const closed = Promise.withResolvers<void>();
+    let socket: Socket<unknown> | undefined;
+    let received = 0;
+    let mismatchAt = -1;
+    const request = (opened: Socket<unknown>) => {
+      socket = opened;
+      if (paused) opened.pause();
+      opened.write(REQUEST);
+      if (fin) opened.shutdown();
+    };
+    const handlers: SocketHandler = {
+      // A TLS socket writes once its handshake is done.
+      ...(secure ? { handshake: request } : { open: request }),
+      data(from, chunk) {
+        if (mismatchAt === -1 && !chunk.equals(source.subarray(received, received + chunk.byteLength))) {
+          mismatchAt = received;
+        }
+        received += chunk.byteLength;
+        if (!next) return;
+        from.pause();
+        void next().then(() => from.resume());
+      },
+      end: ended => void ended.end(),
+      close: () => closed.resolve(),
+      error() {},
+    };
+    return {
+      handlers,
+      closed: closed.promise,
+      resume: () => socket?.resume(),
+      received: () => received,
+      mismatchAt: () => mismatchAt,
+    };
+  }
+
+  // A TLS peer that sends the request, and its FIN with it when `fin`. It reads one chunk and resets the connection.
+  function resetting(fin: boolean) {
+    const closed = Promise.withResolvers<void>();
+    let received = 0;
+    const handlers: SocketHandler = {
+      handshake(socket) {
+        socket.write(REQUEST);
+        if (fin) socket.shutdown();
+      },
+      data(socket, chunk) {
+        received += chunk.byteLength;
+        socket.terminate();
+      },
+      end() {},
+      close: () => closed.resolve(),
+      error() {},
+    };
+    return { handlers, closed: closed.promise, received: () => received };
+  }
+
+  function open(transport: Transport, side: Side, subject: SocketHandler, peer: SocketHandler) {
+    const secure = transport !== "tcp";
+    const dir = transport === "tls over unix" ? tempDir("lost-tail", {}) : undefined;
+    // The socket under test has the default. The peer reads after its own FIN.
+    const accepting = {
+      tls: secure ? { key: tls.key, cert: tls.cert } : undefined,
+      ...(side === "listen" ? { socket: subject } : { socket: peer, allowHalfOpen: true }),
+    };
+    const connecting = {
+      tls: secure ? { ca: tls.cert } : undefined,
+      ...(side === "connect" ? { socket: subject } : { socket: peer, allowHalfOpen: true }),
+    };
+    let listener: Bun.SocketListener<unknown>;
+    let connect: () => Promise<Socket<unknown>>;
+    if (dir) {
+      const unix = join(String(dir), "s.sock");
+      listener = Bun.listen({ unix, ...accepting });
+      connect = () => Bun.connect({ unix, ...connecting });
+    } else {
+      const tcp = Bun.listen({ hostname: "127.0.0.1", port: 0, ...accepting });
+      listener = tcp;
+      connect = () => Bun.connect({ hostname: "127.0.0.1", port: tcp.port, ...connecting });
+    }
+    return {
+      listener,
+      connect,
+      connected: connect(),
+      [Symbol.dispose]() {
+        listener.stop(true);
+        dir?.[Symbol.dispose]();
+      },
+    };
+  }
+
+  // A connection that its peer answers: the loop has run a full iteration when it resolves.
+  async function roundTrip() {
+    using cleanup = new DisposableStack();
+    const server = net.createServer(socket => socket.end("x"));
+    cleanup.defer(() => void server.close());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    cleanup.defer(() => void socket.destroy());
+    await once(socket, "data");
+  }
+
+  // A way to lose the tail that is the same on every platform: the socket under test sends its FIN right after
+  // end(data). Its peer reads to that FIN and answers with its own, and the loop closes the socket over the queued tail.
+  async function loseByShutdown(
+    transport: "tcp" | "tls",
+    side: Side,
+    options: { withError?: boolean; withClose?: boolean } = {},
+    afterEnd = (_socket: Socket<unknown>, _subject: Subject) => {},
+  ) {
+    const subject: Subject = answering({
+      ...options,
+      afterEnd(socket) {
+        afterEnd(socket, subject);
+        socket.shutdown();
+      },
+    });
+    const peer = reading(transport === "tls");
+    using pair = open(transport, side, subject.handlers, peer.handlers);
+    await pair.connected;
+    await Promise.all([subject.closed, peer.closed]);
+    return {
+      kernelFull: subject.kernelFull(),
+      events: subject.events,
+      peerGotLess: peer.received() < subject.sent(),
+    };
+  }
+
+  // A row that expects no report must not pass on a build that never reports: each of them checks this too.
+  let control: Promise<string[]> | undefined;
+  const aLostTailIsReported = () => (control ??= loseByShutdown("tcp", "listen").then(lost => lost.events));
+  const reported = [`end ${TAIL}`, "close EPIPE write"];
+
+  describe.each(["tcp", "tls"] as const)("%s, shutdown() after end(data)", transport => {
+    describe.each(["listen", "connect"] as const)("Bun.%s socket", side => {
+      it.each([
+        ["with", true],
+        ["without", false],
+      ] as const)("the tail is reported once, %s an error handler", async (_handler, withError) => {
+        expect(await loseByShutdown(transport, side, { withError })).toEqual({
+          kernelFull: true,
+          events: [`end ${TAIL}`, ...lostTail(withError)],
+          peerGotLess: true,
+        });
+      });
+    });
+  });
+
+  it("the error handler gets the report when there is no close handler", async () => {
+    expect(await loseByShutdown("tcp", "listen", { withError: true, withClose: false })).toEqual({
+      kernelFull: true,
+      events: [`end ${TAIL}`, "error EPIPE write"],
+      peerGotLess: true,
+    });
+  });
+
+  // What the reset of a peer gives the socket under test depends on the event backend.
+  //   epoll          The loop closes the socket after a hangup, with no error of its own: the tail is the report.
+  //   kqueue, libuv  The reset is an error event: the loop closes the socket with a read error, for `close`.
+  const epoll = isLinux || isAndroid;
+  const afterReset = (withError: boolean) => (epoll ? lostTail(withError) : ["close ECONNRESET read"]);
+  // TLS: a TLS socket does not see the errno of a failed send, so its flush reports nothing. AF_UNIX runs on POSIX only.
+  const resetTransport: Transport = isWindows ? "tls" : "tls over unix";
+
+  describe.each(["listen", "connect"] as const)(`${resetTransport}, Bun.%s socket`, side => {
+    it.each([
+      { peer: "resets", fin: false, handler: "with", withError: true },
+      { peer: "sends its FIN, then resets", fin: true, handler: "with", withError: true },
+      { peer: "resets", fin: false, handler: "without", withError: false },
+    ])("a peer that $peer is reported once, $handler an error handler", async ({ fin, withError }) => {
+      const subject = answering({ withError });
+      const peer = resetting(fin);
+      using pair = open(resetTransport, side, subject.handlers, peer.handlers);
+      await pair.connected;
+      await Promise.all([subject.closed, peer.closed]);
+
+      expect({
+        kernelFull: subject.kernelFull(),
+        events: subject.events,
+        peerGotLess: peer.received() < subject.sent(),
+      }).toEqual({
+        kernelFull: true,
+        events: [`end ${TAIL}`, ...afterReset(withError)],
+        peerGotLess: true,
+      });
+    });
+  });
+
+  it.each([
+    ["with", true],
+    ["without", false],
+  ] as const)("a TLS record that cannot be read is reported once, %s an error handler", async (_handler, withError) => {
+    const subject = answering({ withError });
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: tls.key, cert: tls.cert },
+      socket: subject.handlers,
+    });
+    // The peer is the TLS half of an upgraded socket. It reads nothing. Its raw half writes past the TLS layer.
+    const tcp = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, close() {}, error() {} },
+    });
+    const [raw, secure] = tcp.upgradeTLS({
+      tls: { ca: tls.cert },
+      socket: {
+        handshake(socket: Socket) {
+          socket.pause();
+          socket.write(REQUEST);
+        },
+        data() {},
+        close() {},
+        error() {},
+      },
+    } as any);
+    try {
+      await subject.answered;
+      raw.write(Buffer.alloc(64, "A"));
+      await subject.closed;
+    } finally {
+      secure.terminate();
+    }
+
+    expect({ kernelFull: subject.kernelFull(), events: subject.events }).toEqual({
+      kernelFull: true,
+      events: [`end ${TAIL}`, ...lostTail(withError)],
+    });
+  });
+
+  // The application closes the socket, and with it gives up what end(data) had queued.
+  describe.each(["tcp", "tls"] as const)("%s", transport => {
+    it.each([
+      ["socket.terminate()", (socket: Socket<unknown>) => socket.terminate()],
+      ["socket.close()", (socket: Socket<unknown>) => socket.close()],
+      ["listener.stop(true)", (_socket: Socket<unknown>, listener: Bun.SocketListener<unknown>) => listener.stop(true)],
+    ] as const)("%s reports no error", async (_name, close) => {
+      const subject = answering({ withError: true });
+      const peer = reading(transport === "tls", { paused: true });
+      using pair = open(transport, "listen", subject.handlers, peer.handlers);
+      await pair.connected;
+      close(await subject.answered, pair.listener);
+      peer.resume();
+      await Promise.all([subject.closed, peer.closed]);
+
+      expect({
+        kernelFull: subject.kernelFull(),
+        events: subject.events,
+        peerGotLess: peer.received() < subject.sent(),
+        control: await aLostTailIsReported(),
+      }).toEqual({
+        kernelFull: true,
+        events: [`end ${TAIL}`, "close"],
+        peerGotLess: true,
+        control: reported,
+      });
+    });
+  });
+
+  // end(data) in open() is queued whole, because the handshake is not done. The handshake handler reports a
+  // handshake that fails, and close() reports nothing more.
+  describe.each([
+    { name: "Bun.listen", side: "listen", options: {} },
+    { name: "Bun.listen with rejectUnauthorized", side: "listen", options: { rejectUnauthorized: true } },
+    {
+      name: "Bun.listen with requestCert and rejectUnauthorized",
+      side: "listen",
+      options: { requestCert: true, rejectUnauthorized: true },
+    },
+    { name: "Bun.connect without rejectUnauthorized", side: "connect", options: { rejectUnauthorized: false } },
+    { name: "Bun.connect", side: "connect", options: {} },
+  ] as const)("$name", ({ side, options }) => {
+    it("a handshake that fails after end(data) reports no write error", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const peerClosed = Promise.withResolvers<void>();
+      const subject: SocketHandler = {
+        // With a handshake handler, open() runs before the handshake.
+        open(socket) {
+          events.push(`end ${socket.end(source.subarray(0, TAIL))}`);
+        },
+        handshake(_socket, success, error) {
+          events.push(`handshake ${success} ${(error as NodeJS.ErrnoException | null)?.code}`);
+        },
+        data() {},
+        close(_socket, error) {
+          events.push(closeEvent(error));
+          closed.resolve();
+        },
+        error: (_socket, error: NodeJS.ErrnoException) => void events.push(`error ${error.code} ${error.syscall}`),
+      };
+      // The peer speaks no TLS.
+      const peer: SocketHandler = {
+        open: socket => void socket.write(Buffer.alloc(64, "A")),
+        data() {},
+        close: () => peerClosed.resolve(),
+        error() {},
+      };
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        ...(side === "listen"
+          ? { tls: { key: tls.key, cert: tls.cert, ...options }, socket: subject }
+          : { socket: peer }),
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        ...(side === "connect" ? { tls: { ca: tls.cert, ...options }, socket: subject } : { socket: peer }),
+      });
+      await Promise.all([closed.promise, peerClosed.promise]);
+
+      expect({ events, control: await aLostTailIsReported() }).toEqual({
+        events: [`end ${TAIL}`, "handshake false EPROTO", "close"],
+        control: reported,
+      });
+    });
+  });
+
+  it.each(["listener", "socket"] as const)(
+    "reload() on the %s after end(data): the new close handler gets the report, once",
+    async via => {
+      const lost = await loseByShutdown("tcp", "listen", {}, (socket, subject) => {
+        const reloaded = { socket: subject.reloaded };
+        if (via === "listener") socket.listener!.reload(reloaded);
+        else socket.reload(reloaded);
+      });
+      expect(lost).toEqual({
+        kernelFull: true,
+        events: [`end ${TAIL}`, "reloaded close EPIPE write"],
+        peerGotLess: true,
+      });
+    },
+  );
+
+  it("a reconnect from the close handler that got the report opens a connection with no error", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const peerClosedTwice = Promise.withResolvers<void>();
+    // The first connection of the socket under test loses its tail. The second one does not.
+    let subject = answering({ afterEnd: socket => void socket.shutdown() });
+    let connections = 0;
+    let received = 0;
+    const peer: SocketHandler = {
+      open(socket) {
+        received = 0;
+        socket.write(REQUEST);
+      },
+      data(_socket, chunk) {
+        received += chunk.byteLength;
+      },
+      end: socket => void socket.end(),
+      close: () => void (++connections === 2 && peerClosedTwice.resolve()),
+      error() {},
+    };
+    const reconnecting: SocketHandler = {
+      data: (socket, chunk) => subject.handlers.data!(socket, chunk),
+      end() {},
+      close(_socket, error) {
+        events.push(...subject.events, closeEvent(error));
+        if (events.length > 2) return closed.resolve();
+        subject = answering();
+        void pair.connect();
+      },
+    };
+    using pair = open("tcp", "connect", reconnecting, peer);
+    await pair.connected;
+    await Promise.all([closed.promise, peerClosedTwice.promise]);
+
+    expect({ events, unreceived: subject.sent() - received }).toEqual({
+      events: [`end ${TAIL}`, "close EPIPE write", `end ${TAIL}`, "close"],
+      unreceived: 0,
+    });
+  });
+
+  // A peer that sent its FIN and reads slowly has not left: the tail stays queued for many loop iterations.
+  it("a TLS peer that reads slowly gets every byte, and nothing is reported", async () => {
+    const subject = answering({ withError: true });
+    // One chunk for each round trip of another connection.
+    const peer = reading(true, { paused: true, fin: true, next: roundTrip });
+    using pair = open("tls", "listen", subject.handlers, peer.handlers);
+    await pair.connected;
+    await subject.answered;
+    peer.resume();
+    await Promise.all([subject.closed, peer.closed]);
+
+    expect({
+      kernelFull: subject.kernelFull(),
+      events: subject.events,
+      unreceived: subject.sent() - peer.received(),
+      mismatchAt: peer.mismatchAt(),
+      control: await aLostTailIsReported(),
+    }).toEqual({
+      kernelFull: true,
+      events: [`end ${TAIL}`, "close"],
+      unreceived: 0,
+      mismatchAt: -1,
+      control: reported,
+    });
+  });
+
+  // node:net and node:tls queue with their own native write and never call end(data): they fail a queued write
+  // themselves, and this report stays out of their way. Only epoll closes this socket with the clean code.
+  it.skipIf(!epoll)("a node:tls socket that loses a queued write keeps its own error", async () => {
+    using dir = tempDir("lost-tail-node", {});
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const server = tlsCreateServer({ key: tls.key, cert: tls.cert }, socket => {
+      socket.once("data", () => {
+        const wrote = socket.write(source, error => {
+          events.push(`write callback ${(error as NodeJS.ErrnoException | undefined)?.code}`);
+        });
+        events.push(`write ${wrote}`);
+      });
+      socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+      socket.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        closed.resolve();
+      });
+    });
+    const peer = resetting(false);
+    try {
+      const unix = join(String(dir), "s.sock");
+      await once(server.listen(unix), "listening");
+      await Bun.connect({ unix, tls: { ca: tls.cert }, socket: peer.handlers });
+      await Promise.all([closed.promise, peer.closed]);
+    } finally {
+      server.close();
+    }
+
+    expect({ events, control: await aLostTailIsReported() }).toEqual({
+      events: ["write false", "write callback ERR_SOCKET_CLOSED", "error ERR_SOCKET_CLOSED", "close true"],
+      control: reported,
+    });
+  });
 });

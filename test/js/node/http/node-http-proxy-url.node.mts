@@ -217,6 +217,11 @@ describe(
   },
 );
 
+const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+// Self-signed, for localhost and 127.0.0.1.
+const cert = readFileSync(join(fixtures, "cert.pem"), "utf8");
+const key = readFileSync(join(fixtures, "cert.key"), "utf8");
+
 function proxiedAgent(proxyUrl: string, options: https.AgentOptions = {}, AgentClass = https.Agent) {
   return new AgentClass({ ...options, proxyEnv: { https_proxy: proxyUrl } } as any);
 }
@@ -275,11 +280,6 @@ describe(
   "https request through a proxy that ends the connection before the TLS handshake is done",
   { skip: typeof setGlobalProxyFromEnv !== "function" },
   () => {
-    const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
-    // Self-signed, for localhost and 127.0.0.1.
-    const cert = readFileSync(join(fixtures, "cert.pem"), "utf8");
-    const key = readFileSync(join(fixtures, "cert.key"), "utf8");
-
     const disconnected = {
       code: "ECONNRESET",
       message: "Client network socket disconnected before secure TLS connection was established",
@@ -730,3 +730,278 @@ describe("Agent: socket creation that calls back with an error and a second argu
     }
   });
 });
+
+// nodejs/node 84e367579e, in Node v26.9.0 and later.
+const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+const limitsProxyResponseHeaders =
+  process.versions.bun !== undefined || nodeMajor > 26 || (nodeMajor === 26 && nodeMinor >= 9);
+
+describe(
+  "https request through a proxy: limit on the headers of the CONNECT response",
+  { skip: !limitsProxyResponseHeaders },
+  () => {
+    const target = { host: "example.invalid", port: 443, path: "/" };
+    const refused = "HTTP/1.1 407 Proxy Authentication Required";
+
+    // A complete response head of `length` bytes, with the status line of a refused CONNECT.
+    function head(length: number) {
+      const padding = length - `${refused}\r\nx-pad: \r\n\r\n`.length;
+      return `${refused}\r\nx-pad: ${Buffer.alloc(padding, "a")}\r\n\r\n`;
+    }
+
+    // The error of a head that passed the limit: its status line decides.
+    const refusedHead = {
+      code: "ERR_PROXY_TUNNEL",
+      message: `Failed to establish tunnel to example.invalid:443 via <proxy>: ${refused}`,
+    };
+    function exceeded(limit: number) {
+      return { code: "ERR_PROXY_TUNNEL", message: `Proxy response headers exceeded ${limit} bytes` };
+    }
+
+    // A proxy that gives each connection to `answer` when the CONNECT arrives.
+    async function startProxy(answer: (socket: net.Socket) => void, scheme = "http") {
+      function onConnection(socket: net.Socket) {
+        socket.on("error", () => {});
+        socket.once("data", () => answer(socket));
+      }
+      const proxy = scheme === "https" ? tls.createServer({ key, cert }, onConnection) : net.createServer(onConnection);
+      return { proxy, proxyUrl: `${scheme}://127.0.0.1:${await listenOnRandomPort(proxy)}` };
+    }
+
+    // What the request emits, with "<proxy>" for the URL of the proxy in an error message.
+    async function outcome(req: http.ClientRequest, proxyUrl: string) {
+      const events = (await eventsOf(req)) as any[];
+      return events.map(event =>
+        event.message === undefined ? event : { ...event, message: event.message.replace(proxyUrl, "<proxy>") },
+      );
+    }
+
+    // The outcome of one request through a proxy that answers the CONNECT with `reply` and ends the connection.
+    async function outcomeOf(reply: string, requestOptions: object = {}, agentOptions: object = {}) {
+      const { proxy, proxyUrl } = await startProxy(socket => socket.end(reply));
+      const agent = proxiedAgent(proxyUrl, agentOptions);
+      try {
+        return await outcome(https.get({ ...target, ...requestOptions, agent }), proxyUrl);
+      } finally {
+        agent.destroy();
+        proxy.close();
+      }
+    }
+
+    test("a head of exactly the limit passes, one byte more does not", async () => {
+      const options = { maxHeaderSize: 1024 };
+      assert.deepStrictEqual(await outcomeOf(head(1024), options), [refusedHead, "close"]);
+      // The bytes after the head do not count.
+      assert.deepStrictEqual(await outcomeOf(head(1024) + Buffer.alloc(4096, "b"), options), [refusedHead, "close"]);
+      assert.deepStrictEqual(await outcomeOf(head(1025), options), [exceeded(1024), "close"]);
+    });
+
+    test("a head over the limit is refused when the proxy ends the connection before the end of the head", async () => {
+      const reply = `HTTP/1.1 200 Connection established\r\nx-pad: ${Buffer.alloc(2000, "a")}`;
+      assert.deepStrictEqual(await outcomeOf(reply, { maxHeaderSize: 1024 }), [exceeded(1024), "close"]);
+    });
+
+    test("the maxHeaderSize of the agent replaces the one of the request", async () => {
+      const requestOptions = { maxHeaderSize: 1024 };
+      const agentOptions = { maxHeaderSize: 2048 };
+      assert.deepStrictEqual(await outcomeOf(head(2048), requestOptions, agentOptions), [refusedHead, "close"]);
+      assert.deepStrictEqual(await outcomeOf(head(2049), requestOptions, agentOptions), [exceeded(2048), "close"]);
+    });
+
+    test("no maxHeaderSize and maxHeaderSize: 0 give the limit of the process", async () => {
+      const limit = http.maxHeaderSize;
+      for (const options of [{}, { maxHeaderSize: 0 }]) {
+        assert.deepStrictEqual(await outcomeOf(head(limit), options), [refusedHead, "close"]);
+        assert.deepStrictEqual(await outcomeOf(head(limit + 1), options), [exceeded(limit), "close"]);
+      }
+    });
+
+    // Keeps the client's connection to the proxy, for its counters and events.
+    class ProxySocketAgent extends https.Agent {
+      proxySocket!: net.Socket;
+      createConnection(options: any, callback?: any) {
+        return (this.proxySocket = super.createConnection(options, callback) as net.Socket);
+      }
+    }
+
+    // A head that does not end: header lines, then the end of the connection. A client with no limit reads all of it.
+    const floodBytes = 4 * 1024 * 1024;
+    function flood(socket: net.Socket) {
+      socket.write("HTTP/1.1 200 Connection established\r\n");
+      const lines = Buffer.alloc(64 * 1024, "x-pad: a\r\n");
+      for (let sent = 0; sent < floodBytes; sent += lines.length) socket.write(lines);
+      socket.end();
+    }
+
+    for (const destroyed of [false, true]) {
+      test(`a head that does not end${destroyed ? ", request destroyed" : ""}: the client closes the connection at the limit`, async () => {
+        const { promise: proxyClosed, resolve: onProxyClosed } = Promise.withResolvers<void>();
+        const { proxy, proxyUrl } = await startProxy(socket => {
+          socket.on("close", () => onProxyClosed());
+          flood(socket);
+        });
+        const agent = proxiedAgent(proxyUrl, {}, ProxySocketAgent) as ProxySocketAgent;
+        try {
+          const req = https.get({ ...target, agent });
+          if (destroyed) {
+            // The tunnel does not stop for a destroyed request: the limit is what ends the read.
+            req.on("error", () => {});
+            req.destroy();
+          } else {
+            assert.deepStrictEqual(await outcome(req, proxyUrl), [exceeded(http.maxHeaderSize), "close"]);
+          }
+          await proxyClosed;
+          const { bytesRead } = agent.proxySocket;
+          assert.ok(bytesRead < floodBytes / 4, `the client read ${bytesRead} of ${floodBytes} bytes`);
+        } finally {
+          agent.destroy();
+          proxy.close();
+        }
+      });
+    }
+
+    // Every route to a tunnel has the limit. The proxy answers with a head of 1025 bytes.
+    const over = { ...target, maxHeaderSize: 1024 };
+    const routes: { name: string; scheme?: string; run: (proxyUrl: string) => Promise<unknown> }[] = [
+      {
+        name: "an https:// proxy",
+        scheme: "https",
+        run: proxyUrl => outcome(https.get({ ...over, agent: proxiedAgent(proxyUrl) }), proxyUrl),
+      },
+      {
+        name: "http.get() with an https.Agent",
+        run: proxyUrl => outcome(http.get({ ...over, protocol: "https:", agent: proxiedAgent(proxyUrl) }), proxyUrl),
+      },
+      {
+        name: "a subclass of https.Agent",
+        run: proxyUrl => outcome(https.get({ ...over, agent: proxiedAgent(proxyUrl, {}, ProxySocketAgent) }), proxyUrl),
+      },
+      {
+        name: "the global agent after http.setGlobalProxyFromEnv()",
+        run: async proxyUrl => {
+          const restore = setGlobalProxyFromEnv({ https_proxy: proxyUrl });
+          try {
+            return await outcome(https.get(over), proxyUrl);
+          } finally {
+            restore();
+          }
+        },
+      },
+      {
+        name: "the second of two requests with maxSockets: 1",
+        run: async proxyUrl => {
+          const agent = proxiedAgent(proxyUrl, { maxSockets: 1 });
+          const first = outcome(https.get({ ...over, agent }), proxyUrl);
+          const second = outcome(https.get({ ...over, agent }), proxyUrl);
+          assert.deepStrictEqual(await first, [exceeded(1024), "close"]);
+          return await second;
+        },
+      },
+    ];
+    for (const { name, scheme, run } of routes) {
+      test(name, async () => {
+        // The Agent has no TLS options for its connection to the proxy: the certificate is a default CA for this test.
+        const defaults = scheme === "https" ? tls.getCACertificates("default") : undefined;
+        const { proxy, proxyUrl } = await startProxy(socket => socket.end(head(1025)), scheme);
+        try {
+          if (defaults) tls.setDefaultCACertificates([...defaults, cert]);
+          assert.deepStrictEqual(await run(proxyUrl), [exceeded(1024), "close"]);
+        } finally {
+          proxy.close();
+          if (defaults) tls.setDefaultCACertificates(defaults);
+        }
+      });
+    }
+
+    test("agent.createConnection() gives its callback the error and the socket that it returned", async () => {
+      const { proxy, proxyUrl } = await startProxy(socket => socket.end(head(1025)));
+      try {
+        const { promise, resolve } = Promise.withResolvers<unknown[]>();
+        const socket = proxiedAgent(proxyUrl).createConnection(over, (err: any, given: any) =>
+          resolve([err.code, err.message, err.statusCode, given === socket, given.destroyed]),
+        );
+        assert.deepStrictEqual(await promise, [
+          "ERR_PROXY_TUNNEL",
+          "Proxy response headers exceeded 1024 bytes",
+          undefined,
+          true,
+          true,
+        ]);
+      } finally {
+        proxy.close();
+      }
+    });
+
+    // Sends `fragments` one at a time. The next one leaves when the client has the previous one,
+    // so the client reads each fragment as a chunk of its own.
+    async function outcomeOfFragments(fragments: string[], requestOptions: object) {
+      let proxySide: net.Socket | undefined;
+      const { proxy, proxyUrl } = await startProxy(socket => {
+        proxySide = socket;
+        socket.write(fragments[0]);
+      });
+      const agent = proxiedAgent(proxyUrl, {}, ProxySocketAgent) as ProxySocketAgent;
+      try {
+        const req = https.get({ ...target, ...requestOptions, agent });
+        const chunks: number[] = [];
+        // This listener is before the one of the tunnel: it sees each chunk before the tunnel reads it.
+        agent.proxySocket.on("readable", () => {
+          const length = agent.proxySocket.readableLength;
+          if (length === 0) return;
+          chunks.push(length);
+          if (chunks.length < fragments.length) proxySide!.write(fragments[chunks.length]);
+          else proxySide!.end();
+        });
+        return { events: await outcome(req, proxyUrl), chunks };
+      } finally {
+        agent.destroy();
+        proxySide?.destroy();
+        proxy.close();
+      }
+    }
+
+    test("the end of the head can be split over two chunks", async () => {
+      for (const tail of [1, 2, 3]) {
+        const fragments = [head(1024).slice(0, -tail), head(1024).slice(-tail)];
+        const chunks = [1024 - tail, tail];
+        assert.deepStrictEqual(await outcomeOfFragments(fragments, { maxHeaderSize: 1024 }), {
+          events: [refusedHead, "close"],
+          chunks,
+        });
+        assert.deepStrictEqual(await outcomeOfFragments(fragments, { maxHeaderSize: 1023 }), {
+          events: [exceeded(1023), "close"],
+          chunks,
+        });
+      }
+    });
+
+    test("only the bytes that arrived are searched for the end of the head", async () => {
+      // Bun's reader has a buffer with more capacity than bytes. Every new buffer starts as CRLFs here.
+      const allocUnsafe = Buffer.allocUnsafe;
+      Buffer.allocUnsafe = size => allocUnsafe(size).fill("\r\n");
+      try {
+        const fragments = [head(1024).slice(0, 1000), head(1024).slice(1000, 1001), head(1024).slice(1001)];
+        assert.deepStrictEqual(await outcomeOfFragments(fragments, { maxHeaderSize: 1024 }), {
+          events: [refusedHead, "close"],
+          chunks: [1000, 1, 23],
+        });
+      } finally {
+        Buffer.allocUnsafe = allocUnsafe;
+      }
+    });
+
+    test("a head can arrive one byte at a time", async () => {
+      // The last chunk has the last byte of the head and the bytes after it.
+      const fragments = [...head(64).slice(0, -1), "\nafter the head"];
+      const chunks = fragments.map(fragment => fragment.length);
+      assert.deepStrictEqual(await outcomeOfFragments(fragments, { maxHeaderSize: 64 }), {
+        events: [refusedHead, "close"],
+        chunks,
+      });
+      assert.deepStrictEqual(await outcomeOfFragments(fragments, { maxHeaderSize: 63 }), {
+        events: [exceeded(63), "close"],
+        chunks,
+      });
+    });
+  },
+);

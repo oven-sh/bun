@@ -11,6 +11,7 @@ const {
   checkShouldUseProxy,
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
+  getMaxHTTPHeaderSize,
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
@@ -100,6 +101,8 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   const result = {
     __proto__: null,
     proxyTunnelPayload: payload,
+    // Port of nodejs/node 84e367579e: the limit for the proxy's reply to the CONNECT.
+    maxHeaderSize: reqOptions.maxHeaderSize || getMaxHTTPHeaderSize(),
     requestOptions: {
       // Options used for the request sent after the tunnel is established.
       __proto__: null,
@@ -114,8 +117,12 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   return result;
 }
 
+// Buffer#indexOf() copies a string needle into a new Buffer on each call. The first tunnel makes these.
+let crlf: Buffer | undefined;
+let crlfcrlf: Buffer | undefined;
+
 function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
-  const { proxyTunnelPayload } = tunnelConfig;
+  const { proxyTunnelPayload, maxHeaderSize } = tunnelConfig;
   // Once the tunnel outcome is decided the raw socket belongs to the TLS
   // wrap; stop reading from it and never re-register the readable listener.
   let tunnelDone = false;
@@ -124,8 +131,8 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
   function read() {
     let chunk;
     while (tunnelDone === false && (chunk = socket.read()) !== null) {
-      if (onProxyData(chunk) !== -1) {
-        break;
+      if (onProxyData(chunk)) {
+        return;
       }
     }
     if (tunnelDone === false) {
@@ -138,6 +145,8 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
 
   function cleanup() {
     tunnelDone = true;
+    // The listeners of the tunneled socket keep this scope alive while the agent pools it.
+    buffer = undefined;
     socket.removeListener("end", onProxyEnd);
     socket.removeListener("error", onProxyError);
     socket.removeListener("readable", read);
@@ -152,14 +161,40 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
 
   // Read the headers from the chunks and check for the status code. If it fails we
   // clean up the socket and return an error. Otherwise we establish the tunnel.
-  let buffer = "";
-  function onProxyData(chunk) {
-    const str = chunk.toString();
-    $debug("onProxyData", str);
-    buffer += str;
-    const headerEndIndex = buffer.indexOf("\r\n\r\n");
-    if (headerEndIndex === -1) return headerEndIndex;
-    const statusLine = buffer.substring(0, buffer.indexOf("\r\n"));
+  // Port of nodejs/node 84e367579e: same limit, check order and error. Upstream concatenates and
+  // searches the whole reply again for every chunk. Here `buffer` holds `received` bytes, its capacity
+  // doubles and only the new bytes are searched, so the work is linear in the size of the reply.
+  let buffer: Buffer | undefined;
+  let received = 0;
+  function onProxyData(chunk: Buffer): boolean {
+    $debug("onProxyData", chunk.length);
+    const before = received;
+    received += chunk.length;
+    if (buffer === undefined) {
+      buffer = chunk;
+    } else {
+      const capacity = buffer.length;
+      if (received > capacity) {
+        const grown = Buffer.allocUnsafe(Math.max(received, capacity * 2));
+        buffer.copy(grown, 0, 0, before);
+        buffer = grown;
+      }
+      chunk.copy(buffer, before);
+    }
+    // The search ends at `received`: the capacity after it is not initialized.
+    crlfcrlf ??= Buffer.from("\r\n\r\n");
+    const headerEndIndex = buffer.indexOf(crlfcrlf, before > 3 ? before - 3 : 0, received);
+    const headerLength = headerEndIndex === -1 ? received : headerEndIndex + 4;
+    if (headerLength > maxHeaderSize) {
+      $debug(`Proxy response headers exceed ${maxHeaderSize} bytes, cleaning up`);
+      cleanup();
+      const err: ProxyTunnelError = $ERR_PROXY_TUNNEL(`Proxy response headers exceeded ${maxHeaderSize} bytes`);
+      afterSocket(err, socket);
+      return true;
+    }
+    if (headerEndIndex === -1) return false;
+    crlf ??= Buffer.from("\r\n");
+    const statusLine = buffer.toString("utf8", 0, buffer.indexOf(crlf));
     const statusCode = statusLine.split(" ")[1];
     if (statusCode !== "200") {
       $debug(`onProxyData receives ${statusCode}, cleaning up`);
@@ -208,7 +243,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         tunneledSocket.once("close", onSocketClose.bind(agent, agentKey));
       }
     }
-    return headerEndIndex;
+    return true;
   }
 
   function onProxyEnd() {

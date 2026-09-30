@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunRun } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import path from "path";
 
@@ -147,4 +148,45 @@ test.concurrent("--max-http-header-size=16*1024", async () => {
       BUN_HTTP_MAX_HEADER_SIZE: String(size),
     }),
   ).toSpawn();
+});
+
+// nodejs/node 84e367579e: the limit applies to the reply of a proxy to the CONNECT of an https request.
+test("http.maxHeaderSize limits the CONNECT response headers of a proxy", async () => {
+  // The error of one request through a proxy that answers the CONNECT with a head of `length` bytes.
+  async function errorFor(length: number) {
+    const statusLine = "HTTP/1.1 407 Proxy Authentication Required";
+    const padding = length - `${statusLine}\r\nx-pad: \r\n\r\n`.length;
+    const proxy = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end(`${statusLine}\r\nx-pad: ${Buffer.alloc(padding, "a")}\r\n\r\n`));
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const { port } = proxy.address() as net.AddressInfo;
+    const agent = new https.Agent({ proxyEnv: { https_proxy: `http://127.0.0.1:${port}` } } as any);
+    try {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let error = "no error";
+      const req = https.get({ host: "example.invalid", port: 443, agent });
+      req.on("error", (err: any) => (error = `${err.code}: ${err.statusCode ?? err.message}`));
+      req.on("close", () => resolve(error));
+      return await promise;
+    } finally {
+      agent.destroy();
+      proxy.close();
+    }
+  }
+
+  const original = http.maxHeaderSize;
+  // @ts-expect-error Node has no setter
+  http.maxHeaderSize = 2048;
+  try {
+    expect([await errorFor(2048), await errorFor(2049)]).toEqual([
+      "ERR_PROXY_TUNNEL: 407",
+      "ERR_PROXY_TUNNEL: Proxy response headers exceeded 2048 bytes",
+    ]);
+  } finally {
+    // @ts-expect-error Node has no setter
+    http.maxHeaderSize = original;
+  }
 });

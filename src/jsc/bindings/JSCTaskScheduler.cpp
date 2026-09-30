@@ -1,5 +1,6 @@
 #include "config.h"
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
@@ -19,19 +20,20 @@ extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(const ::BunVmHandleRef
 
 class JSCDeferredWorkTask {
 public:
-    JSCDeferredWorkTask(Ref<Ticket> ticket, Task&& task)
-        : ticket(WTF::move(ticket))
+    JSCDeferredWorkTask(WebCore::JSVMClientData* clientData, Ref<Ticket> ticket, Task&& task)
+        : clientData(clientData)
+        , ticket(WTF::move(ticket))
         , task(WTF::move(task))
     {
     }
 
+    // Not reached through the ticket: a cancelled one's cells may be freed.
+    WebCore::JSVMClientData* clientData;
     Ref<Ticket> ticket;
     Task task;
     ~JSCDeferredWorkTask()
     {
     }
-
-    JSC::VM& vm() const { return ticket->scriptExecutionOwner()->vm(); }
 
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
@@ -98,7 +100,7 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
     // the teardown to release unrun or refuses it and runs the job's release path.
-    auto* job = new JSCDeferredWorkTask(WTF::move(ticket), WTF::move(task));
+    auto* job = new JSCDeferredWorkTask(clientData, WTF::move(ticket), WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job, loopKind);
 }
 
@@ -112,6 +114,30 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
     holder.unlockEarly();
     if (wasKeepingAlive)
         Bun__VmHandle__refKeepAlive(vmHandle, BunLoopKind::Regular, -1);
+}
+
+void JSCTaskScheduler::cancelWorkOfDeadRealms(WebCore::JSVMClientData* clientData, JSC::VM& vm)
+{
+    auto& scheduler = clientData->deferredWorkTimer;
+    UncheckedKeyHashSet<JSGlobalObject*> deadRealms;
+    {
+        Locker<Lock> holder { scheduler.m_lock };
+        auto collect = [&](auto& pendingTickets) {
+            for (auto& ticket : pendingTickets.keys()) {
+                if (ticket->isCancelled())
+                    continue;
+                auto* realm = ticket->target()->globalObject();
+                if (!vm.heap.isMarked(realm))
+                    deadRealms.add(realm);
+            }
+        };
+        collect(scheduler.m_pendingTicketsKeepingEventLoopAlive);
+        collect(scheduler.m_pendingTicketsOther);
+    }
+    // What ~JSGlobalObject does, too late for a global that is swept lazily. Reaches
+    // onCancelPendingWork, which takes m_lock.
+    for (auto* realm : deadRealms)
+        realm->clearWeakTickets();
 }
 
 static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
@@ -144,8 +170,8 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
     // event-loop callback boundary, an exception a task lets escape is
     // reported as uncaught here rather than left on the VM for the next entry.
     if (wasPending && !job->ticket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
-        auto& vm = job->vm();
         auto* globalObject = job->ticket->target()->globalObject();
+        auto& vm = globalObject->vm();
         // The realm's own status, as DeferredWorkTimer::doWork asks it before it runs a
         // task. A realm that `bun test --isolate` retired reports Stopped, so the
         // finished file's leftover work is dropped instead of running under the next
@@ -167,10 +193,7 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
 
 extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 {
-    auto& vm = job->vm();
-    auto clientData = WebCore::clientData(vm);
-
-    runPendingWork(clientData->vmHandle, clientData->deferredWorkTimer, job);
+    runPendingWork(job->clientData->vmHandle, job->clientData->deferredWorkTimer, job);
 }
 
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the
@@ -179,14 +202,12 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 // ticket take() so the pending set and event-loop ref stay balanced.
 extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
 {
-    if (auto* clientData = WebCore::clientData(job->vm())) {
-        auto& scheduler = clientData->deferredWorkTimer;
-        Locker<Lock> holder { scheduler.m_lock };
-        bool wasKeepingAlive = dropPendingTicketLocked(scheduler, job->ticket.ptr());
-        holder.unlockEarly();
-        if (wasKeepingAlive)
-            Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
-    }
+    auto& scheduler = job->clientData->deferredWorkTimer;
+    Locker<Lock> holder { scheduler.m_lock };
+    bool wasKeepingAlive = dropPendingTicketLocked(scheduler, job->ticket.ptr());
+    holder.unlockEarly();
+    if (wasKeepingAlive)
+        Bun__VmHandle__refKeepAlive(job->clientData->vmHandle, BunLoopKind::Regular, -1);
     delete job;
 }
 

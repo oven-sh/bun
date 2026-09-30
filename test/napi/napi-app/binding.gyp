@@ -143,6 +143,17 @@
             ],
         },
         {
+            "target_name": "test_static_thread_stopped_by_cleanup_hook",
+            "sources": ["test_static_thread_stopped_by_cleanup_hook.cpp"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
             "target_name": "test_cleanup_hook_remove_nonexistent",
             "sources": ["test_cleanup_hook_remove_nonexistent.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

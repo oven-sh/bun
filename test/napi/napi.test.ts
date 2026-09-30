@@ -2150,6 +2150,18 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       await checkSameOutput("test_env_teardown_skipped_by_process_exit", [], noDestruct);
     });
 
+    // With its cleanup hook skipped the addon's thread is still running, and destroying
+    // the static that holds it calls std::terminate(). Windows unloads the addon in
+    // ExitProcess(), after it has ended the thread.
+    it.skipIf(isWindows)("process.exit() does not run an addon's static destructors either", async () => {
+      const addon = join(__dirname, "napi-app/build/Debug/test_static_thread_stopped_by_cleanup_hook.node");
+      const result = await run(
+        `require(${JSON.stringify(addon)}); console.log("loaded"); process.exit(0);`,
+        noDestruct,
+      );
+      expect(result).toEqual({ lines: ["loaded"], stderr: "", exitCode: 0 });
+    });
+
     it("an uncaught exception while the entry point runs skips it", async () => {
       const { lines, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
       expect(stderr).toContain("fatal");

@@ -685,6 +685,9 @@ unsafe extern "C" {
     safe fn libc_exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
+    #[cfg(target_os = "macos")]
+    #[link_name = "_exit"]
+    safe fn libc_exit_now(code: c_int) -> !;
 }
 
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
@@ -700,10 +703,6 @@ pub fn exit(code: u32) -> ! {
     // Flush output before exiting to ensure all messages are visible
     Output::flush();
 
-    #[cfg(target_os = "macos")]
-    {
-        libc_exit(code as i32)
-    }
     #[cfg(windows)]
     {
         // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
@@ -716,12 +715,21 @@ pub fn exit(code: u32) -> ! {
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    // Not exit(): it runs the static destructors and atexit() handlers of every loaded
+    // addon, on a process whose other threads are still running.
+    #[cfg(not(windows))]
     {
         if env::ENABLE_ASAN {
             libc_exit(code as i32);
         }
+        #[cfg(not(target_os = "macos"))]
         quick_exit(code as c_int);
+        // macOS has no quick_exit(). `Bun__onExit` is the one at_quick_exit() handler.
+        #[cfg(target_os = "macos")]
+        {
+            Bun__onExit();
+            libc_exit_now(code as c_int)
+        }
     }
 }
 

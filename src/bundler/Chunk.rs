@@ -179,14 +179,13 @@ impl CompileResultSlots {
     /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
     #[inline]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        self.0.iter().map(|c| unsafe { &*c.get() })
+        self.as_slice().iter()
     }
 
     /// The post-join read view of `iter` as one slice, for a reader that takes ranges of it.
     #[inline]
     pub(crate) fn as_slice(&self) -> &[CompileResult] {
-        // SAFETY: as in `iter`, no writer after the pool join; `UnsafeCell<T>` has the layout of `T`.
+        // SAFETY: reads happen only after the pool join; no concurrent writer. `UnsafeCell<T>` has the layout of `T`.
         unsafe {
             core::slice::from_raw_parts(self.0.as_ptr().cast::<CompileResult>(), self.0.len())
         }

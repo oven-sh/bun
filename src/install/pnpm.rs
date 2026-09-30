@@ -244,9 +244,7 @@ fn read_named_registries(
                     let key = prop.key.as_ref().expect("infallible: prop has key");
                     let value = prop.value.as_ref().expect("infallible: prop has value");
                     if let (Some(name_str), Some(url_str)) = (as_string(key), as_string(value)) {
-                        // Without its credentials: this URL is recorded in bun.lock as the tarball base.
-                        let url = crate::bun_schema::api::NpmRegistry::from_url(url_str).url;
-                        registries.put(name_str, url)?;
+                        registries.put(name_str, Box::from(url_str))?;
                     }
                 }
             }

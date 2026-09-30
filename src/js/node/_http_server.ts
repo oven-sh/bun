@@ -517,16 +517,18 @@ Server.prototype.getConnections = function (callback) {
 
 Server.prototype.closeIdleConnections = function () {
   http1Fallback?.closeIdleHttp1Connections(this);
-  const server = this[serverSymbol];
-  if (server) {
-    server.closeIdleConnections();
-    return;
-  }
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
-      // uWS knows whether a request is arriving on the connection. A missing _httpMessage does not tell.
-      if (!socket[kHandedOff]) socket[kHandle]?.closeIfIdle();
+    const sockets = $Array.from(tracked) as NodeHTTPServerSocket[];
+    // The newest connection first, like the sweep of uWS.
+    for (let i = sockets.length - 1; i >= 0; i--) {
+      const socket = sockets[i];
+      if (socket[kHandedOff]) continue;
+      // Node's parser is busy until its message is complete, so also in the listener of a request without a body:
+      // https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1153
+      if (socket.parser?.incoming?.complete === false) continue;
+      // uWS knows the rest: a request head or body that arrives, a response in flight. A missing _httpMessage does not tell.
+      socket[kHandle]?.closeIfIdle();
     }
   }
 };

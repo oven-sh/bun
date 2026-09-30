@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { tempDir } from "harness";
 import { join } from "node:path";
+import { bun } from "./lint-helpers";
 
 type Report = { line: number; column: number; message: string };
 // `eslintTest`: the case is in ESLint's own test of the rule. `differs`: how ESLint's answer, in `eslint`, is another.
 type Case = { code: string; jsx?: true; expect: Report[]; differs?: string; eslint?: Report[]; eslintTest?: true };
 
-const lintEnv = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: "1" };
 const rulesDir = join(import.meta.dir, "rules");
 // `rules/<rule>.json` holds the cases of one rule.
 const rules = [...new Bun.Glob("*.json").scanSync(rulesDir)].map(file => file.slice(0, -".json".length)).sort();
@@ -17,15 +17,7 @@ describe("bun --lint rules", () => {
     // Each case is a file of its own and one run checks them all.
     const names = cases.map((c, i) => `c${String(i).padStart(4, "0")}.${c.jsx ? "jsx" : "js"}`);
     using dir = tempDir(`lint-${rule}`, Object.fromEntries(cases.map((c, i) => [names[i], c.code])));
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--lint", ...names],
-      env: lintEnv,
-      cwd: String(dir),
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await bun(String(dir), ["--lint", ...names]);
 
     // The plain format writes a line break inside a message as one space.
     const expected = cases.map((c, i) =>

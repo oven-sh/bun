@@ -76,6 +76,8 @@ public:
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
 
     bool wasModuleMock = false;
+    // From Bun__VM__moduleFetchStarted, for Bun__VM__moduleFetchSettled. Empty when the fetch was not counted.
+    std::optional<uint32_t> fetchGeneration;
 };
 
 // `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file

@@ -37,9 +37,11 @@ pub struct ServerEntryPoint {
 // auto-generated `Drop`, so no explicit impl is needed.
 
 impl ServerEntryPoint {
+    /// `generation` orders the loads under `--hot`: one that finishes after a newer one does not apply its server config.
     pub fn generate(
         entry: &mut ServerEntryPoint,
         is_hot_reload_enabled: bool,
+        generation: u32,
         path_to_use: &[u8],
     ) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
@@ -54,14 +56,19 @@ impl ServerEntryPoint {
                     "// @bun\n\
                      import * as start from '{}';\n\
                      var hmrSymbol = Symbol(\"BunServerHMR\");\n\
+                     var newestGeneration = Symbol.for(\"BunServerHMR.newestGeneration\");\n\
                      var entryNamespace = start;\n\
                      function isServerConfig(def) {{\n\
                      \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
                      }}\n\
+                     function isNewestGeneration() {{\n\
+                     \x20  return !(globalThis[newestGeneration] > {generation});\n\
+                     }}\n\
+                     if (isNewestGeneration()) globalThis[newestGeneration] = {generation};\n\
                      if (typeof entryNamespace?.then === 'function') {{\n\
                      \x20  entryNamespace = entryNamespace.then((entryNamespace) => {{\n\
                      \x20     var def = entryNamespace?.default;\n\
-                     \x20     if (isServerConfig(def))  {{\n\
+                     \x20     if (isNewestGeneration() && isServerConfig(def))  {{\n\
                      \x20       var server = globalThis[hmrSymbol];\n\
                      \x20       if (server) {{\n\
                      \x20          server.reload(def);\n\
@@ -72,7 +79,7 @@ impl ServerEntryPoint {
                      \x20       }}\n\
                      \x20     }}\n\
                      \x20  }}, reportError);\n\
-                     }} else if (isServerConfig(entryNamespace?.default)) {{\n\
+                     }} else if (isNewestGeneration() && isServerConfig(entryNamespace?.default)) {{\n\
                      \x20  var server = globalThis[hmrSymbol];\n\
                      \x20  if (server) {{\n\
                      \x20     server.reload(entryNamespace.default);\n\

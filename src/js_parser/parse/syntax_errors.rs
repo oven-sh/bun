@@ -379,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// At a token that starts no type. True where a type is missing: parseEntityNameOfTypeReference reports Type_expected.
+    /// At a token that starts no type, where parseEntityNameOfTypeReference reports Type_expected. False where a sink that builds goes on: a list of type arguments ends here, or an attempt runs.
     #[cold]
     #[inline(never)]
     pub(crate) fn type_expected(&mut self, opts: SkipTypeOptionsBitset) -> Result<bool, Error> {
@@ -395,7 +395,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(false);
         }
         let msgs_len = self.log().msgs.len();
-        if self.lexer.is_log_disabled {
+        let is_in_attempt = self.lexer.is_log_disabled;
+        if is_in_attempt {
             // typeHasArrowFunctionBlockingParseError: an arrow function whose return type is missing is none
             if opts.contains(SkipTypeOptions::IsReturnType)
                 && self.lexer.token == T::TEqualsGreaterThan
@@ -410,7 +411,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let range = self.lexer.range();
         self.code_syntax_error(msgs_len, TYPE_EXPECTED, b"", range);
-        Ok(true)
+        Ok(!is_in_attempt)
     }
 
     /// The last character of the token before the one the lexer is on: "<" or "," before an element of a list, ":" or "=>" before a return type.

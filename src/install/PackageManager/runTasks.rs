@@ -22,7 +22,6 @@ use super::{
     Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
 };
 use super::{directories, enqueue};
-use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
@@ -381,8 +380,11 @@ fn run_tasks_erased(
                     let entry_id = task.entry_id;
                     let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
                     let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
-                    let optional = dep.behavior.contains(Behavior::OPTIONAL);
+                    let pkg_id = installer.store.nodes.items_pkg_id()[node_id.get() as usize];
+                    let optional =
+                        !installer
+                            .required_packages
+                            .contains(installer.manager(), dep_id, pkg_id);
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).

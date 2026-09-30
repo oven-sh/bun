@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("blocks should handle a number, string, anonymous class, named class, or function for the first arg", () => {
   const numberMock = jest.fn();
@@ -78,7 +78,7 @@ describe("a named function should work for the second arg", () => {
 
 describe("shows first arg name correctly in test output", () => {
   test("describe block shows function name correctly in test output", async () => {
-    const test_dir = tempDirWithFiles(".", {
+    await using test_dir = tempDir(".", {
       "describe-test.test.js": `
       import { describe, test, expect } from "bun:test";
 
@@ -108,7 +108,7 @@ describe("shows first arg name correctly in test output", () => {
     expect(fullOutput).not.toInclude("[object Object] > should pass");
   });
   test("describe block shows named class correctly in test output", async () => {
-    const test_dir = tempDirWithFiles(".", {
+    await using test_dir = tempDir(".", {
       "describe-test.test.js": `
       import { describe, test, expect } from "bun:test";
 
@@ -137,7 +137,7 @@ describe("shows first arg name correctly in test output", () => {
   });
 
   test("describe block shows anonymous class correctly in test output", async () => {
-    const test_dir = tempDirWithFiles(".", {
+    await using test_dir = tempDir(".", {
       "describe-test.test.js": `
       import { describe, test, expect } from "bun:test";
 
@@ -167,7 +167,7 @@ describe("shows first arg name correctly in test output", () => {
 
 describe("passing arrow function as args", () => {
   test("passes if sole argument", () => {
-    const test_dir = tempDirWithFiles(".", {
+    using test_dir = tempDir(".", {
       "describe-test.test.js": `
       import { describe, test, expect } from "bun:test";
 
@@ -193,7 +193,7 @@ describe("passing arrow function as args", () => {
     expect(fullOutput).toInclude("0 fail");
   });
   test("throws an error if two arguments", () => {
-    const test_dir = tempDirWithFiles(".", {
+    using test_dir = tempDir(".", {
       "describe-test.test.js": `
       import { describe, test, expect } from "bun:test";
 

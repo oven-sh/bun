@@ -46,7 +46,7 @@ struct NodeConstants {
         NOTATION_NODE = 12,
     };
 
-    static const uint8_t LastNodeType = NOTATION_NODE;
+    static constexpr uint8_t LastNodeType = NOTATION_NODE;
 };
 
 } // namespace WebCore::NodeType

@@ -1,5 +1,6 @@
 #include "NodeVMScriptFetcher.h"
 #include "NodeVMSourceTextModule.h"
+#include "CodeGenerationFromStrings.h"
 #include "NodeVMSyntheticModule.h"
 
 #include "ErrorCode.h"
@@ -9,17 +10,15 @@
 #include "wtf/Scope.h"
 
 #include "JavaScriptCore/BuiltinNames.h"
-#include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/JSModuleEnvironment.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/ModuleAnalyzer.h"
-#include "JavaScriptCore/ModuleProgramCodeBlock.h"
+#include "JavaScriptCore/ModuleProgramExecutable.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
-
-#include "../vm/SigintWatcher.h"
 
 namespace Bun {
 using namespace NodeVM;
@@ -27,6 +26,8 @@ using namespace NodeVM;
 NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* globalObject, ArgList args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue identifierValue = args.at(0);
     if (!identifierValue.isString()) {
@@ -63,7 +64,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     JSValue cachedDataValue = args.at(5);
     WTF::Vector<uint8_t> cachedData;
     if (!cachedDataValue.isUndefined() && !extractCachedData(cachedDataValue, cachedData)) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
+        Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataValue);
         return nullptr;
     }
 
@@ -91,17 +92,19 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
-    RETURN_IF_EXCEPTION(scope, nullptr);
 
     SourceOrigin sourceOrigin { {}, *fetcher };
 
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
-        TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
+    TextPosition startPosition = providerStartPosition(
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(lineOffset), sourceText.length()),
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()));
 
-    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset, columnOffset);
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
+
+    SourceCode sourceCode(WTF::move(sourceProvider));
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     WTF::String identifier = identifierValue.toWTFString(globalObject);
@@ -109,13 +112,13 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
 
     if (cachedData.isEmpty()) {
         return ptr;
     }
 
+    // A syntax error wins over rejected cachedData, as in Node.
     ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
     RETURN_IF_EXCEPTION(scope, {});
     if (!executable) {
@@ -123,32 +126,13 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    ptr->m_cachedExecutable.set(vm, ptr, executable);
-    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    if (unlinkedBlock) {
-        JSScope* jsScope = globalObject->globalScope();
-        CodeBlock* codeBlock = nullptr;
-        {
-            // JSC::ProgramCodeBlock::create() requires GC to be deferred.
-            DeferGC deferGC(vm);
-            codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        if (codeBlock) {
-            CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (compilationResult != CompilationResult::CompilationFailed) {
-                executable->installCode(codeBlock);
-                return ptr;
-            }
-        }
-    }
+    // Decoding checks the format and the source key. Linking would need
+    // the module's JSModuleEnvironment, which does not exist yet.
+    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+    Ref<CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
+    if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
+        return ptr;
 
     throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_CACHED_DATA_REJECTED, "cachedData buffer was rejected"_s);
     return nullptr;
@@ -183,7 +167,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, node->varDeclarations(), node->lexicalVariables(), AllFeatures);
+    JSModuleLoader* loader = moduleLoader(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);
@@ -199,6 +185,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     }
 
     m_moduleRecord.set(vm, this, moduleRecord);
+    m_hasTopLevelAwait = node->features() & AwaitFeature;
     m_moduleRequests.clear();
 
     const auto& requests = moduleRecord->requestedModules();
@@ -294,6 +281,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
         addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     m_moduleRequestsArray.set(vm, this, requestsArray);
@@ -317,10 +305,13 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 {
     const unsigned length = specifiers->getArrayLength();
 
-    ASSERT(length == moduleNatives->getArrayLength());
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (length != moduleNatives->getArrayLength()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "moduleNatives"_s, moduleNatives, "must have the same length as \"specifiers\""_str);
+        return {};
+    }
 
     if (m_status != Status::Unlinked) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
@@ -337,11 +328,16 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ASSERT(specifierValue.isString());
+            // getDirectIndex returns an empty JSValue for holes; empty passes
+            // isCell() with a null cell, so it must be rejected before any use.
+            if (specifierValue.isEmpty() || !specifierValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "specifiers"_str, "Array<string>"_str, specifierValue.isEmpty() ? jsUndefined() : specifierValue);
+                return {};
+            }
 
             WTF::String specifier = specifierValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            NodeVMModule* moduleNative = dynamicDowncast<NodeVMModule>(moduleNativeValue);
+            NodeVMModule* moduleNative = moduleNativeValue.isEmpty() ? nullptr : dynamicDowncast<NodeVMModule>(moduleNativeValue);
             if (!moduleNative) {
                 Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
                 return {};
@@ -390,7 +386,10 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     UNUSED_PARAM(scriptFetcher);
-    status(Status::Linked);
+    m_linkCalled = true;
+    // Status stays Unlinked: matching Node, only instantiate() flips a
+    // SourceTextModule to "linked" (linkRequests() alone must leave the
+    // module unlinked, and a failed instantiate() must remain retryable).
     return jsUndefined();
 }
 
@@ -421,6 +420,10 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
 
         const auto& loaded = record->loadedModules();
         for (const auto& request : record->requestedModules()) {
+            if (AbstractModuleRecord* dependency = record->prelinkedRequestedModule(request)) {
+                worklist.append(dependency);
+                continue;
+            }
             auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
             if (iter == loaded.end()) {
                 missingSpecifier = request.m_specifier.string();
@@ -443,6 +446,11 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     if (!record)
         return jsUndefined();
 
+    if (!m_linkCalled) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, "module is not linked"_s);
+        return {};
+    }
+
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
@@ -450,13 +458,25 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 
     String missingSpecifier;
     if (!isModuleGraphLinked(record, missingSpecifier)) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, makeString("request for '"_s, missingSpecifier, "' is not in cache"_s));
+        // The specifier comes from the module's source, so from JS.
+        MessageBuilder message;
+        message.append("request for '"_s, missingSpecifier, "' is not in cache"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
         return {};
     }
+
+    // A record that never went through link() (e.g. a module with no
+    // dependencies instantiated directly) is still Status::New; record->link
+    // asserts the record is past New, and only the loader's
+    // continueModuleLoading would normally flip it.
+    if (record->status() == JSC::CyclicModuleRecord::Status::New)
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
+    status(Status::Linked);
+    propagateLinked();
     return jsUndefined();
 }
 
@@ -466,17 +486,11 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_bytecode) {
-        if (!m_cachedExecutable) {
-            ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (!executable) {
-                throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-                return nullptr;
-            }
-            m_cachedExecutable.set(vm, this, executable);
+        m_bytecode = getBytecode(globalObject, SourceCodeType::ModuleType, m_sourceCode);
+        if (!m_bytecode) {
+            throwSyntaxError(globalObject, scope, "Failed to create cached data"_s);
+            return nullptr;
         }
-        m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     return m_bytecode;
@@ -523,8 +537,8 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     args.append(metaValue);
     args.append(m_moduleWrapper.get());
 
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
     scope.release();
+    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)
@@ -541,10 +555,9 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(vmModule->m_moduleRecord);
     visitor.append(vmModule->m_moduleRequestsArray);
-    visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
-    visitor.append(vmModule->m_evaluationException);
     visitor.append(vmModule->m_initializeImportMeta);
+    NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

@@ -1,5 +1,5 @@
-import type { JSException, JSException as JSExceptionType, Message, Problems } from "../../src/api/schema";
-import { normalizedFilename, StackFrameIdentifier, StackFrameScope, thisCwd } from "./index";
+import { normalizedFilename, StackFrameIdentifier, thisCwd } from "./index";
+import { StackFrameScope, type JSException, type Message, type Problems } from "./schema";
 
 export function problemsToMarkdown(problems: Problems) {
   var markdown = "";
@@ -21,7 +21,7 @@ export function messagesToMarkdown(messages: Message[]): string {
     .join("\n");
 }
 
-export function exceptionsToMarkdown(exceptions: JSExceptionType[]): string {
+export function exceptionsToMarkdown(exceptions: JSException[]): string {
   return exceptions
     .map(exceptionToMarkdown)
     .map(a => a.trim())
@@ -57,17 +57,13 @@ function exceptionToMarkdown(exception: JSException): string {
     markdown += `**${name}**\n`;
   }
 
-  if (stack.frames.length > 0) {
+  if (stack && stack.frames.length > 0) {
     var frames = stack.frames;
     if (stack.source_lines.length > 0) {
       const {
         file: _file = "",
         function_name = "",
-        position: { line = -1, column_start: column = -1, column_stop: columnEnd = column } = {
-          line: -1,
-          column_start: -1,
-          column_stop: -1,
-        },
+        position: { line = -1, column = -1 } = { line: -1, column: -1 },
         scope = 0 as any,
       } = stack.frames[0];
       const file = normalizedFilename(_file, thisCwd);
@@ -127,10 +123,7 @@ function exceptionToMarkdown(exception: JSException): string {
       for (let frame of framesToDisplay) {
         const {
           function_name = "",
-          position: { line = -1, column_start: column = -1 } = {
-            line: -1,
-            column_start: -1,
-          },
+          position: { line = -1, column = -1 } = { line: -1, column: -1 },
           scope = 0 as any,
         } = frame;
         padding = Math.max(
@@ -149,10 +142,7 @@ function exceptionToMarkdown(exception: JSException): string {
         const {
           file = "",
           function_name = "",
-          position: { line = -1, column_start: column = -1 } = {
-            line: -1,
-            column_start: -1,
-          },
+          position: { line = -1, column = -1 } = { line: -1, column: -1 },
           scope = 0 as any,
         } = frame;
 

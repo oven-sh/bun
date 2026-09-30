@@ -71,14 +71,20 @@ common.skipIfDumbTerminal();
       const expectations = [char, '', last];
 
       rli.on('line', common.mustNotCall());
-      for (const character of `${char}\t\t`) {
-        fi.emit('data', character);
-        queueMicrotask(() => {
+      // bun: upstream interleaves per-emit queueMicrotask asserts and ends
+      // with fi.end(); JSC settles the await chain across more microtask
+      // turns than V8, so wait a macrotask per emit instead. rli.close()
+      // here would race the in-flight completion (ERR_USE_AFTER_CLOSE) -
+      // upstream's fi.end() is a no-op on the fake input.
+      common.mustCall(async () => {
+        for (const character of `${char}\t\t`) {
+          fi.emit('data', character);
+          await new Promise((resolve) => setImmediate(resolve));
           assert.strictEqual(output, expectations.shift());
           output = '';
-        });
-      }
-      rli.close();
+        }
+        fi.end();
+      })();
     });
   });
 });
@@ -108,9 +114,9 @@ common.skipIfDumbTerminal();
 
   rli.on('line', common.mustNotCall());
   fi.emit('data', '\t');
-  queueMicrotask(() => {
+  setImmediate(common.mustCall(() => {
     assert.match(output, /^Tab completion error:[^]+Error: message/i);
     output = '';
-  });
-  rli.close();
+    fi.end();
+  }));
 }

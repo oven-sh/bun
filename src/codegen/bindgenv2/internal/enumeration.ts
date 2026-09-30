@@ -1,13 +1,13 @@
 import assert from "node:assert";
 import util from "node:util";
 import {
-  CodeStyle,
+  type CodeStyle,
   joinIndented,
   NamedType,
   reindent,
   toASCIILiteral,
   toQuotedLiteral,
-} from "./base";
+} from "./base.ts";
 
 abstract class EnumType extends NamedType {}
 
@@ -171,24 +171,6 @@ export function enumeration(
             value.toWTFString(&globalObject)
           );
         }
-      `);
-    }
-
-    get hasZigSource() {
-      return true;
-    }
-    get zigSource() {
-      return reindent(`
-        pub const ${name} = enum(u32) {
-          ${joinIndented(
-            10,
-            uniqueValues.map(value => `@${toQuotedLiteral(value)},`),
-          )}
-        };
-
-        pub const Bindgen${name} = bindgen.BindgenTrivial(${name});
-        const bun = @import("bun");
-        const bindgen = bun.bun_js.bindgen;
       `);
     }
   })();

@@ -73,7 +73,6 @@ const contextifiedObjectError = {
   message: /The "contextifiedObject" argument must be an vm\.Context/
 };
 
-let i = 0;
 [
   [undefined, nonContextualObjectError],
   [null, nonContextualObjectError],
@@ -113,8 +112,11 @@ assert.strictEqual(script.runInContext(ctx), false);
     });
   }, (err) => {
     stack = err.stack;
-    return /^ \^/m.test(stack) &&
-           typeof Bun === 'undefined' ? /expected-filename\.js:33:131/.test(stack) : /expected-filename\.js:33:140/.test(stack);
+    // JSC attributes the throw to a different column than V8, which also
+    // moves the caret marker.
+    return typeof Bun === 'undefined'
+      ? /^ \^/m.test(stack) && /expected-filename\.js:33:131/.test(stack)
+      : /^ *\^/m.test(stack) && /expected-filename\.js:33:140/.test(stack);
   }, `stack not formatted as expected: ${stack}`);
 }
 

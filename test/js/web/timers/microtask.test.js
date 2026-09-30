@@ -1,4 +1,9 @@
-import { it } from "bun:test";
+import { expect, it } from "bun:test";
+
+// https://github.com/oven-sh/bun/issues/9249
+it("queueMicrotask.length is 1", () => {
+  expect(queueMicrotask).toHaveLength(1);
+});
 
 it("queueMicrotask", async () => {
   // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.

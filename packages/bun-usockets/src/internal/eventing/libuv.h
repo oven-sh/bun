@@ -24,6 +24,9 @@
 #define LIBUS_SOCKET_READABLE UV_READABLE
 #define LIBUS_SOCKET_WRITABLE UV_WRITABLE
 
+/* Defined in eventing/libuv.c; used by the sweep escalation in loop.c. */
+int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);
+
 struct us_loop_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_internal_loop_data_t data;
 
@@ -32,6 +35,8 @@ struct us_loop_t {
 
   uv_prepare_t *uv_pre;
   uv_check_t *uv_check;
+  /* Created on first use by us_loop_run. */
+  struct us_timer_t *idle_sweep_timer;
 };
 
 // it is no longer valid to cast a pointer to us_poll_t to a pointer of

@@ -1,5 +1,5 @@
 import { describe, test } from "bun:test";
-import { cwdScope, isWindows, rmScope, tempDirWithFiles } from "harness";
+import { cwdScope, isWindows, tempDir } from "harness";
 
 describe.if(!isWindows)("unix socket", () => {
   test("valid", () => {
@@ -38,11 +38,10 @@ describe.if(!isWindows)("unix socket", () => {
 
     for (const args of permutations) {
       test(`${JSON.stringify(args)}`, async () => {
-        const tempdir = tempDirWithFiles("test-socket", {
+        await using tempdir = tempDir("test-socket", {
           "foo.txt": "bar",
         });
-        using cwd = cwdScope(tempdir);
-        using rm = rmScope(tempdir);
+        using cwd = cwdScope(String(tempdir));
         for (let i = 0; i < 100; i++) {
           using server = Bun.listen({
             ...args,

@@ -133,7 +133,7 @@ macro_rules! us_dispatch_shims {
         /// buffer must be valid for the duration of the call).
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
-        pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+        pub(crate) unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
                 Some(f) => {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c
@@ -180,7 +180,7 @@ us_dispatch_shims! {
 /// `loop.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
+unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s: *mut us_socket_t,
     data: *mut u8,
     len: c_int,
@@ -191,23 +191,160 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
-    // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
-    // (stamped at construction); dispatch is single-threaded so no `&mut`
-    // alias exists for the lifetime of this shared borrow.
-    let tls: &TLSSocket = unsafe { &*tls_ptr };
+    // The ext slot for `BunSocketTls` always holds a live `TLSSocket`, stamped
+    // at construction.
+    let tls: bun_ptr::ThisPtr<TLSSocket> =
+        s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
-        // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
-        // grab the raw `*mut` without consuming the ref so the +1 stays put.
         let raw: *mut TLSSocket = raw.as_ptr();
+        // A negative length from the C side means there is nothing to deliver;
+        // never panic across the `extern "C"` boundary.
+        let Ok(len) = usize::try_from(len) else {
+            return s;
+        };
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
-        let slice =
-            unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0")) };
-        // SAFETY: `twin` holds a live +1
-        // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
-        // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
-        unsafe { TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice) };
+        let slice = unsafe { core::slice::from_raw_parts(data, len) };
+        // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
+        // is live for `ThisPtr::new`; dispatch is single-threaded so no
+        // aliasing `&mut` exists.
+        crate::dispatch::fold(unsafe {
+            TLSSocket::on_data(
+                bun_ptr::ThisPtr::new(raw),
+                NewSocketHandler::<true>::from(s),
+                slice,
+            )
+        });
     }
     s
+}
+
+/// A new (resumable) TLS session is ready. BoringSSL's new-session callback
+/// parks the serialized session while `SSL_read`/`SSL_do_handshake` runs;
+/// `ssl_flush_pending_session()` dispatches it here once that stack has
+/// unwound. Mirrors Node's `NewSessionCallback` → `onnewsession` flow. Only
+/// `bun_socket_tls` sockets reach this.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn us_dispatch_session(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        return;
+    };
+    // A negative length from the C side means there is nothing to deliver;
+    // never panic across the `extern "C"` boundary.
+    let Ok(len) = usize::try_from(len) else {
+        return;
+    };
+    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
+    // duration of this call.
+    let slice = unsafe { core::slice::from_raw_parts(data, len) };
+    crate::dispatch::fold(TLSSocket::on_session(tls, slice));
+}
+
+/// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_server_identity(
+    s: *mut us_socket_t,
+    ssl: *mut bun_boringssl_sys::SSL,
+) -> c_int {
+    use bun_boringssl::ServerIdentity::Unchecked;
+    use bun_uws_sys::thunk::ExtSlot;
+    let s_ref = us_socket_t::opaque_mut(s);
+    let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
+    let verdict = match s_ref.kind() {
+        SocketKind::BunSocketTls => s_ref
+            .ext::<Option<bun_ptr::ThisPtr<super::NewSocket<true>>>>()
+            .map_or(Unchecked, |tls| tls.server_identity(ssl)),
+        SocketKind::HttpClientTls => s_ref
+            .ext::<Option<core::ptr::NonNull<c_void>>>()
+            .map_or(Unchecked, |ext| {
+                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
+            }),
+        SocketKind::WsClientUpgradeTls => s_ref
+            .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
+            .map_or(Unchecked, |client| client.server_identity(ssl)),
+        SocketKind::PostgresTls => s_ref
+            .ext::<ExtSlot<bun_sql_jsc::postgres::PostgresSQLConnection>>()
+            .owner_ref()
+            .map_or(Unchecked, |connection| connection.server_identity(ssl)),
+        SocketKind::MysqlTls => s_ref
+            .ext::<ExtSlot<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>()
+            .owner_ref()
+            .map_or(Unchecked, |connection| connection.server_identity(ssl)),
+        SocketKind::ValkeyTls => s_ref
+            .ext::<ExtSlot<crate::valkey_jsc::js_valkey::JSValkeyClient>>()
+            .owner_ref()
+            .map_or(Unchecked, |client| {
+                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity(client, ssl)
+            }),
+        _ => Unchecked,
+    };
+    verdict as c_int
+}
+
+/// BoringSSL's new-session callback, routed to the owner of the socket in `SSL_read`: 1 asks for `us_dispatch_session`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_new_session(
+    s: *mut us_socket_t,
+    session: *mut bun_boringssl_sys::SSL_SESSION,
+) -> c_int {
+    let s_ref = us_socket_t::opaque_mut(s);
+    match s_ref.kind() {
+        SocketKind::HttpClientTls => {
+            bun_http::session_cache::on_new_session(s_ref, session);
+            0
+        }
+        SocketKind::BunSocketTls => {
+            type TLSSocket = super::NewSocket<true>;
+            let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+                return 0;
+            };
+            tls.set_latest_session(session);
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Hands an NSS key-log line parked by the keylog callback to the JS
+/// `keylog` handler.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn us_dispatch_keylog(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        return;
+    };
+    // A negative length from the C side means there is nothing to deliver;
+    // never panic across the `extern "C"` boundary.
+    let Ok(len) = usize::try_from(len) else {
+        return;
+    };
+    // SAFETY: `data` points to `len` readable bytes owned by the caller for the
+    // duration of this call.
+    let slice = unsafe { core::slice::from_raw_parts(data, len) };
+    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
 }

@@ -20,8 +20,8 @@ const assert = require('assert');
 
 const server = http2.createServer({ maxSessionMemory: 1 });
 
-server.on('session', function(session) {
-  session.on('stream', function(stream) {
+server.on('session', common.mustCall((session) => {
+  session.on('stream', common.mustCallAtLeast((stream) => {
     stream.on('end', common.mustCall(function() {
       this.respond({
         ':status': 200
@@ -30,11 +30,11 @@ server.on('session', function(session) {
       });
     }));
     stream.resume();
-  });
-});
+  }));
+}));
 
-server.listen(0, function() {
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+server.listen(0, common.mustCall(() => {
+  const client = http2.connect(`http://localhost:${server.address().port}`);
 
   function next(i) {
     if (i === 10000) {
@@ -50,4 +50,4 @@ server.listen(0, function() {
   }
 
   next(0);
-});
+}));

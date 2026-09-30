@@ -1,8 +1,8 @@
 use bstr::BStr;
 
 use bun_core::strings;
-use bun_core::{Global, Output, err};
-use bun_paths::{AbsPath, PathBuffer};
+use bun_core::{Global, Output};
+use bun_paths::AbsPath;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -20,23 +20,23 @@ use crate::command;
 pub(crate) struct LinkCommand;
 
 impl LinkCommand {
-    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> crate::Result<()> {
         link(ctx)
     }
 }
 
-fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
+fn link(ctx: command::Context) -> crate::Result<()> {
     let cli = CommandLineArguments::parse(Subcommand::Link)?;
     let (manager, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Link) {
         Ok(v) => v,
-        Err(e) if e == err!(MissingPackageJSON) => {
+        Err(bun_install::Error::MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
             // is deterministic over process argv.
             let cli = CommandLineArguments::parse(Subcommand::Link)?;
             pm::init(&mut *ctx, cli, Subcommand::Link)?
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
@@ -136,7 +136,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
-                            e.name(),
+                            BStr::new(e.name()),
                         );
                     }
                     Global::crash();
@@ -153,11 +153,11 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             if name[0] == b'@' {
                 if let Some(i) = strings::index_of_char(name, b'/') {
                     if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
-                        if e != err!(PathAlreadyExists) {
+                        if e != bun_sys::SystemErrno::EEXIST {
                             if manager.options.log_level != LogLevel::Silent {
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> failed to create scope in global dir due to error {}",
-                                    e.name(),
+                                    e,
                                 );
                             }
                             Global::crash();
@@ -172,7 +172,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 use bun_paths::{platform, resolve_path};
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
-                let mut link_path_buf = PathBuffer::uninit();
+                let mut link_path_buf = bun_paths::path_buffer_pool::get();
                 link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
                 link_path_buf.0[top_level.len()] = 0;
                 // SAFETY: NUL written at link_path_buf[top_level.len()] above.
@@ -207,7 +207,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
-                            e.name(),
+                            BStr::new(e.name()),
                         );
                     }
                     Global::crash();
@@ -217,9 +217,9 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
         // Step 3b. Link any global bins
         if package.bin.tag != bin::Tag::None {
-            let mut link_target_buf = PathBuffer::uninit();
-            let mut link_dest_buf = PathBuffer::uninit();
-            let mut link_rel_buf = PathBuffer::uninit();
+            let mut link_target_buf = bun_paths::path_buffer_pool::get();
+            let mut link_dest_buf = bun_paths::path_buffer_pool::get();
+            let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
             // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
             // cannot alias the same value, so resolve the fd path twice (cheap:

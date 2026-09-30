@@ -2,7 +2,7 @@
 // Expected values verified against json5@2.2.3 reference implementation.
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -96,6 +96,51 @@ describe("escape sequences", () => {
     expect(() => JSON5.parse('"\\u041"')).toThrow("Invalid unicode escape: expected 4 hex digits");
     expect(() => JSON5.parse('"\\u41"')).toThrow("Invalid unicode escape: expected 4 hex digits");
     expect(() => JSON5.parse('"\\u"')).toThrow("Invalid unicode escape: expected 4 hex digits");
+  });
+
+  test("hex and unicode escape errors point at the first byte that is not a hex digit", async () => {
+    // Columns are 1-based. The caret must land on the marked character, not on
+    // the first digit of the escape.
+    const unicode = "Invalid unicode escape: expected 4 hex digits";
+    const hex = "Invalid hex escape";
+    const cases = [
+      { file: "string-u.json5", source: '{ a: "\\u12G4" }', message: unicode, column: 11 }, // G
+      { file: "string-x.json5", source: '{ a: "\\x1G" }', message: hex, column: 10 }, // G
+      { file: "string-u-short.json5", source: '{ a: "\\u41" }', message: unicode, column: 11 }, // closing quote
+      { file: "string-x-short.json5", source: '{ a: "\\x" }', message: hex, column: 9 }, // closing quote
+      { file: "string-u-low.json5", source: '{ a: "\\uD83D\\uDE0Z" }', message: unicode, column: 18 }, // Z
+      { file: "key-u.json5", source: "{ \\u00G1: 1 }", message: unicode, column: 7 }, // G
+    ];
+    using dir = tempDir("json5-escape-loc", {
+      ...Object.fromEntries(cases.map(c => [c.file, c.source])),
+      "index.js": `
+        const out = [];
+        for (const file of ${JSON.stringify(cases.map(c => c.file))}) {
+          try {
+            await import("./" + file);
+            out.push({ file, message: "parsed without error" });
+          } catch (e) {
+            out.push({ file, message: e.message, line: e.position.line, column: e.position.column });
+          }
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(
+      cases.map(c => ({ file: c.file, message: c.message, line: 1, column: c.column })),
+    );
+    expect(exitCode).toBe(0);
   });
 
   test("surrogate pairs", () => {
@@ -1658,4 +1703,73 @@ describe("deeply nested parse results", () => {
     expect(stdout.replaceAll("\r\n", "\n").trim()).toBe("JSON5 probed\nJSONC probed\ndone");
     expect(exitCode).toBe(0);
   });
+});
+
+describe("stringify memory", () => {
+  test("does not leak with a string space argument", async () => {
+    // Unique >10-char space string per call so each iteration allocates a
+    // fresh WTFStringImpl for the stored space and hits the clamp branch in
+    // newline(). Nested object/array so indent > 0.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        /* js */ `
+          const rss = process.memoryUsage.rss;
+          const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
+          const pad = Buffer.alloc(1024 * 1024, " ").toString();
+          for (let i = 0; i < 20; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const before = rss();
+          for (let i = 0; i < 200; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const growthMB = (rss() - before) / 1024 / 1024;
+          if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // Under ASAN every freed allocation parks in the allocator quarantine
+        // (default quarantine_size_mb=256) instead of being returned, so the
+        // RSS-delta heuristic over-reports even when nothing leaks. Disable
+        // the quarantine for this measurement process so the 64 MB threshold
+        // keeps separating "fixed" from "leaking ~200 MB". Harmless when the
+        // binary is not ASAN-built.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+// The JSON5 lexer records every source position as an i32, so an input of
+// 2**31 bytes or more used to abort the process with
+// `panic: int cast: TryFromIntError(PosOverflow)` instead of throwing. It is
+// rejected before parsing, so the Uint8Array below is virtual pages that are
+// never read. The runtime accepts a TypedArray here (the binding takes a
+// Blob, Buffer or string); the declared `string` type is narrower.
+test("parse rejects an input of 2**31 bytes or more instead of panicking", () => {
+  let input: Uint8Array;
+  try {
+    input = new Uint8Array(2 ** 31 + 2);
+  } catch {
+    // The 2 GiB reservation itself can fail on a memory-pressured runner;
+    // there is nothing to test then.
+    return;
+  }
+  let err: any;
+  try {
+    JSON5.parse(input as unknown as string);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.constructor?.name).toBe("RangeError");
+  expect(err?.code).toBe("ERR_OUT_OF_RANGE");
+  expect(err?.message).toBe(
+    'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
+  );
 });

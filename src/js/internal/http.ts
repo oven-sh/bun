@@ -1,125 +1,86 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const {
-  getHeader,
-  setHeader,
-  Headers,
-  assignHeaders: assignHeadersFast,
-  setRequestTimeout,
-  headersTuple,
-  webRequestOrResponseHasBodyValue,
-  setServerCustomOptions,
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  drainMicrotasks,
-  setServerIdleTimeout,
-} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
-  getHeader: (headers: Headers, name: string) => string | undefined;
-  setHeader: (headers: Headers, name: string, value: string) => void;
-  Headers: (typeof globalThis)["Headers"];
-  assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  setRequestTimeout: (req: Request, timeout: number) => boolean;
-  headersTuple: any;
-  webRequestOrResponseHasBodyValue: (arg: any) => boolean;
+const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
+  "NodeHTTP.cpp",
+  "createNodeHTTPInternalBinding",
+) as {
   setServerCustomOptions: (
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
+    lenientHttpFlags: number,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+    onConnection?: (socketHandle: any) => undefined,
   ) => void;
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
+  setServerAppFlags: (
+    server: any,
+    requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    lenientHttpFlags: number,
+    httpAllowHalfOpen: boolean,
+  ) => void;
+  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
-const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
-
-const kDeprecatedReplySymbol = Symbol("deprecatedReply");
-const kBodyChunks = Symbol("bodyChunks");
-const kPath = Symbol("path");
-const kPort = Symbol("port");
-const kMethod = Symbol("method");
-const kHost = Symbol("host");
-const kProtocol = Symbol("protocol");
-const kAgent = Symbol("agent");
-const kFetchRequest = Symbol("fetchRequest");
-const kTls = Symbol("tls");
-const kUseDefaultPort = Symbol("useDefaultPort");
-const kRes = Symbol("res");
-const kUpgradeOrConnect = Symbol("upgradeOrConnect");
-const kParser = Symbol("parser");
-const kMaxHeadersCount = Symbol("maxHeadersCount");
-const kReusedSocket = Symbol("reusedSocket");
-const kTimeoutTimer = Symbol("timeoutTimer");
-const kOptions = Symbol("options");
-const kSocketPath = Symbol("socketPath");
-const kSignal = Symbol("signal");
-const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
-const kClearTimeout = Symbol("kClearTimeout");
-
 const headerStateSymbol = Symbol("headerState");
-// used for pretending to emit events in the right order
-const kEmitState = Symbol("emitState");
-
-const bodyStreamSymbol = Symbol("bodyStream");
-const controllerSymbol = Symbol("controller");
-const runSymbol = Symbol("run");
-const deferredSymbol = Symbol("deferred");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const firstWriteSymbol = Symbol("firstWrite");
-const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
-const reqSymbol = Symbol("req");
-const timeoutTimerSymbol = Symbol("timeoutTimer");
 const tlsSymbol = Symbol("tls");
-const typeSymbol = Symbol("type");
-const webRequestOrResponse = Symbol("FetchAPI");
-const statusCodeSymbol = Symbol("statusCode");
 const kAbortController = Symbol.for("kAbortController");
-const statusMessageSymbol = Symbol("statusMessage");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
+const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
-const kDeferredTimeouts = Symbol("deferredTimeouts");
 
-const kEmptyObject = Object.freeze(Object.create(null));
-
-export const enum ClientRequestEmitState {
-  socket = 1,
-  prefinish = 2,
-  finish = 3,
-  response = 4,
-}
+// node:_http_server registers its pipelined-response machinery here at module
+// initialization, letting internal/http1_server_fallback drive the same
+// per-connection queue without widening node:_http_server's exports. The
+// fallback loads node:http (and with it _http_server) before reading these.
+const http1ServerPipeline: {
+  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
+  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
+  abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
+  maybePauseFallbackReads?: (socket: unknown) => void;
+  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  finishDrainedResponse?: (res: unknown) => void;
+  kMustCloseConnection?: symbol;
+} = {};
 
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
   timeout = 2,
-}
-export const enum NodeHTTPIncomingRequestType {
-  FetchRequest,
-  FetchResponse,
-  NodeHTTPResponse,
+  readParsed = 3,
 }
 export const enum NodeHTTPBodyReadState {
   none,
   pending = 1 << 1,
+  /** The last chunk arrived, or a WebSocket took the connection. */
   done = 1 << 2,
-  hasBufferedDataDuringPause = 1 << 3,
+  /** The connection closed before the last chunk. */
+  aborted = 1 << 3,
 }
 
 // Must be kept in sync with NodeHTTPResponse.Flags
 export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
+  ended = 1 << 2,
+  upgraded = 1 << 3,
+  dispatch_threw_while_queued = 1 << 9,
 
   closed_or_completed = socket_closed | request_has_completed,
 }
@@ -146,20 +107,6 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
   }
 }
 
-// TODO: make this more robust.
-function isAbortError(err) {
-  return err?.name === "AbortError";
-}
-
-// This lets us skip some URL parsing
-let isNextIncomingMessageHTTPS = false;
-function getIsNextIncomingMessageHTTPS() {
-  return isNextIncomingMessageHTTPS;
-}
-function setIsNextIncomingMessageHTTPS(value) {
-  isNextIncomingMessageHTTPS = value;
-}
-
 function callCloseCallback(self) {
   if (self[kCloseCallback]) {
     self[kCloseCallback]();
@@ -174,31 +121,91 @@ function emitCloseNT(self) {
     self.emit("close");
   }
 }
-function emitCloseNTAndComplete(self) {
-  if (!self._closed) {
-    self._closed = true;
-    callCloseCallback(self);
-    self.emit("close");
-  }
-
-  self.complete = true;
-}
 
 function emitEOFIncomingMessageOuter(self) {
-  self.push(null);
   self.complete = true;
+  // node:http server: trailer fields received after a chunked request body
+  // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
+  // parserOnMessageComplete. Native moved the section onto THIS request's
+  // handle at its body fin, so pipelined requests can neither inherit nor
+  // overwrite another request's trailers.
+  // Trailers can only follow a chunked request body: a no-body request has
+  // none, so skip the native call (and the socket/server option walk) for the
+  // common GET/HEAD case.
+  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+    // The lenient (insecureHTTPParser) value bytes must match what the parser
+    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
+    const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    if (rawTrailers !== undefined) {
+      self._addHeaderLines(rawTrailers, rawTrailers.length);
+    }
+  }
+  // The parser shim must not retain the request once it has ended. Node clears
+  // parser.incoming on the tick after 'end' so 'end' listeners still see
+  // `parser.incoming === req` (test-http-server-keepalive-end). push(null)
+  // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
+  // here runs after that.
+  self.push(null);
+  const socket = self.socket;
+  if (socket != null) {
+    const parser = socket.parser;
+    if (parser != null && parser.incoming === self) {
+      process.nextTick(clearServerParserIncoming, parser, self);
+    }
+  }
+}
+function clearServerParserIncoming(parser, req) {
+  if (parser.incoming === req) parser.incoming = null;
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
-function validateMsecs(numberlike: any, field: string) {
-  if (typeof numberlike !== "number" || numberlike < 0) {
-    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
+  if (aborted === NodeHTTPResponseAbortEvent.readParsed) {
+    const socket = this.socket;
+    const onReadParsed = socket?.[kOnReadParsed];
+    if (onReadParsed) {
+      socket[kOnReadParsed] = undefined;
+      onReadParsed(socket);
+    }
+    return;
+  }
+  if (aborted === NodeHTTPResponseAbortEvent.abort) {
+    // The request is aborted from the socket's #onClose (like Node.js's
+    // socketOnClose → abortIncoming), which the native close path always
+    // reaches right after this callback; destroying here would drop the
+    // ECONNRESET and emit req 'close' before res 'close'.
+    return;
   }
 
-  return numberlike;
+  // Incoming request-body bytes are socket activity: push the connection's
+  // inactivity timeout (socket.setTimeout / server.timeout) further out, like
+  // Node.js does for reads on the socket.
+  const socket = this.socket;
+  socket?._unrefTimer?.();
+
+  if (chunk && !this._dumped) {
+    if (!this.push(chunk)) {
+      // Like Node's parserOnBody: pause the connection once the buffer fills.
+      // Upgrade-with-body routes through its own handle so the socket's flow
+      // state stays with the upgrade listener; _read() balances it.
+      if (this.upgrade) this[kHandle]?.pause();
+      else if (socket && !socket.writableEnded) {
+        socket.pause();
+        // For a pipelined request the socket's current response is an earlier one, and an ended response does not pause.
+        this[kHandle]?.pause();
+      }
+    }
+  }
+
+  if (isLast) {
+    emitEOFIncomingMessage(this);
+    // Like Node's parserOnMessageComplete: any readStop above left the shared
+    // socket's flowing=false, which would swallow the next request's 'pause'.
+    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+  }
 }
 
 const METHODS = [
@@ -305,10 +312,11 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
-function hasServerResponseFinished(self, chunk, callback) {
+function hasServerResponseFinished(self, chunk, callback, fromEnd) {
   const finished = self.finished;
 
-  if (chunk) {
+  // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
+  if (chunk || (!fromEnd && chunk === "")) {
     const destroyed = self.destroyed;
 
     if (finished || destroyed) {
@@ -316,12 +324,13 @@ function hasServerResponseFinished(self, chunk, callback) {
       if (finished) {
         err = $ERR_STREAM_WRITE_AFTER_END();
       } else if (destroyed) {
-        err = $ERR_STREAM_DESTROYED("Stream is destroyed");
+        err = $ERR_STREAM_DESTROYED("write");
       }
 
       if (!destroyed) {
         process.nextTick(emitErrorNt, self, err, callback);
-      } else if ($isCallable(callback)) {
+      } else if (!fromEnd && $isCallable(callback)) {
+        // Node.js's end() never gives this error to its callback: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
         process.nextTick(callback, err);
       }
 
@@ -350,15 +359,44 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
-const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
+const kNeedDrain = Symbol("kNeedDrain");
+const kProxyConfig = Symbol("kProxyConfig");
+const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
+
+// The `date` header, formatted once per second like Node.js does
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js). Keyed by the second rather than reset by a timer:
+// a timer belongs to whoever happened to be running when it was set, and if that was a
+// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
+let utcCache;
+let utcCacheSecond = -1;
+function utcDate() {
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
+  return utcCache;
+}
 
 function ipToInt(ip) {
   const octets = ip.split(".");
   let result = 0;
   for (let i = 0; i < octets.length; i++) result = (result << 8) + Number.parseInt(octets[i]);
   return result >>> 0;
+}
+
+// Node prints these raw (nodejs/node@3e9954a88b lib/internal/http.js#L114). An unescaped "/" in a password ends the authority early, so cut at the last "@".
+function redactInvalidProxyUrl(proxyUrl) {
+  proxyUrl = `${proxyUrl}`;
+  const userinfoEnd = proxyUrl.lastIndexOf("@");
+  if (userinfoEnd === -1) return proxyUrl;
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(proxyUrl);
+  return (scheme === null ? "" : scheme[0]) + proxyUrl.slice(userinfoEnd + 1);
 }
 
 class ProxyConfig {
@@ -373,11 +411,18 @@ class ProxyConfig {
     try {
       parsedURL = new URL(proxyUrl);
     } catch {
-      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(proxyUrl)}`);
     }
     const { hostname, port, protocol, username, password } = parsedURL;
 
-    this.href = proxyUrl;
+    // `href` ends up in ERR_PROXY_TUNNEL messages, so it must not carry the credentials.
+    if (username || password) {
+      parsedURL.username = "";
+      parsedURL.password = "";
+      this.href = parsedURL.href;
+    } else {
+      this.href = proxyUrl;
+    }
     this.protocol = protocol;
 
     if (username || password) {
@@ -415,7 +460,7 @@ class ProxyConfig {
       // Follow curl's behavior: strip leading dot before matching suffixes.
       if (entry.startsWith(".")) {
         const suffix = entry.substring(1);
-        if (host.endsWith(suffix)) return false;
+        if (host === suffix || (host.endsWith(suffix) && host[host.length - suffix.length - 1] === ".")) return false;
       }
 
       // Handle wildcards like *.example.com
@@ -443,18 +488,27 @@ class ProxyConfig {
   }
 }
 
-function parseProxyConfigFromEnv(env, protocol, keepAlive) {
-  // We only support proxying for HTTP and HTTPS requests.
-  if (protocol !== "http:" && protocol !== "https:") return null;
+function parseProxyUrl(env, protocol) {
   // Get the proxy url - following the most popular convention, lower case takes precedence.
   // See https://about.gitlab.com/blog/we-need-to-talk-no-proxy/#http_proxy-and-https_proxy
   const proxyUrl = protocol === "https:" ? env.https_proxy || env.HTTPS_PROXY : env.http_proxy || env.HTTP_PROXY;
   // No proxy settings from the environment, ignore.
-  if (!proxyUrl) return null;
+  if (!proxyUrl) {
+    return null;
+  }
 
   if (proxyUrl.includes("\r") || proxyUrl.includes("\n")) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(proxyUrl)}`);
   }
+
+  return proxyUrl;
+}
+
+function parseProxyConfigFromEnv(env, protocol, keepAlive) {
+  // We only support proxying for HTTP and HTTPS requests.
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  const proxyUrl = parseProxyUrl(env, protocol);
+  if (proxyUrl === null) return null;
 
   // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
   if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
@@ -467,99 +521,48 @@ function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
   return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
 }
 
-function filterEnvForProxies(env) {
-  return {
-    http_proxy: env.http_proxy,
-    HTTP_PROXY: env.HTTP_PROXY,
-    https_proxy: env.https_proxy,
-    HTTPS_PROXY: env.HTTPS_PROXY,
-    no_proxy: env.no_proxy,
-    NO_PROXY: env.NO_PROXY,
-  };
-}
-
 export {
-  Headers,
   METHODS,
   STATUS_CODES,
   abortedSymbol,
-  assignHeadersFast,
-  bodyStreamSymbol,
   callCloseCallback,
   checkShouldUseProxy,
-  controllerSymbol,
-  deferredSymbol,
   drainMicrotasks,
   emitCloseNT,
-  emitCloseNTAndComplete,
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
-  filterEnvForProxies,
-  firstWriteSymbol,
-  getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
-  getHeader,
-  getIsNextIncomingMessageHTTPS,
   getMaxHTTPHeaderSize,
-  getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
-  headersSymbol,
-  headersTuple,
-  isAbortError,
+  http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
-  kAgent,
-  kBodyChunks,
-  kClearTimeout,
   kCloseCallback,
-  kDeferredTimeouts,
-  kDeprecatedReplySymbol,
-  kEmitState,
-  kEmptyObject,
-  kFetchRequest,
   kHandle,
-  kHost,
+  kHandoffResponse,
   kInternalSocketData,
-  kMaxHeaderSize,
-  kMaxHeadersCount,
-  kMethod,
-  kOptions,
+  kNeedDrain,
+  kOnReadParsed,
   kOutHeaders,
-  kParser,
-  kPath,
   kPendingCallbacks,
-  kPort,
-  kProtocol,
+  kPerRequestCheckServerIdentity,
+  kProxyConfig,
   kRealListen,
   kRequest,
-  kRes,
-  kReusedSocket,
-  kSignal,
-  kSocketPath,
-  kTimeoutTimer,
-  kTls,
-  kUpgradeOrConnect,
-  kUseDefaultPort,
+  kWaitForProxyTunnel,
   noBodySymbol,
+  onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,
-  reqSymbol,
-  runSymbol,
+  parseProxyUrl,
+  redactInvalidProxyUrl,
   serverSymbol,
-  setHeader,
-  setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
-  setRequestTimeout,
+  setServerAppFlags,
   setServerCustomOptions,
-  setServerIdleTimeout,
-  statusCodeSymbol,
-  statusMessageSymbol,
-  timeoutTimerSymbol,
+  setServerMaxHeadersCount,
   tlsSymbol,
-  typeSymbol,
-  validateMsecs,
-  webRequestOrResponse,
-  webRequestOrResponseHasBodyValue,
+  utcDate,
 };

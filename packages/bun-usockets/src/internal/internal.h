@@ -71,13 +71,24 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
+/* Reports "Bun ran out of memory" through the crash handler and aborts. For
+ * allocations this library has no way to fail gracefully from. */
+extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
+/* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
+ * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
+ * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The
+ * fallback has to be in that numbering too: the CRT's ECONNRESET is a
+ * different number on Windows (108) and is misread as another errno there. */
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
+#define LIBUS_ECONNRESET WSAECONNRESET
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
+#define LIBUS_ECONNRESET ECONNRESET
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */
@@ -113,11 +124,14 @@ struct addrinfo_result {
     int error;
 };
 
-/* Dispatch — defined out-of-library (Zig: src/deps/uws/dispatch.zig). loop.c
+/* Dispatch — defined out-of-library (src/runtime/socket/uws_dispatch.rs). loop.c
  * never reads s->group->vtable directly; it calls these and the closed-world
- * switch on s->kind decides whether to direct-call into Zig/C++ or fall back
+ * switch on s->kind decides whether to direct-call into Rust/C++ or fall back
  * to the vtable. Signatures track the vtable entries (us_dispatch_handshake
  * drops the trailing custom_data — dispatch always passes NULL). */
+#ifdef __cplusplus
+extern "C" {
+#endif
 extern struct us_socket_t *us_dispatch_open(us_socket_r s, int is_client, char *ip, int ip_length);
 extern struct us_socket_t *us_dispatch_data(us_socket_r s, char *data, int length);
 extern struct us_socket_t *us_dispatch_fd(us_socket_r s, int fd);
@@ -129,9 +143,22 @@ extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
 extern void us_dispatch_handshake(us_socket_r s, int success, struct us_bun_verify_error_t err);
+extern void us_dispatch_session(us_socket_r s, const unsigned char *data, int length);
+extern void us_dispatch_keylog(us_socket_r s, const unsigned char *data, int length);
+struct ssl_session_st;
+/* Runs inside SSL_read/SSL_do_handshake: must not run JS. Returns 1 to get us_dispatch_session later. */
+extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session);
+/* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
+extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
+extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+#ifdef __cplusplus
+}
+#endif
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
+/* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
+extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
@@ -139,10 +166,21 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 
 /* Loop related */
+/* `eof` values for us_internal_dispatch_ready_poll: nonzero = read-side EOF hint (half-open honored);
+ * LIBUS_POLL_HANGUP = epoll EPOLLHUP, both directions down, re-reported until the fd is closed. */
+#define LIBUS_POLL_EOF 1
+#define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
+#ifndef LIBUS_USE_LIBUV
+/* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
+ * against, so anything comparing against one must read it and not another. */
+uint64_t us_internal_monotonic_ns(void);
+long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
+void us_internal_sweep_if_due(struct us_loop_t *loop);
+#endif
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -154,13 +192,20 @@ void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
  * SSL path calls _raw once it's actually time to drop the fd. */
 struct us_socket_t *us_internal_socket_close_raw(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_close(us_socket_r s, int code, void *reason);
-void us_internal_loop_data_init(struct us_loop_t *loop,
-                                void (*wakeup_cb)(us_loop_r loop),
-                                void (*pre_cb)(us_loop_r loop),
-                                void (*post_cb)(us_loop_r loop));
+int us_internal_loop_data_init(struct us_loop_t *loop,
+                               void (*wakeup_cb)(us_loop_r loop),
+                               void (*pre_cb)(us_loop_r loop),
+                               void (*post_cb)(us_loop_r loop));
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
+
+/* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
+struct us_nq_driver_s;
+void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
+void us_nq_loop_drain(struct us_loop_t *loop);
+void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
+void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
@@ -195,6 +240,8 @@ void us_internal_socket_after_open(us_socket_r s, int error);
 void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_client, const char *sni, struct us_listen_socket_t *listener);
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
+void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
+void us_internal_ssl_socket_left_group(us_socket_r s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
@@ -210,10 +257,11 @@ int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
+int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int count);
+unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
-void *us_internal_ssl_sni_userdata(us_socket_r s);
-void us_internal_ssl_handshake_abort(us_socket_r s);
+const char *us_internal_ssl_sni_servername(us_socket_r s);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
@@ -253,10 +301,13 @@ struct us_socket_t {
   unsigned char kind;
   /* SSL state. These 6 bits live in the pad-to-pointer gap before `group`, so
    * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + 1 byte bits = 9, padded
-   * to 16 anyway for the pointer). Per-socket reneg counters and SNI userdata
-   * hang off SSL ex_data, allocated on first use only. */
+   * to 16 anyway for the pointer). */
   unsigned char ssl_handshake_state : 2;
   unsigned char ssl_write_wants_read : 1;
+  /* us_internal_ssl_write refused application data because the handshake was
+   * not finished. ssl_write_wants_read cannot tell: every pending handshake
+   * sets it. */
+  unsigned char ssl_write_parked : 1;
   unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
@@ -265,6 +316,51 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
+  /* A graceful TLS shutdown arrived while batched ciphertext was still
+   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
+   * spill drains so those records are not cut off by our FIN/close_notify. */
+  unsigned char ssl_shutdown_after_spill : 1;
+  /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
+   * close re-runs from the writable event once the spill drains. */
+  unsigned char ssl_close_after_spill : 1;
+  /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
+   * already dispatched to the user layer; both EOF paths can fire for one
+   * connection, and the end handler must run once. */
+  unsigned char ssl_end_delivered : 1;
+  /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
+   * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
+   * SSL must not be freed under BoringSSL's feet - the detach is deferred to
+   * the driver's epilogue via ssl_pending_detach. */
+  unsigned char ssl_in_use : 1;
+  unsigned char ssl_pending_detach : 1;
+  /* Client with rejectUnauthorized on: a failed chain fails the handshake before the Certificate flight. */
+  unsigned char ssl_inline_reject : 1;
+  /* The verify callback saw an error in this handshake. */
+  unsigned char ssl_verify_failed : 1;
+  /* The owner checked the server's name inside this handshake. */
+  unsigned char ssl_identity_checked : 1;
+  /* The peer sent a certificate chain in this handshake, and it was checked. */
+  unsigned char ssl_peer_chain_checked : 1;
+  /* US_SNI_*: an async SNICallback has the handshake suspended. */
+  unsigned char ssl_sni_pending : 2;
+  /* Server-side socket adopted into TLS with its own SNICallback. */
+  unsigned char ssl_sni_resolver : 1;
+  /* This socket has entries in the loop's ssl_pending_events. */
+  unsigned char ssl_has_pending_events : 1;
+  /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
+  unsigned char read_eof : 1;
+  /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
+   * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
+  unsigned char hangup_closes_unsent : 1;
+  /* The close code passed to the deferred close (e.g. a reset requested from
+   * inside a handshake callback must still RST, not FIN, when it is finally
+   * performed). */
+  unsigned char ssl_pending_close_code : 2;
+  /* Consecutive send() failures with an errno that is neither
+   * would-block/transient nor a known peer-gone error (see
+   * us_socket_write_check_error). Reset by any send that makes progress.
+   * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
+  unsigned char unclassified_send_failures;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
@@ -278,6 +374,21 @@ struct us_socket_t {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+
+/* us_socket_adopt relocates a socket whose ext grows and retires the old block
+ * (is_closed + adopted, prev -> replacement; freed by the outermost tick's
+ * us_internal_free_closed_sockets, so it is still readable mid-dispatch). A
+ * callback may adopt more than once before returning, retiring each block in
+ * turn, so walk the whole chain rather than one link: one link can land on a
+ * block that is itself retired. The walk ends on the live block, which never
+ * has adopted set (the copy is taken before the source is flagged). Tolerates
+ * NULL, which callbacks may return. */
+static inline struct us_socket_t *us_internal_socket_follow_adopted(struct us_socket_t *s) {
+    while (s && s->flags.adopted && s->prev) {
+        s = s->prev;
+    }
+    return s;
+}
 
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
@@ -293,7 +404,11 @@ struct us_connecting_socket_t {
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    /* error_is_dns: `error` holds the raw getaddrinfo(3) return code for a
+     * failed name lookup rather than an errno. The two constant sets are
+     * different namespaces that overlap numerically, so consumers of `error`
+     * must check this bit first. */
+    unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     unsigned char kind;
@@ -310,10 +425,10 @@ struct us_udp_socket_t {
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
     void (*on_close)(struct us_udp_socket_t *);
-    /* Called when recvmmsg returns an error (other than EAGAIN). The socket
-     * is NOT closed — caller decides whether to close. Used to surface ICMP
-     * errors delivered via IP_RECVERR on Linux (ECONNREFUSED, etc.). */
-    void (*on_recv_error)(struct us_udp_socket_t *, int err);
+    /* Called for a receive-path error. is_errqueue == 1 when the errno came
+     * from Linux's MSG_ERRQUEUE (an ICMP report about an earlier send), 0 when
+     * recvmmsg itself failed. The socket is NOT closed — caller decides. */
+    void (*on_recv_error)(struct us_udp_socket_t *, int err, int is_errqueue);
     void *user;
     struct us_loop_t *loop;
     /* An UDP socket can only ever be bound to one single port regardless of how
@@ -321,7 +436,7 @@ struct us_udp_socket_t {
      * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
     uint16_t port;
     uint16_t closed : 1;
-    uint16_t connected : 1;
+    uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };
 
@@ -345,18 +460,11 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+#ifdef LIBUS_USE_LIBUV
   unsigned has_added_timer_to_event_loop;
+#endif
 };
 
-#endif
-
-#if __cplusplus
-extern "C" {
-#endif
-int us_internal_raw_root_certs(struct us_cert_string_t **out);
-
-#if __cplusplus
-}
 #endif
 
 /* Listen sockets are sockets, with their own embedded group for the listener
@@ -378,17 +486,31 @@ struct us_listen_socket_t {
   struct ssl_ctx_st *ssl_ctx;
   /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
   void *sni;
-  void (*on_server_name)(struct us_listen_socket_t *, const char *hostname);
+  /* Dynamic SNI resolver: returns the SSL_CTX to serve for `hostname` on the
+   * in-flight handshake only (the caller does not cache it), or NULL to fall
+   * through to the default context. */
+  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
+  /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
+  unsigned char accept_paused;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 
-int us_raw_root_certs(struct us_cert_string_t **out);
+
+/* Save/restore the per-loop BIO routing state around in-handshake JS
+ * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
+ * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
+ * size their array from us_internal_ssl_loop_state_slots() in a debug
+ * assertion so growth cannot silently corrupt a caller's stack. */
+#define US_SSL_LOOP_STATE_SLOTS 6
+int us_internal_ssl_loop_state_slots(void);
+void us_internal_ssl_loop_state_save(void *ssl, void **out);
+void us_internal_ssl_loop_state_restore(void **saved);
 
 #endif // INTERNAL_H

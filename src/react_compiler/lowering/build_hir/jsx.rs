@@ -1,0 +1,472 @@
+//! Port of build_hir.rs lines 6242–6468 — see mod.rs.
+//!
+//! Bun's parser visit pass lowers `EJsxElement` to `E::Call{was_jsx_element: true}`
+//! before the React Compiler runs (see `src/js_parser/visit/visit_expr.rs::e_jsx_element`).
+//! This module decodes that call shape back into the HIR `JsxExpression` instruction.
+
+use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
+use crate::hir::{
+    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place,
+    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
+};
+use bun_ast::expr::Data as ExprData;
+use bun_ast::{E, Expr, G, Loc, Ref};
+
+use super::expr::lower_expression;
+use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
+use crate::lowering::hir_builder::{HirBuilder, convert_loc};
+use crate::program::JsxImportKind;
+
+fn estring_to_store_str(s: &E::EString) -> StoreStr {
+    if s.is_utf16 {
+        super::helpers::arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
+    } else {
+        StoreStr::new(s.slice8())
+    }
+}
+
+fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag, CompilerError> {
+    let loc = convert_loc(tag.loc);
+    match tag.data {
+        // The parser already lowered host tags (`a..=z` first byte) to `EString`.
+        ExprData::EIdentifier(id) => {
+            let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
+            Ok(JsxTag::Place(temp))
+        }
+        ExprData::EImportIdentifier(id) => {
+            let temp = lower_tag_identifier(builder, id.ref_, loc, loc)?;
+            Ok(JsxTag::Place(temp))
+        }
+        ExprData::EString(s) => {
+            let name = estring_to_store_str(&s);
+            let bytes = name.slice();
+            if let Some(idx) = bun_core::strings::index_of_char_usize(bytes, b':') {
+                let namespace = &bytes[..idx];
+                let local = &bytes[idx + 1..];
+                if bun_core::strings::contains_char(local, b':') {
+                    builder.record_error(CompilerErrorDetail {
+                        category: ErrorCategory::Syntax,
+                        reason:
+                            "Expected JSXNamespacedName to have no colons in the namespace or name"
+                                .to_string(),
+                        description: Some(format!(
+                            "Got `{}` : `{}`",
+                            bun_core::BStr::new(namespace),
+                            bun_core::BStr::new(local)
+                        )),
+                        loc,
+                        suggestions: None,
+                    })?;
+                }
+                let place = lower_value_to_temporary(
+                    builder,
+                    InstructionValue::Primitive {
+                        value: PrimitiveValue::String(
+                            crate::diagnostics::JsString::from_wtf8_bytes(bytes),
+                        ),
+                        loc,
+                    },
+                )?;
+                Ok(JsxTag::Place(place))
+            } else {
+                // Builtin HTML tag
+                Ok(JsxTag::Builtin(BuiltinTag { name, loc }))
+            }
+        }
+        ExprData::EDot(dot) => {
+            let place = lower_jsx_member_expression(builder, &dot, tag.loc)?;
+            Ok(JsxTag::Place(place))
+        }
+        _ => {
+            // Anything else (e.g. the auto-imported Fragment / jsx runtime tag that
+            // doesn't fit the above shapes) is lowered as an ordinary expression.
+            let value = lower_expression(builder, tag)?;
+            let place = lower_value_to_temporary(builder, value)?;
+            Ok(JsxTag::Place(place))
+        }
+    }
+}
+
+fn lower_jsx_member_expression(
+    builder: &mut HirBuilder,
+    expr: &E::Dot,
+    expr_loc: Loc,
+) -> Result<Place, CompilerError> {
+    // Use the full member expression's loc for instruction locs (matching TS: exprPath.node.loc)
+    let expr_loc = convert_loc(expr_loc);
+    let object = match expr.target.data {
+        ExprData::EIdentifier(id) => {
+            let id_loc = convert_loc(expr.target.loc);
+            // Use identifier's own loc for the place, but member expression's loc for the instruction
+            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
+        }
+        ExprData::EImportIdentifier(id) => {
+            let id_loc = convert_loc(expr.target.loc);
+            lower_tag_identifier(builder, id.ref_, id_loc, expr_loc)?
+        }
+        ExprData::EDot(inner) => lower_jsx_member_expression(builder, &inner, expr.target.loc)?,
+        _ => {
+            builder.record_error(CompilerErrorDetail {
+                category: ErrorCategory::Todo,
+                reason: format!(
+                    "(BuildHIR::lowerJsxMemberExpression) Handle {:?} object",
+                    expr.target.data.tag()
+                ),
+                description: None,
+                loc: expr_loc,
+                suggestions: None,
+            })?;
+            lower_value_to_temporary(
+                builder,
+                InstructionValue::Primitive {
+                    value: PrimitiveValue::Undefined,
+                    loc: expr_loc,
+                },
+            )?
+        }
+    };
+    let value = InstructionValue::PropertyLoad {
+        object,
+        property: PropertyLiteral::String(StoreStr::new(expr.name.slice())),
+        loc: expr_loc,
+    };
+    lower_value_to_temporary(builder, value)
+}
+
+/// For non-locals `lower_identifier` already emits `LoadGlobal` and returns its temp;
+/// re-wrapping that in `LoadLocal` would lose the `NonLocalBinding` type.
+fn lower_tag_identifier(
+    builder: &mut HirBuilder,
+    ref_: Ref,
+    id_loc: Option<SourceLocation>,
+    instr_loc: Option<SourceLocation>,
+) -> Result<Place, CompilerError> {
+    match builder.resolve_identifier(ref_, id_loc)? {
+        VariableBinding::Identifier { identifier, .. } => {
+            let place = Place {
+                identifier,
+                effect: Effect::Unknown,
+                reactive: false,
+                loc: id_loc,
+            };
+            let load_value = if builder.is_context_identifier(ref_) {
+                InstructionValue::LoadContext {
+                    place,
+                    loc: instr_loc,
+                }
+            } else {
+                InstructionValue::LoadLocal {
+                    place,
+                    loc: instr_loc,
+                }
+            };
+            lower_value_to_temporary(builder, load_value)
+        }
+        _ => lower_identifier(builder, ref_, id_loc),
+    }
+}
+
+/// Decode an `E::Call{was_jsx_element: true}` produced by Bun's JSX visit pass
+/// back into a HIR `JsxExpression`.
+///
+/// Shapes emitted by `visit_expr.rs::e_jsx_element`:
+///   Automatic runtime:
+///     jsx(tag, props)                                    — 2 args
+///     jsx(tag, props, key)                               — 3 args
+///     jsxDEV(tag, props, key|undefined, isStatic, undefined, this) — 6 args
+///     where `props` is always an `E::Object` and `children` (if any) is one of
+///     its properties (single expr or `E::Array`).
+///   Classic runtime, and the automatic runtime when `key` follows a spread:
+///     createElement(tag, propsOrNull, ...children)
+///     where `key` stays in `props` and the callee is `options.jsx.factory`
+///     or the auto-imported `createElement`.
+pub(super) fn lower_jsx_call(
+    builder: &mut HirBuilder,
+    call: &E::Call,
+    expr_loc: Loc,
+) -> Result<InstructionValue, CompilerError> {
+    let loc = convert_loc(expr_loc);
+    let args: &[Expr] = &call.args;
+
+    let Some(tag_expr) = args.first() else {
+        builder.record_error(CompilerErrorDetail {
+            category: ErrorCategory::Invariant,
+            reason: "(BuildHIR::lowerJsxCall) JSX call with no arguments".to_string(),
+            description: None,
+            loc,
+            suggestions: None,
+        })?;
+        return Ok(InstructionValue::Primitive {
+            value: PrimitiveValue::Undefined,
+            loc,
+        });
+    };
+
+    let opening_loc = convert_loc(tag_expr.loc);
+    let closing_loc = convert_loc(call.close_paren_loc);
+
+    // `<>...</>` arrives here as `jsx(Fragment, {children})` with the
+    // auto-imported jsx-runtime `Fragment` symbol as the tag. Upstream sees a
+    // `JSXFragment` AST node (no tag at all), so it never records the Fragment
+    // identifier as a scope dependency. Detect that symbol and emit
+    // `JsxFragment` to match — otherwise every fragment costs an extra memo
+    // slot for the never-changing `$[n] !== Fragment` guard.
+    let is_fragment = jsx_import_kind(builder, tag_expr) == Some(JsxImportKind::Fragment);
+    let tag = if is_fragment {
+        None
+    } else {
+        Some(lower_jsx_element_name(builder, tag_expr)?)
+    };
+
+    // Only the callee tells the two shapes apart: `createElement(tag, {..}, child)`
+    // has the arity and the E::Object args[1] of `jsx(tag, {..}, key)`.
+    let callee = jsx_import_kind(builder, &call.target);
+    let props_arg = args.get(1);
+    let automatic_props = match (callee, props_arg.map(|p| &p.data)) {
+        (
+            Some(JsxImportKind::Jsx | JsxImportKind::Jsxs | JsxImportKind::JsxDEV),
+            Some(ExprData::EObject(obj)),
+        ) => Some(obj),
+        _ => None,
+    };
+
+    let mut props: HirVec<JsxAttribute> = AstAlloc::vec();
+    let mut children: HirVec<Place> = AstAlloc::vec();
+
+    if let Some(obj) = automatic_props {
+        // visit_expr.rs only wraps `children` in a synthetic E::Array when
+        // `is_static_jsx` is true; for a single non-spread child the child
+        // expression (which may itself be a user-authored array) is passed
+        // through verbatim. Recover that bit so lower_jsx_children knows
+        // whether an EArray is the transform's container or a real child.
+        let is_static_children = if args.len() == 6 {
+            matches!(args[3].data, ExprData::EBoolean(b) if b.value)
+        } else {
+            callee == Some(JsxImportKind::Jsxs)
+        };
+
+        // `key` was hoisted out of the props object into args[2] by the visit
+        // pass. Lower it BEFORE children so instruction order matches JSX
+        // source order (attributes precede children) — upstream build_hir.rs
+        // lowers opening_element.attributes before children.
+        if let Some(key_arg) = args.get(2) {
+            if !matches!(key_arg.data, ExprData::EUndefined(_)) {
+                let place = lower_expression_to_temporary(builder, key_arg)?;
+                props.push(JsxAttribute::Attribute {
+                    name: StoreStr::new(b"key"),
+                    place,
+                });
+            }
+        }
+
+        let last_index = obj.properties.len().saturating_sub(1);
+        for (index, prop) in obj.properties.iter().enumerate() {
+            if matches!(prop.kind, G::PropertyKind::Spread) {
+                let value = prop.value.as_ref().ok_or_else(|| {
+                    todo_err("(BuildHIR::lowerJsxCall) spread without value", loc)
+                })?;
+                let argument = lower_expression_to_temporary(builder, value)?;
+                props.push(JsxAttribute::SpreadAttribute { argument });
+                continue;
+            }
+            if record_accessor_prop(builder, prop)? {
+                continue;
+            }
+            let Some(key_expr) = prop.key.as_ref() else {
+                continue;
+            };
+            let ExprData::EString(key_str) = &key_expr.data else {
+                builder.record_error(CompilerErrorDetail {
+                    category: ErrorCategory::Todo,
+                    reason: "(BuildHIR::lowerJsxCall) non-string JSX attribute key".to_string(),
+                    description: None,
+                    loc: convert_loc(key_expr.loc),
+                    suggestions: None,
+                })?;
+                continue;
+            };
+            let _key_loc = convert_loc(key_expr.loc);
+            let name = estring_to_store_str(key_str);
+            let Some(value_expr) = prop.value.as_ref() else {
+                continue;
+            };
+
+            // The visit pass appends the JSX children as the last property.
+            // Any earlier `children` key is an attribute (or came from an
+            // inlined `{...{children}}` spread) that a later key overrides at
+            // runtime, so it stays an attribute and keeps its position.
+            if name == b"children" && index == last_index {
+                lower_jsx_children(builder, value_expr, is_static_children, &mut children)?;
+                continue;
+            }
+
+            let place = lower_expression_to_temporary(builder, value_expr)?;
+            props.push(JsxAttribute::Attribute { name, place });
+        }
+        // args[3..6] (isStatic, source, self) are dev-only metadata; ignore.
+    } else {
+        // createElement(tag, propsOrNull, ...children)
+        //
+        // The callee is not an operand of `JsxExpression`: codegen resolves
+        // `options.jsx.factory` again. A factory that is a local of this
+        // function would look unused to the compiler and be dropped.
+        if let Some(ref_) = member_expression_root(&call.target)
+            && let VariableBinding::Identifier { .. } = builder.resolve_identifier(ref_, loc)?
+        {
+            builder.record_error(CompilerErrorDetail {
+                category: ErrorCategory::Todo,
+                reason: "(BuildHIR::lowerJsxCall) Handle a JSX factory that is a local binding"
+                    .to_string(),
+                description: None,
+                loc: convert_loc(call.target.loc),
+                suggestions: None,
+            })?;
+        }
+        if let Some(p) = props_arg {
+            if let ExprData::EObject(obj) = &p.data {
+                for prop in obj.properties.iter() {
+                    if matches!(prop.kind, G::PropertyKind::Spread) {
+                        let value = prop.value.as_ref().ok_or_else(|| {
+                            todo_err("(BuildHIR::lowerJsxCall) spread without value", loc)
+                        })?;
+                        let argument = lower_expression_to_temporary(builder, value)?;
+                        props.push(JsxAttribute::SpreadAttribute { argument });
+                        continue;
+                    }
+                    if record_accessor_prop(builder, prop)? {
+                        continue;
+                    }
+                    let Some(key_expr) = prop.key.as_ref() else {
+                        continue;
+                    };
+                    let ExprData::EString(key_str) = &key_expr.data else {
+                        builder.record_error(CompilerErrorDetail {
+                            category: ErrorCategory::Todo,
+                            reason: "(BuildHIR::lowerJsxCall) non-string JSX attribute key"
+                                .to_string(),
+                            description: None,
+                            loc: convert_loc(key_expr.loc),
+                            suggestions: None,
+                        })?;
+                        continue;
+                    };
+                    let _key_loc = convert_loc(key_expr.loc);
+                    let name = estring_to_store_str(key_str);
+                    let Some(value_expr) = prop.value.as_ref() else {
+                        continue;
+                    };
+                    let place = lower_expression_to_temporary(builder, value_expr)?;
+                    props.push(JsxAttribute::Attribute { name, place });
+                }
+            }
+            // E::Null → no props.
+        }
+        for child in args.iter().skip(2) {
+            let place = lower_expression_to_temporary(builder, child)?;
+            children.push(place);
+        }
+    }
+
+    let Some(tag) = tag else {
+        return Ok(InstructionValue::JsxFragment { children, loc });
+    };
+
+    Ok(InstructionValue::JsxExpression {
+        tag,
+        props,
+        children: if children.is_empty() {
+            None
+        } else {
+            Some(children)
+        },
+        loc,
+        opening_loc,
+        closing_loc,
+    })
+}
+
+/// The JSX runtime symbol `expr` refers to, if it is one the parser's visit
+/// pass auto-imported. A user-written `import { Fragment } from "react"` is a
+/// real import, not one of these, and stays a regular component tag: upstream
+/// only special-cases the `JSXFragment` syntax form.
+fn jsx_import_kind(builder: &HirBuilder, expr: &Expr) -> Option<JsxImportKind> {
+    let ref_ = match expr.data {
+        ExprData::EIdentifier(id) => id.ref_,
+        ExprData::EImportIdentifier(id) => id.ref_,
+        _ => return None,
+    };
+    builder.host().jsx_import_kind(ref_)
+}
+
+/// The identifier `a` of an `a.b.c` callee. An import is not a local, so an
+/// `EImportIdentifier` root is of no interest.
+fn member_expression_root(expr: &Expr) -> Option<Ref> {
+    match expr.data {
+        ExprData::EIdentifier(id) => Some(id.ref_),
+        ExprData::EDot(dot) => member_expression_root(&dot.target),
+        _ => None,
+    }
+}
+
+/// The visit pass packs children into the props object as either a single
+/// expression or an `E::Array` (when there were ≥2 children or a spread child).
+fn lower_jsx_children(
+    builder: &mut HirBuilder,
+    value: &Expr,
+    is_static_children: bool,
+    out: &mut HirVec<Place>,
+) -> Result<(), CompilerError> {
+    if is_static_children {
+        if let ExprData::EArray(arr) = &value.data {
+            for item in arr.items.iter() {
+                match &item.data {
+                    ExprData::EMissing(_) => {}
+                    ExprData::ESpread(spread) => {
+                        out.push(lower_expression_to_temporary(builder, &spread.value)?);
+                    }
+                    _ => {
+                        out.push(lower_expression_to_temporary(builder, item)?);
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
+    out.push(lower_expression_to_temporary(builder, value)?);
+    Ok(())
+}
+
+/// The visit pass inlines `<a {...{ get g() {} }} />` into the props object, so
+/// a getter or setter can reach here. A `JsxAttribute` holds a value, not an
+/// accessor, so the function is left uncompiled, as `lower_object_method` does
+/// for an accessor in an object literal. Returns true when `prop` is one.
+fn record_accessor_prop(
+    builder: &mut HirBuilder,
+    prop: &G::Property,
+) -> Result<bool, CompilerError> {
+    let kind = match prop.kind {
+        G::PropertyKind::Get => "get",
+        G::PropertyKind::Set => "set",
+        _ => return Ok(false),
+    };
+    builder.record_error(CompilerErrorDetail {
+        category: ErrorCategory::Todo,
+        reason: format!("(BuildHIR::lowerJsxCall) Handle {kind} functions in JSX props"),
+        description: None,
+        loc: convert_loc(prop.key.as_ref().map_or(Loc::EMPTY, |key| key.loc)),
+        suggestions: None,
+    })?;
+    Ok(true)
+}
+
+fn todo_err(reason: &str, loc: Option<SourceLocation>) -> CompilerError {
+    let mut err = CompilerError::new();
+    err.push_error_detail(CompilerErrorDetail {
+        category: ErrorCategory::Todo,
+        reason: reason.to_string(),
+        description: None,
+        loc,
+        suggestions: None,
+    });
+    err
+}

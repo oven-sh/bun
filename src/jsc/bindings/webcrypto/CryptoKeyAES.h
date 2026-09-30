@@ -41,14 +41,10 @@ struct JsonWebKey;
 
 class CryptoKeyAES final : public CryptoKey {
 public:
-    static const int s_length128 = 128;
-    static const int s_length192 = 192;
-    static const int s_length256 = 256;
+    static constexpr int s_length128 = 128;
+    static constexpr int s_length192 = 192;
+    static constexpr int s_length256 = 256;
 
-    static Ref<CryptoKeyAES> create(CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& key, bool extractable, CryptoKeyUsageBitmap usage)
-    {
-        return adoptRef(*new CryptoKeyAES(algorithm, key, extractable, usage));
-    }
     virtual ~CryptoKeyAES();
 
     static bool isValidAESAlgorithm(CryptoAlgorithmIdentifier);
@@ -63,10 +59,9 @@ public:
     const Vector<uint8_t>& key() const { return m_key; }
     JsonWebKey exportJwk() const;
 
-    static ExceptionOr<size_t> getKeyLength(const CryptoAlgorithmParameters&);
+    static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
 
 private:
-    CryptoKeyAES(CryptoAlgorithmIdentifier, const Vector<uint8_t>& key, bool extractable, CryptoKeyUsageBitmap);
     CryptoKeyAES(CryptoAlgorithmIdentifier, Vector<uint8_t>&& key, bool extractable, CryptoKeyUsageBitmap);
 
     KeyAlgorithm algorithm() const final;

@@ -3,17 +3,14 @@
 const common = require('../common');
 const assert = require('assert');
 const dgram = require('dgram');
+const { internalBinding } = require('internal/test/binding');
+const { UV_UNKNOWN } = internalBinding('uv');
 const { getSystemErrorName } = require('util');
+const { kStateSymbol } = require('internal/dgram');
 const mockError = new Error('mock DNS error');
-
-let kStateSymbol;
 
 function getSocket(callback) {
   const socket = dgram.createSocket('udp4');
-
-  if (!kStateSymbol) {
-    kStateSymbol = Object.getOwnPropertySymbols(socket).filter(sym => sym.description === "state symbol")[0];
-  }
 
   socket.on('message', common.mustNotCall('Should not receive any messages.'));
   socket.bind(common.mustCall(() => {
@@ -26,23 +23,23 @@ function getSocket(callback) {
   return socket;
 }
 
-getSocket((socket) => {
+getSocket(common.mustCall((socket) => {
   socket.on('error', common.mustCall((err) => {
     socket.close();
     assert.strictEqual(err, mockError);
   }));
 
   socket.send('foo', socket.address().port, 'localhost');
-});
+}));
 
-getSocket((socket) => {
+getSocket(common.mustCall((socket) => {
   const callback = common.mustCall((err) => {
     socket.close();
     assert.strictEqual(err, mockError);
   });
 
   socket.send('foo', socket.address().port, 'localhost', callback);
-});
+}));
 
 {
   const socket = dgram.createSocket('udp4');
@@ -51,7 +48,7 @@ getSocket((socket) => {
 
   socket.bind(common.mustCall(() => {
     const port = socket.address().port;
-    const callback = common.mustCall((err, ...args) => {
+    const callback = common.mustCall((err) => {
       socket.close();
       assert.strictEqual(err.code, 'UNKNOWN');
       assert.strictEqual(getSystemErrorName(err.errno), 'UNKNOWN');
@@ -64,8 +61,8 @@ getSocket((socket) => {
       );
     });
 
-    socket[kStateSymbol].handle.socket.send = function() {
-      throw Object.assign(new Error("???"), {code: "UNKNOWN", errno: -4094, syscall: "send"});
+    socket[kStateSymbol].handle.send = function() {
+      return UV_UNKNOWN;
     };
 
     socket.send('foo', port, common.localhostIPv4, callback);

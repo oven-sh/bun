@@ -1,16 +1,52 @@
 use core::marker::PhantomData;
-use core::ptr::NonNull;
+use std::borrow::Cow;
 
+use crate::Error;
 use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_collections::BoundedArray;
-use bun_core::Error;
-use bun_lolhtml_sys::lol_html as lol;
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
+
+/// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
+/// with (here and in `HTMLRewriter`), so lol_html's rewriter/tokenizer
+/// machinery is instantiated once rather than once per sink closure type.
+pub enum OutputSink<'a> {
+    /// `HTMLRewriter`'s response pipe: every chunk is appended to its staging
+    /// buffer (statically dispatched — this is the throughput-sensitive user).
+    /// The pipe owns the rewriter that owns this sink, so the back-reference
+    /// invariant holds structurally.
+    Buffer(bun_ptr::BackRef<bun_ptr::JsCell<Vec<u8>>>),
+    /// The bundler's HTML scanner.
+    Callback(Box<dyn FnMut(&[u8]) + 'a>),
+}
+
+impl lol_html::OutputSink for OutputSink<'_> {
+    #[inline]
+    fn handle_chunk(&mut self, chunk: &[u8]) {
+        match self {
+            // lol-html signals end-of-document with one zero-length chunk.
+            OutputSink::Buffer(buffer) => {
+                if !chunk.is_empty() {
+                    buffer.with_mut(|buffer| buffer.extend_from_slice(chunk));
+                }
+            }
+            OutputSink::Callback(callback) => Self::call(callback, chunk),
+        }
+    }
+}
+
+impl OutputSink<'_> {
+    // Out of line so the per-chunk sink call lol_html inlines everywhere stays small.
+    #[cold]
+    #[inline(never)]
+    fn call(callback: &mut (dyn FnMut(&[u8]) + '_), chunk: &[u8]) {
+        callback(chunk)
+    }
+}
+use lol_html::html_content::Element;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
 
@@ -44,7 +80,8 @@ impl<'a> HTMLScanner<'a> {
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
             'blk: {
-                let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
+                let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
+                else {
                     break 'blk input_path;
                 };
                 let ext = &input_path[index_of_dot..];
@@ -77,7 +114,6 @@ impl<'a> HTMLScanner<'a> {
             tag: ImportRecordTag::default(),
             loader: None,
             source_index: AstIndex::default(),
-            module_id: 0,
             original_path: b"",
             flags: ImportRecordFlags::default(),
         };
@@ -86,11 +122,11 @@ impl<'a> HTMLScanner<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_write_html(&mut self, bytes: &[u8]) {
+    fn on_write_html(&mut self, bytes: &[u8]) {
         let _ = bytes; // bytes are not written in scan phase
     }
 
-    pub(crate) fn on_html_parse_error(&mut self, message: &[u8]) {
+    fn on_html_parse_error(&mut self, message: &[u8]) {
         // Vec/Box allocations abort on OOM; just call. `IntoText for
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
         let _ = self
@@ -98,9 +134,9 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    pub(crate) fn on_tag(
+    fn on_tag(
         &mut self,
-        _element: &mut lol::Element,
+        _element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
@@ -124,7 +160,7 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 pub(crate) trait HTMLProcessorHandler {
     fn on_tag(
         &mut self,
-        element: &mut lol::Element,
+        element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
@@ -135,13 +171,13 @@ pub(crate) trait HTMLProcessorHandler {
     // Only required when VISIT_DOCUMENT_TAGS == true; `run` only calls
     // these when visiting document tags, so the defaults are never
     // reached for handlers that don't visit document tags.
-    fn on_body_tag(&mut self, _element: &mut lol::Element) -> bool {
+    fn on_body_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
         unreachable!()
     }
-    fn on_head_tag(&mut self, _element: &mut lol::Element) -> bool {
+    fn on_head_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
         unreachable!()
     }
-    fn on_html_tag(&mut self, _element: &mut lol::Element) -> bool {
+    fn on_html_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
         unreachable!()
     }
 }
@@ -149,7 +185,7 @@ pub(crate) trait HTMLProcessorHandler {
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
     fn on_tag(
         &mut self,
-        element: &mut lol::Element,
+        element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
@@ -167,315 +203,202 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
 #[derive(Clone, Copy)]
-pub struct TagHandler {
+struct TagHandler {
     /// CSS selector to match elements
-    pub selector: &'static [u8],
-    /// Whether this tag can have text content that needs to be processed
-    pub has_content: bool,
+    pub(crate) selector: &'static str,
     /// The attribute to extract the URL from
-    pub url_attribute: &'static [u8],
+    pub(crate) url_attribute: &'static str,
     /// The kind of import to create
-    pub kind: ImportKind,
-
-    pub is_head_or_html: bool,
+    pub(crate) kind: ImportKind,
 }
 
 impl TagHandler {
-    const fn new(
-        selector: &'static [u8],
-        has_content: bool,
-        url_attribute: &'static [u8],
-        kind: ImportKind,
-    ) -> Self {
+    const fn new(selector: &'static str, url_attribute: &'static str, kind: ImportKind) -> Self {
         Self {
             selector,
-            has_content,
             url_attribute,
             kind,
-            is_head_or_html: false,
         }
     }
 }
 
-pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
+const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
-    TagHandler::new(b"script[src]", false, b"src", ImportKind::Stmt),
+    TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
-    TagHandler::new(
-        b"link[rel='stylesheet'][href]",
-        false,
-        b"href",
-        ImportKind::At,
-    ),
+    TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
     // CSS Assets
-    TagHandler::new(b"link[as='style'][href]", false, b"href", ImportKind::At),
+    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
     // Font files
     TagHandler::new(
-        b"link[as='font'][href], link[type^='font/'][href]",
-        false,
-        b"href",
+        "link[as='font'][href], link[type^='font/'][href]",
+        "href",
         ImportKind::Url,
     ),
     // Image assets
-    TagHandler::new(b"link[as='image'][href]", false, b"href", ImportKind::Url),
+    TagHandler::new("link[as='image'][href]", "href", ImportKind::Url),
     // Audio/Video assets
     TagHandler::new(
-        b"link[as='video'][href], link[as='audio'][href]",
-        false,
-        b"href",
+        "link[as='video'][href], link[as='audio'][href]",
+        "href",
         ImportKind::Url,
     ),
     // Web Workers
-    TagHandler::new(b"link[as='worker'][href]", false, b"href", ImportKind::Stmt),
+    TagHandler::new("link[as='worker'][href]", "href", ImportKind::Stmt),
     // Manifest files
-    TagHandler::new(
-        b"link[rel='manifest'][href]",
-        false,
-        b"href",
-        ImportKind::Url,
-    ),
+    TagHandler::new("link[rel='manifest'][href]", "href", ImportKind::Url),
     // Icons
     TagHandler::new(
-        b"link[rel='icon'][href], link[rel='apple-touch-icon'][href]",
-        false,
-        b"href",
+        "link[rel='icon'][href], link[rel='apple-touch-icon'][href]",
+        "href",
         ImportKind::Url,
     ),
     // Images with src
-    TagHandler::new(b"img[src]", false, b"src", ImportKind::Url),
+    TagHandler::new("img[src]", "src", ImportKind::Url),
     // Images with srcset
-    TagHandler::new(b"img[srcset]", false, b"srcset", ImportKind::Url),
+    TagHandler::new("img[srcset]", "srcset", ImportKind::Url),
     // Videos with src
-    TagHandler::new(b"video[src]", false, b"src", ImportKind::Url),
+    TagHandler::new("video[src]", "src", ImportKind::Url),
     // Videos with poster
-    TagHandler::new(b"video[poster]", false, b"poster", ImportKind::Url),
+    TagHandler::new("video[poster]", "poster", ImportKind::Url),
     // Audio with src
-    TagHandler::new(b"audio[src]", false, b"src", ImportKind::Url),
+    TagHandler::new("audio[src]", "src", ImportKind::Url),
     // Source elements with src
-    TagHandler::new(b"source[src]", false, b"src", ImportKind::Url),
+    TagHandler::new("source[src]", "src", ImportKind::Url),
     // Source elements with srcset
-    TagHandler::new(b"source[srcset]", false, b"srcset", ImportKind::Url),
+    TagHandler::new("source[srcset]", "srcset", ImportKind::Url),
     //     // Iframes
-    //     TagHandler::new(b"iframe[src]", false, b"src", ImportKind::Url),
+    //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];
 
 const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
 
-// ── lol-html DirectiveCallback / OutputSink adapters ──────────────────────
-// `lol_html::DirectiveCallback<Container>` allows one impl per (UserData,
-// Container) pair, so we allocate one user-data record *per selector*
-// holding `(*mut T, tag_index)`; the shared trait body looks up
-// `tag_info` at runtime via the index.
-
-struct TagUserData<T> {
-    this: *mut T,
-    tag_index: usize,
-}
-
-impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserData<T> {
-    fn call(&mut self, element: &mut lol::Element) -> bool {
-        let tag_info = &TAG_HANDLERS[self.tag_index];
-        // Handle URL attribute if present
-        if !tag_info.url_attribute.is_empty() {
-            let has = element
-                .has_attribute(tag_info.url_attribute)
-                .unwrap_or(false);
-            if has {
-                let value = element.get_attribute(tag_info.url_attribute);
-                let _value_guard = scopeguard::guard(value, |v| v.deinit());
-                if value.len > 0 {
-                    bun_core::scoped_log!(
-                        HTMLScanner,
-                        "{} {}",
-                        bstr::BStr::new(tag_info.selector),
-                        bstr::BStr::new(value.slice())
-                    );
-                    // SAFETY: `self.this` was set from `&mut T` in `run` and is
-                    // valid for the lifetime of the rewriter.
-                    unsafe {
-                        (*self.this).on_tag(
-                            element,
-                            value.slice(),
-                            tag_info.url_attribute,
-                            tag_info.kind,
-                        );
-                    }
-                }
-            }
-        }
-        false
-    }
-}
-
-// Unused comment/text handlers — registered as `None`, but the generic
-// `add_element_content_handlers<EL, CM, TX>` still needs concrete types.
-impl<T> lol::DirectiveCallback<lol::Comment> for TagUserData<T> {
-    fn call(&mut self, _: &mut lol::Comment) -> bool {
-        false
-    }
-}
-impl<T> lol::DirectiveCallback<lol::TextChunk> for TagUserData<T> {
-    fn call(&mut self, _: &mut lol::TextChunk) -> bool {
-        false
-    }
-}
-
-struct DocTagUserData<T> {
-    this: *mut T,
-    /// 0 = body, 1 = head, 2 = html
-    which: u8,
-}
-
-impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for DocTagUserData<T> {
-    fn call(&mut self, element: &mut lol::Element) -> bool {
-        // SAFETY: `self.this` was set from `&mut T` in `run` and is valid for
-        // the lifetime of the rewriter.
-        unsafe {
-            match self.which {
-                0 => (*self.this).on_body_tag(element),
-                1 => (*self.this).on_head_tag(element),
-                _ => (*self.this).on_html_tag(element),
-            }
-        }
-    }
-}
-impl<T> lol::DirectiveCallback<lol::Comment> for DocTagUserData<T> {
-    fn call(&mut self, _: &mut lol::Comment) -> bool {
-        false
-    }
-}
-impl<T> lol::DirectiveCallback<lol::TextChunk> for DocTagUserData<T> {
-    fn call(&mut self, _: &mut lol::TextChunk) -> bool {
-        false
-    }
-}
-
-struct Sink<T>(*mut T);
-
-impl<T: HTMLProcessorHandler> lol::OutputSink for Sink<T> {
-    fn write(&mut self, bytes: &[u8]) {
-        // SAFETY: `self.0` was set from `&mut T` in `run` and is valid for the
-        // lifetime of the rewriter.
-        unsafe { (*self.0).on_write_html(bytes) }
-    }
-    fn done(&mut self) {}
-}
-
 #[inline]
-fn lol_err(_: lol::Error) -> Error {
-    bun_core::err!(Fail)
+fn lol_err<E>(_: E) -> Error {
+    crate::Error::Fail
+}
+
+/// `element_content_handlers` entry with only the element slot populated —
+/// the only shape this processor registers (leaving the comment/text slots
+/// empty lets lol-html skip lexing that content).
+fn element_entry<'h>(
+    selector: &str,
+    element: lol_html::ElementHandler<'h>,
+) -> Result<
+    (
+        Cow<'static, lol_html::Selector>,
+        lol_html::ElementContentHandlers<'h>,
+    ),
+    Error,
+> {
+    Ok((
+        Cow::Owned(selector.parse().map_err(lol_err)?),
+        lol_html::ElementContentHandlers {
+            element: Some(element),
+            comments: None,
+            text: None,
+        },
+    ))
 }
 
 impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
     HTMLProcessor<T, VISIT_DOCUMENT_TAGS>
 {
     pub(crate) fn run(this: &mut T, input: &[u8]) -> Result<(), Error> {
+        // Every handler closure and the output sink capture this raw pointer
+        // so one `&mut T` can service them all; `this` is not reborrowed
+        // until the rewriter holding those closures is gone.
         let this_ptr: *mut T = this;
 
-        let builder = lol::HTMLRewriterBuilder::init();
-        let _builder_guard = scopeguard::guard(builder, |b| {
-            // SAFETY: `b` came from `HTMLRewriterBuilder::init()` and has not
-            // been freed.
-            unsafe { lol::HTMLRewriterBuilder::destroy(b) }
-        });
+        let mut element_content_handlers = Vec::with_capacity(SELECTOR_CAP);
 
-        let mut selectors: BoundedArray<*mut lol::HTMLSelector, SELECTOR_CAP> =
-            BoundedArray::default();
-        let mut selectors_guard = scopeguard::guard(
-            &mut selectors,
-            |selectors: &mut BoundedArray<*mut lol::HTMLSelector, SELECTOR_CAP>| {
-                for selector in selectors.slice() {
-                    // SAFETY: each selector was returned by HTMLSelector::parse
-                    // and has not been freed yet.
-                    unsafe { lol::HTMLSelector::destroy(*selector) };
-                }
-            },
-        );
-        let selectors = &mut **selectors_guard;
-
-        // Per-selector user-data records — must outlive the rewriter.
-        let mut tag_user_datas: [TagUserData<T>; TAG_HANDLERS.len()] =
-            core::array::from_fn(|i| TagUserData {
-                this: this_ptr,
-                tag_index: i,
-            });
-        let mut doc_user_datas: [DocTagUserData<T>; 3] = core::array::from_fn(|i| DocTagUserData {
-            this: this_ptr,
-            which: i as u8,
-        });
-
-        // Add handlers for each tag type
-        for i in 0..TAG_HANDLERS.len() {
-            let tag_info = &TAG_HANDLERS[i];
-            let selector = lol::HTMLSelector::parse(tag_info.selector).map_err(lol_err)?;
-            selectors.append_assume_capacity(selector);
-            // SAFETY: `builder` / `selector` are live FFI handles owned by the
-            // guards above.
-            unsafe { &mut *builder }
-                .add_element_content_handlers(
-                    // SAFETY: `selector` was just returned by `parse`.
-                    unsafe { &mut *selector },
-                    Some(NonNull::from(&mut tag_user_datas[i])),
-                    None::<NonNull<TagUserData<T>>>,
-                    None::<NonNull<TagUserData<T>>>,
-                )
-                .map_err(lol_err)?;
+        for tag_info in TAG_HANDLERS {
+            let on_element: lol_html::ElementHandler<'_> = Box::new(
+                move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
+                    if !tag_info.url_attribute.is_empty()
+                        && element.has_attribute(tag_info.url_attribute)
+                    {
+                        let value = element
+                            .get_attribute(tag_info.url_attribute)
+                            .unwrap_or_default();
+                        if !value.is_empty() {
+                            bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
+                            // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
+                            // which is not reborrowed while the rewriter — the only
+                            // holder of these closures — is alive.
+                            unsafe {
+                                (*this_ptr).on_tag(
+                                    element,
+                                    value.as_bytes(),
+                                    tag_info.url_attribute.as_bytes(),
+                                    tag_info.kind,
+                                );
+                            }
+                        }
+                    }
+                    Ok(())
+                },
+            );
+            element_content_handlers.push(element_entry(tag_info.selector, on_element)?);
         }
 
         if VISIT_DOCUMENT_TAGS {
-            for (i, tag) in [b"body" as &[u8], b"head", b"html"].into_iter().enumerate() {
-                let head_selector = lol::HTMLSelector::parse(tag).map_err(lol_err)?;
-                selectors.append_assume_capacity(head_selector);
-                // SAFETY: see above.
-                unsafe { &mut *builder }
-                    .add_element_content_handlers(
-                        // SAFETY: `head_selector` was just returned by `parse`.
-                        unsafe { &mut *head_selector },
-                        Some(NonNull::from(&mut doc_user_datas[i])),
-                        None::<NonNull<DocTagUserData<T>>>,
-                        None::<NonNull<DocTagUserData<T>>>,
-                    )
-                    .map_err(lol_err)?;
+            for (which, tag) in ["body", "head", "html"].into_iter().enumerate() {
+                let on_element: lol_html::ElementHandler<'_> = Box::new(
+                    move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
+                        // SAFETY: see `on_tag` above.
+                        let stop = unsafe {
+                            match which {
+                                0 => (*this_ptr).on_body_tag(element),
+                                1 => (*this_ptr).on_head_tag(element),
+                                _ => (*this_ptr).on_html_tag(element),
+                            }
+                        };
+                        if stop {
+                            // The exact text lol-html's C API attached to a
+                            // LOL_HTML_STOP directive (c-api/rewriter_builder.rs).
+                            Err("The rewriter has been stopped.".into())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                );
+                element_content_handlers.push(element_entry(tag, on_element)?);
             }
         }
 
-        let memory_settings = lol::MemorySettings {
-            preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-            max_allowed_memory_usage: 1024 * 1024 * 10,
+        let settings = lol_html::Settings {
+            element_content_handlers,
+            encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+            memory_settings: lol_html::MemorySettings {
+                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
+                max_allowed_memory_usage: 1024 * 1024 * 10,
+            },
+            strict: false,
+            ..lol_html::Settings::new()
         };
 
-        let mut sink = Sink::<T>(this_ptr);
+        // lol-html signals end-of-document with one zero-length chunk; the
+        // C-API sink routed that to a no-op `done()`, never to `on_write_html`.
+        let output_sink = OutputSink::Callback(Box::new(move |chunk: &[u8]| {
+            if !chunk.is_empty() {
+                // SAFETY: see `on_tag` above.
+                unsafe { (*this_ptr).on_write_html(chunk) }
+            }
+        }));
 
-        // The fallible tail is wrapped in an inner block so the
-        // on-error side effect (`on_html_parse_error`)
-        // runs without a scopeguard double-borrowing `this`.
-        let res: Result<(), Error> = (|| {
-            // SAFETY: `builder` is a live FFI handle.
-            let rewriter = unsafe { &mut *builder }
-                .build(lol::Encoding::UTF8, memory_settings, false, &raw mut sink)
-                .map_err(lol_err)?;
-            let _rewriter_guard = scopeguard::guard(rewriter, |r| {
-                // SAFETY: `r` came from `build` and has not been freed.
-                unsafe { lol::HTMLRewriter::destroy(r) }
-            });
-            // SAFETY: `rewriter` is a live FFI handle owned by `_rewriter_guard`.
-            unsafe { lol::HTMLRewriter::write(rewriter, input) }.map_err(lol_err)?;
-            // SAFETY: same as above.
-            unsafe { lol::HTMLRewriter::end(rewriter) }.map_err(lol_err)?;
-            Ok(())
+        // The rewriter — the sole holder of `this_ptr`-derived aliases — is
+        // consumed (or dropped on a failed `write`) inside this closure, so
+        // reasserting the original `&mut T` borrow afterward is sound.
+        let res: Result<(), lol_html::errors::RewritingError> = (|| {
+            let mut rewriter = lol_html::HtmlRewriter::new(settings, output_sink);
+            rewriter.write(input)?;
+            rewriter.end()
         })();
 
-        if res.is_err() {
-            let last_error = lol::HTMLString::last_error();
-            let _last_error_guard = scopeguard::guard(last_error, |e| e.deinit());
-            if last_error.len > 0 {
-                // The rewriter (sole user of `this_ptr`-derived aliases) was
-                // destroyed when the inner closure returned; reasserting the
-                // original `&mut T` borrow here is sound and avoids the raw
-                // deref entirely.
-                this.on_html_parse_error(last_error.slice());
-            }
+        if let Err(err) = &res {
+            this.on_html_parse_error(err.to_string().as_bytes());
         }
-        res
+        res.map_err(lol_err)
     }
 }

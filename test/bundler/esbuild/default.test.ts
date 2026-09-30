@@ -95,7 +95,7 @@ describe.concurrent("bundler", () => {
         `,
     },
     run: {
-      error: "TypeError: bar2 is not a function. (In 'bar2()', 'bar2' is undefined)",
+      error: "TypeError: bar is not a function. (In 'bar()', 'bar' is undefined)",
       errorLineMatch: /console\.log/,
     },
   });
@@ -234,7 +234,6 @@ describe.concurrent("bundler", () => {
       "/e.js": "export default class Foo {}",
     },
     entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js", "/e.js"],
-    mode: "bundle",
     bundling: false,
     runtimeFiles: {
       "./out/f.js": /* js */ `
@@ -1527,6 +1526,19 @@ describe.concurrent("bundler", () => {
     },
     bundling: false,
     target: "bun",
+    run: {
+      stdout: "123 object",
+    },
+  });
+  itBundled("default/RuntimeNameCollisionBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        function __require() { return 123 }
+        console.log(__require(), typeof (require('fs')))
+      `,
+    },
+    target: "node",
+    external: ["fs"],
     run: {
       stdout: "123 object",
     },
@@ -4846,7 +4858,7 @@ describe.concurrent("bundler", () => {
       "/is-main.js": `module.exports = require.main === module`,
     },
     format: "cjs",
-    platform: "node",
+    target: "node",
   });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
     todo: true,

@@ -3,8 +3,8 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
-    pub spawn_sync_blocking: i32,
-    pub spawn_memfd: i32,
+    pub(crate) spawn_sync_blocking: i32,
+    pub(crate) spawn_memfd: i32,
 }
 
 impl Counters {
@@ -32,7 +32,7 @@ impl Counters {
     }
 }
 
-// Called through the `$zig(...)` js2native codegen, which emits the extern
+// Called through the `$rust(...)` js2native codegen, which emits the extern
 // trampoline (`generate-js2native.ts` wraps this in `host_fn::host_fn_static`),
 // so no `#[bun_jsc::host_fn]` attribute is needed here.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {

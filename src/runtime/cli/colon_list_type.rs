@@ -1,6 +1,7 @@
+use crate::Error;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_core::{Error, Global, err, pretty_errorln};
+use bun_core::{Global, pretty_errorln};
 
 // The value type and its resolver fn collapse into one trait that the
 // value type implements. Each `T` declares its own resolver and whether it is the
@@ -21,7 +22,7 @@ pub(crate) struct ColonListType<T: ColonListValue> {
 }
 
 impl<T: ColonListValue> ColonListType<T> {
-    pub(crate) fn init(count: usize) -> Self {
+    fn init(count: usize) -> Self {
         // `Vec::with_capacity` + `push`, which is infallible here.
         let keys = Vec::with_capacity(count);
         let values = Vec::with_capacity(count);
@@ -29,7 +30,7 @@ impl<T: ColonListValue> ColonListType<T> {
         ColonListType { keys, values }
     }
 
-    pub(crate) fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
+    fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
         for str in input.iter() {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags
@@ -38,7 +39,18 @@ impl<T: ColonListValue> ColonListType<T> {
                 .unwrap_or(u32::MAX)
                 .min(strings::index_of_char(str, b'=').unwrap_or(u32::MAX));
             if midpoint == u32::MAX {
-                return Err(err!("InvalidSeparator"));
+                if T::IS_LOADER {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>--loader {}<r> is missing a \":\" separator. Expected <cyan>--loader .ext:loader<r>, for example <cyan>--loader .md:text<r>",
+                        bun_fmt::quote(str),
+                    );
+                } else {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>--define {}<r> is missing a \":\" or \"=\" separator. Expected <cyan>--define key=value<r>, for example <cyan>--define process.env.NODE_ENV='\"production\"'<r>",
+                        bun_fmt::quote(str),
+                    );
+                }
+                Global::exit(1);
             }
             let midpoint = midpoint as usize;
 
@@ -56,7 +68,7 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values
                 .push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                     Ok(v) => v,
-                    Err(e) if e == err!("InvalidLoader") => {
+                    Err(crate::Error::InvalidLoader) => {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                             bun_fmt::quote(&str[midpoint + 1..str.len()]),
@@ -72,14 +84,7 @@ impl<T: ColonListValue> ColonListType<T> {
 
     pub(crate) fn resolve(input: &[&'static [u8]]) -> Result<Self, Error> {
         let mut list = Self::init(input.len());
-        match list.load(input) {
-            Ok(()) => {}
-            Err(e) if e == err!("InvalidSeparator") => {
-                pretty_errorln!("<r><red>error<r><d>:<r> expected \":\" separator");
-                Global::exit(1);
-            }
-            Err(e) => return Err(e),
-        }
+        list.load(input)?;
         Ok(list)
     }
 }

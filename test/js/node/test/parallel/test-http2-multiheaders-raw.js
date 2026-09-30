@@ -16,10 +16,10 @@ src.test = 'foo, bar, baz';
 
 server.on('stream', common.mustCall((stream, headers, flags, rawHeaders) => {
   const expected = [
-    ':authority',
-    `localhost:${server.address().port}`,
     ':method',
     'GET',
+    ':authority',
+    `localhost:${server.address().port}`,
     ':scheme',
     'http',
     ':path',

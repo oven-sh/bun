@@ -18,6 +18,11 @@ fetch(`http://localhost:${server.address().port}`, { verbose: true })
   });
 
 const [req, res] = await once(server, "request");
-expect(req.complete).toBe(false);
-await once(server, "timeout");
+// Like Node, a GET is complete once the 'request' listener has returned.
+const completeAfterListener = req.complete;
+const [timedOutSocket] = await once(server, "timeout");
+// Like Node, a timeout with a listener attached does not destroy the socket;
+// tear the connection down explicitly so the process can exit.
+timedOutSocket.destroy();
+expect(completeAfterListener).toBe(true);
 expect(callBackCalled).toBe(true);

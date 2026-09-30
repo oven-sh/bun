@@ -2,10 +2,10 @@
 
 const BufferModule = require("node:buffer");
 
-const crc32 = $newZigFunction("node_zlib_binding.zig", "crc32", 1);
-const NativeZlib = $zig("node_zlib_binding.zig", "NativeZlib");
-const NativeBrotli = $zig("node_zlib_binding.zig", "NativeBrotli");
-const NativeZstd = $zig("node_zlib_binding.zig", "NativeZstd");
+const crc32 = $newRustFunction("node_zlib_binding.rs", "crc32", 1);
+const NativeZlib = $rust("node_zlib_binding.rs", "NativeZlib");
+const NativeBrotli = $rust("node_zlib_binding.rs", "NativeBrotli");
+const NativeZstd = $rust("node_zlib_binding.rs", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;
@@ -15,10 +15,10 @@ const ObjectFreeze = Object.freeze;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
+const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const ArrayBufferIsView = ArrayBuffer.isView;
-const isArrayBufferView = ArrayBufferIsView;
+const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
@@ -82,10 +82,11 @@ function zlibBufferOnData(chunk) {
   if (!this.buffers) this.buffers = [chunk];
   else ArrayPrototypePush.$call(this.buffers, chunk);
   this.nread += chunk.length;
-  if (this.nread > this._maxOutputLength) {
+  const maxOutputLength = this._maxOutputLength;
+  if (this.nread > maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb($ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(maxOutputLength));
   }
 }
 
@@ -125,7 +126,7 @@ function zlibBufferSync(engine, buffer) {
 function zlibOnError(message, errno, code) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
-  const error = new Error(message);
+  const error: ZlibError = new Error(message);
   error.errno = errno;
   error.code = code;
   self.destroy(error);
@@ -140,6 +141,42 @@ const FLUSH_BOUND = [
 const FLUSH_BOUND_IDX_NORMAL = 0;
 const FLUSH_BOUND_IDX_BROTLI = 1;
 const FLUSH_BOUND_IDX_ZSTD = 2;
+
+interface ZlibError extends Error {
+  errno?: number;
+}
+
+interface FlushOptions {
+  flush: number;
+  finishFlush: number;
+  fullFlush: number;
+}
+
+interface ZlibHandle {
+  [owner_symbol]: ZlibBase;
+  onerror: typeof zlibOnError;
+  reset(): void;
+  close(): void;
+}
+
+declare class ZlibBase extends Transform {
+  constructor(opts, mode: number, handle: ZlibHandle, flushOptions: FlushOptions);
+  [kError]: ZlibError | null;
+  bytesWritten: number;
+  _handle: ZlibHandle | null;
+  _outBuffer: Buffer;
+  _outOffset: number;
+  _chunkSize: number;
+  _defaultFlushFlag: number;
+  _finishFlushFlag: number;
+  _defaultFullFlushFlag: number;
+  _info: boolean | undefined;
+  _maxOutputLength: number;
+  reset(): void;
+  flush(kind?, callback?): void;
+  close(callback?: () => void): void;
+  _processChunk(chunk: Buffer, flushFlag: number, cb?: () => void): Buffer | undefined;
+}
 
 // The base class for all Zlib-style streams.
 function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
@@ -254,7 +291,7 @@ function maxFlush(a, b) {
 // Set up a list of 'special' buffers that can be written using .write()
 // from the .flush() code as a way of introducing flushing operations into the
 // write sequence.
-const kFlushBuffers: (typeof Buffer)[] = [];
+const kFlushBuffers: (Buffer & { [kFlushFlag]?: number })[] = [];
 {
   const dummyArrayBuffer = new ArrayBuffer();
   for (const flushFlag of kFlushFlagList) {
@@ -307,6 +344,21 @@ ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
   else return processChunkSync(this, chunk, flushFlag);
 };
 
+// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible. A slice gives
+// the chunk an ArrayBuffer. JSC then counts the chunk as allocated a second time, and only a full
+// collection takes it out of the heap size again, so full collections come often. A slice also keeps
+// the whole chunk alive with the result. nativeDecodePullResult in BunStreamSource.cpp has the same rule.
+function takeOutput(buffer, offset, have) {
+  // A full chunk: hand it over. The caller replaces an exhausted chunk.
+  if (offset === 0 && have === buffer.byteLength) return buffer;
+  // At most one default chunk: copy it out. A fractional chunkSize gives fractional offsets, which
+  // `slice` truncates and `copyBytesFrom` rejects.
+  if (have <= Z_DEFAULT_CHUNK && NumberIsInteger(offset) && NumberIsInteger(have)) {
+    return Buffer.copyBytesFrom(buffer, offset, have);
+  }
+  return buffer.slice(offset, offset + have);
+}
+
 function processChunkSync(self, chunk, flushFlag) {
   let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
@@ -355,14 +407,15 @@ function processChunkSync(self, chunk, flushFlag) {
 
     const have = availOutBefore - availOutAfter;
     if (have > 0) {
-      const out = buffer.slice(offset, offset + have);
+      const out = takeOutput(buffer, offset, have);
       offset += have;
       ArrayPrototypePush.$call(buffers, out);
       nread += out.byteLength;
 
-      if (nread > self._maxOutputLength) {
+      const maxOutputLength = self._maxOutputLength;
+      if (nread > maxOutputLength) {
         _close(self);
-        throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
+        throw $ERR_BUFFER_TOO_LARGE(maxOutputLength);
       }
     } else {
       $assert(have === 0, "have should not go down");
@@ -440,7 +493,7 @@ function processCallback() {
   const have = handle.availOutBefore - availOutAfter;
   let streamBufferIsFull = false;
   if (have > 0) {
-    const out = self._outBuffer.slice(self._outOffset, self._outOffset + have);
+    const out = takeOutput(self._outBuffer, self._outOffset, have);
     self._outOffset += have;
     streamBufferIsFull = !self.push(out);
   } else {
@@ -453,10 +506,12 @@ function processCallback() {
   }
 
   // Exhausted the output buffer, or used all the input create a new one.
-  if (availOutAfter === 0 || self._outOffset >= self._chunkSize) {
-    handle.availOutBefore = self._chunkSize;
+  let chunkSize;
+  if (availOutAfter === 0 || self._outOffset >= (chunkSize = self._chunkSize)) {
+    chunkSize ??= self._chunkSize;
+    handle.availOutBefore = chunkSize;
     self._outOffset = 0;
-    self._outBuffer = Buffer.allocUnsafe(self._chunkSize);
+    self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
   if (availOutAfter === 0) {
@@ -503,6 +558,7 @@ function processCallback() {
     // stream has ended early.
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
+
     self.push(null);
   }
 
@@ -560,7 +616,11 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE(
+          "options.dictionary",
+          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+          dictionary,
+        );
       }
     }
   }
@@ -642,7 +702,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -670,7 +730,7 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd) {
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }
@@ -705,14 +765,27 @@ function Brotli(opts, mode) {
       if (typeof value !== "number" && typeof value !== "boolean") {
         throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
-      brotliInitParamsArray[key] = value;
+      brotliInitParamsArray[key] = +value;
     });
+  }
+
+  let dictionary = opts?.dictionary;
+  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
+    if (isAnyArrayBuffer(dictionary)) {
+      dictionary = Buffer.from(dictionary);
+    } else {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.dictionary",
+        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+        dictionary,
+      );
+    }
   }
 
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -739,6 +812,8 @@ const zstdDefaultOpts = {
 };
 
 class Zstd extends ZlibBase {
+  declare _writeState: Uint32Array;
+
   constructor(opts, mode, initParamsArray, maxParam) {
     $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
 
@@ -763,7 +838,16 @@ class Zstd extends ZlibBase {
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
+    // non-view is silently ignored — and re-reads it rather than caching. Both
+    // are load-bearing for parity, so this mirrors lib/zlib.js:920 verbatim.
+    handle.init(
+      initParamsArray,
+      pledgedSrcSize,
+      writeState,
+      processCallback,
+      opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined,
+    );
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

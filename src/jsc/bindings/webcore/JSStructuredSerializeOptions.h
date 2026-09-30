@@ -25,6 +25,14 @@
 
 namespace WebCore {
 
+// Walks any iterable into a transfer list. Shape failures (not-object, no callable
+// Symbol.iterator, malformed iterator/next/result) throw ERR_INVALID_ARG_TYPE with
+// `notIterableMessage`. A non-object *element* differs by caller: node's
+// port.postMessage() reports DataCloneError, its structuredClone() a TypeError.
+enum class BadTransferElement : uint8_t { ThrowTypeError,
+    ThrowDataCloneError };
+Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSC::JSGlobalObject&, JSC::JSValue, ASCIILiteral notIterableMessage, BadTransferElement);
+
 template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptions>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

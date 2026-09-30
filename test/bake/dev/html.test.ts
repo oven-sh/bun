@@ -77,6 +77,9 @@ devTest("image tag", {
       });
       await dev.fetch("/").expect.toInclude('alt="modified image"');
     });
+    // The image did not change, so the reloaded page keeps its URL and the asset is still served.
+    expect(await c.js`document.querySelector("img").src`).toBe(url);
+    await dev.fetch(url).expect.toBe("FIRST");
 
     // Editing image content causes a hard reload because the html must reflect the new image content
     await c.expectReload(async () => {
@@ -277,5 +280,132 @@ devTest("error report endpoint handles stack frames with very long absolute path
 
     // The dev server must still be serving requests afterwards.
     await dev.fetch("/").expect.toInclude("<h1>Error Report</h1>");
+  },
+});
+
+devTest("error report endpoint rejects requests whose origin header does not match the dev server", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Origin Check</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function str32(s: string) {
+      const bytes = Buffer.from(s, "utf8");
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    const body = Buffer.concat([str32("Error"), str32("origin-check-message"), str32(dev.baseUrl + "/"), u32(0)]);
+
+    const crossOrigin = await dev.fetch("/_bun/report_error", {
+      method: "POST",
+      headers: { Origin: "http://other-page.example" },
+      body,
+    });
+    expect(await crossOrigin.text()).toBe("Blocked: Origin header does not match the dev server");
+    expect(crossOrigin.status).toBe(403);
+
+    const sameOrigin = await dev.fetch("/_bun/report_error", {
+      method: "POST",
+      headers: { Origin: dev.baseUrl },
+      body,
+    });
+    expect(sameOrigin.status).toBe(200);
+
+    await dev.fetch("/").expect.toInclude("<h1>Origin Check</h1>");
+  },
+});
+
+devTest("error report endpoint blanks stray non-text bytes in reported frames", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Frame Bytes</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    function u32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(n >>> 0, 0);
+      return b;
+    }
+    function i32(n: number) {
+      const b = Buffer.alloc(4);
+      b.writeInt32LE(n, 0);
+      return b;
+    }
+    function bytes32(bytes: Buffer) {
+      return Buffer.concat([u32(bytes.length), bytes]);
+    }
+    function str32(s: string) {
+      return bytes32(Buffer.from(s, "utf8"));
+    }
+
+    const functionName = Buffer.concat([Buffer.from("fnstart"), Buffer.from([0x9b]), Buffer.from("fnend")]);
+    const body = Buffer.concat([
+      str32("Error"),
+      str32("frame-bytes-message"),
+      str32(dev.baseUrl + "/"),
+      u32(1),
+      i32(1),
+      i32(1),
+      bytes32(functionName),
+      str32("foo.ts"),
+    ]);
+
+    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+    const reply = Buffer.from(await res.arrayBuffer());
+    expect(reply.includes(Buffer.from("fnstart fnend", "latin1"))).toBe(true);
+    expect(reply.includes(0x9b)).toBe(false);
+    expect(res.status).toBe(200);
+
+    await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
+  },
+});
+devTest("editing a file imported from outside the project root hot-reloads", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { value } from "../outside/dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "two";
+      `,
+    );
+    await c.expectMessage("two");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "three";
+      `,
+    );
+    await c.expectMessage("three");
   },
 });

@@ -27,7 +27,14 @@ import {
 import { createSpawnCheck } from "./runner/check_bun_lint";
 import { type EnumeratedInstance, enumerateCase } from "./runner/compiler_runner";
 import { tsgoRules } from "./runner/diagnosticwriter";
-import { instanceInput, makeTemporaryDirectory } from "./runner/materialise";
+import {
+  type CompilerTest,
+  type InstanceInput,
+  type Platform,
+  findObstacles,
+  instanceInput,
+  makeTemporaryDirectory,
+} from "./runner/materialise";
 import { type Oracle, type OracleTable, diffRootOf, loadOracleTable, oracleOf, readOracle } from "./runner/oracle";
 import { type CorpusPaths, corpusPaths, suites } from "./runner/paths";
 import { readErrorBaseline } from "./runner/reader";
@@ -56,16 +63,17 @@ An instance is swept when one selector takes it. Without a selector every instan
   --update               add to expectations.json the names that pass, are not listed and may enter; no name leaves
   --report <path>        file of the report (default: lint-conformance-report.json in the temporary directory)
   --since <revision>     compare the lists with those of that revision: a name that left its list fails, unless the
-                         corpus has no instance of that name any more
+                         list may not hold it any more: the corpus has no instance of that name, or one that does
+                         not run, that is of the other class or that a platform of the test run cannot hold
   --no-run               run no instance: check the lists against the corpus, and --since
   --round-trip           run no instance: read every error baseline of the corpus and write it again from what was read
   --expectations <path>  the lists (default: expectations.json beside this script)
   --corpus <directory>   the corpus (default: corpus beside this script)
   -h, --help
 
-Exit code 0: every listed instance of the selection passes and no name left the lists; with --round-trip, every error
-baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists, the module
-of the check or the file of the report cannot be used.`;
+Exit code 0: every listed instance of the selection passes and no name left a list that may hold it; with --round-trip,
+every error baseline is written back with its bytes. 1: not so. 2: the command line is wrong, or the corpus, the lists,
+the module of the check or the file of the report cannot be used.`;
 
 const tags = ["accepted", "triaged"] as const;
 type Tag = (typeof tags)[number];
@@ -281,24 +289,37 @@ function listCases(casesDirectory: string): string[] {
 }
 
 // An instance of the enumerator with what the baselines and the two lists of typescript-go say of it.
-function factOf(enumerated: EnumeratedInstance, casePath: string, table: OracleTable): Fact {
+function factOf(enumerated: EnumeratedInstance, casePath: string, table: OracleTable, paths: CorpusPaths): Fact {
   const { name, suite } = enumerated;
   const diff = diffRootOf(table, suite, name);
-  const common = { name, directory: directoryOf(casePath), casePath, platformLimited: undefined };
-  const tagged = { ...common, tags: tags.filter(tag => diff[tag]) };
-  if (enumerated.status === "skip") {
-    return { ...tagged, status: "skipped", reason: enumerated.skipReason ?? "", kind: undefined };
-  }
+  const tagged = { name, directory: directoryOf(casePath), casePath, tags: tags.filter(tag => diff[tag]) };
+  // No list may hold an instance that does not run, whatever a platform makes of its files.
+  const notRun = { ...tagged, kind: undefined, platformLimited: undefined };
+  if (enumerated.status === "skip") return { ...notRun, status: "skipped", reason: enumerated.skipReason ?? "" };
   // The reference fails an instance whose diff is in both lists, as it fails one that it cannot set up.
   const stops = enumerated.status === "invalid" ? (enumerated.invalidReason ?? "") : diff.fatal;
-  if (stops !== undefined) return { ...tagged, status: "invalid", reason: stops, kind: undefined };
+  if (stops !== undefined) return { ...notRun, status: "invalid", reason: stops };
   const oracle = oracleOf(table, suite, name);
   const run: RunInstance = { name, status: "run", casePath, config: enumerated.config, oracle };
-  return { ...tagged, status: "run", reason: "", kind: oracle.class, run };
+  let limited: { why: string | undefined } | undefined;
+  return {
+    ...tagged,
+    status: "run",
+    reason: "",
+    kind: oracle.class,
+    run,
+    // Only the rules of the lists read it: an instance that a list holds, held or may take is laid out for it, once.
+    get platformLimited() {
+      return (limited ??= { why: platformLimitedOf(paths, run) }).why;
+    },
+  };
 }
 
-// The files of an instance as the harness lays them out; with a root they are written below it, and the run removes them.
-function inputOf(paths: CorpusPaths, instance: RunInstance, root: string | undefined): InputResult {
+// What a check gets of an instance with the test that its files are written from, or why the instance cannot be laid out.
+type Layout = { ok: true; input: InstanceInput; test: CompilerTest } | { ok: false; reason: string };
+
+// The files of an instance as the harness lays them out; with a root they are written below it.
+function layOut(paths: CorpusPaths, instance: RunInstance, root: string | undefined): Layout {
   const filename = `${paths.cases}/${instance.casePath}`;
   const read = readFile(filename);
   if (!read.ok) return { ok: false, reason: `the case cannot be read: ${filename}` };
@@ -308,11 +329,40 @@ function inputOf(paths: CorpusPaths, instance: RunInstance, root: string | undef
   }));
   if (!units.ok) return { ok: false, reason: units.reason };
   const made = instanceInput(units, instance.config, root, { libDirectory: paths.lib });
-  if (made.ok) return { ok: true, input: made.input };
+  if (made.ok) return { ok: true, input: made.input, test: made.test };
   return {
     ok: false,
     reason: made.status === "invalid" ? `the reference fails the instance: ${made.reason}` : made.reason,
   };
+}
+
+// The input of the check of an instance; with a root its files are written below it, and the run removes them.
+function inputOf(paths: CorpusPaths, instance: RunInstance, root: string | undefined): InputResult {
+  const laid = layOut(paths, instance, root);
+  return laid.ok ? { ok: true, input: laid.input } : laid;
+}
+
+// The disks of the platforms of the test run, whichever of them runs the sweep; Windows without the right to link to a file.
+const testPlatforms: readonly Platform[] = [
+  { os: "linux", caseSensitive: true, preservesNames: true, fileLinks: true },
+  { os: "darwin", caseSensitive: false, preservesNames: false, fileLinks: true },
+  { os: "win32", caseSensitive: false, preservesNames: true, fileLinks: false },
+];
+
+// Why a platform of the test run cannot hold the files of an instance that runs: the first obstacle of the first such platform. Undefined: every platform holds them.
+function platformLimitedOf(paths: CorpusPaths, instance: RunInstance): string | undefined {
+  let laid: Layout;
+  try {
+    laid = layOut(paths, instance, undefined);
+  } catch (error) {
+    laid = { ok: false, reason: `the files cannot be laid out: ${messageOf(error)}` };
+  }
+  if (!laid.ok) return `every platform: ${laid.reason}`;
+  for (const platform of testPlatforms) {
+    const [first] = findObstacles(laid.test, platform);
+    if (first !== undefined) return `${platform.os}: ${first.reason}${first.detail === "" ? "" : `: ${first.detail}`}`;
+  }
+  return undefined;
 }
 
 function matcher(selector: string): (fact: Fact) => boolean {
@@ -523,7 +573,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const facts = new Map<string, Fact>();
   for (const casePath of reached) {
     for (const enumerated of enumerateCase(paths.cases, casePath)) {
-      facts.set(enumerated.name, factOf(enumerated, casePath, table));
+      facts.set(enumerated.name, factOf(enumerated, casePath, table, paths));
     }
   }
   const selection = select(facts.values(), o, listed);
@@ -555,23 +605,32 @@ async function main(argv: readonly string[]): Promise<number> {
   say(`instances ${selected.length}: ${counts.join(", ")}`);
   for (const [reason, n] of mostFirst(notRun)) say(`  ${String(n).padStart(6)}  ${reason}`);
 
-  // What needs no run: every listed name is an instance that runs and whose oracle is of the class of its list.
+  // What needs no run: every listed name is an instance that runs, whose oracle is of the class of its list and whose files every platform of the test run holds.
   const inScope = (name: string) => whole || read.has(caseOf(name) ?? "");
   const scoped: Expectations = { ...lists, E: lists.E.filter(inScope), C: lists.C.filter(inScope) };
   const notInstances = checkLists(scoped, facts);
   for (const f of notInstances) say(`  FAIL ${f.list} ${f.name}: ${f.reason}: ${f.detail}`);
-  // A list may grow and may not shrink; a name whose instance the corpus has lost had to leave.
+  // A list may grow and may not shrink; a name that its list may not hold any more had to leave it.
   const shrink = compareWithRevision(lists, old, facts);
+  const leavers = [
+    ...shrink.removed.map(r => ({ name: r.name, from: r.list, went: `left ${r.list}` })),
+    ...shrink.moved.map(m => ({ name: m.name, from: m.from, went: `moved from ${m.from} to ${m.to}` })),
+  ];
+  const leftFrom = (list: Kind) => leavers.filter(l => l.from === list).map(l => l.name);
+  // What the list that a name left has against the name now; no entry where that list could still hold it.
+  const against = new Map<string, string>();
+  for (const f of checkLists({ level: lists.level, E: leftFrom("E"), C: leftFrom("C") }, facts)) {
+    against.set(f.name, `${f.reason}: ${f.detail}`);
+  }
   const losses = [
-    ...shrink.removed.filter(r => r.stillAnInstance).map(r => `${r.name} left ${r.list}`),
-    ...shrink.moved.map(m => `${m.name} moved from ${m.from} to ${m.to}`),
+    ...leavers.filter(l => !against.has(l.name)).map(l => `${l.name} ${l.went}`),
     ...(shrink.levelLowered ? [`the level was ${old?.level} and is ${lists.level}`] : []),
   ];
   if (o.since !== undefined && old === undefined) {
     say(`${o.since} has no ${basename(expectationsPath)}: no name can have left it`);
   }
-  for (const r of shrink.removed.filter(r => !r.stillAnInstance)) {
-    say(`  since ${o.since}: ${r.name} left ${r.list}, and the corpus has no instance of this name now`);
+  for (const l of leavers.filter(l => against.has(l.name))) {
+    say(`  since ${o.since}: ${l.name} ${l.went}; ${l.from} may not hold it: ${against.get(l.name)}`);
   }
   for (const loss of losses) say(`  FAIL since ${o.since}: ${loss}`);
   if (checked === undefined) return notInstances.length > 0 || losses.length > 0 ? 1 : 0;
@@ -608,10 +667,17 @@ async function main(argv: readonly string[]): Promise<number> {
   const passes = (fact: Fact) => resultOf.get(fact.name)!.outcome === "pass";
   const cellOf = (all: readonly Fact[]): Cell => [all.filter(passes).length, all.length];
   const ratio = ([pass, all]: Cell) => `${pass} of ${all}`;
-  say(`pass ${ratio(cellOf(ran))}: E ${ratio(cellOf(ranE))}, C ${ratio(cellOf(ranC))}`);
-  const counted = outcomes.map(outcome => [outcome, results.filter(r => r.outcome === outcome).length] as const);
-  const byOutcome = counted.filter(([, n]) => n > 0);
-  if (byOutcome.length > 0) say(`by outcome: ${byOutcome.map(([outcome, n]) => `${outcome} ${n}`).join(", ")}`);
+  // The two classes are never one number: a check that reports nothing passes every instance of C and none of E.
+  say(`pass: E ${ratio(cellOf(ranE))}, C ${ratio(cellOf(ranC))}`);
+  const outcomesOf = (all: readonly Fact[]) => {
+    const counted = countBy(all, fact => resultOf.get(fact.name)!.outcome);
+    return outcomes.filter(outcome => counted.has(outcome)).map(outcome => [outcome, counted.get(outcome)!] as const);
+  };
+  const byOutcome = { E: outcomesOf(ranE), C: outcomesOf(ranC) };
+  for (const kind of ["E", "C"] as const) {
+    const counted = byOutcome[kind].map(([outcome, n]) => `${outcome} ${n}`);
+    if (counted.length > 0) say(`by outcome, ${kind}: ${counted.join(", ")}`);
+  }
   // The plain format of a compiler holds the first section of a baseline and no more: such a match is counted apart.
   const headerOnly = results.filter(r => r.headerOnly === true).length;
   if (headerOnly > 0) say(`first section alone: ${headerOnly} instances, none of which is a pass`);
@@ -626,8 +692,9 @@ async function main(argv: readonly string[]): Promise<number> {
     for (const [reason, n] of reasons.slice(0, 10)) say(`  ${String(n).padStart(6)}  ${reason}`);
     if (reasons.length > 10) say(`  and ${reasons.length - 10} more reasons in the report`);
   }
+  // An instance counts once for a part, however many times its check reached the part.
   const standIns = countBy(
-    results.flatMap(r => r.standIns ?? []),
+    results.flatMap(r => [...new Set(r.standIns ?? [])]),
     name => name,
   );
   if (standIns.size > 0) {
@@ -695,7 +762,7 @@ async function main(argv: readonly string[]): Promise<number> {
     `listed: E ${lists.E.length}, C ${lists.C.length}; of them run ${listedAndRun}, not passing ${notPassing.length}`,
   );
   for (const f of notPassing) say(`  FAIL ${f.list} ${f.name}: ${f.reason}: ${f.detail.split("\n")[0]}`);
-  // A listed name of a case that was not read counts for its directory as what its list says it is: an instance that runs.
+  // A listed name of a case that was not read counts for its directory as what its list says it is: an instance that runs. It has no outcome, so the plan asks no rule about it.
   const known = new Map<string, InstanceFacts>(facts);
   for (const kind of ["E", "C"] as const) {
     for (const name of lists[kind]) {
@@ -730,10 +797,9 @@ async function main(argv: readonly string[]): Promise<number> {
       run: ran.length,
       skipped,
       invalid,
-      pass: cellOf(ran)[0],
       E: cellOf(ranE),
       C: cellOf(ranC),
-      outcomes: Object.fromEntries(byOutcome),
+      outcomes: { E: Object.fromEntries(byOutcome.E), C: Object.fromEntries(byOutcome.C) },
       headerOnly,
     },
     directories: Object.fromEntries(directories),
@@ -741,7 +807,15 @@ async function main(argv: readonly string[]): Promise<number> {
     codesUnread,
     standIns: Object.fromEntries(mostFirst(standIns)),
     notRun: Object.fromEntries(mostFirst(notRun)),
-    listed: { E: lists.E.length, C: lists.C.length, run: listedAndRun, notInstances, notPassing, since: shrink },
+    listed: {
+      E: lists.E.length,
+      C: lists.C.length,
+      run: listedAndRun,
+      notInstances,
+      notPassing,
+      since: shrink,
+      losses,
+    },
     notListed: planned.added,
     refused: planned.refused,
     updated: o.update && added > 0,

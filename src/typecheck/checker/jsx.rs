@@ -668,7 +668,7 @@ pub struct JsxElaborationElement {
     pub error_node: NodeId,
     pub inner_expression: NodeId,
     pub name_type: TypeId,
-    pub create_diagnostic: bool,
+    pub create_diagnostic: bool, // Optional: creates a custom diagnostic for this element
 }
 
 // The iterator of generateJsxChildren as its state: `next` runs the loop up to the next yield, so the literal type of each child is made when the consumer asks for it.

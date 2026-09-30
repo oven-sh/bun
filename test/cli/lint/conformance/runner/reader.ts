@@ -83,6 +83,8 @@ interface Section {
   contentLines: string[];
   entries: Entry[];
   unit?: TestFile;
+  // The places of this file that the text names, in the first section and in the related lines of every section.
+  places: Required<PrintedPosition>[];
 }
 
 // A name does not start with a space: a line of a chain does.
@@ -187,7 +189,7 @@ export function readErrorBaseline(rules: Rules, text: string, options: ReadOptio
       lines.push(bodyLines[i]);
       i++;
     }
-    sections.push({ name: m[1], count: Number(m[2]), lines, contentLines: [], entries: [] });
+    sections.push({ name: m[1], count: Number(m[2]), lines, contentLines: [], entries: [], places: [] });
   }
 
   if (options.units !== undefined) {
@@ -213,18 +215,41 @@ export function readErrorBaseline(rules: Rules, text: string, options: ReadOptio
         `header of ${section.name} counts ${section.count}, the first section has ${section.entries.length}`,
       );
     }
+    // A masked position does not say which line the squiggle lines follow, and a squiggle line without tildes looks like a source line.
+    if (section.entries.some(e => e.line === undefined || e.character === undefined)) {
+      throw new ReadError(`masked position in a section: ${section.name}`);
+    }
+  }
+
+  const sectionOf = sectionLookup(rules, sections);
+  const named = (fileName: string | undefined, line: number | undefined, character: number | undefined): void => {
+    if (fileName === undefined || line === undefined || character === undefined) return;
+    const k = sectionOf(fileName);
+    if (k >= 0) sections[k].places.push({ line, character });
+  };
+  for (const e of entries) {
+    named(e.fileName, e.line, e.character);
+    for (const r of e.related) {
+      named(r.fileName, r.line, r.character);
+      // The span of the pretty form is read from the last line of its snippet.
+      named(r.fileName, r.snippet?.lastLine, 1);
+    }
+  }
+  for (const line of bodyLines) {
+    const m = line.startsWith("!!! related TS") ? relatedLine.exec(line) : null;
+    if (m !== null) named(m[2], printedNumber(m[3]), printedNumber(m[4]));
   }
 
   sections.forEach((section, index) => readSection(rules, section, index, decisions));
 
   // With the units the text of every file is known; without them the source lines are joined with the first line break that fits.
-  if (options.units !== undefined) return build(rules, pretty, entries, sections, "", decisions);
+  if (options.units !== undefined) return build(rules, pretty, entries, sections, sectionOf, "", decisions);
   const given = options.contentNewLines;
   const newLines = given !== undefined && given.length > 0 ? given : ["\n", "\r\n"];
   let firstError: unknown;
   for (const contentNewLine of newLines) {
     try {
-      const result = build(rules, pretty, entries, sections, contentNewLine, decisions.slice());
+      const result = build(rules, pretty, entries, sections, sectionOf, contentNewLine, decisions.slice());
       if (contentNewLine !== newLines[0]) {
         result.decisions.push(`source lines joined with ${JSON.stringify(contentNewLine)}`);
       }
@@ -240,6 +265,25 @@ export function readErrorBaseline(rules: Rules, text: string, options: ReadOptio
 function unitMatches(rules: Rules, unitName: string, sectionName: string): boolean {
   if (unitName === sectionName) return true;
   return comparePathsOf(rules, unitName, realName(rules, sectionName, true), caseInsensitive) === 0;
+}
+
+// The section of the file of a name: the last section of that name, else the last one whose name compares equal; -1 when there is none.
+function sectionLookup(rules: Rules, sections: Section[]): (name: string) => number {
+  const known = new Map<string, number>();
+  return name => {
+    let found = known.get(name);
+    if (found === undefined) {
+      found = -1;
+      for (let k = 0; k < sections.length; k++) if (sections[k].name === name) found = k;
+      if (found < 0) {
+        for (let k = 0; k < sections.length; k++) {
+          if (comparePathsOf(rules, name, sections[k].name, caseInsensitive) === 0) found = k;
+        }
+      }
+      known.set(name, found);
+    }
+    return found;
+  };
 }
 
 function isSectionHead(line: string): boolean {
@@ -606,7 +650,7 @@ function readSection(rules: Rules, section: Section, sectionIndex: number, decis
   }
 }
 
-// The first squiggle line of a diagnostic must be where the first section says that the diagnostic starts.
+// The checks of one attempt: the first squiggle line of a diagnostic is where the first section says that the diagnostic starts, and every place that the text names is in the file.
 function checkSection(rules: Rules, section: Section, r: SectionResult): void {
   const model = rules.model;
   const content = section.unit !== undefined ? section.unit.content : r.contentLines.join("\n");
@@ -636,6 +680,16 @@ function checkSection(rules: Rules, section: Section, r: SectionResult): void {
       );
     }
   });
+  // A chain that took source lines leaves the file without its last lines and puts other lines at the places that the text names. Joined with CR LF, a line has one position more than here.
+  const beyond = section.unit === undefined ? 1 : 0;
+  for (const { line, character } of section.places) {
+    if (line > starts.length) throw new ReadError(`line ${line} is outside ${section.name}`);
+    const at = model.advanceUTF16(content, starts[line - 1], character - 1, content.length);
+    if (at === undefined) throw new ReadError(`column ${character} is no position of line ${line} of ${section.name}`);
+    if (line < starts.length && at >= starts[line] + beyond) {
+      throw new ReadError(`column ${character} is after line ${line} of ${section.name}`);
+    }
+  }
 }
 
 function readSectionOnce(
@@ -697,8 +751,9 @@ function readSectionOnce(
       let expects: boolean;
       if (state[k] === 1 || last) {
         expects = true;
-      } else if (e.line !== undefined) {
-        expects = e.line - 1 <= lineIndex;
+      } else {
+        // No position of a section is masked: readErrorBaseline refuses one.
+        expects = e.line! - 1 <= lineIndex;
         if (!expects) {
           look();
           if (looksLikeSquiggle && messageFollows) {
@@ -710,11 +765,6 @@ function readSectionOnce(
             );
           }
         }
-      } else {
-        // Masked position: a line of tildes, or a line of white space before a message, is a squiggle line.
-        look();
-        expects = looksLikeSquiggle && (lines[i].includes("~") || messageFollows);
-        if (expects) decisions.push(`masked position in ${section.name}: a squiggle line is taken by its look`);
       }
       if (!expects) continue;
       look();
@@ -762,6 +812,7 @@ function build(
   pretty: boolean,
   entries: Entry[],
   sections: Section[],
+  sectionOf: (name: string) => number,
   contentNewLine: string,
   decisions: string[],
 ): ParsedErrorBaseline {
@@ -777,17 +828,6 @@ function build(
   }));
   const lineStarts = sectionFiles.map(f => model.lineStarts(f.text));
   sectionFiles.forEach((f, k) => (f.lineMap = lineStarts[k]));
-
-  // The file of a name: the last section of that name, else the last one whose name compares equal.
-  const sectionOf = (name: string): number => {
-    let found = -1;
-    for (let k = 0; k < sections.length; k++) if (sections[k].name === name) found = k;
-    if (found >= 0) return found;
-    for (let k = 0; k < sections.length; k++) {
-      if (comparePathsOf(rules, name, sections[k].name, caseInsensitive) === 0) found = k;
-    }
-    return found;
-  };
 
   const madeUp = new Map<string, MadeUpFile>();
   const namedFiles = new Map<string, FileLike>();
@@ -857,7 +897,7 @@ function build(
       locate(e, d, (file, pos, section) => {
         d.file = file;
         d.pos = pos;
-        d.end = Math.max(pos, 0);
+        d.end = pos;
         if (section >= 0) {
           spanFromSquiggles(rules, e, d, section, sections, lineStarts, decisions);
         } else {
@@ -957,34 +997,69 @@ function spanFromSquiggles(
   const model = rules.model;
   const own = e.squiggles.filter(s => s.section === section);
   if (own.length === 0) throw new ReadError(`no squiggle line for a diagnostic in ${e.fileName}`);
-  const first = own[0];
   const last = own[own.length - 1];
   if (!last.ended) throw new ReadError("the last squiggle line of a diagnostic has no message");
+  const name = sections[section].name;
+  const text = d.file!.text;
   const starts = lineStarts[section];
   const content = sections[section].contentLines;
-  if (d.pos < 0) {
-    const at = model.advanceSquiggle(content[first.lineIndex], 0, model.prefixCount(first.prefix));
-    if (at === undefined) throw new ReadError("squiggle prefix is longer than its line");
-    d.pos = starts[first.lineIndex] + at;
-    decisions.push(`masked position in ${e.fileName}: the start is read from the squiggle line`);
+  // A line break inside a line gives the writer more line starts than lines: the start that it takes for a later line is not where that line is.
+  const shifted = starts.length > content.length;
+  // Tildes that stop before the end of their line stop at the end of the span, tildes up to the end of their line stop at it or before it: the span is taken to end at the last of these stops.
+  let end = d.pos;
+  let determined = false;
+  let displaced = false;
+  for (const s of own) {
+    const line = content[s.lineIndex];
+    const lineStart = starts[s.lineIndex];
+    const inPlace = !shifted || text.startsWith(line, lineStart);
+    if (!inPlace) displaced = true;
+    const squiggleStart = Math.max(0, d.pos - lineStart);
+    if (squiggleStart > line.length) continue;
+    const stop = model.advanceSquiggle(line, squiggleStart, s.tildes);
+    if (stop === undefined) throw new ReadError("more tildes than characters");
+    end = Math.max(end, lineStart + stop);
+    if (inPlace && stop < line.length) determined = true;
   }
-  const line = content[last.lineIndex];
-  const thisLineStart = starts[last.lineIndex];
-  const squiggleStart = Math.max(0, d.pos - thisLineStart);
-  if (squiggleStart > line.length) {
-    if (rules.name !== "tsc" || last.tildes > 0) throw new ReadError("squiggle starts after the end of its line");
-    d.end = d.pos;
-    return;
-  }
-  const stop = model.advanceSquiggle(line, squiggleStart, last.tildes);
-  if (stop === undefined) throw new ReadError("more tildes than characters");
-  d.end = Math.max(d.pos, thisLineStart + stop);
-  if (stop === line.length && last.tildes > 0) {
-    const next = last.lineIndex + 1 < starts.length ? starts[last.lineIndex + 1] : thisLineStart + stop;
-    if (next - (thisLineStart + stop) > 1) {
-      decisions.push("tildes to the end of a line that ends in CR LF: the span is taken to end before the CR");
+  d.end = end;
+  // With shifted line starts the last squiggle line alone does not have the end: every line must be the one that the writer makes of the span.
+  const lastLine = content.length - 1;
+  for (const s of own) {
+    const tildes = tildesOf(rules, content[s.lineIndex], starts[s.lineIndex], d.pos, end);
+    if (tildes === undefined) throw new ReadError("squiggle starts after the end of its line");
+    const ends = s.lineIndex === lastLine || starts[s.lineIndex + 1] > end;
+    if (tildes !== s.tildes || ends !== s.ended) {
+      throw new ReadError(
+        `section ${name}: the squiggle lines of ${e.line},${e.character} do not agree on the end of the span`,
+      );
     }
   }
+  if (determined) return;
+  // A later end prints the same as long as the message stays at its line.
+  const limit = last.lineIndex === lastLine ? text.length : starts[last.lineIndex + 1] - 1;
+  if (shifted) {
+    // A slice of a line that is not where the writer takes it to be can cut a character: another end can have the same tildes.
+    if (displaced || end < limit) {
+      decisions.push(
+        `${name} has more line starts than lines: the span of ${e.line},${e.character} is taken to end where its tildes end`,
+      );
+    }
+  } else if (end < limit && last.tildes > 0) {
+    decisions.push("tildes to the end of a line that ends in CR LF: the span is taken to end before the CR");
+  }
+}
+
+// The tildes that iterateErrorBaseline writes below a line for a span; undefined where the reference panics.
+function tildesOf(rules: Rules, line: string, lineStart: number, pos: number, end: number): number | undefined {
+  const squiggleStart = Math.max(0, pos - lineStart);
+  const length = end - pos - Math.max(0, lineStart - pos);
+  if (rules.name === "tsc") {
+    const count = Math.min(length, line.length - squiggleStart) + 1;
+    return count < 0 ? undefined : Math.max(0, count - 1);
+  }
+  if (squiggleStart > line.length) return undefined;
+  const squiggleEnd = Math.max(squiggleStart, Math.min(squiggleStart + length, line.length));
+  return rules.model.squiggleCount(line.slice(squiggleStart, squiggleEnd));
 }
 
 function spanFromSnippet(rules: Rules, snippet: Snippet, d: Diagnostic, starts: number[], decisions: string[]): void {

@@ -36,8 +36,6 @@ export interface TextModel {
   advanceSquiggle(text: string, from: number, count: number): number | undefined;
   // Spaces before the tildes: every character that is not white space becomes one space.
   blankNonWhitespace(slice: string): string;
-  // Length of a squiggle prefix in the unit of advanceSquiggle.
-  prefixCount(prefix: string): number;
   // Matches a squiggle line after its four spaces of indent.
   readonly squigglePattern: RegExp;
   // Trim of a code snippet line.
@@ -103,7 +101,6 @@ export const utf8Model: TextModel = {
     return pos;
   },
   blankNonWhitespace: replaceNonWhitespace,
-  prefixCount: prefix => prefix.length,
   squigglePattern: /^[\t\n\f\r ]*~*$/,
   trimEnd: trimRightSpace,
   compare: compareStrings,
@@ -126,7 +123,6 @@ export const utf16Model: TextModel = {
   squiggleCount: slice => slice.length,
   advanceSquiggle: (text, from, count) => (from + count <= text.length ? from + count : undefined),
   blankNonWhitespace: slice => slice.replace(/\S/g, " "),
-  prefixCount: prefix => prefix.length,
   squigglePattern: /^\s*~*$/,
   trimEnd: line => line.trimEnd(),
   // ts.compareStringsCaseSensitive compares code units.

@@ -13,8 +13,6 @@ pub(crate) trait TypeSink {
     /// What one type leaves behind.
     type Out: Default;
 
-    /// Binding level of the type after the ":" of a conditional type.
-    const CONDITIONAL_FALSE_LEVEL: Level;
     /// No type read yet.
     const NONE: Self::Out;
     /// Whether what the other sinks let pass is an error.
@@ -280,7 +278,6 @@ pub(crate) struct Discard;
 impl TypeSink for Discard {
     type Out = ();
 
-    const CONDITIONAL_FALSE_LEVEL: Level = Level::Lowest;
     const NONE: () = ();
     const STRICT: bool = false;
     const BUILDS: bool = false;
@@ -356,7 +353,6 @@ pub(crate) struct DecoratorMetadata;
 impl TypeSink for DecoratorMetadata {
     type Out = Metadata;
 
-    const CONDITIONAL_FALSE_LEVEL: Level = Level::BitwiseAnd;
     const NONE: Metadata = Metadata::MNone;
     const STRICT: bool = false;
     const BUILDS: bool = false;
@@ -743,7 +739,6 @@ fn led(lx: &Lexer<'_>, node: ts::Type, start: u32, is_union: bool) -> ts::Type {
 impl TypeSink for Build {
     type Out = Option<ts::Type>;
 
-    const CONDITIONAL_FALSE_LEVEL: Level = Level::Lowest;
     const NONE: Option<ts::Type> = None;
     const STRICT: bool = true;
     const BUILDS: bool = true;

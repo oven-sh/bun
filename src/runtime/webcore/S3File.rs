@@ -198,6 +198,8 @@ pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             .throw());
     };
 
+    // A file that `resolve_s3_blob` makes from a path has the options of this call.
+    let given_a_file = matches!(path_or_blob, PathOrBlob::Blob(_));
     let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
     // `write_file_internal` takes `&mut PathOrBlob`; rewrap the resolved blob.
     let mut blob_internal = PathOrBlob::Blob(blob);
@@ -207,7 +209,7 @@ pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
         data,
         blob::WriteFileOptions {
             mkdirp_if_not_exists: Some(false),
-            extra_options: options,
+            extra_options: if given_a_file { options } else { None },
             ..Default::default()
         },
     )
@@ -269,6 +271,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     default_acl: Option<s3::ACL>,
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
+    default_content: Option<&std::sync::Arc<s3::S3ContentHeaders>>,
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
@@ -286,7 +289,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
-    finish_s3_blob(global, store, &aws_options, options)
+    finish_s3_blob(global, store, &aws_options, options, default_content)
 }
 
 pub(crate) fn construct_s3_file_with_s3_credentials(
@@ -306,7 +309,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
     )?;
     let credentials = std::mem::take(&mut aws_options.credentials);
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
-    finish_s3_blob(global, store, &aws_options, options)
+    finish_s3_blob(global, store, &aws_options, options, None)
 }
 
 /// Shared constructor epilogue: copies the parsed per-request settings onto
@@ -317,12 +320,14 @@ fn finish_s3_blob(
     store: RefPtr<Store>,
     aws_options: &s3::S3CredentialsWithOptions,
     options: Option<JSValue>,
+    default_content: Option<&std::sync::Arc<s3::S3ContentHeaders>>,
 ) -> JsResult<Blob> {
     let s3 = Store::data_mut(&store).as_s3_mut();
     s3.options = aws_options.options;
     s3.acl = aws_options.acl;
     s3.storage_class = aws_options.storage_class;
     s3.request_payer = aws_options.request_payer;
+    s3.content = s3::S3ContentHeaders::from_options(aws_options, default_content);
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {

@@ -1,5 +1,6 @@
 use core::mem::size_of;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -1248,6 +1249,42 @@ pub struct S3CredentialsWithOptions {
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
+}
+
+/// `contentDisposition` and `contentEncoding` of the options that a client or a file was made
+/// with. Each upload of the file sends them, unless the call has a value of its own.
+/// The bytes are owned: a blob store keeps the value, and any thread can release a blob store.
+pub struct S3ContentHeaders {
+    pub content_disposition: Option<Box<[u8]>>,
+    pub content_encoding: Option<Box<[u8]>>,
+}
+
+impl S3ContentHeaders {
+    /// The values of `options`. For a value that `options` does not have, the one of `defaults`.
+    pub fn from_options(
+        options: &S3CredentialsWithOptions,
+        defaults: Option<&Arc<S3ContentHeaders>>,
+    ) -> Option<Arc<S3ContentHeaders>> {
+        let content_disposition = options.content_disposition.as_deref();
+        let content_encoding = options.content_encoding.as_deref();
+        if content_disposition.is_none() && content_encoding.is_none() {
+            return defaults.cloned();
+        }
+        Some(Arc::new(S3ContentHeaders {
+            content_disposition: content_disposition
+                .or_else(|| defaults.and_then(|d| d.content_disposition.as_deref()))
+                .map(Box::from),
+            content_encoding: content_encoding
+                .or_else(|| defaults.and_then(|d| d.content_encoding.as_deref()))
+                .map(Box::from),
+        }))
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        size_of::<S3ContentHeaders>()
+            + self.content_disposition.as_deref().map_or(0, <[u8]>::len)
+            + self.content_encoding.as_deref().map_or(0, <[u8]>::len)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

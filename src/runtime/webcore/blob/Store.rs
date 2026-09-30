@@ -67,6 +67,14 @@ pub(crate) trait S3Ext {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
+    /// [`Self::get_credentials_with_options`] for an upload. A `contentDisposition` or
+    /// `contentEncoding` that `options` does not have is the one that the file was made with.
+    /// The other calls (`presign()`, `unlink()`, `list()`) take these two from `options` only.
+    fn upload_options(
+        &self,
+        options: Option<JSValue>,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
     fn unlink(
         &self,
@@ -266,6 +274,22 @@ impl S3Ext for S3 {
             self.request_payer,
             global_object,
         )
+    }
+
+    fn upload_options(
+        &self,
+        options: Option<JSValue>,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<S3CredentialsWithOptions> {
+        let mut upload = self.get_credentials_with_options(options, global_object)?;
+        let owned = |value: &[u8]| bun_core::Utf8Bytes::Owned(value.to_vec());
+        if upload.content_disposition.is_none() {
+            upload.content_disposition = self.content_disposition().map(owned);
+        }
+        if upload.content_encoding.is_none() {
+            upload.content_encoding = self.content_encoding().map(owned);
+        }
+        Ok(upload)
     }
 
     fn unlink(

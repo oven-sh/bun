@@ -1381,7 +1381,7 @@ impl BlobExt for Blob {
             let store::Data::S3(s3) = &store.data else {
                 unreachable!()
             };
-            let aws_options = match s3.get_credentials_with_options(extra_options, cx.global()) {
+            let aws_options = match s3.upload_options(extra_options, cx.global()) {
                 Ok(o) => o,
                 Err(err) => {
                     return Ok(JSPromise::rejected_promise_with_caught_exception(
@@ -1633,8 +1633,14 @@ impl BlobExt for Blob {
                     &global_this.js_thread(context),
                     credentials_with_options.options,
                     self.content_type_or_mime_type(),
-                    content_disposition_str.as_ref().map(|s| s.slice()),
-                    content_encoding_str.as_ref().map(|s| s.slice()),
+                    content_disposition_str
+                        .as_ref()
+                        .map(|s| s.slice())
+                        .or_else(|| s3.content_disposition()),
+                    content_encoding_str
+                        .as_ref()
+                        .map(|s| s.slice())
+                        .or_else(|| s3.content_encoding()),
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
                 );
@@ -1646,8 +1652,8 @@ impl BlobExt for Blob {
                 &global_this.js_thread(context),
                 Default::default(),
                 self.content_type_or_mime_type(),
-                None,
-                None,
+                s3.content_disposition(),
+                s3.content_encoding(),
                 None,
                 s3.request_payer,
             );
@@ -4243,17 +4249,16 @@ fn write_file_with_empty_source_to_destination(
         }
         store::Data::S3(s3) => {
             // create empty file
-            let aws_options =
-                match s3.get_credentials_with_options(options.extra_options, cx.global()) {
-                    Ok(o) => o,
-                    Err(err) => {
-                        return Ok(JSPromise::rejected_promise_with_caught_exception(
-                            cx.global(),
-                            err,
-                        )?
-                        .to_js());
-                    }
-                };
+            let aws_options = match s3.upload_options(options.extra_options, cx.global()) {
+                Ok(o) => o,
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        cx.global(),
+                        err,
+                    )?
+                    .to_js());
+                }
+            };
 
             struct Wrapper {
                 promise: jsc::JSPromiseStrong,
@@ -4457,8 +4462,7 @@ pub(crate) fn write_file_with_source_destination(
         return Ok(JSPromise::resolved_promise_value(cx.global(), blob_value));
     } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();
-        let aws_options = match s3.get_credentials_with_options(options.extra_options, cx.global())
-        {
+        let aws_options = match s3.upload_options(options.extra_options, cx.global()) {
             Ok(o) => o,
             Err(err) => {
                 return Ok(
@@ -4841,8 +4845,7 @@ pub(crate) fn write_file_internal(
                             .expect("infallible: store present")
                             .clone();
                         let s3 = dest_store.data.as_s3();
-                        let aws_options =
-                            s3.get_credentials_with_options(options.extra_options, cx.global())?;
+                        let aws_options = s3.upload_options(options.extra_options, cx.global())?;
                         // SAFETY: exclusive borrow scoped to the call (may run JS).
                         let _ = unsafe { (*body_value).to_readable_stream(cx) }?;
                         let readable_opt = get_stream().or_else(|| {

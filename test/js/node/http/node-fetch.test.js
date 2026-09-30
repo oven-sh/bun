@@ -1,11 +1,13 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
-import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import fetch2, { AbortError, fetch, FetchBaseError, FetchError, Headers, Request, Response } from "node-fetch";
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 import * as stream from "stream";
 
 import { afterEach, expect, test } from "bun:test";
+import { deadPort } from "../../bun/http/proxy-stress-helpers";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -410,6 +412,191 @@ test("node-fetch fetch() rejects for a Writable request body", async () => {
   using server = serveRequestBody();
   const response = fetch2(server.url, { method: "POST", body: discard() });
   expect(await response.catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+// node-fetch rejects with its own AbortError and FetchError, not the native fetch() errors:
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L70
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L108
+test("node-fetch fetch() rejects with AbortError when the signal aborts", async () => {
+  const gate = Promise.withResolvers();
+  using server = Bun.serve({ port: 0, fetch: () => gate.promise.then(() => new Response("late")) });
+  const controller = new AbortController();
+  const pending = fetch2(server.url, { signal: controller.signal });
+  controller.abort();
+  const error = await pending.catch(e => e);
+  gate.resolve();
+  expect(error).toBeInstanceOf(AbortError);
+  expect({ name: error.name, type: error.type, message: error.message }).toEqual({
+    name: "AbortError",
+    type: "aborted",
+    message: "The operation was aborted.",
+  });
+
+  const preAborted = await fetch2(server.url, { signal: AbortSignal.abort(new Error("custom reason")) }).catch(e => e);
+  expect(preAborted).toBeInstanceOf(AbortError);
+  expect(preAborted.type).toBe("aborted");
+});
+
+test("node-fetch fetch() rejects with a system FetchError when the connection is refused", async () => {
+  using dead = await deadPort();
+  const url = `http://127.0.0.1:${dead.port}/`;
+  const error = await fetch2(url).catch(e => e);
+  expect(error).toBeInstanceOf(FetchError);
+  expect(error).toBeInstanceOf(FetchBaseError);
+  expect(error).not.toBeInstanceOf(TypeError);
+  expect({
+    name: error.name,
+    type: error.type,
+    code: error.code,
+    errno: error.errno,
+    erroredSysCall: error.erroredSysCall,
+    message: error.message,
+    string: String(error),
+  }).toEqual({
+    name: "FetchError",
+    type: "system",
+    code: "ECONNREFUSED",
+    errno: "ECONNREFUSED",
+    erroredSysCall: "connect",
+    message: `request to ${url} failed, reason: ECONNREFUSED: Unable to connect. Is the computer able to access the url?`,
+    string: `FetchError: request to ${url} failed, reason: ECONNREFUSED: Unable to connect. Is the computer able to access the url?`,
+  });
+});
+
+test("node-fetch fetch() rejects with a redirect FetchError", async () => {
+  using server = Bun.serve({ port: 0, fetch: req => Response.redirect(req.url, 302) });
+  const url = server.url.href;
+  const noRedirect = await fetch2(url, { redirect: "error" }).catch(e => e);
+  expect(noRedirect).toBeInstanceOf(FetchError);
+  expect({ type: noRedirect.type, code: noRedirect.code, message: noRedirect.message }).toEqual({
+    type: "no-redirect",
+    code: undefined,
+    message: `uri requested responds with a redirect, redirect mode is set to error: ${url}`,
+  });
+
+  const maxRedirect = await fetch2(url).catch(e => e);
+  expect(maxRedirect).toBeInstanceOf(FetchError);
+  expect({ type: maxRedirect.type, message: maxRedirect.message }).toEqual({
+    type: "max-redirect",
+    message: `maximum redirect reached at: ${url}`,
+  });
+});
+
+test("node-fetch body read rejects with AbortError when the signal aborts during the body", async () => {
+  const secondChunk = Promise.withResolvers();
+  using server = serveTwoChunks(secondChunk.promise);
+  const controller = new AbortController();
+
+  const res = await fetch2(server.url, { signal: controller.signal });
+  const text = res.text();
+  controller.abort();
+  const error = await text.catch(e => e);
+  secondChunk.resolve();
+  expect(error).toBeInstanceOf(AbortError);
+  expect({ name: error.name, type: error.type }).toEqual({ name: "AbortError", type: "aborted" });
+});
+
+test("node-fetch body stream emits AbortError when the signal aborts during the body", async () => {
+  const secondChunk = Promise.withResolvers();
+  using server = serveTwoChunks(secondChunk.promise);
+  const controller = new AbortController();
+
+  const res = await fetch2(server.url, { signal: controller.signal });
+  const body = res.body;
+  const failed = once(body, "error").then(([e]) => e);
+  body.resume();
+  await once(body, "data");
+  controller.abort();
+  const error = await failed;
+  secondChunk.resolve();
+  expect(error).toBeInstanceOf(AbortError);
+  expect(error.type).toBe("aborted");
+});
+
+test("node-fetch body read rejects with a system FetchError when the connection drops", async () => {
+  // Sends the headers and one chunk, then drops the connection.
+  const server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.write(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nfirst\r\n",
+        () => socket.destroy(),
+      );
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/`;
+    const res = await fetch2(url);
+    const error = await res.text().catch(e => e);
+    expect(error).toBeInstanceOf(FetchError);
+    expect({
+      name: error.name,
+      type: error.type,
+      code: error.code,
+      errno: error.errno,
+      message: error.message,
+    }).toEqual({
+      name: "FetchError",
+      type: "system",
+      code: "ECONNRESET",
+      errno: "ECONNRESET",
+      message: `Invalid response body while trying to fetch ${url}: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass \`verbose: true\` in the second argument to fetch()`,
+    });
+
+    // The node stream reports the error of the transport as it is.
+    const streamed = await fetch2(url);
+    const body = streamed.body;
+    const failed = once(body, "error").then(([e]) => e);
+    body.resume();
+    const streamError = await failed;
+    expect(streamError).not.toBeInstanceOf(FetchError);
+    expect(streamError.code).toBe("ECONNRESET");
+  } finally {
+    server.close();
+  }
+});
+
+test("node-fetch fetch() keeps a TypeError for a bad argument", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response("unreached") });
+  const invalidUrl = await fetch2("/relative").catch(e => e);
+  expect(invalidUrl).toBeInstanceOf(TypeError);
+  expect(invalidUrl.code).toBe("ERR_INVALID_URL");
+
+  const badScheme = await fetch2("ftp://example.test/").catch(e => e);
+  expect(badScheme).toBeInstanceOf(TypeError);
+  expect(badScheme).not.toBeInstanceOf(FetchError);
+
+  const badHeader = await fetch2(server.url, { headers: { "a b": "c" } }).catch(e => e);
+  expect(badHeader).toBeInstanceOf(TypeError);
+  expect(badHeader).not.toBeInstanceOf(FetchError);
+});
+
+test("node-fetch FetchError and AbortError match node-fetch's error classes", () => {
+  const error = new FetchError("request to http://example.test/ failed", "system", {
+    code: "ECONNRESET",
+    syscall: "read",
+  });
+  expect(error).toBeInstanceOf(Error);
+  expect(error.name).toBe("FetchError");
+  expect(String(error)).toBe("FetchError: request to http://example.test/ failed");
+  expect(Object.prototype.toString.call(error)).toBe("[object FetchError]");
+  expect({ type: error.type, code: error.code, errno: error.errno, erroredSysCall: error.erroredSysCall }).toEqual({
+    type: "system",
+    code: "ECONNRESET",
+    errno: "ECONNRESET",
+    erroredSysCall: "read",
+  });
+
+  const plain = new FetchError("invalid json", "invalid-json");
+  expect(plain.name).toBe("FetchError");
+  expect("code" in plain).toBe(false);
+
+  const aborted = new AbortError("The operation was aborted.");
+  expect(aborted).toBeInstanceOf(Error);
+  expect(aborted).toBeInstanceOf(DOMException);
+  expect(aborted.name).toBe("AbortError");
+  expect(aborted.type).toBe("aborted");
 });
 
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {

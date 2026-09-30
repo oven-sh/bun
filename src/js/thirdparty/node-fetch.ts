@@ -61,6 +61,8 @@ const kBody = Symbol("kBody");
 // A fetched response has a body stream even when it has no body (204, HEAD):
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L253-L286
 const kFetched = Symbol("kFetched");
+// The request's signal: an abort during the body read rejects with AbortError too.
+const kSignal = Symbol("kSignal");
 const HeadersPrototype = Headers.prototype;
 
 function closeEmptyBody(controller) {
@@ -80,10 +82,26 @@ function readableFromOldStyleStream(source: import("node:stream").Stream) {
   return passthrough;
 }
 
+// The node stream of a fetched body emits AbortError when the request's signal aborts:
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L70-L79
+let FetchedBody;
+function fetchedBody(response, web) {
+  FetchedBody ??= class FetchedBody extends require("internal/webstreams_adapters")._ReadableFromWeb {
+    destroy(error, callback) {
+      if (error && this[kSignal]?.aborted) error = new AbortError("The operation was aborted.");
+      return super.destroy(error, callback);
+    }
+  };
+  const body = new FetchedBody({ responseBody: true }, web);
+  body[kSignal] = response[kSignal];
+  return body;
+}
+
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
   [kFetched]: boolean | undefined;
+  [kSignal]: AbortSignal | undefined;
 
   constructor(body, init) {
     const { Readable, Stream } = require("node:stream");
@@ -102,10 +120,44 @@ class Response extends WebResponse {
         if (!this[kFetched]) return null;
         web = new ReadableStream({ start: closeEmptyBody });
       }
-      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({ responseBody: true }, web);
+      body = this[kBody] = fetchedBody(this, web);
     }
 
     return body;
+  }
+
+  // A body read that fails rejects with node-fetch's errors:
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/body.js#L225-L249
+  async arrayBuffer() {
+    try {
+      return await super.arrayBuffer();
+    } catch (error) {
+      throw toNodeFetchBodyError(error, this);
+    }
+  }
+
+  async blob() {
+    try {
+      return await super.blob();
+    } catch (error) {
+      throw toNodeFetchBodyError(error, this);
+    }
+  }
+
+  async formData() {
+    try {
+      return await super.formData();
+    } catch (error) {
+      throw toNodeFetchBodyError(error, this);
+    }
+  }
+
+  async text() {
+    try {
+      return await super.text();
+    } catch (error) {
+      throw toNodeFetchBodyError(error, this);
+    }
   }
 
   get headers() {
@@ -117,6 +169,7 @@ class Response extends WebResponse {
     // clone() moved the body to a new web stream, so `body` gets a new node stream, as in node-fetch.
     this[kBody] = undefined;
     if (this[kFetched]) cloned[kFetched] = true;
+    cloned[kSignal] = this[kSignal];
     return cloned;
   }
 
@@ -124,13 +177,13 @@ class Response extends WebResponse {
   // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/body.js#L147-L150
   // The inherited json() resolves null for an empty fetched body (#24955).
   async json() {
-    return JSONParse(await super.text());
+    return JSONParse(await this.text());
   }
 
   // This is a deprecated function in node-fetch
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
-    return new $Buffer(await super.arrayBuffer());
+    return new $Buffer(await this.arrayBuffer());
   }
 
   get type() {
@@ -191,18 +244,63 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-  const response = await nativeFetch.$call(undefined, url, init);
+  const signal = init?.signal ?? url?.signal;
+  let response;
+  try {
+    response = await nativeFetch.$call(undefined, url, init);
+  } catch (error) {
+    throw toNodeFetchError(error, url, signal);
+  }
   Object.setPrototypeOf(response, ResponsePrototype);
   response[kFetched] = true;
+  response[kSignal] = signal;
   return response;
 }
 
-class AbortError extends DOMException {
-  constructor(message) {
-    super(message, "AbortError");
-  }
+// A failure of the transport is a system error and carries `errno`, as node's do. A bad argument
+// (`ERR_INVALID_URL`, `ERR_INVALID_ARG_VALUE`, an invalid header name) or a used body does not.
+function isSystemError(error) {
+  return $isObject(error) && typeof error.errno === "number";
 }
 
+// node-fetch rejects with its own classes once the request started:
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L70
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/index.js#L108-L179
+function toNodeFetchError(error, url, signal) {
+  // An abort rejects with AbortError whatever the signal's reason is.
+  if (signal?.aborted) return new AbortError("The operation was aborted.");
+  if (!isSystemError(error)) return error;
+  const requestUrl = error.path || (typeof url === "string" ? url : (url?.url ?? String(url)));
+  switch (error.code) {
+    case "UnexpectedRedirect":
+      return new FetchError(
+        `uri requested responds with a redirect, redirect mode is set to error: ${requestUrl}`,
+        "no-redirect",
+      );
+    case "TooManyRedirects":
+      return new FetchError(`maximum redirect reached at: ${requestUrl}`, "max-redirect");
+    case "RedirectURLInvalid":
+      return new FetchError(`uri requested responds with an invalid redirect URL: ${requestUrl}`, "invalid-redirect");
+    case "UnsupportedRedirectProtocol":
+      return new FetchError(
+        `uri requested responds with an unsupported redirect URL: ${requestUrl}`,
+        "unsupported-redirect",
+      );
+  }
+  return new FetchError(`request to ${requestUrl} failed, reason: ${error.message}`, "system", error);
+}
+
+function toNodeFetchBodyError(error, response) {
+  if (response[kSignal]?.aborted) return new AbortError("The operation was aborted.");
+  if (!isSystemError(error)) return error;
+  return new FetchError(
+    `Invalid response body while trying to fetch ${response.url}: ${error.message}`,
+    "system",
+    error,
+  );
+}
+
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/base.js
 class FetchBaseError extends Error {
   type: string;
 
@@ -210,12 +308,39 @@ class FetchBaseError extends Error {
     super(message);
     this.type = type;
   }
+
+  get name() {
+    return this.constructor.name;
+  }
+
+  get [Symbol.toStringTag]() {
+    return this.constructor.name;
+  }
 }
 
+// https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/errors/fetch-error.js
 class FetchError extends FetchBaseError {
+  declare code?: string;
+  declare errno?: string;
+  declare erroredSysCall?: string;
+
   constructor(message, type, systemError) {
     super(message, type);
-    this.code = systemError?.code;
+    if (systemError) {
+      this.code = this.errno = systemError.code;
+      this.erroredSysCall = systemError.syscall;
+    }
+  }
+}
+
+// node-fetch's AbortError is a FetchBaseError. This one stays a DOMException so that
+// `error instanceof DOMException` keeps working on Bun, where fetch() rejected with one before.
+class AbortError extends DOMException {
+  type: string;
+
+  constructor(message, type = "aborted") {
+    super(message, "AbortError");
+    this.type = type;
   }
 }
 

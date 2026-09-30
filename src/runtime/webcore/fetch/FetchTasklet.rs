@@ -1423,6 +1423,16 @@ impl FetchTasklet {
             _ => fail.name(),
         };
 
+        // A failed `connect(2)` names its syscall, as the `getaddrinfo` path
+        // above does, so the error has the `node:net` shape.
+        let syscall = match fail {
+            http::Error::ConnectionRefused => BunString::static_("connect"),
+            http::Error::FailedToOpenSocket if self.result.connect_errno != 0 => {
+                BunString::static_("connect")
+            }
+            _ => BunString::EMPTY,
+        };
+
         let message = match fail {
             http::Error::ConnectionClosed => BunString::create_format(format_args!(
                 "{code}: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
@@ -1648,6 +1658,7 @@ impl FetchTasklet {
             code: BunString::static_(code),
             message,
             path,
+            syscall,
             ..Default::default()
         };
 

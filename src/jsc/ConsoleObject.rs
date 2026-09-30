@@ -1429,7 +1429,11 @@ pub fn format2(
             any = true;
 
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            // Only a primitive: `%` formatting a String object or a RegExp would run its `toString`.
+            if matches!(tag.tag, TagPayload::String)
+                && tag.cell == jsc::JSType::String
+                && !fmt.remaining().is_empty()
+            {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
@@ -1451,7 +1455,11 @@ pub fn format2(
             }
             any = true;
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            // Only a primitive: `%` formatting a String object or a RegExp would run its `toString`.
+            if matches!(tag.tag, TagPayload::String)
+                && tag.cell == jsc::JSType::String
+                && !fmt.remaining().is_empty()
+            {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
@@ -2793,6 +2801,16 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
+    fn number_text(buf: &mut [u8; 124], number: f64) -> &[u8] {
+        if number.is_nan() {
+            b"NaN"
+        } else if number.is_infinite() {
+            if number > 0.0 { b"Infinity" } else { b"-Infinity" }
+        } else {
+            bun_core::fmt::FormatDouble::dtoa_with_negative_zero(buf, number)
+        }
+    }
+
     fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
@@ -3531,9 +3549,18 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
+            let mut target = value.get_proxy_internal_field(jsc::ProxyField::Target);
             // Proxy does not allow non-objects here.
             debug_assert!(target.is_cell());
+            // A chain of proxies stands for one value, so it costs one level of
+            // native stack however long it is. It ends at a revoked one.
+            while target.js_type() == jsc::JSType::ProxyObject
+                && target
+                    .get_proxy_internal_field(jsc::ProxyField::Handler)
+                    .is_cell()
+            {
+                target = target.get_proxy_internal_field(jsc::ProxyField::Target);
+            }
             // TODO: if (options.showProxy), print like
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
@@ -3750,12 +3777,15 @@ pub mod formatter {
             if value.is_cell() {
                 let number_name = value.get_class_name(self.global_this)?;
 
-                let number_value =
-                    reader::boxed_primitive(value).to_js_string_view(self.global_this)?;
+                let mut buf = [0u8; 124];
+                let number_value = bstr::BStr::new(number_text(
+                    &mut buf,
+                    reader::boxed_primitive(value).as_number(),
+                ));
 
                 if !number_name.eq_ascii(b"Number") {
                     writer.add_for_new_line(
-                        number_name.length() + number_value.length() + "[Number ():]".len(),
+                        number_name.length() + number_value.len() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3770,7 +3800,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
+                writer.add_for_new_line(number_name.length() + number_value.len() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -3784,32 +3814,15 @@ pub mod formatter {
                 return Ok(());
             }
 
-            let num = value.as_number();
-
-            if num.is_infinite() && num > 0.0 {
-                writer.add_for_new_line("Infinity".len());
-                writer.print(format_args!("{}Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
-            } else if num.is_infinite() && num < 0.0 {
-                writer.add_for_new_line("-Infinity".len());
-                writer.print(format_args!(
-                    "{}-Infinity{}",
-                    pf!("<r><yellow>"),
-                    pf!("<r>")
-                ));
-            } else if num.is_nan() {
-                writer.add_for_new_line("NaN".len());
-                writer.print(format_args!("{}NaN{}", pf!("<r><yellow>"), pf!("<r>")));
-            } else {
-                let mut buf = [0u8; 124];
-                let formatted = bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
-                writer.add_for_new_line(formatted.len());
-                writer.print(format_args!(
-                    "{}{}{}",
-                    pf!("<r><yellow>"),
-                    bstr::BStr::new(formatted),
-                    pf!("<r>")
-                ));
-            }
+            let mut buf = [0u8; 124];
+            let formatted = number_text(&mut buf, value.as_number());
+            writer.add_for_new_line(formatted.len());
+            writer.print(format_args!(
+                "{}{}{}",
+                pf!("<r><yellow>"),
+                bstr::BStr::new(formatted),
+                pf!("<r>")
+            ));
             if writer.failed {
                 self.failed = true;
             }

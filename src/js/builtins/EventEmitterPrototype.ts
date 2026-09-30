@@ -85,8 +85,6 @@ export function applyHandlers(handlers, emitter, args) {
 // function that this one returns.
 export function createEmit() {
   return function emit(this: any, type, ...args) {
-    $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
-
     if (type === "error") {
       return $nodeEventsEmitError(this, args);
     }
@@ -168,7 +166,6 @@ export function createEmitWithRejectionCapture() {
   }
 
   return function emit(this: any, type, ...args) {
-    $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
     if (type === "error") {
       return $nodeEventsEmitError(this, args);
     }

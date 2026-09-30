@@ -1,4 +1,4 @@
-// Port of the option tables of internal/tsoptions of typescript-go 89d5d5b (declscompiler.go, commandlineoption.go, enummaps.go), with the fields that the test harness reads, and of the two tables that internal/testutil/harnessutil/harnessutil.go adds to them.
+// Port of the option tables of internal/tsoptions of typescript-go 89d5d5b (declscompiler.go, commandlineoption.go, enummaps.go), with the fields that the test harness reads, and of compilerOptions of internal/testutil/harnessutil/harnessutil.go.
 
 // commandlineoption.go:9
 export type CommandLineOptionKind = "string" | "number" | "boolean" | "object" | "list" | "listOrElement" | "enum";
@@ -278,23 +278,6 @@ export const compilerOptions: readonly CommandLineOption[] = [
   { name: "noErrorTruncation", kind: "boolean" },
   { name: "suppressOutputPathCheck", kind: "boolean" },
   { name: "noCheck", kind: "boolean" },
-];
-
-// harnessutil.go:341
-export const harnessCommandLineOptions: readonly CommandLineOption[] = [
-  { name: "useCaseSensitiveFileNames", kind: "boolean" },
-  { name: "baselineFile", kind: "string" },
-  { name: "includeBuiltFile", kind: "string" },
-  { name: "fileName", kind: "string" },
-  { name: "libFiles", kind: "list" },
-  { name: "noImplicitReferences", kind: "boolean" },
-  { name: "currentDirectory", kind: "string" },
-  { name: "symlink", kind: "string" },
-  { name: "link", kind: "string" },
-  { name: "noTypesAndSymbols", kind: "boolean" },
-  { name: "fullEmitPaths", kind: "boolean" },
-  { name: "reportDiagnostics", kind: "boolean" },
-  { name: "captureSuggestions", kind: "boolean" },
 ];
 
 // enummaps.go:11; a value is the name of a lib file.

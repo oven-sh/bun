@@ -1310,7 +1310,7 @@ impl PublishCommand {
                                     .unwrap_or_else(|| {
                                         Output::err(
                                             "WebLogin",
-                                            "missing `token` field in reponse json",
+                                            "missing `token` field in response json",
                                             (),
                                         );
                                         Global::crash();

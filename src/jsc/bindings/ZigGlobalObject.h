@@ -786,6 +786,9 @@ public:
 
     void finishCreation(JSC::VM&);
 
+    // Defines the global variable that builtins read as `$name`, for a value that its owner creates at first use.
+    void addBuiltinGlobal(const JSC::Identifier& privateName, JSC::JSValue, unsigned attributes);
+
 private:
     void addBuiltinGlobals(JSC::VM&);
 

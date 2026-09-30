@@ -143,7 +143,6 @@ using namespace JSC;
     macro(nodeEventsKShapeMode) \
     macro(nodeEventsOnceWrap) \
     macro(nodeEventsOverflowWarning) \
-    macro(nodeEventsPrototype) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \

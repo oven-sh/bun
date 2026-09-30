@@ -80,6 +80,8 @@ enum class DOMStructureSlot : uint8_t {
     DOMFormDataIterator,
     FetchHeadersIterator,
     URLSearchParamsIterator,
+    // Bun::nodeEventEmitterPrototype() keeps node:events' EventEmitter.prototype as the prototype of this Structure.
+    NodeEventEmitter,
     Count,
 };
 

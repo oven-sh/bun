@@ -8,6 +8,7 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/StructureCache.h>
 #include <JavaScriptCore/Symbol.h>
 #include <wtf/text/SymbolRegistry.h>
 
@@ -16,57 +17,78 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+using BuiltinName = WebCore::BunBuiltinNames::Name;
+using Generator = FunctionExecutable* (*)(VM&);
+
+// The functions that the methods call, each under the `$name` that a builtin reads it by.
+static constexpr struct {
+    BuiltinName name;
+    Generator generator;
+} helpers[] = {
+    { BuiltinName::k_nodeEventsAddListener, eventEmitterPrototypeInternalAddListenerCodeGenerator },
+    { BuiltinName::k_nodeEventsApplyHandlers, eventEmitterPrototypeApplyHandlersCodeGenerator },
+    { BuiltinName::k_nodeEventsCopyWithInserted, eventEmitterPrototypeCopyWithInsertedCodeGenerator },
+    { BuiltinName::k_nodeEventsCreateEmit, eventEmitterPrototypeCreateEmitCodeGenerator },
+    { BuiltinName::k_nodeEventsEmitError, eventEmitterPrototypeEmitErrorCodeGenerator },
+    { BuiltinName::k_nodeEventsOnceWrap, eventEmitterPrototypeInternalOnceWrapCodeGenerator },
+    { BuiltinName::k_nodeEventsOverflowWarning, eventEmitterPrototypeOverflowWarningCodeGenerator },
+};
+
+// The own keys of the prototype, in the order that the object literal of events.ts had. src/js/node/events.ts
+// assigns the two that have no generator: `constructor` is its function, and `emit` has a rest parameter, which
+// a builtin cannot have, so a call of $nodeEventsCreateEmit creates it.
+static constexpr struct {
+    ASCIILiteral name;
+    Generator generator;
+    ASCIILiteral alias;
+} methods[] = {
+    { "setMaxListeners"_s, eventEmitterPrototypeSetMaxListenersCodeGenerator, {} },
+    { "constructor"_s, nullptr, {} },
+    { "getMaxListeners"_s, eventEmitterPrototypeGetMaxListenersCodeGenerator, {} },
+    { "emit"_s, nullptr, {} },
+    { "addListener"_s, eventEmitterPrototypeAddListenerCodeGenerator, "on"_s },
+    { "prependListener"_s, eventEmitterPrototypePrependListenerCodeGenerator, {} },
+    { "once"_s, eventEmitterPrototypeOnceCodeGenerator, {} },
+    { "prependOnceListener"_s, eventEmitterPrototypePrependOnceListenerCodeGenerator, {} },
+    { "removeListener"_s, eventEmitterPrototypeRemoveListenerCodeGenerator, "off"_s },
+    { "removeAllListeners"_s, eventEmitterPrototypeRemoveAllListenersCodeGenerator, {} },
+    { "listeners"_s, eventEmitterPrototypeListenersCodeGenerator, {} },
+    { "rawListeners"_s, eventEmitterPrototypeRawListenersCodeGenerator, {} },
+    { "listenerCount"_s, eventEmitterPrototypeListenerCountCodeGenerator, {} },
+    { "eventNames"_s, eventEmitterPrototypeEventNamesCodeGenerator, {} },
+};
+
 JSValue nodeEventEmitterPrototype(Zig::GlobalObject* globalObject)
 {
+    constexpr auto slot = WebCore::DOMStructureSlot::NodeEventEmitter;
+    if (auto* structure = globalObject->domStructure(slot))
+        return structure->storedPrototypeObject();
+
     auto& vm = JSC::getVM(globalObject);
     auto& names = WebCore::builtinNames(vm);
-    if (JSValue prototype = globalObject->getDirect(vm, names.nodeEventsPrototypePrivateName()))
-        return prototype;
 
-    // A builtin reads a `$nodeEvents` name as a global variable: an own property of the global object under a
-    // private name. They are defined here and not at startup, so a global that never has an emitter pays nothing.
-    constexpr unsigned constant = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
-    auto helper = [&](const Identifier& name, FunctionExecutable* executable) {
-        globalObject->putDirectBuiltinFunction(vm, globalObject, name, executable, constant);
-    };
+    // Defined here and not at startup, so that a global that never has an emitter does not pay for them.
+    constexpr unsigned constant = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
     // events.defaultMaxListeners and events.setMaxListeners(n) assign this one.
-    globalObject->putDirect(vm, names.nodeEventsDefaultMaxListenersPrivateName(), jsNumber(10), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    globalObject->putDirect(vm, names.nodeEventsKShapeModePrivateName(), Symbol::createWithDescription(vm, "shapeMode"_s), constant);
-    globalObject->putDirect(vm, names.nodeEventsKErrorMonitorPrivateName(), Symbol::create(vm, vm.symbolRegistry().symbolForKey("events.errorMonitor"_s)), constant);
-    helper(names.nodeEventsAddListenerPrivateName(), eventEmitterPrototypeInternalAddListenerCodeGenerator(vm));
-    helper(names.nodeEventsApplyHandlersPrivateName(), eventEmitterPrototypeApplyHandlersCodeGenerator(vm));
-    helper(names.nodeEventsCopyWithInsertedPrivateName(), eventEmitterPrototypeCopyWithInsertedCodeGenerator(vm));
-    helper(names.nodeEventsCreateEmitPrivateName(), eventEmitterPrototypeCreateEmitCodeGenerator(vm));
-    helper(names.nodeEventsEmitErrorPrivateName(), eventEmitterPrototypeEmitErrorCodeGenerator(vm));
-    helper(names.nodeEventsOnceWrapPrivateName(), eventEmitterPrototypeInternalOnceWrapCodeGenerator(vm));
-    helper(names.nodeEventsOverflowWarningPrivateName(), eventEmitterPrototypeOverflowWarningCodeGenerator(vm));
+    globalObject->addBuiltinGlobal(names.nodeEventsDefaultMaxListenersPrivateName(), jsNumber(10), PropertyAttribute::DontEnum | 0);
+    globalObject->addBuiltinGlobal(names.nodeEventsKShapeModePrivateName(), Symbol::createWithDescription(vm, "shapeMode"_s), constant);
+    globalObject->addBuiltinGlobal(names.nodeEventsKErrorMonitorPrivateName(), Symbol::create(vm, vm.symbolRegistry().symbolForKey("events.errorMonitor"_s)), constant);
+    for (auto& helper : helpers)
+        globalObject->addBuiltinGlobal(names.privateName(helper.name), JSFunction::create(vm, globalObject, helper.generator(vm), globalObject), constant);
 
-    // 16 names here, and events.ts adds two.
-    auto* prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 18);
-    auto method = [&](ASCIILiteral name, FunctionExecutable* executable) {
-        return prototype->putDirectBuiltinFunction(vm, globalObject, Identifier::fromString(vm, name), executable, 0);
-    };
-    // The order of the keys is the order that the plain object of events.ts had. events.ts assigns the two names
-    // that are undefined here: `constructor` is its function, and `emit` has a rest parameter, which a builtin
-    // cannot have, so a call into JavaScript creates it.
-    method("setMaxListeners"_s, eventEmitterPrototypeSetMaxListenersCodeGenerator(vm));
-    prototype->putDirect(vm, vm.propertyNames->constructor, jsUndefined());
-    method("getMaxListeners"_s, eventEmitterPrototypeGetMaxListenersCodeGenerator(vm));
-    prototype->putDirect(vm, Identifier::fromString(vm, "emit"_s), jsUndefined());
-    auto* addListener = method("addListener"_s, eventEmitterPrototypeAddListenerCodeGenerator(vm));
-    prototype->putDirect(vm, Identifier::fromString(vm, "on"_s), addListener);
-    method("prependListener"_s, eventEmitterPrototypePrependListenerCodeGenerator(vm));
-    method("once"_s, eventEmitterPrototypeOnceCodeGenerator(vm));
-    method("prependOnceListener"_s, eventEmitterPrototypePrependOnceListenerCodeGenerator(vm));
-    auto* removeListener = method("removeListener"_s, eventEmitterPrototypeRemoveListenerCodeGenerator(vm));
-    prototype->putDirect(vm, Identifier::fromString(vm, "off"_s), removeListener);
-    method("removeAllListeners"_s, eventEmitterPrototypeRemoveAllListenersCodeGenerator(vm));
-    method("listeners"_s, eventEmitterPrototypeListenersCodeGenerator(vm));
-    method("rawListeners"_s, eventEmitterPrototypeRawListenersCodeGenerator(vm));
-    method("listenerCount"_s, eventEmitterPrototypeListenerCountCodeGenerator(vm));
-    method("eventNames"_s, eventEmitterPrototypeEventNamesCodeGenerator(vm));
+    auto* prototype = constructEmptyObject(globalObject, globalObject->objectPrototype());
+    for (auto& method : methods) {
+        auto name = Identifier::fromString(vm, method.name);
+        if (!method.generator) {
+            prototype->putDirect(vm, name, jsUndefined());
+            continue;
+        }
+        auto* function = prototype->putDirectBuiltinFunction(vm, globalObject, name, method.generator(vm), 0);
+        if (!method.alias.isNull())
+            prototype->putDirect(vm, Identifier::fromString(vm, method.alias), function);
+    }
 
-    globalObject->putDirect(vm, names.nodeEventsPrototypePrivateName(), prototype, constant);
+    globalObject->setDOMStructure(slot, globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, JSFinalObject::defaultInlineCapacity));
     return prototype;
 }
 

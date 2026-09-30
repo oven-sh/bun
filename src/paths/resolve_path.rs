@@ -747,6 +747,7 @@ pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr
 }
 
 /// `scratch` holds the normalized `path` so that the join does not read the buffer it writes.
+#[inline(always)]
 fn normalize_relative_input<'a, P: PlatformT>(
     out: &'a mut [u8],
     scratch: &mut [u8],
@@ -811,22 +812,9 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
 ) -> &'static [u8] {
     // SAFETY: thread-local scratch; single live borrow per thread.
     let common_buf = RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf);
-    let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
-    let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
-    let normalized = (
-        normalize_relative_input::<P>(&mut relative_from_buf[..], &mut common_buf[..], from),
-        normalize_relative_input::<P>(&mut relative_to_buf[..], &mut common_buf[..], to),
-    );
-    let (Some(normalized_from), Some(normalized_to)) = normalized else {
-        return relative_platform_spilled::<P>(from, to);
-    };
-    match relative_normalized_buf_checked::<P, ALWAYS_COPY>(
-        &mut common_buf[..],
-        normalized_from,
-        normalized_to,
-    ) {
+    match relative_platform_buf_checked::<P, ALWAYS_COPY>(&mut common_buf[..], from, to) {
         Some(rel) => rel,
-        None => relative_normalized_spilled::<P>(normalized_from, normalized_to),
+        None => relative_platform_spilled::<P>(from, to),
     }
 }
 
@@ -994,13 +982,6 @@ fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     &path[0..0]
 }
 
-/// Whether `units` more units fit at `buf[at..]`; `at` only ever advances past admitted writes.
-#[inline(always)]
-fn has_room<T>(buf: &[T], at: usize, units: usize) -> bool {
-    debug_assert!(at <= buf.len());
-    units <= buf.len() - at
-}
-
 /// [`normalize_string_generic_tz`] without NUL termination or an NT prefix.
 pub fn normalize_string_generic_t<
     'a,
@@ -1021,7 +1002,19 @@ pub fn normalize_string_generic_t<
     )
 }
 
-/// `None` as soon as a write does not fit `buf`. Output <= input + 1, plus the NT prefix and NUL.
+/// Units the normalizer can add to its input: Windows `C:` -> `C:.`, `\??\UNC\`, the NUL.
+const fn normalize_growth<const ZERO_TERMINATE: bool, const ADD_NT_PREFIX: bool>(
+    is_windows: bool,
+) -> usize {
+    (if is_windows {
+        1 + if ADD_NT_PREFIX { 6 } else { 0 }
+    } else {
+        0
+    }) + ZERO_TERMINATE as usize
+}
+
+/// `None` only when the result, with its NUL, does not fit `buf`.
+#[inline(always)]
 pub fn normalize_string_generic_tz<
     'a,
     T: PathChar,
@@ -1035,6 +1028,71 @@ pub fn normalize_string_generic_tz<
     separator: T,
     is_separator: impl Fn(T) -> bool + Copy,
 ) -> Option<&'a mut [T]> {
+    let capacity = path_.len()
+        + normalize_growth::<ZERO_TERMINATE, ADD_NT_PREFIX>(separator == T::from_u8(SEP_WINDOWS));
+    if buf.len() < capacity {
+        return normalize_string_through_scratch_tz::<
+            T,
+            ALLOW_ABOVE_ROOT,
+            PRESERVE_TRAILING_SLASH,
+            ZERO_TERMINATE,
+            ADD_NT_PREFIX,
+        >(path_, buf, separator, &is_separator, capacity);
+    }
+    let len = normalize_string_in_place_tz::<
+        T,
+        ALLOW_ABOVE_ROOT,
+        PRESERVE_TRAILING_SLASH,
+        ZERO_TERMINATE,
+        ADD_NT_PREFIX,
+    >(path_, buf, separator, is_separator);
+    Some(&mut buf[..len])
+}
+
+/// `buf` may not hold the intermediate form of a path that `..` shortens. `dyn` keeps one copy.
+#[cold]
+#[inline(never)]
+fn normalize_string_through_scratch_tz<
+    'a,
+    T: PathChar,
+    const ALLOW_ABOVE_ROOT: bool,
+    const PRESERVE_TRAILING_SLASH: bool,
+    const ZERO_TERMINATE: bool,
+    const ADD_NT_PREFIX: bool,
+>(
+    path_: &[T],
+    buf: &'a mut [T],
+    separator: T,
+    is_separator: &dyn Fn(T) -> bool,
+    capacity: usize,
+) -> Option<&'a mut [T]> {
+    let mut scratch = vec![T::from_u8(0); capacity];
+    let len = normalize_string_in_place_tz::<
+        T,
+        ALLOW_ABOVE_ROOT,
+        PRESERVE_TRAILING_SLASH,
+        ZERO_TERMINATE,
+        ADD_NT_PREFIX,
+    >(path_, &mut scratch, separator, is_separator);
+    let with_nul = len + ZERO_TERMINATE as usize;
+    buf.get_mut(..with_nul)?
+        .copy_from_slice(&scratch[..with_nul]);
+    Some(&mut buf[..len])
+}
+
+/// `buf` holds at least `path_.len()` + [`normalize_growth`] units, so no write leaves it.
+fn normalize_string_in_place_tz<
+    T: PathChar,
+    const ALLOW_ABOVE_ROOT: bool,
+    const PRESERVE_TRAILING_SLASH: bool,
+    const ZERO_TERMINATE: bool,
+    const ADD_NT_PREFIX: bool,
+>(
+    path_: &[T],
+    buf: &mut [T],
+    separator: T,
+    is_separator: impl Fn(T) -> bool + Copy,
+) -> usize {
     let is_windows = separator == T::from_u8(SEP_WINDOWS);
     // sep_str: single-char slice [separator], built per-call.
 
@@ -1059,17 +1117,11 @@ pub fn normalize_string_generic_tz<
     if is_windows {
         if vol_len > 0 {
             if ADD_NT_PREFIX {
-                if !has_room(buf, buf_i, 4) {
-                    return None;
-                }
                 buf[buf_i..buf_i + 4].copy_from_slice(T::lit(b"\\??\\"));
                 buf_i += 4;
             }
             if path_[1] != T::from_u8(b':') {
-                // UNC paths: the volume, its trailing separator, and the two units `UNC\` adds.
-                if !has_room(buf, buf_i, vol_len + 1 + if ADD_NT_PREFIX { 2 } else { 0 }) {
-                    return None;
-                }
+                // UNC paths
                 if ADD_NT_PREFIX {
                     // "UNC" ++ sep_str
                     buf[buf_i..buf_i + 3].copy_from_slice(T::lit(b"UNC"));
@@ -1097,18 +1149,12 @@ pub fn normalize_string_generic_tz<
                 // it is just a volume name
                 if path_begin >= path_.len() {
                     if ZERO_TERMINATE {
-                        if !has_room(buf, buf_i, 1) {
-                            return None;
-                        }
                         buf[buf_i] = T::from_u8(0);
                     }
-                    return Some(&mut buf[0..buf_i]);
+                    return buf_i;
                 }
             } else {
                 // drive letter
-                if !has_room(buf, buf_i, 2) {
-                    return None;
-                }
                 buf[buf_i] = T::to_ascii_upper(path_[0]);
                 buf[buf_i + 1] = T::from_u8(b':');
                 buf_i += 2;
@@ -1116,9 +1162,6 @@ pub fn normalize_string_generic_tz<
                 path_begin = 2;
             }
         } else if !path_.is_empty() && is_separator(path_[0]) {
-            if !has_room(buf, buf_i, 1) {
-                return None;
-            }
             buf[buf_i] = separator;
             buf_i += 1;
             dotdot = buf_i;
@@ -1139,9 +1182,6 @@ pub fn normalize_string_generic_tz<
         // consume leading slashes on windows
         if r < n && is_separator(path[r]) {
             r += 1;
-            if !has_room(buf, buf_i, 1) {
-                return None;
-            }
             buf[buf_i] = separator;
             buf_i += 1;
 
@@ -1177,17 +1217,11 @@ pub fn normalize_string_generic_tz<
             } else if ALLOW_ABOVE_ROOT {
                 if buf_i > buf_start {
                     // sep_str ++ ".."
-                    if !has_room(buf, buf_i, 3) {
-                        return None;
-                    }
                     buf[buf_i] = separator;
                     buf[buf_i + 1] = T::from_u8(b'.');
                     buf[buf_i + 2] = T::from_u8(b'.');
                     buf_i += 3;
                 } else {
-                    if !has_room(buf, buf_i, 2) {
-                        return None;
-                    }
                     buf[buf_i] = T::from_u8(b'.');
                     buf[buf_i + 1] = T::from_u8(b'.');
                     buf_i += 2;
@@ -1199,20 +1233,17 @@ pub fn normalize_string_generic_tz<
         }
 
         // real path element.
+        // add slash if needed
+        if buf_i != buf_start && buf_i > 0 && !is_separator(buf[buf_i - 1]) {
+            buf[buf_i] = separator;
+            buf_i += 1;
+        }
+
         let from = r;
         while r < n && !is_separator(path[r]) {
             r += 1;
         }
         let count = r - from;
-        // add slash if needed
-        let needs_separator = buf_i != buf_start && buf_i > 0 && !is_separator(buf[buf_i - 1]);
-        if !has_room(buf, buf_i, count + needs_separator as usize) {
-            return None;
-        }
-        if needs_separator {
-            buf[buf_i] = separator;
-            buf_i += 1;
-        }
         buf[buf_i..buf_i + count].copy_from_slice(&path[from..from + count]);
         buf_i += count;
     }
@@ -1220,9 +1251,6 @@ pub fn normalize_string_generic_tz<
     if PRESERVE_TRAILING_SLASH {
         // Was there a trailing slash? Let's keep it.
         if buf_i > 0 && path_[path_.len() - 1] == separator && buf[buf_i - 1] != separator {
-            if !has_room(buf, buf_i, 1) {
-                return None;
-            }
             buf[buf_i] = separator;
             buf_i += 1;
         }
@@ -1231,9 +1259,6 @@ pub fn normalize_string_generic_tz<
     if is_windows && buf_i == 2 && buf[1] == T::from_u8(b':') {
         // If the original path is just a relative path with a drive letter,
         // add .
-        if !has_room(buf, buf_i, 1) {
-            return None;
-        }
         buf[buf_i] = if !path.is_empty() && path[0] == T::from_u8(b'\\') {
             T::from_u8(b'\\')
         } else {
@@ -1243,13 +1268,10 @@ pub fn normalize_string_generic_tz<
     }
 
     if ZERO_TERMINATE {
-        if !has_room(buf, buf_i, 1) {
-            return None;
-        }
         buf[buf_i] = T::from_u8(0);
     }
 
-    Some(&mut buf[0..buf_i])
+    buf_i
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
@@ -1420,16 +1442,24 @@ impl Platform {
 
 /// Takes input of any length; the result is valid until the next call on this thread.
 pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &'static [u8] {
-    // Normalizing grows a path by at most one byte (see `normalize_string_generic_tz`).
-    let capacity = str.len() + 1;
-    if capacity <= PARSER_BUFFER_LEN {
-        return PARSER_BUFFER
-            .with(|b| &*normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)));
+    let fixed = PARSER_BUFFER
+        .with(|b| normalize_string_buf_checked::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)));
+    match fixed {
+        Some(normalized) => normalized,
+        None => normalize_string_spilled::<ALLOW_ABOVE_ROOT, P>(str),
     }
-    spill_out(&PARSER_SPILL, capacity, |buf| {
+}
+
+#[cold]
+#[inline(never)]
+fn normalize_string_spilled<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
+    str: &[u8],
+) -> &'static [u8] {
+    // Normalizing grows a path by at most one byte (see `normalize_growth`).
+    spill_out(&PARSER_SPILL, str.len() + 1, |buf| {
         normalize_string_buf_checked::<ALLOW_ABOVE_ROOT, P, false>(str, buf)
             .map(|normalized| &*normalized)
-            .unwrap_or_else(|| unreachable!("capacity bounds the normalized path"))
+            .unwrap_or_else(|| unreachable!("the buffer is sized for the input"))
     })
 }
 
@@ -1579,52 +1609,8 @@ pub fn normalize_string_buf<
         .unwrap_or_else(|| path_buffer_too_small(buf_len))
 }
 
-/// `None` only when the result does not fit `buf`, even if `..` segments make the input longer.
+/// `None` only when the result does not fit `buf`.
 fn normalize_string_buf_t<
-    'a,
-    T: PathChar,
-    const ALLOW_ABOVE_ROOT: bool,
-    P: PlatformT,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    str: &[T],
-    buf: &'a mut [T],
-) -> Option<&'a mut [T]> {
-    if let Some(len) =
-        normalize_string_buf_in_place_t::<T, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
-            .map(|normalized| normalized.len())
-    {
-        return Some(&mut buf[..len]);
-    }
-    normalize_string_buf_via_scratch_t::<T, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
-}
-
-#[cold]
-#[inline(never)]
-fn normalize_string_buf_via_scratch_t<
-    'a,
-    T: PathChar,
-    const ALLOW_ABOVE_ROOT: bool,
-    P: PlatformT,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    str: &[T],
-    buf: &'a mut [T],
-) -> Option<&'a mut [T]> {
-    // Normalizing grows a path by at most one unit (see `normalize_string_generic_tz`).
-    let mut scratch = vec![T::from_u8(0); str.len() + 1];
-    let normalized =
-        normalize_string_buf_in_place_t::<T, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(
-            str,
-            &mut scratch,
-        )
-        .unwrap_or_else(|| unreachable!("the scratch buffer is sized for the input"));
-    let out = buf.get_mut(..normalized.len())?;
-    out.copy_from_slice(normalized);
-    Some(out)
-}
-
-fn normalize_string_buf_in_place_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1660,11 +1646,18 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 // result borrows the thread-local buffer ('static) OR returns `cwd`
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
-    let capacity = join_abs_capacity::<P>(cwd.len(), parts);
-    if capacity <= PARSER_JOIN_INPUT_BUFFER_LEN {
-        return PARSER_JOIN_INPUT_BUFFER
-            .with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts));
+    let fixed = PARSER_JOIN_INPUT_BUFFER
+        .with(|b| join_abs_string_buf_checked::<P>(cwd, tl_buf_mut(b), parts));
+    match fixed {
+        Some(joined) => joined,
+        None => join_abs_string_spilled::<P>(cwd, parts),
     }
+}
+
+#[cold]
+#[inline(never)]
+fn join_abs_string_spilled<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
+    let capacity = join_abs_capacity::<P>(cwd.len(), parts);
     spill_out(&PARSER_JOIN_INPUT_SPILL, capacity, |buf| {
         join_abs_string_buf_checked::<P>(cwd, buf, parts)
             .unwrap_or_else(|| unreachable!("join_abs_capacity bounds the joined path"))
@@ -1695,11 +1688,18 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
-    let capacity = join_abs_capacity::<P>(cwd.len(), parts);
-    if capacity <= PARSER_JOIN_INPUT_BUFFER_LEN {
-        return PARSER_JOIN_INPUT_BUFFER
-            .with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts));
+    let fixed = PARSER_JOIN_INPUT_BUFFER
+        .with(|b| join_abs_string_buf_z_checked::<P>(cwd, tl_buf_mut(b), parts));
+    match fixed {
+        Some(joined) => joined,
+        None => join_abs_string_z_spilled::<P>(cwd, parts),
     }
+}
+
+#[cold]
+#[inline(never)]
+fn join_abs_string_z_spilled<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
+    let capacity = join_abs_capacity::<P>(cwd.len(), parts);
     let with_nul = spill_out(&PARSER_JOIN_INPUT_SPILL, capacity, |buf| {
         join_abs_string_buf_z_checked::<P>(cwd, buf, parts)
             .unwrap_or_else(|| unreachable!("join_abs_capacity bounds the joined path"))
@@ -1718,11 +1718,16 @@ thread_local! {
 
 /// Takes input of any length; the result is valid until the next `join`/`join_z` on this thread.
 pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
-    let capacity = join_needed(parts);
-    if capacity <= JOIN_BUF_LEN {
-        return JOIN_BUF.with(|b| join_string_buf::<P>(tl_buf_mut(b), parts));
+    match JOIN_BUF.with(|b| join_string_buf_checked::<P>(tl_buf_mut(b), parts)) {
+        Some(joined) => joined,
+        None => join_spilled::<P>(parts),
     }
-    spill_out(&JOIN_SPILL, capacity, |buf| {
+}
+
+#[cold]
+#[inline(never)]
+fn join_spilled<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
+    spill_out(&JOIN_SPILL, join_needed(parts), |buf| {
         join_string_buf_checked::<P>(buf, parts)
             .unwrap_or_else(|| unreachable!("join_needed bounds the joined path"))
     })
@@ -1730,11 +1735,16 @@ pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
 
 /// [`join`], NUL-terminated.
 pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
-    let capacity = join_needed(parts);
-    if capacity <= JOIN_BUF_LEN {
-        return JOIN_BUF.with(|b| join_z_buf::<P>(tl_buf_mut(b), parts));
+    match JOIN_BUF.with(|b| join_z_buf_checked::<P>(tl_buf_mut(b), parts)) {
+        Some(joined) => joined,
+        None => join_z_spilled::<P>(parts),
     }
-    let with_nul = spill_out(&JOIN_SPILL, capacity, |buf| {
+}
+
+#[cold]
+#[inline(never)]
+fn join_z_spilled<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
+    let with_nul = spill_out(&JOIN_SPILL, join_needed(parts), |buf| {
         join_z_buf_checked::<P>(buf, parts)
             .unwrap_or_else(|| unreachable!("join_needed bounds the joined path"))
             .as_bytes_with_nul()
@@ -2196,19 +2206,15 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         leading_buf[0] = b'/';
         1
     };
-    // Copy leading separator into buf (order-independent with normalize,
-    // which writes into buf[leading_len..]).
     let capacity = buf.len().checked_sub(IS_SENTINEL as usize)?;
     let out_buf = &mut buf[..capacity];
-    out_buf
-        .get_mut(..leading_len)?
-        .copy_from_slice(&leading_buf[..leading_len]);
-
     let result_len = normalize_string_buf_checked::<false, P, true>(
         &temp_buf[leading_len..out],
-        &mut out_buf[leading_len..],
+        out_buf.get_mut(leading_len..)?,
     )?
     .len();
+    // After the normalize step: a join that does not fit leaves `buf` as it was.
+    out_buf[..leading_len].copy_from_slice(&leading_buf[..leading_len]);
     let len = leading_len + result_len;
 
     if IS_SENTINEL {
@@ -2419,7 +2425,9 @@ fn normalize_string_node_t<T: PathChar, P: PlatformT>(str: &[T], buf: &mut [T]) 
     let separator_t = T::from_u8(P::P.separator());
     let is_sep_fn = |c: T| P::P.is_separator_t::<T>(c);
 
-    let out = buf.get_mut(buf_off..)?;
+    // The trailing separator's slot is kept back, so a result that does not fit writes nothing.
+    let out_end = buf.len().checked_sub(trailing_separator as usize)?;
+    let out = buf.get_mut(buf_off..out_end)?;
     let out_len = if !is_absolute {
         normalize_string_generic_t::<T, true, false>(str, out, separator_t, is_sep_fn)?.len()
     } else {
@@ -2446,7 +2454,7 @@ fn normalize_string_node_t<T: PathChar, P: PlatformT>(str: &[T], buf: &mut [T]) 
 
     if trailing_separator {
         if !P::P.is_separator_t::<T>(buf[buf_off + out_len - 1]) {
-            *buf.get_mut(buf_off + out_len)? = separator_t;
+            buf[buf_off + out_len] = separator_t;
             out_len += 1;
         }
     }
@@ -3229,12 +3237,12 @@ mod tests {
             normalize_posix(b"a/../../..", buf).map(|s| s.to_vec())
         });
 
-        // The primitive works in place and needs room for `dir`. The `*_checked` functions do not.
-        assert_eq!(normalize_posix(b"dir/../x", &mut [0u8; 1]), None);
+        // Only the result has to fit, not the intermediate form `dir`.
         assert_eq!(
-            normalize_posix(b"dir/../x", &mut [0u8; 3]).as_deref(),
+            normalize_posix(b"dir/../x", &mut [0u8; 1]).as_deref(),
             Some(&b"x"[..])
         );
+        assert_eq!(normalize_posix(b"dir/../xy", &mut [0u8; 1]), None);
         let mut collapsing = b"dir/../".repeat(1000);
         collapsing.extend_from_slice(b"x");
         let mut one = [0u8; 1];
@@ -3299,10 +3307,74 @@ mod tests {
         check("\\\\s\\sh\\\0", &|buf| nt::<false>("\\\\s\\sh", buf));
         check("C:\\x\\y\0", &|buf| nt::<false>("C:/x//./y", buf));
         check("x\0", &|buf| nt::<false>("x", buf));
-        // The in-place primitive needs six units for the intermediate form `C:\x\y`.
-        assert_eq!(nt::<false>("C:\\x\\y\\..", &mut [0u16; 5]), None);
-        let expected: Vec<u16> = "C:\\x\0".encode_utf16().collect();
-        assert_eq!(nt::<false>("C:\\x\\y\\..", &mut [0u16; 6]), Some(expected));
+        // Only the result has to fit, not the intermediate form `C:\x\y`.
+        check("C:\\x\0", &|buf| nt::<false>("C:\\x\\y\\..", buf));
+    }
+
+    // Too slow under Miri, and this path has no unsafe code: an index past the buffer panics.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn normalize_growth_bounds_every_input_shape() {
+        fn shapes(pieces: &[&str], separators: &[&str]) -> Vec<String> {
+            let mut out: Vec<String> = vec![String::new()];
+            let mut last: Vec<String> = vec![String::new()];
+            for _ in 0..4 {
+                let mut next = Vec::new();
+                for prefix in &last {
+                    for piece in pieces {
+                        for separator in separators {
+                            next.push(format!("{prefix}{piece}{separator}"));
+                        }
+                    }
+                }
+                out.extend(next.iter().cloned());
+                last = next.into_iter().take(400).collect();
+            }
+            out
+        }
+        fn check<const AAR: bool, const PTS: bool, const ZT: bool, const NT: bool>(
+            path: &str,
+            separator: u8,
+        ) {
+            let path: Vec<u16> = path.encode_utf16().collect();
+            let is_separator =
+                |c: u16| c == b'/' as u16 || (separator == b'\\' && c == b'\\' as u16);
+            let capacity = path.len() + normalize_growth::<ZT, NT>(separator == b'\\');
+            let mut exact = vec![0xAAAAu16; capacity];
+            let in_exact = normalize_string_generic_tz::<u16, AAR, PTS, ZT, NT>(
+                &path,
+                &mut exact,
+                separator as u16,
+                is_separator,
+            )
+            .map(|normalized| normalized.to_vec());
+            let mut big = vec![0xAAAAu16; capacity + 64];
+            let in_big = normalize_string_generic_tz::<u16, AAR, PTS, ZT, NT>(
+                &path,
+                &mut big,
+                separator as u16,
+                is_separator,
+            )
+            .map(|normalized| normalized.to_vec());
+            assert!(in_exact.is_some(), "{path:?}");
+            assert_eq!(in_exact, in_big, "{path:?}");
+        }
+        for path in shapes(&["a", "..", ".", "", "bc"], &["/", "//", ""]) {
+            check::<false, false, false, false>(&path, b'/');
+            check::<true, false, false, false>(&path, b'/');
+            check::<false, true, false, false>(&path, b'/');
+            check::<true, true, true, false>(&path, b'/');
+        }
+        let windows = shapes(
+            &["a", "..", ".", "", "C:", "\\\\s\\sh", "c:\\"],
+            &["\\", "/", ""],
+        );
+        for path in windows.iter().filter(|path| !path.starts_with(":\\")) {
+            check::<false, false, false, false>(path, b'\\');
+            check::<true, true, false, false>(path, b'\\');
+            check::<false, false, true, true>(path, b'\\');
+            check::<true, false, true, true>(path, b'\\');
+        }
     }
 
     #[test]
@@ -3621,6 +3693,27 @@ mod tests {
         assert_eq!(join::<platform::Posix>(&[&longer]), &longer[..]);
         // Under Miri or ASAN this read fails if the second call freed the first result.
         assert_eq!(first, &long[..]);
+    }
+
+    #[test]
+    fn a_spilling_call_reads_an_input_that_is_the_previous_fixed_result() {
+        // The attempt in the fixed buffer must write nothing when the result does not fit.
+        let previous = join::<platform::Posix>(&[b"/previous", b"result"]);
+        let long = vec![b'a'; JOIN_BUF_LEN];
+        let mut expected = b"/previous/result/".to_vec();
+        expected.extend_from_slice(&long);
+        assert_eq!(join::<platform::Posix>(&[previous, &long]), &expected[..]);
+
+        let previous = join_abs_string::<platform::Posix>(b"/work", &[b"previous"]);
+        let long = vec![b'b'; PARSER_JOIN_INPUT_BUFFER_LEN];
+        let mut expected = b"/work/previous/".to_vec();
+        expected.extend_from_slice(&long);
+        assert_eq!(
+            join_abs_string::<platform::Posix>(previous, &[&long]),
+            &expected[..]
+        );
+        let z = join_abs_string_z::<platform::Posix>(b"/work", &[b"previous", &long]);
+        assert_eq!(z.as_bytes(), &expected[..]);
     }
 
     #[test]

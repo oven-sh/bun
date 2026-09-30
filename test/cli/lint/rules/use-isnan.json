@@ -327,7 +327,7 @@
 	{"code":"((0), NaN) === x","expect":[{"line":1,"column":1,"message":"Use the isNaN function to compare with NaN."}]},
 	{"code":"a, (b) === NaN","expect":[{"line":1,"column":4,"message":"Use the isNaN function to compare with NaN."}]},
 	{"code":"g(f(x) === NaN)","expect":[{"line":1,"column":3,"message":"Use the isNaN function to compare with NaN."}]},
-	{"code":"if (x === NaN) {}","expect":[{"line":1,"column":5,"message":"Use the isNaN function to compare with NaN."}]},
+	{"code":"while (x === NaN) {}","expect":[{"line":1,"column":8,"message":"Use the isNaN function to compare with NaN."}]},
 	{"code":"((x) === NaN)","expect":[{"line":1,"column":2,"message":"Use the isNaN function to compare with NaN."}]},
 	{"code":"(x)\n=== NaN","expect":[{"line":1,"column":1,"message":"Use the isNaN function to compare with NaN."}]},
 	{"code":"(x) === (NaN)","expect":[{"line":1,"column":1,"message":"Use the isNaN function to compare with NaN."}]},

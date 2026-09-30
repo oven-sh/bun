@@ -271,31 +271,18 @@ fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PosixWriterParent
-// ──────────────────────────────────────────────────────────────────────────
-
-/// The parent's refcount, for both POSIX writers: a writer is a field of its
-/// parent and is freed with it.
-///
-/// Methods take `*mut Self`: see [`PosixBufferedWriterParent`].
+/// The refcount of the parent that a POSIX writer is a field of.
 pub trait PosixWriterParent {
-    /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn ref_(this: *mut Self);
-    /// May free `this`.
-    ///
-    /// # Safety
-    /// `this` must point to a live `Self`, and the caller must own one ref.
+    /// `this` must point to a live `Self` that the caller holds a ref on. May free it.
     unsafe fn deref(this: *mut Self);
 }
 
-/// One ref on a writer's parent, released on drop. The release can free the
-/// parent and the writer in it, so the guard has to outlive every use of the writer.
+/// A ref on the parent of a writer. Its drop can free the parent and the writer in it.
 struct ParentKeepAlive<Parent: PosixWriterParent>(*mut Parent);
 
 impl<Parent: PosixWriterParent> ParentKeepAlive<Parent> {
-    /// # Safety
     /// `parent` must point to a live `Parent`.
     unsafe fn new(parent: *mut Parent) -> Self {
         // SAFETY: caller contract.
@@ -829,8 +816,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.reset();
 
         let parent = self.parent();
-        // `on_error` can release every other ref (`FileSink` rejects a promise
-        // in it), and `close()` is still to run.
+        // `on_error` can release every other ref on the parent, and `close()` is still to run.
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let _keep_alive = unsafe { ParentKeepAlive::new(parent) };
         // SAFETY: as above.
@@ -2670,15 +2656,15 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // method is `unsafe fn(this: *mut Self, ..)`
 // that derefs the BACKREF and forwards to an inherent method. Every concrete
 // parent (FileSink, Terminal, WindowsNamedPipe, shell IOWriter,
-// StaticPipeWriter) was hand-stamping the same cfg-gated impls
-// ({Posix,Windows}WriterParent + {Posix,Windows}{Streaming,Buffered}WriterParent),
+// StaticPipeWriter) was hand-stamping the same triple of cfg-gated impls
+// (POSIX + WindowsWriterParent + Windows{Streaming,Buffered}WriterParent),
 // differing only in:
 //   (a) the inherent-method names the vtable forwards to,
 //   (b) how the callback is dispatched off `*mut Self` — as `&mut`, `&`, or
 //       a raw-ptr method call (re-entrancy under Stacked/Tree Borrows — see
 //       `borrow = shared` / `borrow = ptr` callers),
 //   (c) the `event_loop` / `loop_` / refcount accessor expressions.
-// These macros stamp those impls once per parent.
+// These macros stamp that triple once per parent.
 //
 // `borrow = mut`    → bodies form `&mut *this` (unique access for the
 //                     callback's duration; the writer never holds

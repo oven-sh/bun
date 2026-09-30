@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, normalizeBunSnapshot } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 
 describe("HTTP server with proxy-style absolute URLs", () => {
@@ -65,5 +67,56 @@ describe("https request through a proxy agent", () => {
       stdout: "ERR_INVALID_CHAR",
       exitCode: 0,
     });
+  });
+
+  test("NODE_USE_ENV_PROXY=1: the request reports a tunnel that the proxy ends before the TLS handshake is done", async () => {
+    // end(), not destroy(): a close with unread bytes is a reset, which the client reports on another path.
+    const proxy = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        socket.once("data", () => socket.end());
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      const script = `
+        const events = [];
+        const req = require("node:https").get("https://example.invalid/");
+        req.on("error", err => events.push({ code: err.code, message: err.message }));
+        req.on("close", () => {
+          events.push("close");
+          console.log(JSON.stringify(events));
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          NODE_USE_ENV_PROXY: "1",
+          HTTPS_PROXY: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          https_proxy: undefined,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([
+          {
+            code: "ECONNRESET",
+            message: "Client network socket disconnected before secure TLS connection was established",
+          },
+          "close",
+        ]),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      proxy.close();
+    }
   });
 });

@@ -14,6 +14,7 @@ import type {
   Instance,
 } from "./conformance/runner";
 import * as runner from "./conformance/runner";
+import { createSpawnCheck, probe } from "./conformance/runner/check_bun_lint";
 import { tsgoRules } from "./conformance/runner/diagnosticwriter";
 import { getErrorBaseline } from "./conformance/runner/error_baseline";
 import {
@@ -25,6 +26,7 @@ import {
   utf8String,
   utf8ToByteString,
 } from "./conformance/runner/gostrings";
+import { skippedEmitTests } from "./conformance/runner/harnessutil_options";
 import { type Origin, listErrorBaselines, roundTripFiles, sampleErrorBaselines } from "./conformance/runner/roundtrip";
 import { skipTrivia } from "./conformance/runner/scanner";
 import { toWriterInput } from "./conformance/runner/shape";
@@ -34,6 +36,7 @@ import {
   getConfigNameFromFileName,
   parseTestFilesAndSymlinksWithOptions,
 } from "./conformance/runner/test_case_parser";
+import { optionsDeclarations } from "./conformance/runner/tsoptions";
 import { decodeBytes } from "./conformance/runner/vfs";
 
 const home = join(import.meta.dir, "conformance");
@@ -365,8 +368,7 @@ describe("variations", () => {
     getFileBasedTestConfigurations(extractCompilerSettings(text), vary()).map(c => c.name);
 
   test("72 of the 126 declared options vary", () => {
-    const counts = { declared: runner.optionsDeclarations.length, varying: vary().size };
-    expect(counts).toEqual({ declared: 126, varying: 72 });
+    expect({ declared: optionsDeclarations.length, varying: vary().size }).toEqual({ declared: 126, varying: 72 });
   });
 
   // The reference walks Go maps, whose order is not fixed: the names are compared as a set.
@@ -416,7 +418,7 @@ describe("variations", () => {
 });
 
 describe("enumerator", () => {
-  const { skippedEmitTests, skippedTests } = runner;
+  const { skippedTests } = runner;
   const sample = [...cases().values()].filter(path => sampled(path, 40)).sort();
 
   test("the sample holds cases of both suites", () => {
@@ -914,7 +916,7 @@ describe("plain format", () => {
 });
 
 describe("default check", () => {
-  const { createSpawnCheck, probe, runInstance } = runner;
+  const { runInstance } = runner;
   // Commands that stand for a linter: the fixture reads its operands and does what their lines "//~ " say.
   const command = (fixture: string) => [bunExe(), join(fixtures, fixture)];
   const linter = lazy(() => createSpawnCheck({ command: command("lints-fixture.ts"), env: bunEnv }));
@@ -1057,14 +1059,20 @@ describe("default check", () => {
       "//~ print error internal-error: an assertion of the checker\n",
       "the command reports an error of its own: an assertion of the checker",
     ],
+    [
+      "a diagnostic of a rule",
+      "//~ print {file}(1,1): error no-debugger: Unexpected 'debugger' statement.\n",
+      "stderr line 1 has the code no-debugger, which is no code of TypeScript",
+    ],
     // Windows has no signals.
     ...(isWindows ? [] : [["a signal", "//~ kill SIGKILL\n", "the command ended by the signal SIGKILL"]]),
   ] as [string, string, string][])(
-    "a run that breaks the rules is never an empty list of diagnostics: %s",
+    "a run that breaks the rules is a crash and never an empty list of diagnostics: %s",
     async (_label, orders, reason) => {
-      const result = await ending(C, linter(), orders);
-      expect(result.outcome).not.toBe("pass");
-      expect(result.reason).toContain(reason);
+      expect(await ending(C, linter(), orders)).toEqual({
+        outcome: "crash",
+        reason: `the check threw: Error: ${reason}`,
+      });
     },
     spawnTimeout,
   );

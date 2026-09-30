@@ -565,6 +565,8 @@ long us_ssl_ctx_live_count(void);
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 /* 1 when the verify step of this handshake asked the owner for the server's name. */
 int us_ssl_identity_checked(struct ssl_st *ssl);
+/* Why a client refuses a renegotiation, as the reason of a protocol failure: the error SSL_renegotiate() queued, or the limit. Drains the thread's error queue. */
+void us_ssl_refused_renegotiation_reason(int over_limit, char *reason, size_t size);
 /* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
 void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
 /* `ctx` is the X509_STORE_CTX of a verify callback. */

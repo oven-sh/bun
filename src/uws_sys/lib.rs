@@ -49,6 +49,15 @@ pub struct us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
     pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
+
+    /// A fatal TLS protocol failure, like `ssl_dispatch_parked_reason` in openssl.c. `reason` must outlive the report.
+    pub fn protocol_failure(reason: &core::ffi::CStr) -> Self {
+        Self {
+            error_no: -71,
+            code: c"EPROTO".as_ptr(),
+            reason: reason.as_ptr(),
+        }
+    }
 }
 
 impl Default for us_bun_verify_error_t {

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
+import { request as httpsRequest } from "https";
 import { connect as netConnect } from "net";
 import { join } from "path";
 import { Duplex } from "stream";
@@ -348,6 +349,269 @@ it("should terminate the connection when the peer exceeds the renegotiation limi
   // renegotiation limit, before the attacker finishes its 10 renegotiations
   // and delivers the response.
   expect(await outcome).toBe("closed");
+});
+
+// The server starts a renegotiation only when the client sends data, and writes "done N" when renegotiation N
+// completed. So each handshake report sits between two pieces of data, and request 4 is the one that the client
+// refuses (the limit is 3 in 600 s).
+const pingPongRenegotiationServer = /* js */ `
+  const tls = require("tls");
+  // The server counts handshakes too. Only the limit of the client is under test.
+  tls.CLIENT_RENEG_LIMIT = 100;
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let asked = 0;
+      socket.on("data", () => {
+        const n = ++asked;
+        socket.renegotiate({ rejectUnauthorized: false }, err => {
+          if (!err) socket.write("done " + n);
+        });
+      });
+    },
+  );
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
+
+// Renegotiates 4 times in a row when the first request arrives, so the client refuses the last one while it waits
+// for an answer. An HTTP request gets its response after the 4 renegotiations. A RESP command (Valkey) gets none.
+const backToBackRenegotiationServer = /* js */ `
+  const tls = require("tls");
+  tls.CLIENT_RENEG_LIMIT = 100;
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let head = "";
+      socket.on("data", function onHead(chunk) {
+        head += chunk.toString("latin1");
+        const isHttp = !head.startsWith("*");
+        if (isHttp && !head.includes("\\r\\n\\r\\n")) return;
+        socket.off("data", onHead);
+        socket.resume();
+        let asked = 0;
+        (function ask() {
+          if (asked === 4) {
+            if (isHttp) socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+            return;
+          }
+          asked++;
+          socket.renegotiate({ rejectUnauthorized: false }, err => {
+            if (!err) ask();
+          });
+        })();
+      });
+    },
+  );
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
+
+function spawnRenegotiationServer(source: string) {
+  return Bun.spawn({
+    cmd: ["node", "-e", source],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+}
+
+async function portOf(server: ReturnType<typeof spawnRenegotiationServer>) {
+  const { value, done } = await server.stdout.getReader().read();
+  if (done) throw new Error("the server exited before it printed its port");
+  return Number(new TextDecoder().decode(value).trim());
+}
+
+// A refusal is not the result of a handshake: no 'secureConnect' reports it.
+it.concurrent.each([
+  { transport: "TCP", trusted: false },
+  { transport: "TCP", trusted: true },
+  { transport: "a Duplex", trusted: false },
+  { transport: "a Duplex", trusted: true },
+])(
+  "a renegotiation that the client refuses is an 'error' and no 'secureConnect' over $transport (trusted chain: $trusted)",
+  async ({ transport, trusted }) => {
+    await using server = spawnRenegotiationServer(pingPongRenegotiationServer);
+    const port = await portOf(server);
+
+    const options = { servername: "localhost", rejectUnauthorized: false, ...(trusted && { ca: tls.cert }) };
+    let raw: ReturnType<typeof netConnect> | undefined;
+    let socket: ReturnType<typeof tlsConnect>;
+    if (transport === "TCP") {
+      socket = tlsConnect({ ...options, port, host: "127.0.0.1" });
+    } else {
+      const transportSocket = (raw = netConnect(port, "127.0.0.1"));
+      transportSocket.on("error", () => {});
+      const duplex = new Duplex({
+        read() {},
+        write(chunk: Buffer, encoding: string, callback: () => void) {
+          transportSocket.write(chunk, callback);
+        },
+        final(callback: () => void) {
+          transportSocket.end();
+          callback();
+        },
+      });
+      transportSocket.on("data", (chunk: Buffer) => duplex.push(chunk));
+      transportSocket.on("end", () => duplex.push(null));
+      transportSocket.on("close", () => duplex.destroy());
+      socket = tlsConnect({ ...options, socket: duplex });
+    }
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    socket.on("secureConnect", () => {
+      if (events.push(`secureConnect authorized=${socket.authorized}`) === 1) socket.write("go");
+    });
+    socket.on("data", (chunk: Buffer) => {
+      events.push(`data ${chunk}`);
+      socket.write("go");
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+    socket.on("close", (hadError: boolean) => {
+      events.push(`close hadError=${hadError}`);
+      closed.resolve();
+    });
+    try {
+      await closed.promise;
+      expect(events).toEqual([
+        `secureConnect authorized=${trusted}`,
+        `secureConnect authorized=${trusted}`,
+        "data done 1",
+        `secureConnect authorized=${trusted}`,
+        "data done 2",
+        `secureConnect authorized=${trusted}`,
+        "data done 3",
+        "error EPROTO: TLS renegotiation limit exceeded",
+        "close hadError=true",
+      ]);
+    } finally {
+      socket.destroy();
+      raw?.destroy();
+    }
+  },
+);
+
+// The handshake handler gets the refusal as a protocol failure, not as the certificate verdict of the session.
+it.concurrent.each([true, false])(
+  "Bun.connect reports a renegotiation that the client refuses to its handshake handler (error handler: %p)",
+  async withErrorHandler => {
+    await using server = spawnRenegotiationServer(pingPongRenegotiationServer);
+    const port = await portOf(server);
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const describe = (error: Error | null | undefined) =>
+      error ? `${(error as NodeJS.ErrnoException).code}: ${error.message}` : `${error}`;
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: { ca: tls.cert, serverName: "localhost" },
+      socket: {
+        data(socket, chunk) {
+          events.push(`data ${chunk}`);
+          socket.write("go");
+        },
+        handshake(socket, success, error) {
+          if (events.push(`handshake ${success} ${describe(error)}`) === 1) socket.write("go");
+        },
+        ...(withErrorHandler && {
+          error(_socket: Bun.Socket, error: Error) {
+            events.push(`error ${describe(error)}`);
+          },
+        }),
+        close(socket, error) {
+          events.push(`close ${describe(error)} authorized=${socket.authorized}`);
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+
+    expect(events).toEqual([
+      "handshake true null",
+      "handshake true null",
+      "data done 1",
+      "handshake true null",
+      "data done 2",
+      "handshake true null",
+      "data done 3",
+      "handshake false EPROTO: TLS renegotiation limit exceeded",
+      "close undefined authorized=false",
+    ]);
+  },
+);
+
+it("https.request fails with the protocol error when the client refuses a renegotiation", async () => {
+  await using server = spawnRenegotiationServer(backToBackRenegotiationServer);
+  const port = await portOf(server);
+  const outcome = Promise.withResolvers<string>();
+  const req = httpsRequest(
+    { host: "localhost", port, path: "/", agent: false, ca: tls.cert },
+    (res: IncomingMessage) => {
+      res.resume();
+      res.on("end", () => outcome.resolve(`status ${res.statusCode}`));
+    },
+  );
+  req.on("error", (err: NodeJS.ErrnoException) => outcome.resolve(`${err.code}: ${err.message}`));
+  req.end();
+  expect(await outcome.promise).toBe("EPROTO: TLS renegotiation limit exceeded");
+});
+
+// The chain is not trusted and the client accepts that. The refusal must not come back as that certificate verdict.
+it("fetch does not report a certificate error when the client refuses a renegotiation", async () => {
+  await using server = spawnRenegotiationServer(backToBackRenegotiationServer);
+  const port = await portOf(server);
+  const outcome = await fetch(`https://localhost:${port}/`, {
+    keepalive: false,
+    tls: { rejectUnauthorized: false },
+  }).then(
+    res => `status ${res.status}`,
+    (err: NodeJS.ErrnoException) => `${err.name} ${err.code}`,
+  );
+  expect(outcome).toBe("TypeError EPROTO");
+});
+
+// In a child process: with no error to report, an assert-enabled build aborts when it makes an Error with no message.
+it("a Valkey client fails its command with the protocol error when the client refuses a renegotiation", async () => {
+  await using server = spawnRenegotiationServer(backToBackRenegotiationServer);
+  const port = await portOf(server);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const client = new Bun.RedisClient("rediss://localhost:" + process.env.SERVER_PORT, {
+          tls: { ca: process.env.SERVER_CERT },
+          autoReconnect: false,
+        });
+        const outcome = await client.get("key").then(
+          value => "value " + value,
+          err => err.code + ": " + err.message,
+        );
+        console.log(outcome);
+        client.close();
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      SERVER_PORT: String(port),
+      SERVER_CERT: tls.cert,
+      // An abort of an ASAN build must not spend the test's time on symbols.
+      ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode, stderr }).toEqual({
+    stdout: "EPROTO: TLS renegotiation limit exceeded",
+    exitCode: 0,
+    signalCode: null,
+    stderr: expect.any(String),
+  });
 });
 
 // A renegotiation reports the certificate check of its own handshake. The client ends its write side while the first

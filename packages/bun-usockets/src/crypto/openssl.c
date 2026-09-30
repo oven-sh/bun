@@ -1950,6 +1950,29 @@ static inline int ssl_gone(struct us_socket_t *s) {
   return us_socket_is_closed(s) || s->ssl == NULL;
 }
 
+void us_ssl_refused_renegotiation_reason(int over_limit, char *reason, size_t size) {
+  unsigned long queued = over_limit ? 0 : ERR_peek_error();
+  if (queued) {
+    ERR_error_string_n(queued, reason, size);
+  } else {
+    const char *text = over_limit ? "TLS renegotiation limit exceeded" : "TLS renegotiation refused";
+    size_t length = strlen(text) < size ? strlen(text) : size - 1;
+    memcpy(reason, text, length);
+    reason[length] = 0;
+  }
+  ERR_clear_error();
+}
+
+/* A refusal is a protocol failure, not the X509 verdict of the session. After
+ * our own close_notify or FIN the request has no answer, so nothing is parked. */
+static void ssl_park_refused_renegotiation(struct us_socket_t *s, int over_limit) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || us_internal_ssl_is_shut_down(s)) return;
+  us_ssl_refused_renegotiation_reason(over_limit, loop_ssl_data->ssl_last_fatal_error,
+                                      sizeof(loop_ssl_data->ssl_last_fatal_error));
+  loop_ssl_data->ssl_last_fatal_error_owner = s;
+}
+
 static int ssl_renegotiate(struct us_socket_t *s) {
   /* Server-forced renegotiation (HelloRequest -> SSL_ERROR_WANT_RENEGOTIATE).
    * Enforce the per-context policy (default 3 per 600s, Node's
@@ -1973,11 +1996,13 @@ static int ssl_renegotiate(struct us_socket_t *s) {
     st->reneg_count = 0;
   }
   if (st->reneg_count >= limit) {
+    ssl_park_refused_renegotiation(s, 1);
     ssl_trigger_handshake(s, 0);
     return 0;
   }
   st->reneg_count++;
   if (!SSL_renegotiate(s_ssl(s))) {
+    ssl_park_refused_renegotiation(s, 0);
     ssl_trigger_handshake(s, 0);
     return 0;
   }

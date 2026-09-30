@@ -1,6 +1,7 @@
 //! The lint rules behind `bun --lint`.
 
 mod ast_utils;
+pub mod code_frame;
 mod context;
 pub mod diagnostic;
 pub mod diagnosticwriter;

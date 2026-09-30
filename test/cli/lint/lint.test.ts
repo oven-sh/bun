@@ -52,6 +52,39 @@ describe("BUN_FEATURE_FLAG_EXPERIMENTAL_LINT, the variable that turns --lint on"
   });
 });
 
+describe("--lint with a flag that selects another run mode", () => {
+  // Without the variable that turns `--lint` on, the refusal is about that variable.
+  const gated = {
+    stdout: "",
+    stderr:
+      "error: --lint is experimental. Set the environment variable BUN_FEATURE_FLAG_EXPERIMENTAL_LINT=1 to enable it\n",
+    exitCode: 1,
+  };
+  const withoutVariable: NodeJS.Dict<string> = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_LINT: undefined };
+
+  // Without `--lint` these run scripts one after the other, run a script in every workspace, and start the REPL.
+  test.concurrent.each(["--sequential", "--workspaces", "--interactive"])(
+    "`%s` is refused and the file is not run",
+    async flag => {
+      using dir = tempDir("lint-run-mode", { "file.ts": markerSource });
+      const cwd = String(dir);
+      const refused = { stdout: "", stderr: `error: --lint cannot be used with ${flag}\n`, exitCode: 1 };
+      const [auto, run, bare, unset] = await Promise.all([
+        bun(cwd, ["--lint", flag, "file.ts"]),
+        bun(cwd, ["run", "--lint", flag, "file.ts"]),
+        bun(cwd, ["--lint", flag]),
+        bun(cwd, ["--lint", flag, "file.ts"], withoutVariable),
+      ]);
+      expect(auto).toEqual(refused);
+      expect(run).toEqual(refused);
+      // The flag is refused before the operands are looked at, so without a file too.
+      expect(bare).toEqual(refused);
+      expect(unset).toEqual(gated);
+      expect(await markerExists(cwd)).toBe(false);
+    },
+  );
+});
+
 describe("--lint among the flags that bunx reads before the package name", () => {
   const refused = { stdout: "", stderr: "error: --lint cannot be used with bunx\n", exitCode: 1 };
   // The refusal does not depend on the variable that turns `--lint` on.

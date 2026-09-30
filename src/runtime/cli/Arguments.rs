@@ -1783,6 +1783,16 @@ fn accept_lint(
         );
         Global::exit(1);
     }
+    // Refused, not dropped as the other flags of a lint run are: each selects a run mode of its own.
+    if args.flag(b"--sequential") {
+        cli::lint_command::refuse("--sequential");
+    }
+    if args.flag(b"--workspaces") {
+        cli::lint_command::refuse("--workspaces");
+    }
+    if args.flag(b"--interactive") {
+        cli::lint_command::refuse("--interactive");
+    }
     ctx.lint = true;
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());

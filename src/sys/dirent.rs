@@ -160,7 +160,7 @@ const ENDED: usize = usize::MAX;
 
 /// Ends a walk at a malformed record: `EIO` for this call, as the kernel answers a FUSE server, then the end of the directory.
 #[cold]
-#[inline(never)]
+// Not `#[inline(never)]`: as a call it puts `next` above the inline threshold of the recursive `readdirSync` loops, which costs them 45 instructions per entry.
 pub fn end_walk<T>(end_index: &mut usize, syscall: Tag) -> Result<Option<T>, Error> {
     if *end_index == ENDED {
         return Ok(None);

@@ -2737,18 +2737,8 @@ pub mod formatter {
         /// Mirror of `Formatter::write_indent` routed through the wrapped
         /// `ctx` writer. Takes the current `Formatter::indent` by value.
         pub(crate) fn write_indent(&mut self, indent: u32) {
-            let mut total_remain: u32 = indent;
-            while total_remain > 0 {
-                let written: u8 = total_remain.min(32) as u8;
-                if self
-                    .ctx
-                    .write_all(&INDENTATION_BUF[0..(written as usize) * 2])
-                    .is_err()
-                {
-                    self.failed = true;
-                    return;
-                }
-                total_remain = total_remain.saturating_sub(u32::from(written));
+            if write_indent_n(indent, self.ctx).is_err() {
+                self.failed = true;
             }
         }
 
@@ -2825,14 +2815,11 @@ pub mod formatter {
         }
     }
 
+    /// Indentation stops growing at 32 levels. Growing with the depth, it makes
+    /// the output quadratic in it: a value nested as deep as the native stack
+    /// allows printed hundreds of megabytes of spaces.
     fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
-        let mut total_remain: u32 = indent;
-        while total_remain > 0 {
-            let written: u8 = total_remain.min(32) as u8;
-            writer.write_all(&INDENTATION_BUF[0..(written as usize) * 2])?;
-            total_remain = total_remain.saturating_sub(u32::from(written));
-        }
-        Ok(())
+        writer.write_all(&INDENTATION_BUF[0..(indent.min(32) as usize) * 2])
     }
 
     impl<'a> Formatter<'a> {
@@ -3574,7 +3561,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_proxy<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -4254,7 +4241,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_to_json<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -4328,7 +4315,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_array<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
@@ -4661,7 +4648,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_map<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -4751,7 +4738,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_map_iterator_like<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             label: &'static str,
@@ -4823,7 +4810,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_set<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
@@ -5093,7 +5080,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_jsx<const C: bool>(
             &mut self,
-            _entered: &Entered,
+            _: &Entered,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {

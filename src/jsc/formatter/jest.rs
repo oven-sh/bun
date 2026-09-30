@@ -58,7 +58,7 @@ impl<'a> Formatter<'a> {
             Tag::Event => self.print_event::<false>(entered, writer_, value),
             Tag::JSX => self.print_jsx::<false>(entered, writer_, value),
             Tag::Object | Tag::MapIterator | Tag::SetIterator | Tag::CustomFormattedObject => {
-                self.print_jest_object(entered, writer_, value, js_type)
+                self.print_jest_object(entered, writer_, value)
             }
             Tag::TypedArray => self.print_jest_typed_array(writer_, value, js_type),
             Tag::RevokedProxy => self.print_revoked_proxy::<false>(writer_),
@@ -80,9 +80,8 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Stored snapshots stop indenting at 32 levels.
     fn put_jest_indent(&mut self, writer_: &mut dyn bun_io::Write) {
-        if write_indent_n(self.indent.min(32), writer_).is_err() {
+        if write_indent_n(self.indent, writer_).is_err() {
             self.failed = true;
         }
     }
@@ -201,7 +200,7 @@ impl<'a> Formatter<'a> {
     #[inline(never)]
     fn print_jest_error(
         &mut self,
-        _entered: &Entered,
+        _: &Entered,
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
@@ -252,7 +251,7 @@ impl<'a> Formatter<'a> {
     #[inline(never)]
     fn print_jest_array(
         &mut self,
-        _entered: &Entered,
+        _: &Entered,
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
@@ -395,13 +394,10 @@ impl<'a> Formatter<'a> {
                 let entries = to_json.call(self.global_this, value, &[])?;
                 return self.print_as::<false>(Tag::Object, writer_, entries, jsc::JSType::Object);
             }
-        } else if js_type != jsc::JSType::DOMWrapper {
-            if value.is_callable() {
-                return self.print_jest_function(writer_, value);
-            }
-            return self.print_jest_object(entered, writer_, value, js_type);
+        } else if js_type != jsc::JSType::DOMWrapper && value.is_callable() {
+            return self.print_jest_function(writer_, value);
         }
-        self.print_jest_object(entered, writer_, value, jsc::JSType::Event)
+        self.print_jest_object(entered, writer_, value)
     }
 
     #[inline(never)]
@@ -417,7 +413,7 @@ impl<'a> Formatter<'a> {
     #[inline(never)]
     fn print_jest_map(
         &mut self,
-        _entered: &Entered,
+        _: &Entered,
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
@@ -464,7 +460,7 @@ impl<'a> Formatter<'a> {
     #[inline(never)]
     fn print_jest_set(
         &mut self,
-        _entered: &Entered,
+        _: &Entered,
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
     ) -> JsResult<()> {
@@ -548,10 +544,9 @@ impl<'a> Formatter<'a> {
     #[inline(never)]
     fn print_jest_object(
         &mut self,
-        _entered: &Entered,
+        _: &Entered,
         writer_: &mut dyn bun_io::Write,
         value: JSValue,
-        _js_type: jsc::JSType,
     ) -> JsResult<()> {
         let prev_quote_strings = self.quote_strings;
         self.quote_strings = true;

@@ -368,6 +368,7 @@ function onQuerySettled(query: Query<any, any>, callback: () => void) {
 function removeQueryWhenSettled(query: Query<any, any>, pending: Set<Query<any, any>>) {
   $pokePromiseAsHandled(query);
   if ($isPromisePending(query)) {
+    $assert(query[_pending] === undefined, "a query is in one set of pending queries");
     query[_pending] = pending;
   } else {
     pending.$delete(query);

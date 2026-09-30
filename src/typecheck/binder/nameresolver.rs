@@ -563,7 +563,7 @@ impl<H> NameResolver<'_, H> {
                 }
                 if declaration_requires_scope_change == Tristate::UNKNOWN {
                     declaration_requires_scope_change =
-                        if core::some(a.parameters(function_location), |parameter| {
+                        if core::some(a.parameters(function_location).as_slice(), |parameter| {
                             self.requires_scope_change(a, parameter)
                         }) {
                             Tristate::TRUE

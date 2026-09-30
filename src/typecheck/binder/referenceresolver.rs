@@ -231,7 +231,7 @@ impl<'a, H> ReferenceResolverImpl<'a, '_, H> {
     }
 
     fn get_declaration_of_alias_symbol(&mut self, a: Ast<'a>, symbol: SymbolId) -> NodeId {
-        core::find_last(a.sym(symbol).declarations, |declaration| {
+        core::find_last(a.sym(symbol).declarations.as_slice(), |declaration| {
             ast::is_alias_symbol_declaration(a, declaration)
         })
     }

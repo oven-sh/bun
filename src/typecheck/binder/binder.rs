@@ -1448,7 +1448,7 @@ impl<'a> Binder<'a> {
             }
             _ => {}
         }
-        core::some(statements, |s| {
+        core::some(statements.as_slice(), |s| {
             ast::is_export_declaration(a, s) || ast::is_export_assignment(a, s)
         })
     }
@@ -3010,9 +3010,10 @@ impl<'a> Binder<'a> {
         self.pre_switch_case_flow = self.current_flow;
         self.bind(stmt.case_block);
         self.add_antecedent(post_switch_label, self.current_flow);
-        let has_default = core::some(a.nodes(a.as_case_block(stmt.case_block).clauses), |c| {
-            a.kind(c) == Kind::DefaultClause
-        });
+        let has_default = core::some(
+            a.nodes(a.as_case_block(stmt.case_block).clauses).as_slice(),
+            |c| a.kind(c) == Kind::DefaultClause,
+        );
         if !has_default {
             let switch_clause =
                 self.create_flow_switch_clause(self.pre_switch_case_flow, node, 0, 0);
@@ -3555,13 +3556,14 @@ impl<'a> Binder<'a> {
         let declarations = a.sym(symbol).declarations;
         let declarations = if declarations.is_nil() {
             self.new_single_declaration(node)
-        } else if declarations.iter().any(|declaration| declaration == node) {
-            // core.AppendIfUnique: the list stays as it is when the node is in it.
-            declarations
         } else {
-            let mut items = declarations.as_slice().to_vec();
-            items.push(node);
-            self.list_of(&items)
+            let appended = core::append_if_unique(declarations.as_slice().to_vec(), node);
+            // The list stays as it is when the node is in it.
+            if appended.len() == declarations.as_slice().len() {
+                declarations
+            } else {
+                self.list_of(&appended)
+            }
         };
         a.update_symbol(symbol, |s| s.declarations = declarations);
         // On merge of const enum module with class or function, reset const enum only flag (namespaces will already recalculate)

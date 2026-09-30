@@ -316,3 +316,28 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
     Bun.gc(true);
   }
 });
+
+test("a module that failed to build as a static import is fetched again by the next importer", async () => {
+  using dir = tempDir("build-error-static-retry", {
+    "child.mjs": "export const value = ;",
+    "before.mjs": `export { value } from "./child.mjs";`,
+    "after.mjs": `export { value } from "./child.mjs"; // another importer`,
+    "main.mjs": `
+      import { writeFileSync } from "node:fs";
+      const outcome = path => import(path).then(m => "value " + m.value, e => "failed");
+      console.log("broken:", await outcome("./before.mjs"));
+      writeFileSync(import.meta.dir + "/child.mjs", "export const value = 1;");
+      console.log("fixed:", await outcome("./after.mjs"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "broken: failed\nfixed: value 1\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

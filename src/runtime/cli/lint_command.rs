@@ -142,16 +142,19 @@ fn parse(file: FileId, loader: bun_ast::Loader, source: &bun_ast::Source) -> Vec
     bun_ast::initialize_store();
     let _reset = bun_ast::StoreResetGuard::new();
     let arena = bun_alloc::Arena::new();
-    let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
-    // A macro call stays a call: nothing is evaluated.
-    options.features.no_macros = true;
-    options.features.is_macro_runtime = true;
-    options.features.top_level_await = true;
-    options.features.standard_decorators = true;
+    let options = || {
+        let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
+        // A macro call stays a call: nothing is evaluated.
+        options.features.no_macros = true;
+        options.features.is_macro_runtime = true;
+        options.features.top_level_await = true;
+        options.features.standard_decorators = true;
+        options
+    };
     let define = bun_js_parser::Define::default();
     let mut log = bun_ast::Log::init();
     log.level = bun_ast::Level::Warn;
-    let parser = bun_js_parser::Parser::init(options, &mut log, source, &define, &arena);
+    let parser = bun_js_parser::Parser::init(options(), &mut log, source, &define, &arena);
     let parsed = parser.and_then(|parser| match loader {
         // The rules read the statements as they were written: the visit pass of `Parser::parse` rewrites them.
         bun_ast::Loader::Js | bun_ast::Loader::Jsx => {
@@ -160,16 +163,18 @@ fn parse(file: FileId, loader: bun_ast::Loader, source: &bun_ast::Source) -> Vec
         // `Parser::parse_only` is the parser without TypeScript: a TypeScript file gets the full parse and no rule.
         _ => parser.parse().map(|_| Vec::new()),
     });
+    if matches!(parsed, Err(bun_js_parser::Error::StackOverflow)) {
+        // `Parser::parse_only` only returns a stack overflow: `Parser::parse` logs it, at the place the lexer reached.
+        log = bun_ast::Log::init();
+        log.level = bun_ast::Level::Warn;
+        let _ = bun_js_parser::Parser::init(options(), &mut log, source, &define, &arena)
+            .and_then(|parser| parser.parse());
+    }
     let reports = match parsed {
         Ok(reports) => reports,
         Err(err) => {
             if log.errors == 0 {
-                // `Parser::parse` logs a stack overflow under this text itself, `Parser::parse_only` only returns it.
-                let text: &'static [u8] = match err {
-                    bun_js_parser::Error::StackOverflow => b"Maximum call stack size exceeded",
-                    _ => err.name().as_bytes(),
-                };
-                log.add_range_error(Some(source), bun_ast::Range::None, text);
+                log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
             }
             Vec::new()
         }

@@ -168,8 +168,9 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 {
     WTF::String message = errorMessage(str);
     if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length.
-        return {};
+        // Allocation failed or the message exceeds the maximum string length. An empty value
+        // with no exception pending makes the caller's throw a no-op: a failed `expect()` passes.
+        return JSValue::encode(JSC::createOutOfMemoryError(globalObject));
     }
     JSC::JSObject* result = nullptr;
     switch (kind) {

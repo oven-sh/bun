@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import os from "node:os";
 
 // https://github.com/oven-sh/bun/issues/38931
@@ -52,6 +52,37 @@ console.log(JSON.stringify({
       signalCode: null,
     });
     expect(parsed.length).toBeGreaterThan(540_000_000);
+  },
+  300_000,
+);
+
+// https://github.com/oven-sh/bun/issues/37310
+// A message longer than the longest string cannot become an Error. The matcher then threw nothing,
+// so the failed assertion passed.
+test.skipIf(os.totalmem() < 16 * 1024 ** 3 || isDebug || isASAN)(
+  "expect failure message longer than the longest string still throws",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { expect } = require("bun:test");
+// One character short of the longest string, so the text the matcher adds does not fit.
+const label = Buffer.alloc(2 ** 31 - 2, "x").toString("latin1");
+let caught;
+try { expect(1, label).toBe(2); } catch (e) { caught = e; }
+console.log(JSON.stringify({ threw: caught !== undefined, name: caught?.name, message: caught?.message }));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ threw: true, name: "RangeError", message: "Out of memory" }) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   },
   300_000,
 );

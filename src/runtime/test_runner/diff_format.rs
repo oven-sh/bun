@@ -10,14 +10,14 @@ use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
 /// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
 /// inside `Display::fmt`.
-pub struct DiffFormatter<'a> {
+pub(crate) struct DiffFormatter<'a> {
     pub(crate) received_string: Cow<'a, [u8]>,
     pub(crate) expected_string: Cow<'a, [u8]>,
     pub(crate) not: bool,
 }
 
 impl<'a> DiffFormatter<'a> {
-    pub fn new(
+    pub(crate) fn new(
         global_this: &JSGlobalObject,
         received: JSValue,
         expected: JSValue,
@@ -54,7 +54,7 @@ impl<'a> DiffFormatter<'a> {
         })
     }
 
-    pub fn from_strings(received: &'a [u8], expected: &'a [u8], not: bool) -> Self {
+    pub(crate) fn from_strings(received: &'a [u8], expected: &'a [u8], not: bool) -> Self {
         DiffFormatter {
             received_string: Cow::Borrowed(received),
             expected_string: Cow::Borrowed(expected),

@@ -352,6 +352,122 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/33904
+  // The linker rewrites an import that a plugin onResolve answers. When the answer has a
+  // namespace, the printer emits "namespace:path", and the cached module record has to
+  // request that same specifier. "./data.bar?custom" is moved into a namespace by the
+  // plugin. "virt:thing" is already in one in the source.
+  const pluginNamespaceTestFile = `
+    import { test, expect } from "bun:test";
+    import direct from "./data.bar?custom";
+    import * as star from "./data.bar?custom";
+    import { named as viaClause } from "./reexport-clause.ts";
+    import { named as viaStar } from "./reexport-star.ts";
+    import { ns as viaNamespace } from "./reexport-namespace.ts";
+    import redirected from "./data.bar?redirect";
+    import virtual from "virt:other";
+    import { virtual as viaVirtualReexport } from "./reexport-virtual.ts";
+
+    test("plugin-resolved imports load", () => {
+      expect({
+        direct,
+        star: star.named,
+        viaClause,
+        viaStar,
+        viaNamespace: viaNamespace.named,
+        redirected,
+        virtual,
+        viaVirtualReexport,
+      }).toEqual({
+        direct: "FROM_PLUGIN",
+        star: "FROM_PLUGIN",
+        viaClause: "FROM_PLUGIN",
+        viaStar: "FROM_PLUGIN",
+        viaNamespace: "FROM_PLUGIN",
+        redirected: "REDIRECTED",
+        virtual: "resolved-other",
+        viaVirtualReexport: "resolved-thing",
+      });
+    });
+  `;
+
+  const pluginNamespaceFixture = {
+    "bunfig.toml": `[test]\npreload = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+      import { dirname, resolve } from "node:path";
+      Bun.plugin({
+        name: "query-loader",
+        setup(build) {
+          build.onResolve({ filter: /\\.bar\\?custom$/ }, args => ({
+            path: resolve(dirname(args.importer), args.path.slice(0, -"?custom".length)),
+            namespace: "custom",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "custom" }, () => ({
+            contents: 'export const named = "FROM_PLUGIN"; export default "FROM_PLUGIN";',
+            loader: "js",
+          }));
+          // No namespace: the record stays a plain file path.
+          build.onResolve({ filter: /\\.bar\\?redirect$/ }, args => ({
+            path: resolve(dirname(args.importer), "redirected.ts"),
+          }));
+          build.onResolve({ filter: /.*/, namespace: "virt" }, args => ({
+            path: "resolved-" + args.path,
+            namespace: "virt",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virt" }, args => ({
+            contents: "export default " + JSON.stringify(args.path) + ";",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+    "data.bar": "unused",
+    "redirected.ts": `export default "REDIRECTED";`,
+    "reexport-clause.ts": `export { named } from "./data.bar?custom";`,
+    "reexport-star.ts": `export * from "./data.bar?custom";`,
+    "reexport-namespace.ts": `export * as ns from "./data.bar?custom";`,
+    "reexport-virtual.ts": `export { default as virtual } from "virt:thing";`,
+    "a.test.ts": pluginNamespaceTestFile,
+    "b.test.ts": pluginNamespaceTestFile,
+  };
+
+  test.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes both files (scale-up gated), so the second file links from the records the first one cached.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("cached module records keep the namespace a plugin onResolve gives an import (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-plugin-namespace", pluginNamespaceFixture);
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      ...env,
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // The on-disk transpiler cache stores the module record next to the output. reexport-clause.ts
+  // is padded past the 4 KiB floor of that cache, so the second run rebuilds its record from the entry.
+  test("with --isolate, the on-disk transpiler cache keeps that namespace in the stored module record", async () => {
+    using dir = tempDir("isolate-plugin-namespace-disk-cache", {
+      ...pluginNamespaceFixture,
+      "reexport-clause.ts": `export { named } from "./data.bar?custom";\n//${Buffer.alloc(5 * 1024, "f").toString()}\n`,
+    });
+    const cacheDir = join(String(dir), ".cache");
+    const env = {
+      ...bunEnv,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    for (const run of ["cold", "warm"]) {
+      const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"], env);
+      expect(normalizeBunSnapshot(stderr, dir), run).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir), run).toContain("0 fail");
+      expect(fs.readdirSync(cacheDir), run).toHaveLength(1);
+      expect(exitCode, run).toBe(0);
+    }
+  });
+
   test("with --isolate, leaked outbound socket is closed before next file", async () => {
     using dir = tempDir("isolate-socket", {
       "a-connect.test.ts": `
@@ -407,6 +523,157 @@ describe.concurrent("bun test --isolate", () => {
     } finally {
       server.close();
     }
+  });
+
+  test("with --isolate, what a leaked listener's close handler opens is closed before next file", async () => {
+    using dir = tempDir("isolate-close-handler", {
+      "a-listen.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("leak a listener whose close handler binds a UDP socket", async () => {
+          const { promise: accepted, resolve } = Promise.withResolvers<void>();
+          const listener = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              open() { resolve(); },
+              data() {},
+              async close() {
+                // Not in any socket group: only its owner's context closes it.
+                const late = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+                fs.writeFileSync(process.env.PORT_FILE!, String(late.port));
+              },
+            },
+          });
+          await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+          await accepted;
+          // intentionally leaving both open
+        });
+      `,
+      "b-check.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("the late socket's port is free again", async () => {
+          const port = Number(fs.readFileSync(process.env.PORT_FILE!, "utf8"));
+          expect(port).toBeGreaterThan(0);
+          const socket = await Bun.udpSocket({ hostname: "127.0.0.1", port });
+          try {
+            expect(socket.port).toBe(port);
+          } finally {
+            socket.close();
+          }
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-listen.test.ts", "./b-check.test.ts"],
+      { ...bunEnv, PORT_FILE: join(String(dir), "port.txt") },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("with --isolate, the default DNS resolver answers in every file, not only the first", async () => {
+    // The resolver is the VM's, and each file's queries open its channel anew.
+    using dir = tempDir("isolate-dns", {
+      "a-resolve.test.ts": `
+        import { test, expect } from "bun:test";
+        import dns from "node:dns";
+
+        test("a query through the default resolver is answered", async () => {
+          // A DNS server that answers every query with NXDOMAIN.
+          const server = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, query, port, address) {
+                const reply = Buffer.from(query);
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | 3;
+                socket.send(reply, port, address);
+              },
+            },
+          });
+          try {
+            dns.setServers(["127.0.0.1:" + server.port]);
+            const outcome = await dns.promises.resolve4("isolate-dns.test").then(() => "resolved", error => error.code);
+            expect(outcome).toBe("ENOTFOUND");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+      "b-resolve.test.ts": `
+        import { test, expect } from "bun:test";
+        import dns from "node:dns";
+
+        test("a query through the default resolver is answered", async () => {
+          // A DNS server that answers every query with NXDOMAIN.
+          const server = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, query, port, address) {
+                const reply = Buffer.from(query);
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | 3;
+                socket.send(reply, port, address);
+              },
+            },
+          });
+          try {
+            dns.setServers(["127.0.0.1:" + server.port]);
+            const outcome = await dns.promises.resolve4("isolate-dns.test").then(() => "resolved", error => error.code);
+            expect(outcome).toBe("ENOTFOUND");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+      "c-resolve.test.ts": `
+        import { test, expect } from "bun:test";
+        import dns from "node:dns";
+
+        test("a query through the default resolver is answered", async () => {
+          // A DNS server that answers every query with NXDOMAIN.
+          const server = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket, query, port, address) {
+                const reply = Buffer.from(query);
+                reply[2] |= 0x80;
+                reply[3] = (reply[3] & 0xf0) | 3;
+                socket.send(reply, port, address);
+              },
+            },
+          });
+          try {
+            dns.setServers(["127.0.0.1:" + server.port]);
+            const outcome = await dns.promises.resolve4("isolate-dns.test").then(() => "resolved", error => error.code);
+            expect(outcome).toBe("ENOTFOUND");
+          } finally {
+            server.close();
+          }
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-resolve.test.ts", "./b-resolve.test.ts", "./c-resolve.test.ts"],
+      bunEnv,
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
   });
 
   test("with --isolate, leaked fs.watch is closed before next file", async () => {
@@ -1400,10 +1667,10 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // fs.watchFile's StatWatcher is thread-safe-refcounted: the scheduler queue
 // holds a ref that is dropped on the work-pool thread. After unwatchFile +
 // GC of the JS wrapper, that queue ref is the LAST ref, so the watcher is
-// freed off the JS thread — where the thread-local isolation registry is
-// unreachable. The registry entry must therefore be removed in close() (JS
-// thread), not in the refcount destructor; otherwise the file-boundary drain
-// pops a dangling pointer and calls close() on freed memory (UAF, caught by
+// freed off the JS thread — where its context's handle list must not be
+// touched. The watcher must therefore leave its context in close() (JS
+// thread), not in the refcount destructor; otherwise the file-boundary sweep
+// reaches a dangling pointer and calls close() on freed memory (UAF, caught by
 // ASAN).
 test.concurrent(
   "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling registry entry",
@@ -1418,8 +1685,8 @@ test.concurrent(
     //      the closed watcher and drops the queue ref — the last one — freeing
     //      the watcher on the work-pool thread. No JS-observable signal exists
     //      for that free, hence the bounded sleep.
-    // The file boundary after each file then drains the isolation registry,
-    // which must no longer reference the freed watcher.
+    // The file boundary after each file then sweeps the file's context, which
+    // must no longer reference the freed watcher.
     const raceFixture = `
     import { test } from "bun:test";
     import fs from "node:fs";

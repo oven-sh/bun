@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
@@ -873,7 +872,9 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path.
+    // and on every exit path. A source map may be parsed lazily from a thread that never ran the parser (a stack trace
+    // remapped from a collector thread's end phase), so make sure this thread has the stores at all.
+    bun_ast::initialize_store();
     let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {

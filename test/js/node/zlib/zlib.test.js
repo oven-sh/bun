@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it, jest } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -691,6 +691,37 @@ describe("zlib.zstd", () => {
       expect(() => zlib.createZstdDecompress({ dictionary: malformedDictionary })).toThrow(
         expect.objectContaining(expectedError),
       );
+    });
+
+    // node:zlib/iter builds its own NativeZstd handle and needs the flag, so it runs in a child.
+    it("node:zlib/iter decompressZstd and decompressZstdSync throw when the handle is created", async () => {
+      const script = `
+        const { from, fromSync, pull, pullSync, bytes, bytesSync } = require("node:stream/iter");
+        const { decompressZstd, decompressZstdSync } = require("node:zlib/iter");
+        const dictionary = Buffer.from(${JSON.stringify([...malformedDictionary])});
+        const compressed = Buffer.from(${JSON.stringify(compressedString)}, "base64");
+        const show = e => [e.name, e.code, e.message].join("|");
+        try {
+          const out = bytesSync(pullSync(fromSync(compressed), decompressZstdSync({ dictionary })));
+          console.log("sync resolved with", out.byteLength, "bytes");
+        } catch (e) {
+          console.log("sync", show(e));
+        }
+        bytes(pull(from(compressed), decompressZstd({ dictionary }))).then(
+          out => console.log("async resolved with", out.byteLength, "bytes"),
+          e => console.log("async", show(e)),
+        );
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = [expectedError.name, expectedError.code, expectedError.message].join("|");
+      expect(stdout).toBe(`sync ${expected}\nasync ${expected}\n`);
+      expect(exitCode).toBe(0);
     });
 
     it("a raw content dictionary still round-trips", () => {

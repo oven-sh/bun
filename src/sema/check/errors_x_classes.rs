@@ -279,6 +279,11 @@ impl Checker<'_> {
         if !self.is_known(constructor) || self.is_uncertain(file, extends) {
             return ClassBase::Unknown;
         }
+        // `resolveBaseTypesOfClass`: the error type is no base type. In JavaScript `is_callee_in_error` takes the `anyType` of an
+        // unresolved `require("m")` for it.
+        if constructor == TypeId::ANY && !hir.is_js && self.is_callee_in_error(file, extends) {
+            return nothing;
+        }
         // A type parameter that is not in scope here is left over from an incomplete resolution.
         let is_generic_here = !class.type_params.is_empty() || self.has_outer_type_parameters(sym);
         if !is_generic_here && self.has_type_variables_except_this(file, c, constructor) {
@@ -924,8 +929,9 @@ impl Checker<'_> {
             }
             ClassBase::Is { constructor, base } => (constructor, base),
         };
-        // `any` may stand for what is in error, a type that no name goes by, and then nothing is extended: 4112, not 4113.
-        if base == TypeId::ANY {
+        // What a constructor that is not `any` itself makes, and in JavaScript every `any`, may be the error type, and then nothing
+        // is extended: 4112, not 4113.
+        if base == TypeId::ANY && (is_js || constructor != TypeId::ANY) {
             return;
         }
         // A name that is only known when the program runs is the name of no property that could be looked up.

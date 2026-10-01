@@ -728,9 +728,12 @@ impl Checker<'_> {
     }
 
     /// `isErrorType`, for the type of the expression `callee`. The error type is not modelled: an expression in error has type `any`,
-    /// so the syntax tells it from a declared `any`. The error type passes unchanged through `.`, `[]`, `!`, `<T>` and calls.
+    /// so the syntax tells it from a declared `any`. The error type passes unchanged through `.`, `[]`, `!`, `<T>`, `await`, calls,
+    /// binding elements and the initializer of a variable without a type annotation.
     pub(super) fn is_callee_in_error(&mut self, file: FileId, mut callee: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // The variables whose initializers the loop has gone on with.
+        let mut followed: SmallVec<[Sym; 4]> = SmallVec::new();
         loop {
             callee = match hir[callee].kind {
                 // `checkPropertyAccessExpressionOrQualifiedName`
@@ -741,7 +744,9 @@ impl Checker<'_> {
                     if !self.is_any(receiver) {
                         // `checkNonNullType` returns the error type for `unknown` and for a type that is only null or undefined.
                         let receiver = self.receiver_that_is_there(receiver);
-                        if self.is_any(receiver) {
+                        if self.is_any(receiver)
+                            || self.is_property_declared_in_error(receiver, name)
+                        {
                             return true;
                         }
                         // A property missing from `globalThis` or from a JavaScript literal type is `anyType`.
@@ -784,6 +789,14 @@ impl Checker<'_> {
                     inner
                 }
                 ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. } => inner,
+                // `getAwaitedType` returns `any` and the error type as they are.
+                ExprKind::Await(inner) => {
+                    let operand = self.type_of_expr(file, inner);
+                    if !self.is_any(operand) {
+                        return false;
+                    }
+                    inner
+                }
                 ExprKind::Ident(name) => {
                     if matches!(
                         name,
@@ -802,19 +815,43 @@ impl Checker<'_> {
                     {
                         return true;
                     }
-                    // The type annotation of the value declaration can resolve to the error type. An initializer is not followed: it
-                    // can refer back to this expression.
                     let Some(&(decl_file, Decl::Var(pat) | Decl::Param(pat))) =
                         self.files().decls_of(sym).first()
                     else {
                         return false;
                     };
-                    let is_annotated = match self.bound(decl_file).pat_parent[pat.idx()] {
-                        PatParent::Param(p) => self.hir(decl_file)[p].ty.is_some(),
-                        PatParent::Var(d) => self.hir(decl_file)[d].ty.is_some(),
-                        _ => false,
+                    let pat_parent = &self.bound(decl_file).pat_parent;
+                    // `getBindingElementTypeFromParentType`: an element of a pattern that destructures `any` has the type of the parent.
+                    let mut root = pat;
+                    while let PatParent::Prop(parent, _) | PatParent::Elem(parent, _) =
+                        pat_parent[root.idx()]
+                    {
+                        let parent_type =
+                            self.type_for_binding_element_parent(decl_file, root, parent);
+                        if !self.is_any(parent_type) {
+                            return false;
+                        }
+                        root = parent;
+                    }
+                    let (annotation, initializer) = match pat_parent[root.idx()] {
+                        PatParent::Param(p) => (self.hir(decl_file)[p].ty, ExprId::NONE),
+                        PatParent::Var(d) => {
+                            let declaration = self.hir(decl_file)[d];
+                            (declaration.ty, declaration.init)
+                        }
+                        _ => return false,
                     };
-                    return is_annotated && self.is_declared_in_error(decl_file, pat, TypeId::ANY);
+                    // The type annotation can resolve to the error type.
+                    if annotation.is_some() {
+                        return self.is_declared_in_error(decl_file, root, TypeId::ANY);
+                    }
+                    // `getWidenedTypeForVariableLikeDeclaration`: widening leaves the error type of the initializer alone. A variable
+                    // that is reached twice is circular, which makes it `anyType`.
+                    if initializer.is_none() || decl_file != file || followed.contains(&sym) {
+                        return false;
+                    }
+                    followed.push(sym);
+                    initializer
                 }
                 // `checkSuperExpression`. The arms for `.` and `[]` only continue with a `super` of type `any`.
                 ExprKind::Super => {
@@ -866,6 +903,28 @@ impl Checker<'_> {
                 _ => return false,
             };
         }
+    }
+
+    /// `getTypeOfVariableOrParameterOrProperty`: whether the type annotation of the property `name` of `receiver` resolves to the
+    /// error type.
+    fn is_property_declared_in_error(&mut self, receiver: TypeId, name: Atom) -> bool {
+        let apparent = self.apparent_type(receiver);
+        let Some((prop, _)) = self.prop_ref(apparent, name) else {
+            return false;
+        };
+        let (of, annotation) = match &prop.source {
+            PropSource::Members(members) => match members.first() {
+                Some(&(of, member)) if self.hir(of)[member].kind == MemberKind::Property => {
+                    (of, self.hir(of)[member].ty)
+                }
+                _ => return false,
+            },
+            PropSource::Parameter(of, param) => (*of, self.hir(*of)[*param].ty),
+            _ => return false,
+        };
+        annotation.is_some()
+            && self.type_from_node(of, annotation) == TypeId::ANY
+            && self.is_error_type_as_written(of, annotation, 0)
     }
 
     /// Whether `checkElementAccessExpression` returns the error type for `e`, which is `receiver[index]`. `receiver` is not `any`.

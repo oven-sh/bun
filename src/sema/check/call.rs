@@ -2347,6 +2347,7 @@ impl<'p> Checker<'p> {
         self.candidate_holes.push(CandidateHoles {
             type_params,
             mapper: None,
+            deferred_calls: SmallVec::new(),
         });
         let chosen = self.choose_overload_among(file, call, candidates, type_args, args, this_arg);
         self.candidate_holes.pop();
@@ -2443,14 +2444,15 @@ impl<'p> Checker<'p> {
             let is_plain = match a {
                 Arg::Expr(e) => {
                     // A call among the first `settled_before` arguments has been told what it is expected to be, and stays what it
-                    // comes to.
+                    // comes to, unless the first round defers it.
                     !self.is_context_sensitive(file, e)
                         && (!self.depends_on_context(file, e)
                             || i < settled_before
                                 && matches!(
                                     self.hir(file)[e].kind,
                                     ExprKind::Call(_) | ExprKind::New(_)
-                                ))
+                                )
+                                && !self.is_deferred_in_first_round(file, e))
                 }
                 Arg::Type(_) => true,
                 Arg::Spread(..) => false,
@@ -2648,6 +2650,10 @@ impl<'p> Checker<'p> {
                 Arg::Type(_) => false,
             };
             if waits || !self.has_type_variables(param) {
+                continue;
+            }
+            // `silentNeverType`: nothing is inferred from it.
+            if matches!(arg, Arg::Expr(x) if self.is_deferred_in_first_round(file, x)) {
                 continue;
             }
             let ty = self.arg_type(file, arg);
@@ -2944,6 +2950,8 @@ impl<'p> Checker<'p> {
         // What is expected of the result says what a candidate's type parameters are, for a start.
         let mut from_result: SmallVec<[Option<MapperId>; 8]> = SmallVec::new();
         let mut plain: SmallVec<[Option<(bool, MapperId, MapperId)>; 8]> = SmallVec::new();
+        // The arguments in `deferred_calls`.
+        let mut is_deferred: SmallVec<[bool; 8]> = smallvec![false; args.len()];
         let mut is_sensitive: SmallVec<[bool; 8]> = args
             .iter()
             .map(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
@@ -3048,6 +3056,28 @@ impl<'p> Checker<'p> {
                 }
                 if !reaches.contains(&true) {
                     reaches.fill(true);
+                }
+            }
+            // `inferTypeArguments` checks the arguments under `CheckModeSkipGenericFunctions`: the first candidate whose parameter has type
+            // variables defers the call (`resolveCallExpression`), and `argCheckMode` keeps the flag until a candidate passes the first
+            // round. That candidate says what is expected of the call, so no contextual type is recorded here. Without a context
+            // sensitive argument the first round infers from everything to the left of the call, and the call is resolved in it.
+            if type_args.is_empty() && is_sensitive.contains(&true) {
+                let first_to_reach = reaches.iter().position(|&r| r).unwrap_or(0);
+                for k in 0..=first_to_reach {
+                    if !self.sig_type_params(candidates[k]).is_empty()
+                        && let Some(t) = self.context_of_arg_at(&lists[k], i, Some(args.len()))
+                        && self.is_deferred_generic_call(file, e, t)
+                    {
+                        is_deferred[i] = true;
+                        if let Some(holes) = self.candidate_holes.last_mut() {
+                            holes.deferred_calls.push((file, e));
+                        }
+                        break;
+                    }
+                }
+                if is_deferred[i] {
+                    continue;
                 }
             }
             // What the first candidate to get as far as `e` expects of it, if an argument after `e` rules that candidate out: what
@@ -3312,7 +3342,9 @@ impl<'p> Checker<'p> {
                         && (!self.has_room_for_literal(file, e, param)
                             || self.literal_lacks_target_signatures(file, e, param)
                             || !self.is_guard_if_expected(file, e, param)
-                            || !self.do_annotated_parameters_fit(file, e, param, by_subtype)
+                            // `params` lack what the deferred calls contribute.
+                            || !is_deferred.contains(&true)
+                                && !self.do_annotated_parameters_fit(file, e, param, by_subtype)
                             || !self.do_plain_members_fit(file, e, param, by_subtype))
                     {
                         applicable = false;
@@ -3320,8 +3352,8 @@ impl<'p> Checker<'p> {
                     }
                     continue;
                 }
-                // What `rest` collects is held against it all together, below.
-                if i >= arg_count {
+                // What `rest` collects is held against it all together, below. `silentNeverType` is related to every type.
+                if i >= arg_count || is_deferred[i] {
                     continue;
                 }
                 let Some(param) = self.param_type_at(&params, i) else {
@@ -3380,7 +3412,8 @@ impl<'p> Checker<'p> {
                 // What waits is not looked at, and fits anything.
                 let taken_for: SmallVec<[Option<TypeId>; 8]> = is_sensitive
                     .iter()
-                    .map(|&waits| waits.then_some(TypeId::UNRESOLVED))
+                    .zip(&is_deferred)
+                    .map(|(&waits, &defers)| (waits || defers).then_some(TypeId::UNRESOLVED))
                     .collect();
                 let given = self.spread_argument_type(
                     file,
@@ -3996,6 +4029,57 @@ impl<'p> Checker<'p> {
             _ => Chain::No,
         };
         self.chain_receiver(file, this_arg, chain).0
+    }
+
+    /// The contextual type of `call` that `inferTypeArguments` instantiates with `outerMapper`: `getContextualType` gives the declared
+    /// parameter type of the call around (`checkExpressionWithContextualType`). The recorded context of an argument is instantiated
+    /// ahead of time, so the contextual type is derived again with the declared parameter type as the context of the argument.
+    /// `None`: `call` is not in an argument of the innermost call being resolved, or the recorded context will do.
+    fn contextual_type_for_outer_mapper(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        type_params: &[TypeId],
+    ) -> Option<TypeId> {
+        let outer = self.resolving.last()?;
+        if outer.file != file || outer.call.is_none() || outer.so_far == MapperId::IDENTITY {
+            return None;
+        }
+        let (outer_call, params) = (outer.call, outer.params.clone());
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (ExprKind::Call(id) | ExprKind::New(id)) = hir[outer_call].kind else {
+            return None;
+        };
+        let mut arg = call;
+        loop {
+            arg = match bound.expr_parent[arg.idx()] {
+                Parent::Expr(parent) if parent == outer_call => break,
+                Parent::Expr(parent)
+                    if !matches!(
+                        hir[parent].kind,
+                        ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
+                    ) =>
+                {
+                    parent
+                }
+                Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
+                _ => return None,
+            };
+        }
+        let args = hir[id].args;
+        if hir
+            .ids(args)
+            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
+        {
+            return None;
+        }
+        let index = hir.ids(args).position(|a| a == arg)?;
+        let param = self.context_of_arg_at(&params, index, Some(args.len()))?;
+        let param = self.without_no_infer(param);
+        self.contextual.push((file, arg, param));
+        let expected = self.expected_result(file, call, type_params);
+        self.contextual.pop();
+        expected.map(|(ty, _)| ty)
     }
 
     /// The head of `inferTypeArguments`: what is expected of the result of `call`, whose signature has `type_params`, and
@@ -4684,6 +4768,10 @@ impl<'p> Checker<'p> {
                 let contextual = self
                     .contextual_type_before_return_mapper(file, call, contextual)
                     .unwrap_or(contextual);
+                // `outerMapper` is applied to the declared parameter type. `returnMapper` below is made from the recorded type.
+                let contextual = self
+                    .contextual_type_for_outer_mapper(file, call, &type_params)
+                    .unwrap_or(contextual);
                 // Type parameters of the calls around, which are still being worked out, are what is known of them by now.
                 let mut expected = contextual;
                 let levels = self.inference_context_levels(file, call);
@@ -4898,8 +4986,16 @@ impl<'p> Checker<'p> {
         }
         // `resolveCallExpression` under `CheckModeSkipGenericFunctions`: a call, without type arguments, of a generic function
         // that returns a function waits too, so that what stands to its left has had its say. It is a plain argument for all
-        // that: nothing is settled for its sake. While candidates are tried it is held against each of them, and does not wait.
+        // that: nothing is settled for its sake. A trial infers from it in its turn, unless `choose_overload_among` defers it.
         let mut put_off: SmallVec<[bool; 8]> = smallvec![false; args.len()];
+        if skip_sensitive {
+            for (i, &arg) in args.iter().enumerate() {
+                if matches!(arg, Arg::Expr(e) if self.is_deferred_in_first_round(file, e)) {
+                    is_sensitive[i] = true;
+                    put_off[i] = true;
+                }
+            }
+        }
         // Whether anything would wait if this were not a trial.
         let mut anything_waits = settled || is_sensitive.contains(&true);
         for (i, &arg) in args.iter().enumerate() {
@@ -5584,6 +5680,22 @@ impl<'p> Checker<'p> {
             }
         }
         false
+    }
+
+    /// `resolveCallExpression` under `CheckModeSkipGenericFunctions`: whether `inferTypeArguments` defers the argument `e`, given for
+    /// `param`. `getResolvedSignature` returns a cached `resolvedSignature` first, so a call that is resolved is not deferred.
+    fn is_deferred_generic_call(&mut self, file: FileId, e: ExprId, param: TypeId) -> bool {
+        self.has_type_variables(param)
+            && matches!(self.hir(file)[e].kind, ExprKind::Call(_))
+            && self.p.calls.get(&(file, e)).is_none()
+            && self.is_call_of_generic_function_returning_function(file, e)
+    }
+
+    /// Whether `e` is an argument of the overloaded call whose candidates are being tried, and the first round defers it.
+    fn is_deferred_in_first_round(&self, file: FileId, e: ExprId) -> bool {
+        self.candidate_holes
+            .last()
+            .is_some_and(|holes| holes.deferred_calls.contains(&(file, e)))
     }
 
     /// The types of the array literals `e` is made of: what `ObjectFlagsArrayLiteral` marks.
@@ -8828,9 +8940,11 @@ impl<'p> Checker<'p> {
 }
 
 /// The type parameters of the candidates of an overloaded call. `mapper`: from each of them to a hole, once that has been asked for.
+/// `deferred_calls`: the arguments that the first round of `chooseOverload` defers (`CheckModeSkipGenericFunctions`).
 pub(super) struct CandidateHoles {
     type_params: SmallVec<[TypeId; 8]>,
     mapper: Option<MapperId>,
+    deferred_calls: SmallVec<[(FileId, ExprId); 4]>,
 }
 
 /// Whether the type node `node` is a keyword, a literal type, a reference without type arguments, or a union or intersection of those.

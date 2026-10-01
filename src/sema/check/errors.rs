@@ -1277,6 +1277,46 @@ impl Checker<'_> {
         (code, None)
     }
 
+    /// `errorOnImplicitAnyModule` with `isError`: 7016 of `spec`, which is one of the `untyped_imports` of `file` in `mode`. The error goes
+    /// from `at.0` to `at.1`. `at.1` is `0` for the specifier written at `at.0`.
+    pub(super) fn error_on_implicit_any_module(
+        &mut self,
+        file: FileId,
+        spec: Atom,
+        mode: ResolutionMode,
+        at: (u32, u32),
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let module = self.files().module(file);
+        let Some(index) = module
+            .untyped_imports
+            .iter()
+            .position(|&u| u == (spec, mode))
+        else {
+            return;
+        };
+        let start = at.0;
+        out.push(Diagnostic { start, code: 7016 });
+        let (path, package) = module.untyped_import_files[index];
+        self.explain_to(start, at.1, 7016, |c| {
+            vec![c.atom_text(spec), c.atom_text(path)]
+        });
+        if let Some(package) = package
+            && !crate::resolve::is_relative(&self.atom_text(spec))
+        {
+            let alternate = module
+                .untyped_import_alternates
+                .iter()
+                .find(|a| (a.0, a.1) == (spec, mode))
+                .map(|a| a.2);
+            self.explain_chain(start, 7016, |c| {
+                let alternate = alternate.map(|types| c.atom_text(types));
+                let (spec, package) = (c.atom_text(spec), c.atom_text(package));
+                vec![c.module_not_found_hint(&spec, &package, alternate)]
+            });
+        }
+    }
+
     /// `resolveExternalModule`. `kind` is `None` for `import()` and `Require` for a `require()` call too. `mode`: the way the specifier is
     /// resolved where it is written.
     fn check_specifier(
@@ -1359,29 +1399,8 @@ impl Checker<'_> {
                     .position(|&u| u == (spec, mode));
                 let path = module.untyped_import_files[at.unwrap()].0;
                 self.explain(start, 6142, |c| vec![c.atom_text(spec), c.atom_text(path)]);
-            // `errorOnImplicitAnyModule`
             } else if options.no_implicit_any && !is_side_effect {
-                out.push(Diagnostic { start, code: 7016 });
-                let at = module
-                    .untyped_imports
-                    .iter()
-                    .position(|&u| u == (spec, mode));
-                let (path, package) = module.untyped_import_files[at.unwrap()];
-                self.explain(start, 7016, |c| vec![c.atom_text(spec), c.atom_text(path)]);
-                if let Some(package) = package
-                    && !crate::resolve::is_relative(&self.atom_text(spec))
-                {
-                    let alternate = module
-                        .untyped_import_alternates
-                        .iter()
-                        .find(|a| (a.0, a.1) == (spec, mode))
-                        .map(|a| a.2);
-                    self.explain_chain(start, 7016, |c| {
-                        let alternate = alternate.map(|types| c.atom_text(types));
-                        let (spec, package) = (c.atom_text(spec), c.atom_text(package));
-                        vec![c.module_not_found_hint(&spec, &package, alternate)]
-                    });
-                }
+                self.error_on_implicit_any_module(file, spec, mode, (start, 0), out);
             }
             return;
         }

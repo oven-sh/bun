@@ -14,6 +14,461 @@ use super::*;
 use crate::bind::{Parent, ScopeId};
 use crate::resolve::JsxEmit;
 
+/// What `checkNodeDeferred` puts off until the statements of the file have been checked.
+enum DeferredNode {
+    /// `checkFunctionExpressionOrObjectLiteralMethodDeferred`. For an accessor of an object literal, `checkAccessorDeclaration`.
+    Function(FnId),
+    /// `checkClassExpressionDeferred`
+    ClassExpression(ClassId),
+    /// `checkJsxElementDeferred`, `checkJsxSelfClosingElementDeferred`
+    JsxElement(JsxId),
+    /// The operand of `void`.
+    VoidOperand(ExprId),
+}
+
+/// Walks a file as `checkSourceFile` does, as far as the syntax tells, for the order in which `checkJsxElement`,
+/// `checkJsxSelfClosingElement` and `checkJsxFragment` are first called.
+struct JsxCheckOrder<'c, 'p> {
+    checker: &'c mut Checker<'p>,
+    file: FileId,
+    deferred: std::collections::VecDeque<DeferredNode>,
+    /// By `ExprId`: `checkExpression` has been called.
+    is_checked: Vec<bool>,
+    /// By `FnId`: `getReturnTypeFromBody` has been called.
+    has_return_type: Vec<bool>,
+    /// By `FnId`: a candidate is written in it.
+    holds_candidate: Vec<bool>,
+    reached: Vec<ExprId>,
+}
+
+impl<'c, 'p> JsxCheckOrder<'c, 'p> {
+    /// The JSX elements and fragments of `file` in that order. Empty unless there are several `candidates` to choose from.
+    fn of(checker: &'c mut Checker<'p>, file: FileId, candidates: &[ExprId]) -> Vec<ExprId> {
+        if candidates.len() < 2 {
+            return Vec::new();
+        }
+        let (hir, bound) = (checker.hir(file), checker.bound(file));
+        let mut holds_candidate = vec![false; hir.fns.len()];
+        for &e in candidates {
+            let mut parent = bound.expr_parent[e.idx()];
+            while !matches!(parent, Parent::None | Parent::File) {
+                match parent {
+                    Parent::FnBody(func) => holds_candidate[func.idx()] = true,
+                    Parent::ParamDefault(p) => {
+                        holds_candidate[bound.param_fn[p.idx()].idx()] = true
+                    }
+                    _ => {}
+                }
+                parent = checker.outward(file, parent);
+            }
+        }
+        let mut order = JsxCheckOrder {
+            checker,
+            file,
+            deferred: Default::default(),
+            is_checked: vec![false; hir.exprs.len()],
+            has_return_type: vec![false; hir.fns.len()],
+            holds_candidate,
+            reached: Vec::new(),
+        };
+        for s in hir.ids(hir.body) {
+            order.check_source_element(s);
+        }
+        order.check_deferred_nodes();
+        order.reached
+    }
+
+    /// `checkDeferredNodes`: what is deferred meanwhile goes to the end of the queue.
+    fn check_deferred_nodes(&mut self) {
+        let hir = self.checker.hir(self.file);
+        while let Some(node) = self.deferred.pop_front() {
+            match node {
+                DeferredNode::Function(func) => {
+                    if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+                        self.check_function_like_declaration(func);
+                    } else {
+                        self.get_return_type_from_body(func);
+                        self.check_function_body(func);
+                    }
+                }
+                DeferredNode::ClassExpression(class) => self.check_class_members(class),
+                DeferredNode::JsxElement(jsx) => {
+                    let jsx = &hir[jsx];
+                    self.check_expression(jsx.tag);
+                    for p in jsx.attrs.iter() {
+                        self.check_expression(hir[p].value);
+                    }
+                    for child in hir.ids(jsx.children) {
+                        self.check_expression(child);
+                    }
+                    // `checkJsxReturnAssignableToAppropriateBound`
+                    if let Some(func) = self.called_function(jsx.tag) {
+                        self.get_return_type_from_body(func);
+                    }
+                }
+                DeferredNode::VoidOperand(e) => self.check_expression(e),
+            }
+        }
+    }
+
+    /// `checkSourceElement`
+    fn check_source_element(&mut self, s: StmtId) {
+        if s.is_none() {
+            return;
+        }
+        let hir = self.checker.hir(self.file);
+        match hir[s].kind {
+            StmtKind::Expr(e)
+            | StmtKind::Throw(e)
+            | StmtKind::ExportDefault(e)
+            | StmtKind::ExportAssign(e) => self.check_expression(e),
+            // `checkReturnStatement` asks for the return type of the function first.
+            StmtKind::Return(e) => {
+                if let Some(func) = self.checker.enclosing_fn(self.file, Parent::Stmt(s)) {
+                    self.get_return_type_from_body(func);
+                }
+                self.check_expression(e);
+            }
+            StmtKind::Var(decls) => {
+                for d in decls.iter() {
+                    self.check_binding_pattern(hir[d].pat);
+                    self.check_expression(hir[d].init);
+                }
+            }
+            StmtKind::Fn(func) => self.check_function_like_declaration(func),
+            StmtKind::Class(class) => {
+                self.check_expression(hir[class].extends);
+                self.check_class_members(class);
+            }
+            StmtKind::If { test, yes, no } => {
+                self.check_expression(test);
+                self.check_source_element(yes);
+                self.check_source_element(no);
+            }
+            StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                self.check_source_element(init);
+                self.check_expression(test);
+                self.check_expression(update);
+                self.check_source_element(body);
+            }
+            StmtKind::ForIn { left, expr, body }
+            | StmtKind::ForOf {
+                left, expr, body, ..
+            } => {
+                self.check_source_element(left);
+                self.check_expression(expr);
+                self.check_source_element(body);
+            }
+            StmtKind::While { test, body } => {
+                self.check_expression(test);
+                self.check_source_element(body);
+            }
+            StmtKind::DoWhile { body, test } => {
+                self.check_source_element(body);
+                self.check_expression(test);
+            }
+            StmtKind::Block(list) => {
+                for s in hir.ids(list) {
+                    self.check_source_element(s);
+                }
+            }
+            StmtKind::Switch { expr, cases } => {
+                self.check_expression(expr);
+                for c in cases.iter() {
+                    self.check_expression(hir[c].test);
+                    for s in hir.ids(hir[c].body) {
+                        self.check_source_element(s);
+                    }
+                }
+            }
+            StmtKind::Try {
+                block,
+                handler,
+                finalizer,
+                ..
+            } => {
+                self.check_source_element(block);
+                self.check_source_element(handler);
+                self.check_source_element(finalizer);
+            }
+            StmtKind::Labeled { body, .. } => self.check_source_element(body),
+            StmtKind::Module(module) => {
+                for s in hir.ids(hir[module].body) {
+                    self.check_source_element(s);
+                }
+            }
+            StmtKind::Enum(e) => {
+                for m in hir[e].members.iter() {
+                    self.check_expression(hir[m].init);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `checkVariableLikeDeclaration`, of the elements of a binding pattern.
+    fn check_binding_pattern(&mut self, pat: PatId) {
+        if pat.is_none() {
+            return;
+        }
+        let hir = self.checker.hir(self.file);
+        match hir[pat].kind {
+            PatKind::Missing | PatKind::Ident(_) => {}
+            PatKind::Object(props) => {
+                for p in props.iter() {
+                    if let PropKey::Computed(key) = hir[p].key {
+                        self.check_expression(key);
+                    }
+                    self.check_binding_pattern(hir[p].value);
+                    self.check_expression(hir[p].default);
+                }
+            }
+            PatKind::Array(elems) => {
+                for e in elems.iter() {
+                    self.check_binding_pattern(hir[e].pat);
+                    self.check_expression(hir[e].default);
+                }
+            }
+        }
+    }
+
+    /// `checkSignatureDeclaration`
+    fn check_parameters(&mut self, func: FnId) {
+        let hir = self.checker.hir(self.file);
+        for p in hir[func].params.iter() {
+            self.check_binding_pattern(hir[p].pat);
+            self.check_expression(hir[p].default);
+        }
+    }
+
+    fn check_function_body(&mut self, func: FnId) {
+        let hir = self.checker.hir(self.file);
+        match hir[func].body {
+            FnBody::Block(list) => {
+                for s in hir.ids(list) {
+                    self.check_source_element(s);
+                }
+            }
+            FnBody::Expr(e) => self.check_expression(e),
+            FnBody::None => {}
+        }
+    }
+
+    /// `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration`, `checkAccessorDeclaration`: the body is not deferred.
+    fn check_function_like_declaration(&mut self, func: FnId) {
+        if func.is_none() {
+            return;
+        }
+        self.check_parameters(func);
+        // `checkAccessorDeclaration` asks for `getTypeOfAccessors` before the body.
+        if self.checker.hir(self.file)[func].kind == FnKind::Getter {
+            self.get_return_type_from_body(func);
+        }
+        self.check_function_body(func);
+    }
+
+    fn check_class_members(&mut self, class: ClassId) {
+        let hir = self.checker.hir(self.file);
+        for m in hir[class].members.iter() {
+            let member = &hir[m];
+            if let PropKey::Computed(key) = member.key {
+                self.check_expression(key);
+            }
+            self.check_function_like_declaration(member.func);
+            self.check_expression(member.init);
+        }
+    }
+
+    /// `getReturnTypeFromBody`, which `getReturnTypeOfSignature` calls once for a function without a return type annotation.
+    fn get_return_type_from_body(&mut self, func: FnId) {
+        let (hir, bound) = (self.checker.hir(self.file), self.checker.bound(self.file));
+        if hir[func].ret.is_some() || std::mem::replace(&mut self.has_return_type[func.idx()], true)
+        {
+            return;
+        }
+        match hir[func].body {
+            FnBody::Expr(body) => self.check_expression(body),
+            FnBody::Block(_) => {
+                let info = &bound.fns[func.idx()];
+                // `checkAndAggregateReturnExpressionTypes`
+                for s in bound.ids(info.returns) {
+                    if let StmtKind::Return(value) = hir[s].kind {
+                        self.check_expression(value);
+                    }
+                }
+                // `checkAndAggregateYieldOperandTypes`
+                if hir[func].flags.contains(Flags::GENERATOR) {
+                    for y in bound.ids(info.yields) {
+                        if let ExprKind::Yield { value, .. } = hir[y].kind {
+                            self.check_expression(value);
+                        }
+                    }
+                }
+            }
+            FnBody::None => {}
+        }
+    }
+
+    /// The initializer `getTypeOfSymbol` checks for the variable the identifier `e` names, if that has no type annotation.
+    fn variable_initializer(&self, e: ExprId) -> Option<ExprId> {
+        use crate::bind::{Decl, PatParent};
+        let (hir, bound) = (self.checker.hir(self.file), self.checker.bound(self.file));
+        let symbol = bound.expr_symbol[e.idx()];
+        if symbol.is_none() {
+            return None;
+        }
+        let &[Decl::Var(pat)] = &bound.symbols[symbol.idx()].decls[..] else {
+            return None;
+        };
+        let mut parent = bound.pat_parent[pat.idx()];
+        while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = parent {
+            parent = bound.pat_parent[outer.idx()];
+        }
+        match parent {
+            PatParent::Var(d) if hir[d].ty.is_none() => hir[d].init.some(),
+            _ => None,
+        }
+    }
+
+    /// The function whose signature a call of `callee` resolves to, where the syntax tells: a function expression, or the name of a
+    /// function declaration or of a variable initialized with a function expression.
+    fn called_function(&self, callee: ExprId) -> Option<FnId> {
+        let (hir, bound) = (self.checker.hir(self.file), self.checker.bound(self.file));
+        let function_expression = |e: ExprId| match hir[e].kind {
+            ExprKind::Fn(func) => Some(func),
+            _ => None,
+        };
+        let ExprKind::Ident(_) = hir[callee.some()?].kind else {
+            return function_expression(callee);
+        };
+        let symbol = bound.expr_symbol[callee.idx()];
+        if symbol.is_some()
+            && let &[crate::bind::Decl::Fn(func)] = &bound.symbols[symbol.idx()].decls[..]
+        {
+            return Some(func);
+        }
+        function_expression(self.variable_initializer(callee)?)
+    }
+
+    /// `checkExpression`
+    fn check_expression(&mut self, e: ExprId) {
+        if e.is_none()
+            || self.checker.is_stack_low()
+            || std::mem::replace(&mut self.is_checked[e.idx()], true)
+        {
+            return;
+        }
+        let hir = self.checker.hir(self.file);
+        match hir[e].kind {
+            ExprKind::Ident(_) => {
+                if let Some(init) = self.variable_initializer(e) {
+                    self.check_expression(init);
+                }
+            }
+            ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
+                for x in hir.ids(exprs) {
+                    self.check_expression(x);
+                }
+            }
+            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+                let call = &hir[c];
+                self.check_expression(call.callee);
+                for x in hir.ids(call.args) {
+                    self.check_expression(x);
+                }
+                // `checkCallExpression`: `getReturnTypeOfSignature` of the signature the call resolves to.
+                if matches!(hir[e].kind, ExprKind::Call(_))
+                    && let Some(func) = self.called_function(call.callee)
+                {
+                    self.get_return_type_from_body(func);
+                }
+            }
+            ExprKind::Object(props) => {
+                for p in props.iter() {
+                    if let PropKey::Computed(key) = hir[p].key {
+                        self.check_expression(key);
+                    }
+                    self.check_expression(hir[p].value);
+                }
+            }
+            // `checkFunctionExpressionOrObjectLiteralMethod`
+            ExprKind::Fn(func) => {
+                self.deferred.push_back(DeferredNode::Function(func));
+                // `checkObjectLiteral` does no more than defer an accessor.
+                if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+                    return;
+                }
+                // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`
+                if hir[func].ret.is_none()
+                    && self.holds_candidate[func.idx()]
+                    && self.checker.contextual_signature(self.file, func).is_some()
+                {
+                    self.get_return_type_from_body(func);
+                }
+                self.check_parameters(func);
+            }
+            // `checkClassExpression`
+            ExprKind::Class(class) => {
+                self.check_expression(hir[class].extends);
+                self.deferred
+                    .push_back(DeferredNode::ClassExpression(class));
+            }
+            // `checkVoidExpression`
+            ExprKind::Unary {
+                op: UnOp::Void,
+                operand,
+            } => self.deferred.push_back(DeferredNode::VoidOperand(operand)),
+            ExprKind::Dot { obj: x, .. }
+            | ExprKind::Unary { operand: x, .. }
+            | ExprKind::Spread(x)
+            | ExprKind::Await(x)
+            | ExprKind::Yield { value: x, .. }
+            | ExprKind::As { expr: x, .. }
+            | ExprKind::Satisfies { expr: x, .. }
+            | ExprKind::AsConst(x)
+            | ExprKind::NonNull(x)
+            | ExprKind::Instantiation { expr: x, .. }
+            | ExprKind::ImportCall(x) => self.check_expression(x),
+            ExprKind::Index {
+                obj: a, index: b, ..
+            }
+            | ExprKind::Binary {
+                left: a, right: b, ..
+            }
+            | ExprKind::Assign {
+                target: a,
+                value: b,
+                ..
+            } => {
+                self.check_expression(a);
+                self.check_expression(b);
+            }
+            ExprKind::Cond { test, yes, no } => {
+                self.check_expression(test);
+                self.check_expression(yes);
+                self.check_expression(no);
+            }
+            // `checkJsxElement` and `checkJsxSelfClosingElement` defer what is in the element. `checkJsxFragment` does not.
+            ExprKind::Jsx(jsx) => {
+                self.reached.push(e);
+                if hir[jsx].tag.is_some() {
+                    self.deferred.push_back(DeferredNode::JsxElement(jsx));
+                } else {
+                    for child in hir.ids(hir[jsx].children) {
+                        self.check_expression(child);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Checker<'_> {
     pub(super) fn check_jsx(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -23,14 +478,22 @@ impl Checker<'_> {
         let options = &self.p.files.options;
         let (jsx, no_implicit_any) = (options.jsx, options.no_implicit_any);
         let atoms = &self.p.files.atoms;
-        let runtime =
-            crate::program::jsx_runtime_of(options, hir, atoms).map(|spec| atoms.intern_str(&spec));
+        // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
+        let path = &self.files().module(file).path;
+        let runtime = crate::program::jsx_runtime_of(options, hir, atoms)
+            .filter(|_| path.ends_with(".tsx") || path.ends_with(".jsx"))
+            .map(|spec| atoms.intern_str(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the module elements are made with is imported unasked, and has to be there.
         let runtime_is_missing =
             runtime.is_some_and(|spec| self.files().module_of_specifier(file, spec).is_none());
         // `resolveExternalModule`: of a file that is found and is no module, that is what is said.
         let runtime_is_no_module =
             runtime.is_some_and(|spec| self.files().module(file).imported_file(spec).is_some());
+        // Of JavaScript that is not in the program, what `errorOnImplicitAnyModule` says.
+        let module = self.files().module(file);
+        let untyped_runtime = runtime
+            .map(|spec| (spec, module.default_mode))
+            .filter(|untyped| !runtime_is_no_module && module.untyped_imports.contains(untyped));
         let (factory, fragment_factory) = jsx_factory_names(self.files(), hir);
         let names_fragment_factory = atoms.bytes(fragment_factory) != b"null";
         // `markJsxAliasReferenced`: a module that is not found is as good as none asked for.
@@ -58,26 +521,21 @@ impl Checker<'_> {
             .filter(|e| !matches!(bound.expr_parent[e.idx()], Parent::None))
             .collect();
         elements.sort_unstable_by_key(|&e| hir[e].pos);
-        // What is said once for the file is said of what is looked at first.
+        // What is said once for the file is said of what is checked first.
         let (mut first, mut first_fragment) = (None, None);
         if runtime_is_missing || checks_fragment_type {
-            let (mut least, mut least_of_fragments) = (u32::MAX, u32::MAX);
-            for &e in &elements {
-                let ExprKind::Jsx(j) = hir[e].kind else {
-                    continue;
-                };
-                let is_fragment = hir[j].tag.is_none();
-                if !runtime_is_missing && !is_fragment {
-                    continue;
-                }
-                let depth = self.jsx_deferral_depth(file, e);
-                if depth < least {
-                    (least, first) = (depth, Some(e));
-                }
-                if is_fragment && depth < least_of_fragments {
-                    (least_of_fragments, first_fragment) = (depth, Some(e));
-                }
-            }
+            let is_fragment =
+                |e: ExprId| matches!(hir[e].kind, ExprKind::Jsx(j) if hir[j].tag.is_none());
+            let candidates: Vec<ExprId> = elements
+                .iter()
+                .copied()
+                .filter(|&e| runtime_is_missing || is_fragment(e))
+                .collect();
+            let reached = JsxCheckOrder::of(self, file, &candidates);
+            // What the walk does not reach comes last, in source order.
+            let mut in_order = reached.iter().chain(&candidates).copied();
+            first = in_order.clone().next();
+            first_fragment = in_order.find(|&e| is_fragment(e));
         }
         for e in elements {
             let ExprKind::Jsx(j) = hir[e].kind else {
@@ -96,17 +554,33 @@ impl Checker<'_> {
                 self.note(start, end, 17004, Vec::new());
             }
             if runtime_is_missing && first == Some(e) {
-                let code = if runtime_is_no_module { 2306 } else { 2875 };
-                out.push(Diagnostic { start, code });
-                self.explain_to(start, end, code, |c| {
-                    let Some(spec) = runtime else {
-                        return Vec::new();
-                    };
-                    vec![match c.files().module(file).imported_file(spec) {
-                        Some(found) if code == 2306 => c.files().module(found).path.clone(),
-                        _ => c.atom_text(spec),
-                    }]
-                });
+                // `checkJsxElement` passes the whole element to `getJsxElementTypeAt`. In a file that is emitted before it is checked,
+                // `MarkLinkedReferencesRecursively` comes first, where `markJsxAliasReferenced` passes the opening element.
+                let is_whole_element = self.p.files.options.no_emit_is_set
+                    && element.tag.is_some()
+                    && element.close_pos != u32::MAX;
+                let end = if self.explains && is_whole_element {
+                    self.end_of_jsx_closing(file, j)
+                } else {
+                    end
+                };
+                if let Some((spec, mode)) = untyped_runtime {
+                    if no_implicit_any {
+                        self.error_on_implicit_any_module(file, spec, mode, (start, end), out);
+                    }
+                } else {
+                    let code = if runtime_is_no_module { 2306 } else { 2875 };
+                    out.push(Diagnostic { start, code });
+                    self.explain_to(start, end, code, |c| {
+                        let Some(spec) = runtime else {
+                            return Vec::new();
+                        };
+                        vec![match c.files().module(file).imported_file(spec) {
+                            Some(found) if code == 2306 => c.files().module(found).path.clone(),
+                            _ => c.atom_text(spec),
+                        }]
+                    });
+                }
             }
             // `resolveName`, from the tag outwards. What `checkAndReportErrorForMissingPrefix` says of a tag that is spelled like what is
             // looked for is not said.
@@ -288,63 +762,6 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let (start, end) = (tag_name_start(hir, e), tag_name_end(hir, e));
         self.explain_to(start, end, code, |c| vec![c.source_text(file, start, end)]);
-    }
-
-    /// How many times over `checkNodeDeferred` puts off what `e` is written in. What is put off is looked at after the statements of
-    /// the file, in the order it was met, and what is met meanwhile goes last.
-    fn jsx_deferral_depth(&mut self, file: FileId, e: ExprId) -> u32 {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut depth = 0;
-        // Whether it is part of what the function it is written in returns or yields.
-        let mut is_returned = false;
-        let mut parent = bound.expr_parent[e.idx()];
-        loop {
-            let outer = self.outward(file, parent);
-            match parent {
-                Parent::None | Parent::File => return depth,
-                Parent::Expr(x) => match hir[x].kind {
-                    // `checkJsxElementDeferred`: what is in an element waits. What is in a fragment does not.
-                    ExprKind::Jsx(j) if hir[j].tag.is_some() => depth += 1,
-                    // `checkVoidExpression`
-                    ExprKind::Unary { op: UnOp::Void, .. } => depth += 1,
-                    ExprKind::Yield { .. } => is_returned = true,
-                    _ => {}
-                },
-                Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Return(_)) => {
-                    is_returned = true
-                }
-                Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_) => {
-                    if let Parent::Expr(x) = outer {
-                        let is_put_off = match hir[x].kind {
-                            // `checkClassExpressionDeferred`
-                            ExprKind::Class(_) => true,
-                            // `checkSignatureDeclaration` sees to the parameters at once. An accessor of an object literal waits as a whole.
-                            ExprKind::Fn(f) if matches!(parent, Parent::ParamDefault(_)) => {
-                                matches!(hir[f].kind, FnKind::Getter | FnKind::Setter)
-                            }
-                            // `getReturnTypeFromBody` goes through what is returned as soon as it is asked what the function returns: it is
-                            // called on the spot, or it is held against what is expected of it.
-                            ExprKind::Fn(f) => {
-                                let is_called = matches!(bound.expr_parent[x.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(c) if hir[c].callee == x));
-                                let is_looked_at = (is_returned
-                                    || matches!(hir[f].body, FnBody::Expr(_)))
-                                    && hir[f].ret.is_none()
-                                    && (is_called
-                                        || self.contextual_type(file, x).is_some_and(|t| {
-                                            t != TypeId::ANY && t != TypeId::UNKNOWN
-                                        }));
-                                !is_looked_at
-                            }
-                            _ => false,
-                        };
-                        depth += u32::from(is_put_off);
-                    }
-                    is_returned = false;
-                }
-                _ => {}
-            }
-            parent = outer;
-        }
     }
 
     /// `resolveJsxOpeningLikeElement` and `checkApplicableSignatureForJsxCallLikeElement`: 2322 and what says more, 2558 2604 2743 2769.

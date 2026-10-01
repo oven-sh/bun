@@ -3113,11 +3113,7 @@ impl<'p> Checker<'p> {
             };
             match c.property_in(&members, name) {
                 Some((prop, _)) => present || prop.flags.contains(PropFlags::OPTIONAL),
-                None => {
-                    c.applicable_index_info(&members, TypeId::STRING, Some(name))
-                        .is_some()
-                        || !present
-                }
+                None => c.applicable_index_type_for_name(&members, name).is_some() || !present,
             }
         };
         if self.parts(ty).iter().any(|&m| may_be(self, m, true)) {

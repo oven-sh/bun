@@ -716,7 +716,7 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether the alias `sym` stands for nothing, and that is an error in the program: it is from a module that cannot be
-    /// found, or that does not have it. What is in error can be anything.
+    /// found, or that does not have it, or it names an entity that is not there. What is in error can be anything.
     pub(super) fn is_alias_in_error(&self, mut sym: Sym) -> bool {
         let files = self.files();
         for _ in 0..32 {
@@ -771,7 +771,17 @@ impl<'p> Checker<'p> {
                     ImportEqualsTarget::Require(spec) => {
                         (spec, Atom::NONE, ResolutionMode::Require)
                     }
-                    _ => return false,
+                    // `resolveAlias`: an entity name that resolves to nothing leaves `unknownSymbol`. `globalThis` has no `Sym`.
+                    ImportEqualsTarget::Entity(names) => {
+                        return names.len() != 1 || hir.id_at(names, 0) != known::globalThis;
+                    }
+                },
+                // `getTargetOfImportSpecifier` for a binding element, `getTargetOfImportEqualsDeclaration` for the whole module.
+                Decl::Require(pat) => match self.bound(file).required_by(hir, pat) {
+                    Some((spec, part)) => {
+                        (spec, part.unwrap_or(Atom::NONE), ResolutionMode::Require)
+                    }
+                    None => return false,
                 },
                 _ => return false,
             };

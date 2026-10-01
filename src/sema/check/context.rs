@@ -2212,7 +2212,9 @@ impl<'p> Checker<'p> {
     }
 
     /// `assignContextualParameterTypes`: whether a function around `e` has taken `param` over from the generic signature expected of
-    /// it. What is written in that function may mean `param`, which is declared elsewhere.
+    /// it. What is written in that function may mean `param`, which is declared elsewhere. The same if `param` has reached the type of
+    /// one of its parameters: `inferTypeArguments` instantiates a generic contextual signature of a call with its own type parameters
+    /// (`getSignatureInstantiationWithoutFillingInTypeArguments`), which are then inferred for what a function argument takes.
     pub(super) fn is_type_param_adopted_around(
         &mut self,
         file: FileId,
@@ -2225,12 +2227,32 @@ impl<'p> Checker<'p> {
                 && let Some(owner) = self.takes_context(file, func)
                 && self.is_context_sensitive(file, owner)
                 && let Some(expected) = self.contextual_signature(file, func)
-                && self.sig_type_params(expected).contains(&param)
+                && (self.sig_type_params(expected).contains(&param)
+                    || self.has_contextual_parameter_type_mentioning(file, func, param))
             {
                 return true;
             }
             let enclosing = self.bound(file).fns[func.idx()].enclosing;
             around = enclosing.is_some().then_some(enclosing);
+        }
+        false
+    }
+
+    /// Whether a parameter of `func` without a type annotation gets a contextual type that mentions `param`.
+    fn has_contextual_parameter_type_mentioning(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        param: TypeId,
+    ) -> bool {
+        let hir = self.hir(file);
+        for (index, p) in hir[func].params.iter().enumerate() {
+            if hir[p].ty.is_none()
+                && let Some(ty) = self.contextual_param_type(file, func, index)
+                && self.mentions(ty, param, 0)
+            {
+                return true;
+            }
         }
         false
     }

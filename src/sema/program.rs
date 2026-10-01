@@ -1670,9 +1670,31 @@ impl Files {
         // Only a file that can have tags in it, going by its name, imports what they are made with.
         if (path.ends_with(".tsx") || path.ends_with(".jsx"))
             && let Some(runtime) = jsx_runtime_of(options, &hir, atoms)
-            && let Some(found) = resolver.resolve_as(&runtime, path, default_mode)
+            && let Some(found) = resolver.resolve_module(&runtime, path, default_mode)
         {
-            imports.push((atoms.intern_str(&runtime), default_mode, found, true));
+            let spec = atoms.intern_str(&runtime);
+            let is_untyped = is_javascript(&found);
+            if is_untyped {
+                untyped_imports.push((spec, default_mode));
+                if let Some(types) = resolver.alternate_result(&runtime, path, default_mode) {
+                    let types = atoms.intern(types.as_bytes());
+                    untyped_import_alternates.push((spec, default_mode, types));
+                }
+                let package = resolver.package_id(&found);
+                untyped_import_files.push((
+                    atoms.intern(found.as_bytes()),
+                    package
+                        .as_deref()
+                        .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
+                        .map(|name| atoms.intern(name.as_bytes())),
+                ));
+                if found.contains("/node_modules/") {
+                    untyped_package_imports.push((spec, default_mode));
+                }
+            }
+            if !is_untyped || options.allow_js {
+                imports.push((spec, default_mode, found, true));
+            }
         }
         // The arguments of `import()` calls, and of `require()` calls in JavaScript (`ForEachDynamicImportOrRequireCall`).
         let (mut called, mut required): (Vec<Atom>, Vec<Atom>) = (Vec::new(), Vec::new());
@@ -1925,7 +1947,12 @@ impl Files {
 
     /// The module `file` imports for its JSX without saying so.
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
-        let runtime = jsx_runtime_of(&self.options, &self.modules[file.idx()].hir, &self.atoms)?;
+        let module = &self.modules[file.idx()];
+        // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
+        if !module.path.ends_with(".tsx") && !module.path.ends_with(".jsx") {
+            return None;
+        }
+        let runtime = jsx_runtime_of(&self.options, &module.hir, &self.atoms)?;
         self.atoms.lookup(runtime.as_bytes())
     }
 
@@ -3152,8 +3179,9 @@ impl Files {
     }
 
     /// Whether all there is to import from `module` can be told. What `export =` gives has properties, which can be imported as well.
-    /// `declare module "m";` has whatever is asked of it. What a JSON file has is up to what is in it. The same goes for what is
-    /// passed on with `export *`, and nothing is known of what that leads to if it leads nowhere.
+    /// `declare module "m";` has whatever is asked of it. What a JSON file has is up to what is in it. What its `export *` lead to
+    /// makes no difference. `visit` of `getExportsOfModuleWorker` passes on the export table of the module a specifier resolves to,
+    /// and nothing if it resolves to none or the module has no table.
     pub fn has_known_exports(&self, module: Sym) -> bool {
         if let Some(known) = self.memo.has_known_exports.get(&module) {
             return known;
@@ -3164,35 +3192,13 @@ impl Files {
     }
 
     fn has_known_exports_uncached(&self, module: Sym) -> bool {
-        let is_open = |m: Sym| {
-            self.export(m, known::export_equals).is_some()
-                || self.symbol(m).exports.is_none()
-                || self
-                    .decls_of(m)
-                    .iter()
-                    .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
-                || self.module(m.file).path.ends_with(".json")
-        };
-        if is_open(module) {
-            return false;
-        }
-        let mut pending = vec![module];
-        let mut visited = FxHashSet::default();
-        visited.insert(module);
-        while let Some(m) = pending.pop() {
-            for &(target, _) in self.export_stars_of(m) {
-                let Some(target) = target else {
-                    return false;
-                };
-                if is_open(target) {
-                    return false;
-                }
-                if visited.insert(target) {
-                    pending.push(target);
-                }
-            }
-        }
-        true
+        self.export(module, known::export_equals).is_none()
+            && self.symbol(module).exports.is_some()
+            && !self
+                .decls_of(module)
+                .iter()
+                .any(|&(f, d)| matches!(d, Decl::Module(id) if !self.hir(f)[id].has_body))
+            && !self.module(module.file).path.ends_with(".json")
     }
 
     /// `visit` of `getExportsOfModuleWorker`, while symbols are being put together: what `module` exports itself, or passes on with

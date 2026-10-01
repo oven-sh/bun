@@ -278,6 +278,11 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
 }
 
+void JSVMClientData::reconcileWeakReferencesAtGCEnd(JSC::VM& vm, JSC::CollectionScope)
+{
+    Bun::JSCTaskScheduler::cancelWorkOfDeadRealms(this, vm);
+}
+
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
 {
     if (m_decoderStringTable)

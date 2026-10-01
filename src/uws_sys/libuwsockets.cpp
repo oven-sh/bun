@@ -1548,6 +1548,25 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+  void uws_res_clear_handlers_of(int ssl, uws_res_r res, void *user_data)
+  {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return;
+    }
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->clearHandlersOf(user_data);
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->clearHandlersOf(user_data);
+    }
+  }
+
   bool uws_res_close_after_message_if_parsing(int ssl, uws_res_r res)
   {
     if (ssl)

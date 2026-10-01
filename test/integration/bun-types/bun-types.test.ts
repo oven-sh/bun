@@ -639,8 +639,9 @@ describe("@types/bun integration test", () => {
       });
 
       // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache`.
-      // Pin it so the store links land under checkDir.
-      const installEnv = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+      // Pin it so the store links land under checkDir. BUN_INSTALL_GLOBAL_STORE
+      // overrides bunfig's `globalStore` the same way.
+      const installEnv = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir, BUN_INSTALL_GLOBAL_STORE: "1" };
       await using install = Bun.spawn({
         cmd: [bunExe(), "install"],
         env: installEnv,
@@ -671,8 +672,9 @@ describe("@types/bun integration test", () => {
       expect(exitCode).toBe(0);
 
       // The project links into the store, so bun-types is not under checkDir.
+      // tmpdir() can contain a symlink (/var on macOS), so both sides are real paths.
       const bunTypesRealDir = await realpath(join(checkDir, "node_modules", "bun-types"));
-      expect(bunTypesRealDir).toStartWith(join(cacheDir, "links"));
+      expect(bunTypesRealDir).toStartWith(await realpath(join(cacheDir, "links")));
       expect(existsSync(join(dirname(bunTypesRealDir), "undici-types", "package.json"))).toBe(true);
     });
   });

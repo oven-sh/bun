@@ -399,8 +399,7 @@ pub struct PackageManager {
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
-    // name hash from alias package name -> the alias's `npm:` specifier, as owned text
-    // (see `NpmAliasRegistry::record_npm_alias`)
+    // name hash from alias package name -> the alias's `npm:` specifier text
     pub(crate) known_npm_aliases: NpmAliasMap,
 
     pub(crate) event_loop: AnyEventLoop,

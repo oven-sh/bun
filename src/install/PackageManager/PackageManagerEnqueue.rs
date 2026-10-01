@@ -758,8 +758,7 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
-/// The `npm:` alias recorded under `name_hash`. `known_npm_aliases` holds its text, and this
-/// parses the text into the lockfile's string buffer, which the enqueue path slices versions with.
+/// The `npm:` alias recorded under `name_hash`, parsed into the lockfile's string buffer.
 fn known_npm_alias(
     this: &mut PackageManager,
     name: SemverString,

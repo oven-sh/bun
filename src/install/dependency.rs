@@ -17,9 +17,7 @@ use crate::{PackageManager, PackageNameHash};
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
-    /// `specifier` is the alias's `npm:` text. The registry copies it, because the parsed
-    /// `Version` holds offsets into the caller's string buffer, and that buffer is not always
-    /// the manager's lockfile (a temporary lockfile, a package.json, a CLI argument).
+    /// Takes the alias's text: a parsed `Version` is only valid with the buffer it was parsed in.
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]);
 }
 

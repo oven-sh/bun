@@ -4,7 +4,7 @@ Nothing here is in the tree. Read at be1ebe5295 (worktree /workspace/wt/cli), 20
 proto/src-lint/          the planned text of the thirteen files of src/lint that change: lib.rs, context.rs, tokens.rs,
                          ast_utils.rs, linter.rs, rules/{no_compare_neg_zero,no_dupe_class_members,no_dupe_keys,no_duplicate_case,
                          no_self_assign,no_unsafe_negation,use_isnan,valid_typeof}.rs. rustfmt clean, one-line comments.
-proto/src-lint.patch     the same as a patch: `git apply --check` passes in the worktree at be1ebe5295. It changes the signature
+proto/src-lint.patch     the same as a patch (13 files, +871 -395): `git apply --check` passes in the worktree at be1ebe5295. It changes the signature
                          of `bun_lint::lint` (ParsedForLint, `typescript: bool`): src/runtime/cli/lint_command.rs has to call
                          `parser.parse_for_lint_with_codes(&mut errors, |parsed| bun_lint::lint(file, parsed, source, loader.is_typescript()))`
                          for every loader in the same commit, or `bun_runtime` does not compile.

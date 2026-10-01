@@ -194,3 +194,23 @@ Rule by rule, in a TypeScript file:
   (`ts-wrappers-eleven-rules/topdown/HOWTO.txt`): the 3,341 cases of the fixtures (3,305 keep their answer, the 36
   of difference 11 have ESLint's now), 1,081 TypeScript cases (1,071 that both parsers take), and the start and end
   of 522,847 expressions of real files against the nodes of the two parsers.
+
+=== (E) what else in API.md the change makes stale (line numbers of API.md as of 2026-10-01 04:05) ===
+
+- 919-923, the bullet of `no-unsafe-negation` under "Rule by rule": it names `Context::closes` and the tokens between the
+  `!` and the right operand. Now: the parentheses are read from the wrapper records (`Context::paren_count`), and a
+  TypeScript node around the `!` (`Context::ts_wrapper`) is the left operand for ESLint.
+- 936-946 and 958-959, the numbers of the 2719 cases that say "at another place (difference 11)" and "with another text":
+  the numbers stay what the research of C3 measured; add that these cases have ESLint's answer since <commit>.
+- 941-942: `no-duplicate-case` reads what ESLint compares through `Context::tokens_of`, no longer `Context::case_test`.
+- 980-981, 990-998 and 1017, section "Rule `no-self-assign`": the text of the reported node is read between
+  `Context::node_start` and `Context::node_end`; its difference 1 (a `(` behind a comment or a line break) is gone.
+- 1078-1082, 1104, 1128-1134, 1193-1194, section "Rule `use-isnan`": `Context::binary_start` reads the records and keeps
+  the way down a chain by its first token (no text is read for it); its difference 2 (two look-backs) is gone.
+- 1169: the names of a dropped import. `ParsedForLint::symbols` has them (a macro import is a symbol of kind `other`);
+  the walk still does not read the symbols, so difference 10 stays as it is until the name resolution of D4.
+- 69, 98, 271-302, 327, 334, 442, 474, 728, 752, 787: `Parser::parse_only` and `ParsedOnly`; they change with the parse
+  entry ("Which parse entry a file gets", "Public surface of `bun_lint`": `lint` takes `&ParsedForLint` and `typescript: bool`).
+- "Attribution": the rule `no-dupe-class-members` follows typescript-eslint's rule of that name in a TypeScript file
+  (packages/eslint-plugin/src/rules/no-dupe-class-members.ts, MIT). If `src/lint/UPSTREAM_PORTED` is to name it:
+  `typescript-eslint/typescript-eslint 90c2803a4c250e0343598d41e973f95e743bf4ce` (the commit of the tag v8.58.2).

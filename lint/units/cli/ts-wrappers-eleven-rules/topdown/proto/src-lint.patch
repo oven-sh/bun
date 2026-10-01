@@ -275,7 +275,7 @@
      }
  
      /// A diagnostic of `rule` at the token that starts at `at`. Its length is that token.
-@@ -165,127 +325,407 @@
+@@ -165,127 +325,410 @@
          self.reports
      }
  
@@ -676,19 +676,31 @@
 -    pub(crate) fn case_test(&self, value: &Expr) -> Option<Vec<u8>> {
 -        // The scan starts at the `loc`: two tests that differ only in the decorators before it would be equal.
 -        if starts_with_decorators(value) {
--            return None;
--        }
--        let from = u32::try_from(value.loc.start).ok()?;
--        let spans = tokens::spans_under(self.text(), &[value], self.stack_check)?;
 +    /// After the `}` of the body of a function or of an arrow function.
 +    fn body_end(&self, body: &G::FnBody) -> Option<u32> {
 +        let from = offset_of(body.loc)?;
 +        let spans = tokens::spans_under_stmts(self.text(), body.stmts.slice(), self.stack_check)?;
++        let mut log = Log::init();
++        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, from);
++        tokens::matching_close(&mut tokens)
++    }
++
++    /// What ESLint compares of the node in the place of `expr`: its tokens, as bytes. `None`: its end is not known, or its text does not read as the tree says.
++    pub(crate) fn tokens_of(&self, expr: &Expr) -> Option<Vec<u8>> {
++        let start = offset_of(self.node_start(expr))?;
++        let end = self.node_end(expr)?;
++        if start >= end {
+             return None;
+         }
+-        let from = u32::try_from(value.loc.start).ok()?;
+-        let spans = tokens::spans_under(self.text(), &[value], self.stack_check)?;
++        let spans = tokens::spans_under(self.text(), &[expr], self.stack_check)?;
          let mut log = Log::init();
 -        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
 -        tokens::case_key(&mut tokens, self.text())
-+        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, from);
-+        tokens::matching_close(&mut tokens)
++        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, start);
++        // ESLint's own parser has a word as what it spells; typescript-eslint has its text.
++        tokens::key_until(&mut tokens, self.text(), end, !self.typescript)
      }
  
 -    /// Where the clause with the test `value` starts: the `case` that the text before the test shows, else the test.
@@ -704,19 +716,9 @@
 -    pub(crate) fn close_bracket(&self, index: &Expr) -> Option<u32> {
 -        let from = u32::try_from(index.loc.start).ok()?;
 -        let spans = tokens::spans_under(self.text(), &[index], self.stack_check)?;
-+    /// What ESLint compares of the node in the place of `expr`: its tokens, as bytes. `None`: its end is not known, or its text does not read as the tree says.
-+    pub(crate) fn tokens_of(&self, expr: &Expr) -> Option<Vec<u8>> {
-+        let start = offset_of(self.node_start(expr))?;
-+        let end = self.node_end(expr)?;
-+        let spans = tokens::spans_under(self.text(), &[expr], self.stack_check)?;
-         let mut log = Log::init();
+-        let mut log = Log::init();
 -        let mut tokens = Tokens::new(&mut log, self.source, self.arena, &spans, from);
 -        tokens::close_bracket(&mut tokens)
-+        let mut tokens = Tokens::new(&mut log, self.source, self.parsed.arena, &spans, start);
-+        // ESLint's own parser has a word as what it spells; typescript-eslint has its text.
-+        tokens::key_until(&mut tokens, self.text(), end, !self.typescript)
-+    }
-+
 +    /// Where the clause at `index` of `node` starts: at its `case`. Where no `case` is found, at the first token of its test.
 +    pub(crate) fn case_start(&self, node: &S::Switch, index: usize) -> Loc {
 +        let cases = node.cases.slice();
@@ -788,7 +790,7 @@
      }
  
      /// After the token that starts at `at`. `None` when the text there does not read.
-@@ -297,37 +737,20 @@
+@@ -297,37 +740,20 @@
          }
      }
  
@@ -899,7 +901,7 @@
      loop {
          match *source.get(at)? {
              b'\\' => at += 2,
-@@ -259,82 +281,31 @@
+@@ -259,90 +281,44 @@
      }
  }
  
@@ -962,24 +964,44 @@
 -                    }
 -                }
 -                _ => {}
--            }
++        if token.start >= end {
++            break;
++        }
++        let raw = source.get(token.start as usize..token.end.min(end) as usize)?;
++        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone, and the node may end inside it.
++        if !token.opaque && token.end.saturating_sub(token.start) > 1 && raw.first() == Some(&b'>')
++        {
++            for byte in raw {
++                key.extend_from_slice(&[0, 1, 0, 0, 0, *byte]);
+             }
 -        } else if token.t == T::TTemplateHead {
 -            stack.push((T::TTemplateTail, waiting));
 -            waiting = 0;
 -        } else if token.t == T::TTemplateTail {
 -            let (close, around) = stack.pop()?;
 -            if close != T::TTemplateTail {
--                return None;
--            }
++        } else {
++            if token.end > end {
+                 return None;
+             }
 -            waiting = around;
 -        } else if token.t == T::TTemplateMiddle
 -            && !matches!(stack.last(), Some((T::TTemplateTail, _)))
 -        {
-+        if token.start >= end {
-+            break;
+-            return None;
++            let spelled = if token.opaque || !cooked {
++                None
++            } else {
++                spelled_word(raw)
++            };
++            let text = spelled.as_deref().unwrap_or(raw);
++            key.push(u8::from(token.opaque));
++            key.extend_from_slice(&u32::try_from(text.len()).ok()?.to_le_bytes());
++            key.extend_from_slice(text);
 +        }
-+        if token.end > end {
-             return None;
++        // The last token of the node: nothing after it is read, the text may end there.
++        if token.end >= end {
++            break;
          }
 -        trailing = 0;
 -        out.push(token);
@@ -989,20 +1011,20 @@
 -    // `(a).b`: the `(` before the first token that the test closes are part of it.
 -    let mut key = leading.saturating_sub(trailing).to_le_bytes().to_vec();
 -    for token in &out {
-         let raw = source.get(token.start as usize..token.end as usize)?;
+-        let raw = source.get(token.start as usize..token.end as usize)?;
 -        let spelled = if token.opaque {
-+        // `>>` closes two lists of type arguments for typescript-eslint and is one operator elsewhere: each `>` and `=` of such a token is compared alone.
-+        if !token.opaque && raw.len() > 1 && raw.first() == Some(&b'>') {
-+            for byte in raw {
-+                key.extend_from_slice(&[0, 1, 0, 0, 0, *byte]);
-+            }
-+            continue;
-+        }
-+        let spelled = if token.opaque || !cooked {
-             None
-         } else {
-             spelled_word(raw)
-@@ -394,31 +365,8 @@
+-            None
+-        } else {
+-            spelled_word(raw)
+-        };
+-        let text = spelled.as_deref().unwrap_or(raw);
+-        key.push(u8::from(token.opaque));
+-        key.extend_from_slice(&u32::try_from(text.len()).ok()?.to_le_bytes());
+-        key.extend_from_slice(text);
+     }
+     Some(key)
+ }
+@@ -394,31 +370,8 @@
      Some(out)
  }
  
@@ -1036,7 +1058,7 @@
      let mut depth = 0u32;
      loop {
          let token = tokens.next()?;
-@@ -426,59 +374,30 @@
+@@ -426,59 +379,30 @@
              continue;
          }
          match token.t {

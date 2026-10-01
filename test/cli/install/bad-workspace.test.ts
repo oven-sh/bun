@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { dirname, join } from "path";
 
 let cwd: string;
@@ -184,13 +185,14 @@ function rootPackageJson(workspaces: string[]) {
   return JSON.stringify({ name: "root", workspaces });
 }
 
-async function runInstall(cwd: string, env: Record<string, string | undefined> = bunEnv) {
+async function runInstall(cwd: string, env: Record<string, string | undefined> = bunEnv, timeout?: number) {
   await using proc = spawn({
     cmd: [bunExe(), "install"],
     cwd,
     env,
     stdout: "pipe",
     stderr: "pipe",
+    timeout,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
@@ -376,8 +378,8 @@ describe.concurrent("untrusted ancestor package.json", () => {
     return join(root, "postinstall-ran");
   }
 
-  function installIn(root: string, subdirectory: string) {
-    return runInstall(join(root, subdirectory), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
+  function installIn(root: string, subdirectory: string, timeout?: number) {
+    return runInstall(join(root, subdirectory), { ...bunEnv, POSTINSTALL_MARKER: marker(root) }, timeout);
   }
 
   function chownToOtherUser(path: string) {
@@ -394,8 +396,12 @@ describe.concurrent("untrusted ancestor package.json", () => {
 
   // Installs in `planted/sub` and asserts that the walk passed over `planted/package.json`
   // and installed the empty project above it instead: no error, and nothing in `planted`.
-  async function expectPlantedProjectIgnored(root: string, warning: (directory: string) => string) {
-    const { stdout, stderr, exitCode } = await installIn(root, "planted/sub");
+  async function expectPlantedProjectIgnored(
+    root: string,
+    warning: (directory: string) => string,
+    timeout?: number,
+  ) {
+    const { stdout, stderr, exitCode } = await installIn(root, "planted/sub", timeout);
 
     expect(stderr).toContain(warning(join(root, "planted")));
     expect(stderr).not.toContain("error");
@@ -437,6 +443,30 @@ describe.concurrent("untrusted ancestor package.json", () => {
   test.skipIf(isWindows)("is not the project in a sticky directory every user may write to", async () => {
     using dir = tempDir("bad-workspace-project-shared-dir", noWorkspacesFiles);
     const root = String(dir);
+    chmodSync(join(root, "planted"), 0o1777);
+
+    await expectPlantedProjectIgnored(root, otherUsersCanAddFilesTo);
+  });
+
+  // An entry that is refused is never opened. An open for reading of a FIFO that nothing
+  // writes to does not return, so an install that opened it would never finish. The timeout
+  // only ends such a run. An install that skips the entry does not come near it.
+  test.skipIf(isWindows)("is not opened, so a FIFO of that name does not block the install", async () => {
+    using dir = tempDir("bad-workspace-project-fifo", noWorkspacesFiles);
+    const root = String(dir);
+    rmSync(join(root, "planted", "package.json"));
+    mkfifo(join(root, "planted", "package.json"));
+    chmodSync(join(root, "planted"), 0o1777);
+
+    await expectPlantedProjectIgnored(root, otherUsersCanAddFilesTo, 60_000);
+  });
+
+  // The same for a file this user may not open. Root may open any file, so only the other
+  // users see the difference.
+  test.skipIf(isWindows || isRoot)("is not opened, so an unreadable file does not fail the install", async () => {
+    using dir = tempDir("bad-workspace-project-unreadable", noWorkspacesFiles);
+    const root = String(dir);
+    chmodSync(join(root, "planted", "package.json"), 0o000);
     chmodSync(join(root, "planted"), 0o1777);
 
     await expectPlantedProjectIgnored(root, otherUsersCanAddFilesTo);

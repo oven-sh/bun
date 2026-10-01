@@ -1467,7 +1467,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
 }
 
 /// May a `package.json` above the directory this command ran in be the root of
-/// the install? Both upward walks in [`init`] ask this.
+/// the install? Both upward walks in [`init`] ask this before they open it.
 ///
 /// The root manifest picks which lifecycle scripts run (`trustedDependencies`),
 /// where the dependencies come from (`overrides`, `patchedDependencies`, its
@@ -1478,23 +1478,26 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
 /// Two things have to hold. `directory` is not a shared drop point: the sticky
 /// bit plus group or other write, what `/tmp` and `/dev/shm` carry, where
 /// another user may add a name, including a hard link to a file this user owns.
-/// And a trusted user owns both the file bun opened and the directory entry
-/// that named it, so that a symlink another user planted cannot stand in for it
-/// (`fstat` reports the owner of a link's target).
+/// And a trusted user owns the directory entry (`lstat`, here) and the file it
+/// opens ([`opened_ancestor_is_trusted`], after), so that neither a planted
+/// symlink nor the target of one stands in for a file of theirs.
+///
+/// An entry that is refused is never opened, so its type and mode do not
+/// matter: a FIFO cannot block the walk and an unreadable file cannot fail it.
 ///
 /// Trusted: this user, and the owner of the directory the command ran in
 /// (`cwd_uid`, `None` when it cannot be read). The second keeps `sudo bun
 /// install` and images where one other user owns the checkout working.
 #[cfg(unix)]
-fn ancestor_package_json_trust(
-    package_json: &bun_sys::File,
-    path: &ZStr,
-    directory: &[u8],
-    cwd_uid: Option<u32>,
-) -> Option<Untrusted> {
+fn ancestor_entry(path: &ZStr, directory: &[u8], cwd_uid: Option<u32>) -> AncestorEntry {
     const SHARED_WRITE: bun_sys::Mode = bun_sys::S::IWGRP | bun_sys::S::IWOTH;
     let is_shared = |mode: bun_sys::Mode| mode & bun_sys::S::ISVTX != 0 && mode & SHARED_WRITE != 0;
-    let is_trusted = |uid: u32| uid == bun_sys::c::geteuid() || Some(uid) == cwd_uid;
+
+    let entry = match bun_sys::lstat(path) {
+        Ok(entry) => entry,
+        Err(e) if e.get_errno() == bun_sys::E::ENOENT => return AncestorEntry::Missing,
+        Err(_) => return AncestorEntry::Openable { judged: false },
+    };
 
     let mut directory_buf = bun_paths::path_buffer_pool::get();
     directory_buf[..directory.len()].copy_from_slice(directory);
@@ -1503,17 +1506,37 @@ fn ancestor_package_json_trust(
     let directory = ZStr::from_buf(&directory_buf[..], directory.len());
 
     if !bun_sys::stat(directory).is_ok_and(|st| !is_shared(st.st_mode as bun_sys::Mode)) {
-        return Some(Untrusted::SharedDirectory);
+        return AncestorEntry::Refused(Untrusted::SharedDirectory);
     }
-    if !bun_sys::lstat(path).is_ok_and(|st| is_trusted(st.st_uid))
-        || !bun_sys::fstat(package_json.handle).is_ok_and(|st| is_trusted(st.st_uid))
-    {
-        return Some(Untrusted::OtherUser);
+    if !is_trusted_owner(entry.st_uid, cwd_uid) {
+        return AncestorEntry::Refused(Untrusted::OtherUser);
     }
-    None
+    AncestorEntry::Openable { judged: true }
 }
 
-/// Why [`ancestor_package_json_trust`] refused a `package.json`.
+#[cfg(unix)]
+enum AncestorEntry {
+    Missing,
+    Refused(Untrusted),
+    /// `judged` is false when `lstat` failed for another reason than a missing
+    /// file. The open then reports that reason, and if it succeeds after all the
+    /// file is refused.
+    Openable {
+        judged: bool,
+    },
+}
+
+#[cfg(unix)]
+fn opened_ancestor_is_trusted(package_json: &bun_sys::File, cwd_uid: Option<u32>) -> bool {
+    bun_sys::fstat(package_json.handle).is_ok_and(|st| is_trusted_owner(st.st_uid, cwd_uid))
+}
+
+#[cfg(unix)]
+fn is_trusted_owner(uid: u32, cwd_uid: Option<u32>) -> bool {
+    uid == bun_sys::c::geteuid() || Some(uid) == cwd_uid
+}
+
+/// Why a `package.json` above the start directory is not used.
 #[cfg(unix)]
 enum Untrusted {
     SharedDirectory,
@@ -1667,6 +1690,26 @@ pub fn init(
                     this_cwd.len() + b"/package.json".len(),
                 );
 
+                // Above the cwd this is also the install root, so judge it before the open.
+                #[cfg(unix)]
+                let judged = if strings::eql_long(this_cwd, original_cwd, true) {
+                    None
+                } else {
+                    match ancestor_entry(package_json_path, this_cwd, cwd_uid) {
+                        AncestorEntry::Openable { judged } => Some(judged),
+                        skipped => {
+                            if let AncestorEntry::Refused(reason) = &skipped {
+                                warn_untrusted_ancestor(reason, this_cwd);
+                            }
+                            if let Some(parent) = bun_core::dirname(this_cwd) {
+                                this_cwd = strings::without_trailing_slash(parent);
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                };
+
                 match bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
                     package_json_path.as_bytes(),
@@ -1678,23 +1721,17 @@ pub fn init(
                     0,
                 ) {
                     Ok(f) => {
-                        // Above the cwd this is also the install root, so check it.
                         #[cfg(unix)]
-                        if !strings::eql_long(this_cwd, original_cwd, true) {
-                            if let Some(reason) = ancestor_package_json_trust(
-                                &f,
-                                package_json_path,
-                                this_cwd,
-                                cwd_uid,
-                            ) {
-                                warn_untrusted_ancestor(&reason, this_cwd);
-                                let _ = f.close();
-                                if let Some(parent) = bun_core::dirname(this_cwd) {
-                                    this_cwd = strings::without_trailing_slash(parent);
-                                    continue;
-                                }
-                                break;
+                        if judged.is_some_and(|judged| {
+                            !(judged && opened_ancestor_is_trusted(&f, cwd_uid))
+                        }) {
+                            warn_untrusted_ancestor(&Untrusted::OtherUser, this_cwd);
+                            let _ = f.close();
+                            if let Some(parent) = bun_core::dirname(this_cwd) {
+                                this_cwd = strings::without_trailing_slash(parent);
+                                continue;
                             }
+                            break;
                         }
                         break 'child f;
                     }
@@ -1783,6 +1820,26 @@ pub fn init(
                     parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
                         0;
 
+                    // Before the open, so a manifest bun will not use is never opened.
+                    #[cfg(unix)]
+                    let judged = {
+                        // SAFETY: NUL written above
+                        let path = ZStr::from_buf(
+                            &parent_path_buf[..],
+                            parent_without_trailing_slash.len() + b"/package.json".len(),
+                        );
+                        match ancestor_entry(path, parent_without_trailing_slash, cwd_uid) {
+                            AncestorEntry::Openable { judged } => judged,
+                            skipped => {
+                                if let AncestorEntry::Refused(reason) = &skipped {
+                                    warn_untrusted_ancestor(reason, parent_without_trailing_slash);
+                                }
+                                this_cwd = parent;
+                                continue;
+                            }
+                        }
+                    };
+
                     let json_file = match bun_sys::File::openat(
                         bun_sys::Fd::cwd(),
                         &parent_path_buf
@@ -1796,25 +1853,15 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Before the read, so a manifest bun will not use is never parsed.
                     #[cfg(unix)]
-                    {
-                        // SAFETY: NUL written above
-                        let path = ZStr::from_buf(
-                            &parent_path_buf[..],
-                            parent_without_trailing_slash.len() + b"/package.json".len(),
-                        );
-                        if let Some(reason) = ancestor_package_json_trust(
-                            &json_file,
-                            path,
+                    if !(judged && opened_ancestor_is_trusted(&json_file, cwd_uid)) {
+                        warn_untrusted_ancestor(
+                            &Untrusted::OtherUser,
                             parent_without_trailing_slash,
-                            cwd_uid,
-                        ) {
-                            warn_untrusted_ancestor(&reason, parent_without_trailing_slash);
-                            let _ = json_file.close();
-                            this_cwd = parent;
-                            continue;
-                        }
+                        );
+                        let _ = json_file.close();
+                        this_cwd = parent;
+                        continue;
                     }
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];

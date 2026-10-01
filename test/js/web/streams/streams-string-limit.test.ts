@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
+import { allocationCapEnv, bunEnv, bunExe, emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
 import { totalmem } from "node:os";
 
 // Consuming a stream as text must reject with a catchable error when the accumulated
@@ -192,6 +192,7 @@ test.skipIf(!enoughMemory)("arrayBuffer() and bytes() reject mixed chunks summin
 // when the allocator refuses its buffer, and when it doubles the buffer for the first 16-bit
 // chunk and the double is longer than a 16-bit string can be.
 describe("the text of string chunks is one allocation of its length", () => {
+  const MIB = 1024 * 1024;
   const outOfMemory = "RangeError: Out of memory";
   // "aaabbc" is "a3 b2 c1".
   const runs = `text => text.replace(/(.)\\1*/gs, (run, character) => character + run.length + " ").trim()`;
@@ -209,17 +210,8 @@ describe("the text of string chunks is one allocation of its length", () => {
     console.log(JSON.stringify(settled));
   `;
 
-  // With Malloc=1 WebKit allocates through the system allocator, so ASAN's cap of 4 MiB for one
-  // allocation covers the text. ASAN logs every allocation that it refuses to stderr.
   describe.skipIf(!isASAN)("under a cap of 4 MiB for one allocation", () => {
-    const MIB = 1024 * 1024;
-    const env = {
-      ...bunEnv,
-      Malloc: "1",
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4", "detect_leaks=0"]
-        .filter(Boolean)
-        .join(":"),
-    };
+    const env = allocationCapEnv(4);
     const megabytes = (letters: string) => `[...${JSON.stringify(letters)}].map(megabyte)`;
 
     test.concurrent.each([
@@ -248,6 +240,18 @@ describe("the text of string chunks is one allocation of its length", () => {
     });
   });
 
+  // A 16-bit string holds at most 2,147,483,635 characters. The consumer refuses a longer text
+  // before it allocates, so the child stays small.
+  test("a 16-bit text of 2,147,483,636 characters", async () => {
+    const chunks = `["\\u20AC", ...Array(2047).fill(megabyte("x")), megabyte("x").slice(0, 2 ** 20 - 13)]`;
+    const { stdout, stderr, exitCode } = await run(consume(chunks, "Bun.readableStreamToText(stream)"));
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: { rejected: outOfMemory },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // This text fits in a string: it is 2 GiB in 16 bits. A debug build takes 6 s to copy it.
   test.skipIf(!enoughMemory || isDebug)("a 16-bit character after a gigabyte of Latin-1", async () => {
     const chunks = `[...Array(16).fill(Buffer.alloc(2 ** 26, "x").toString("latin1")), "\\u20AC"]`;
@@ -260,27 +264,46 @@ describe("the text of string chunks is one allocation of its length", () => {
     });
   });
 
-  // The text without its BOM shares the buffer of the join. A copy is a second allocation of that size.
-  test("a BOM before 128 MiB of Latin-1", async () => {
-    const MIB = 1024 * 1024;
+  // The peak RSS of a child that reads a stream of string chunks as text, above the peak of an
+  // empty child, in MiB.
+  const peakOfText = async (chunks: string, report: string, expected: unknown) => {
     const fixture = `
-      const megabyte = Buffer.alloc(${MIB}, "x").toString("latin1");
+      const latin1 = (length, letter) => Buffer.alloc(length, letter).toString("latin1");
+      ${chunks}
       const stream = new ReadableStream({
         start(controller) {
-          controller.enqueue("\\uFEFF");
-          for (let i = 0; i < 128; i++) controller.enqueue(megabyte);
+          for (const chunk of chunks) controller.enqueue(chunk);
           controller.close();
         },
       });
       const text = await stream.text();
-      console.log(JSON.stringify({ length: text.length, start: text.slice(0, 3) }));
+      console.log(JSON.stringify(${report}));
     `;
-    const [peak, emptyPeak] = await Promise.all([
-      runFixtureMaxRSS(fixture, { length: 128 * MIB, start: "xxx" }),
-      emptyProcessMaxRSS(),
-    ]);
-    // The join is 256 MiB in 16 bits, and a copy of it makes 512 MiB.
-    expect((peak - emptyPeak) / MIB).toBeLessThan(384);
+    const [peak, emptyPeak] = await Promise.all([runFixtureMaxRSS(fixture, expected), emptyProcessMaxRSS()]);
+    return (peak - emptyPeak) / MIB;
+  };
+
+  // The join leaves the BOM out. No copy removes it, and the text is not a part of another
+  // string, so structuredClone() shares it. The text is 256 MiB in 16 bits. A copy makes 512 MiB.
+  test("a BOM before 128 MiB of Latin-1", async () => {
+    const peak = await peakOfText(
+      `const chunks = ["\\uFEFF", ...Array(128).fill(latin1(${MIB}, "x"))];`,
+      `{ length: text.length, start: text.slice(0, 3), clone: structuredClone(text).length }`,
+      { length: 128 * MIB, start: "xxx", clone: 128 * MIB },
+    );
+    expect(peak).toBeLessThan(384);
+  });
+
+  // The join copies a chunk that is a rope from the two strings of the rope. It does not make
+  // the string of each rope first, which is 128 MiB more.
+  test("128 MiB of chunks that are ropes", async () => {
+    const peak = await peakOfText(
+      `const a = latin1(${MIB / 2}, "a"), b = latin1(${MIB / 2}, "b");
+       const chunks = Array.from({ length: 128 }, () => a + b);`,
+      `{ length: text.length, start: text.slice(0, 3), end: text.slice(-3) }`,
+      { length: 128 * MIB, start: "aaa", end: "bbb" },
+    );
+    expect(peak).toBeLessThan(192);
   });
 });
 

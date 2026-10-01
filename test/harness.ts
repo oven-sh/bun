@@ -339,6 +339,29 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
 }
 
 /**
+ * The env of a child whose allocator refuses one allocation of more than
+ * `megabytes` MiB. It needs an ASAN build: use it under `skipIf(!isASAN)`.
+ * `Malloc=1` is not optional. Without it WebKit takes the buffers of its
+ * strings from bmalloc, which the cap does not reach, and a test that expects
+ * a refusal passes or fails for another reason. ASAN logs every allocation
+ * that it refuses to stderr.
+ */
+export function allocationCapEnv(megabytes: number): typeof bunEnv {
+  return {
+    ...bunEnv,
+    Malloc: "1",
+    ASAN_OPTIONS: [
+      bunEnv.ASAN_OPTIONS,
+      "allocator_may_return_null=1",
+      `max_allocation_size_mb=${megabytes}`,
+      "detect_leaks=0",
+    ]
+      .filter(Boolean)
+      .join(":"),
+  };
+}
+
+/**
  * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
  * line) under bun with ASAN quarantine disabled, and asserts the delta is below
  * `release` MiB (or `debug` MiB under ASAN/debug builds).

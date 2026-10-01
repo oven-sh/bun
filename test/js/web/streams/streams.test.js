@@ -1910,6 +1910,15 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     ["two BOMs before the text", () => ["\uFEFF", "\uFEFFabc"], "abc"],
     ["three BOMs before the text", () => ["\uFEFF\uFEFF", "\uFEFFabc"], "\uFEFFabc"],
     ["only a BOM", () => ["\uFEFF", ""], ""],
+    ["two BOMs and text in one chunk", () => ["\uFEFF\uFEFFab", "c"], "abc"],
+    ["BOMs with empty chunks between them", () => ["", "\uFEFF", "", "\uFEFF", "abc"], "abc"],
+    ["a BOM after the first character", () => ["a", "\uFEFFbc"], "a\uFEFFbc"],
+    ["a BOM at the start of a rope", () => ["\uFEFF" + unresolvedRopes()[1], "abc"], unresolvedRopes()[1] + "abc"],
+    [
+      "a BOM at the start of a part of another string",
+      () => [("x\uFEFF" + unresolvedRopes()[0]).slice(1), "abc"],
+      unresolvedRopes()[0] + "abc",
+    ],
   ])("text: string chunks join in order: %s", async (_name, chunks, text) => {
     expect(await Bun.readableStreamToText(source(chunks()))).toBe(text);
     expect(await new Response(source(chunks())).text()).toBe(text);

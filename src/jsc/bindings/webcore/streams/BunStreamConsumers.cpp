@@ -232,7 +232,7 @@ using WebCore::JSStreamsRuntime;
 WTF::String withoutUTF8BOM(const WTF::String& string)
 {
     if (string.length() && string[0] == 0xFEFF)
-        return string.substringSharingImpl(1);
+        return string.substring(1);
     return string;
 }
 
@@ -540,20 +540,58 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
 static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&, JSValue chunk);
 static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject*, JSC::JSObject* owner, BunTextAccumulator&);
 
-// The string chunks as one string of `length` code units, from one allocation. Null when that allocation fails.
+// The number of U+FEFF code units, at most two, at the start of the text of the string chunks.
+// stripTextResultBOM() removes as many from a text. A Latin-1 chunk cannot start with one.
+static unsigned leadingBOMCount(JSGlobalObject* globalObject, const MarkedArgumentBuffer& chunks)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    unsigned count = 0;
+    for (unsigned i = 0; i < chunks.size() && count < 2; i++) {
+        JSString* chunk = asString(chunks.at(i));
+        if (!chunk->length())
+            continue;
+        if (chunk->is8Bit())
+            break;
+        auto view = chunk->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, 0);
+        unsigned inChunk = 0;
+        while (inChunk < view->length() && count < 2 && view[inChunk] == 0xFEFF) {
+            inChunk++;
+            count++;
+        }
+        if (inChunk < view->length())
+            break;
+    }
+    return count;
+}
+
+// The string chunks as one string, without the first `skip` of their `length` code units. It is one
+// allocation of that size, and null when that allocation fails. A chunk that is a rope is copied from
+// its fibers: it is not resolved first.
 template<typename CharacterType>
-static WTF::String tryJoinStringChunks(JSGlobalObject* globalObject, const MarkedArgumentBuffer& chunks, unsigned length)
+static WTF::String tryJoinStringChunks(JSGlobalObject* globalObject, const MarkedArgumentBuffer& chunks, unsigned length, unsigned skip)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     std::span<CharacterType> characters;
-    WTF::String joined = WTF::String::tryCreateUninitialized(length, characters);
+    WTF::String joined = WTF::String::tryCreateUninitialized(length - skip, characters);
     if (joined.isNull()) [[unlikely]]
         return joined;
     for (unsigned i = 0; i < chunks.size(); i++) {
-        auto chunk = asString(chunks.at(i))->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        chunk->getCharacters(characters);
-        characters = characters.subspan(chunk->length());
+        JSString* chunk = asString(chunks.at(i));
+        unsigned chunkLength = chunk->length();
+        if (skip && chunkLength) [[unlikely]] {
+            unsigned skipped = std::min(skip, chunkLength);
+            skip -= skipped;
+            if (skipped < chunkLength) {
+                auto view = chunk->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                view->substring(skipped).getCharacters(characters);
+                characters = characters.subspan(chunkLength - skipped);
+            }
+            continue;
+        }
+        chunk->resolveToBuffer(characters.first(chunkLength));
+        characters = characters.subspan(chunkLength);
     }
     return joined;
 }
@@ -625,15 +663,17 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
+        unsigned skip = all8Bit ? 0 : leadingBOMCount(globalObject, values);
+        RETURN_IF_EXCEPTION(scope, {});
         WTF::String joined = all8Bit
-            ? tryJoinStringChunks<Latin1Character>(globalObject, values, codeUnits.value())
-            : tryJoinStringChunks<char16_t>(globalObject, values, codeUnits.value());
+            ? tryJoinStringChunks<Latin1Character>(globalObject, values, codeUnits.value(), skip)
+            : tryJoinStringChunks<char16_t>(globalObject, values, codeUnits.value(), skip);
         RETURN_IF_EXCEPTION(scope, {});
         if (joined.isNull()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        RELEASE_AND_RETURN(scope, jsString(vm, stripTextResultBOM(joined)));
+        RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(joined)));
     }
 
     // Mixed string/binary chunks: drive the shared accumulator so adjacent-string rope
@@ -748,7 +788,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         WTF::String rope = accumulator.rope.toString();
         releaseAccumulated();
         if (rope.length() && rope[0] == 0xFEFF)
-            return rope.substringSharingImpl(1);
+            return rope.substring(1);
         return rope;
     }
     // estimatedLength never overcounts the bytes, so an estimate past the limit is final.
@@ -778,7 +818,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
     if (accumulator.rope.length()) {
         WTF::String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
-            rope = rope.substringSharingImpl(1);
+            rope = rope.substring(1);
         if (!appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
             releaseAccumulated();
             throwOutOfMemoryError(globalObject, scope);

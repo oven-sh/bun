@@ -26,7 +26,7 @@ use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
 pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::Mapping;
-pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
+pub use parsed_source_map::{NoLineBound, ParsedSourceMap, SourceContentPtr};
 
 // SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
 // `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
@@ -925,13 +925,22 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
+    let mut longest_source_text: usize = 0;
+    let mut textless_sources: Vec<u32> = Vec::new();
+
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
-        for item in sources_paths.items() {
+        for (item, content) in sources_paths.items().iter().zip(sources_content.items()) {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
             };
+            match content.as_str() {
+                Some(text) if !text.is_empty() => {
+                    longest_source_text = longest_source_text.max(text.len());
+                }
+                _ => textless_sources.push(v.len() as u32),
+            }
             v.push(Box::<[u8]>::from(s));
         }
         Some(v)
@@ -944,7 +953,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             mappings_vlq,
             None,
             i32::MAX,
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,
@@ -993,6 +1001,11 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
+        psm.source_text = parsed_source_map::SourceText::new(
+            psm.external_source_names.len(),
+            longest_source_text,
+            textless_sources,
+        );
         // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
         // `ref_count` field is layout parity only and FFI ref/deref routes
         // through `Arc::{increment,decrement}_strong_count` (see

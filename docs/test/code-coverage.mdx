@@ -208,6 +208,8 @@ coverageIgnoreSourcemaps = true  # default false
   transpilation process.
 </Warning>
 
+A file that `bun build --target=bun` wrote starts with `// @bun`, so Bun does not transpile it again. When such a file has a source map (`--sourcemap=linked`, `inline` or `external`), its coverage is reported in the lines of its sources. Bun takes the number of lines from the source text in the map (`sourcesContent`) and ignores a mapping to a line that the text does not have. For a source with no text in the map, Bun counts the lines of the file that the map names. If Bun cannot read that file, it prints a warning and reports the lines of the built file.
+
 ## Coverage Defaults
 
 By default, coverage reports:

@@ -1580,6 +1580,16 @@ describe("new Request(input) transfers the input body", () => {
     });
   });
 
+  // The same Request in both positions is visited as init first, so its body
+  // is copied and it is not consumed as the input.
+  test("new Request(a, a) copies the body of `a` and does not consume it", async () => {
+    const a = make("both");
+    // @ts-expect-error Bun accepts a Request as init
+    const copy = new Request(a, a);
+    expect(a.bodyUsed).toBe(false);
+    expect(await Promise.all([a.text(), copy.text()])).toEqual(["both", "both"]);
+  });
+
   test("a constructor throw after the input-body check does not consume the input", async () => {
     // Bun's init.url extension validates after the loop; the transfer must not
     // have happened yet when that validation throws.
@@ -1674,6 +1684,63 @@ describe("new Request(input) transfers the input body", () => {
       );
       expect(outcome).toBe(failure);
       expect(await cancelled).toBe(failure);
+    });
+  });
+
+  // Reading the `.body` getter (what `if (req.body)` in a middleware does) turns
+  // a blob-backed body into a native stream. The transfer lifts the Blob back
+  // out of that unread stream, as clone() does. A proxy of the stream would hide
+  // the Blob: the copy then has no Content-Type and is sent chunked.
+  describe.each([
+    ["single-arg", (req: Request) => new Request(req)],
+    ["two-arg", (req: Request) => new Request(req, {})],
+  ] as const)("%s copy after the input's .body getter was read", (_, construct) => {
+    test.each([
+      [
+        "FormData",
+        () => {
+          const form = new FormData();
+          form.append("a", "1");
+          return form;
+        },
+        "multipart/form-data; boundary=",
+      ],
+      ["URLSearchParams", () => new URLSearchParams({ a: "1" }), "application/x-www-form-urlencoded"],
+      ["typed Blob", () => new Blob(["a=1"], { type: "text/x-copy-test" }), "text/x-copy-test"],
+      [
+        "Bun.file",
+        () => Bun.file(join(tempDirWithFiles("body-clone-looked", { "a.txt": "a=1" }), "a.txt")),
+        "text/plain",
+      ],
+    ] as const)("%s keeps its Content-Type and is sent with a Content-Length", async (_, makeBody, type) => {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return Response.json({
+            type: req.headers.get("content-type"),
+            length: req.headers.get("content-length"),
+            encoding: req.headers.get("transfer-encoding"),
+            bytes: (await req.arrayBuffer()).byteLength,
+          });
+        },
+      });
+      const input = new Request(server.url, { method: "POST", body: makeBody() });
+      const observed = input.body!;
+      const copy = construct(input);
+      expect({ observedLocked: observed.locked, inputUsed: input.bodyUsed }).toEqual({
+        observedLocked: true,
+        inputUsed: true,
+      });
+      expect(copy.headers.get("content-type")).toStartWith(type);
+
+      const seen = await (await fetch(copy)).json();
+      expect(seen).toEqual({
+        type: expect.stringContaining(type),
+        length: String(seen.bytes),
+        encoding: null,
+        bytes: expect.any(Number),
+      });
+      expect(seen.bytes).toBeGreaterThan(0);
     });
   });
 

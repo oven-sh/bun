@@ -1786,6 +1786,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             .js_ref()
             .and_then(Self::stream_get_cached)
             .and_then(ReadableStream::from_js_direct);
+        // As in `clone()`: an unread native blob, file, or buffered byte stream
+        // goes back to being a Blob, so the copy keeps the store's type and length.
+        if let Value::Locked(locked) = self.get_body_value() {
+            if let Some(blob) = locked.take_blob_from_unread_stream(global_this, cached_stream) {
+                *self.get_body_value() = Value::from(blob);
+            }
+        }
         // Proxy (step 45.2) before the move so a failure leaves the input untouched.
         let live_stream = match self.get_body_value() {
             Value::Locked(locked) => cached_stream.or_else(|| locked.readable.get()),

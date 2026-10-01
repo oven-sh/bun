@@ -1102,7 +1102,7 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (slot, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
                 && value_type == bun_jsc::JSType::FinalObject
@@ -1114,8 +1114,9 @@ impl Request {
                     // Spec step 45's transfer applies only when this Request is
                     // the *input* (arguments[0]); a Request supplied as *init*
                     // (Bun extension) keeps the non-consuming tee, matching the
-                    // sibling Response-as-init branch below.
-                    let is_input = value == url_or_object;
+                    // sibling Response-as-init branch below. The input is the
+                    // last slot: `new Request(a, a)` visits `a` as init first.
+                    let is_input = !is_first_argument_a_url && slot + 1 == values_to_try.len();
                     if values_to_try.len() == 1 {
                         match Request::clone_into(
                             request,

@@ -164,6 +164,28 @@ impl Checker<'_> {
                 _ => {}
             }
         }
+        // `createGeneratorType`, which a generator that does not say what it returns is always asked for: that there is neither a `Generator`
+        // nor an `IterableIterator` is said, of no file.
+        for i in 0..hir.fns.len() {
+            let f = &hir.fns[i];
+            if !f.flags.contains(Flags::GENERATOR)
+                || f.ret.is_some()
+                || matches!(f.body, FnBody::None)
+                || matches!(bound.fns[i].owner, FnOwner::None)
+            {
+                continue;
+            }
+            let (generator, iterator) = if f.flags.contains(Flags::ASYNC) {
+                (known::AsyncGenerator, known::AsyncIterableIterator)
+            } else {
+                (known::Generator, known::IterableIterator)
+            };
+            if self.global_type_of_arity(generator, 3).is_none()
+                && self.global_type_symbol(iterator).is_none()
+            {
+                self.report_global_error(2318, vec![self.atom_text(iterator)]);
+            }
+        }
         // `checkSignatureDeclaration`: a generator gives a `Generator`, which what it says it returns has to have room for.
         for i in 0..hir.fns.len() {
             let f = &hir.fns[i];
@@ -646,7 +668,13 @@ impl Checker<'_> {
             source = TypeId::UNRESOLVED;
         }
         if !self.is_assignment_pattern(file, target) {
-            return self.check_reference_assignment(file, target, source, ExprId::NONE, out);
+            let said = out.len();
+            self.check_reference_assignment(file, target, source, ExprId::NONE, out);
+            // What is said of a default is said at the same name, and both stand.
+            if let Some(&said) = out.get(said) {
+                self.explain_apart(said.start, said.code);
+            }
+            return;
         }
         match hir[target].kind {
             ExprKind::Object(props) => {

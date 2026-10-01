@@ -1097,7 +1097,7 @@ impl Checker<'_> {
                     {
                         out.push(Diagnostic { start, code: 2413 });
                         let end = self.end_of_reported(file, node);
-                        self.explain_to(start, end, 2413, |c| {
+                        self.explain_another(start, end, 2413, |c| {
                             vec![
                                 c.type_to_string(check.key),
                                 c.type_to_string(check.value),

@@ -130,6 +130,19 @@ impl Checker<'_> {
         }
     }
 
+    /// The error `code` last noted at `start` is an error of its own if another says something else there: see `explain_another`.
+    pub(super) fn explain_apart(&self, start: u32, code: u32) {
+        if let Some(note) = self
+            .notes
+            .borrow_mut()
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            note.is_another = true;
+        }
+    }
+
     /// `AddRelatedInfo`: adds to what was last noted of the error `code` at `start`. `related` is only called if it will be read.
     pub(super) fn relate(
         &mut self,
@@ -233,6 +246,16 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether `GetSuggestionDiagnostics` are reported as well.
+    pub(super) fn captures_suggestions(&self) -> bool {
+        self.files().options.captures_suggestions
+    }
+
+    /// `errorOrSuggestion`: the error `code` reported at `start` is no more than a suggestion.
+    pub(super) fn note_suggestion(&self, start: u32, code: u32) {
+        self.suggestions.borrow_mut().push((start, code));
+    }
+
     /// `name` as it is written in a message.
     pub(super) fn atom_text(&self, name: crate::atom::Atom) -> String {
         String::from_utf8_lossy(self.files().atoms.bytes(name)).into_owned()
@@ -261,6 +284,23 @@ impl Checker<'_> {
         let text = &self.hir(file).text;
         let end = (end as usize).min(text.len());
         String::from_utf8_lossy(&text[(start as usize).min(end)..end]).into_owned()
+    }
+
+    /// In the first line of what was last noted of the error `code` at `start`, the type that reads `from` goes by the name `to`.
+    pub(super) fn explain_first_line_renamed(&self, start: u32, code: u32, from: &str, to: &str) {
+        if let Some(note) = self
+            .notes
+            .borrow_mut()
+            .iter_mut()
+            .rev()
+            .find(|n| n.start == start && n.code == code)
+        {
+            for arg in &mut note.args {
+                if arg.as_str() == from {
+                    *arg = to.to_owned();
+                }
+            }
+        }
     }
 
     /// Adds lines under the message last noted for the error `code` at `start`: the reasons, outermost first.
@@ -344,6 +384,7 @@ impl Checker<'_> {
     pub fn check_file_explained(&mut self, file: FileId) -> Vec<Explained> {
         let explained_before = std::mem::replace(&mut self.explains, true);
         self.notes.borrow_mut().clear();
+        self.suggestions.borrow_mut().clear();
         self.release_shapes_for_now();
         let errors = self.check_file(file);
         self.explains = explained_before;
@@ -369,6 +410,12 @@ impl Checker<'_> {
                 explained.push(self.explained(file, d, None));
             }
         }
+        let suggestions = self.suggestions.take();
+        for one in &mut explained {
+            if suggestions.contains(&(one.start, one.code)) {
+                one.category = Category::Suggestion;
+            }
+        }
         explained
     }
 
@@ -376,7 +423,11 @@ impl Checker<'_> {
         let text = &self.hir(file).text;
         let (category, template) =
             messages::message(d.code).unwrap_or((Category::Error, "Unknown error."));
-        let token_end = end_of_token(text, d.start);
+        // What is reported where a line ends is reported between two tokens, and is empty. In a JSDoc comment the end of a line is a token.
+        let token_end = match text.get(d.start as usize) {
+            Some(b'\n' | b'\r') if !self.hir(file).is_in_jsdoc(d.start) => d.start,
+            _ => end_of_token(text, d.start),
+        };
         let mut message = match note {
             Some(note) if !note.args.is_empty() => messages::format(template, &note.args),
             _ => messages::format(

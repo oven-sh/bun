@@ -470,6 +470,36 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `parameter_name_at_position`, of the signature `sig`, whose parameters are `params`. The label of an element of a rest
+    /// parameter is read off the type of the parameter, if that is written as a tuple of as many elements.
+    fn labeled_parameter_name_at_position(
+        &self,
+        sig: SigId,
+        params: &[SigParam],
+        pos: usize,
+    ) -> String {
+        if let Some((rest, fixed)) = params.split_last().filter(|split| split.0.rest)
+            && pos >= fixed.len()
+            && let TypeData::Tuple { elems, .. } = self.data(rest.ty)
+            && let Some((file, func, _)) = self.sig_decl(sig)
+        {
+            let hir = self.hir(file);
+            let (declared, index) = (hir[func].params, pos - fixed.len());
+            if declared.len() == params.len() {
+                let node = hir[declared.at(fixed.len())].ty;
+                if node.is_some()
+                    && let TypeNodeKind::Tuple(written) = hir[node].kind
+                    && written.len() == elems.len()
+                    && index < written.len()
+                    && hir[written.at(index)].name.is_some()
+                {
+                    return self.atom_text(hir[written.at(index)].name);
+                }
+            }
+        }
+        self.parameter_name_at_position(params, pos)
+    }
+
     /// `typePredicateToString`. `params`: the parameters of the signature it is the predicate of.
     fn type_predicate_text(
         &mut self,
@@ -976,9 +1006,16 @@ impl<'p> Checker<'p> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            match self.base_constraint_of(target) {
+            // `unknown` is a constraint like another where it is written: `T extends unknown`, `T extends any`.
+            let base_constraint = match self.base_constraint_of(target) {
+                None if self.constraint_of_type_param(target) == Some(TypeId::UNKNOWN) => {
+                    Some(TypeId::UNKNOWN)
+                }
+                base_constraint => base_constraint,
+            };
+            match base_constraint {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
-                    let constraint = self.type_to_string(constraint);
+                    let constraint = self.base_constraint_to_string(target, constraint);
                     x.report(
                         5075,
                         vec![
@@ -989,7 +1026,7 @@ impl<'p> Checker<'p> {
                     );
                 }
                 Some(constraint) if self.is_assignable(source, constraint) => {
-                    let constraint = self.type_to_string(constraint);
+                    let constraint = self.base_constraint_to_string(target, constraint);
                     x.report(
                         5075,
                         vec![source_type.clone(), target_type.clone(), constraint],
@@ -1361,7 +1398,11 @@ impl<'p> Checker<'p> {
         state: u8,
     ) -> Ternary {
         if self.is_union(source) {
-            if self.has_primitive_flag(source) {
+            // `TypeFlagsPrimitive`: `boolean` and an enum have it, some of the members of an enum have not.
+            let is_whole_enum = self
+                .union_enum_symbol(source)
+                .is_some_and(|owner| self.enum_type(owner) == source);
+            if source == TypeId::BOOLEAN || is_whole_enum {
                 return self.union_or_intersection_related_to(&mut x.r, source, target, state);
             }
             return if x.r.relation == Relation::Comparable {
@@ -2548,7 +2589,17 @@ impl<'p> Checker<'p> {
                 ..
             }
         );
-        for tp in &tm.shape().props {
+        // `getNamedMembers`: what nothing declares, the elements and the length of a tuple, comes last, by name.
+        let mut in_order: Vec<&Prop> = tm.shape().props.iter().collect();
+        if self.is_tuple(target) {
+            let atoms = &self.files().atoms;
+            let place = |tp: &Prop| match tp.source {
+                PropSource::Type(_) => (true, atoms.bytes(tp.name)),
+                _ => (false, &[][..]),
+            };
+            in_order.sort_by(|a, b| place(a).cmp(&place(b)));
+        }
+        for tp in in_order {
             if optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype
             {
@@ -3097,8 +3148,8 @@ impl<'p> Checker<'p> {
             }
             if !related.holds() {
                 let names = vec![
-                    self.parameter_name_at_position(&sp, i),
-                    self.parameter_name_at_position(&tp, i),
+                    self.labeled_parameter_name_at_position(source, &sp, i),
+                    self.labeled_parameter_name_at_position(target, &tp, i),
                 ];
                 x.report(2328, names);
                 return Ternary::FALSE;

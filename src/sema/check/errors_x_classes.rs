@@ -160,6 +160,13 @@ impl Checker<'_> {
                 self.check_bases_of_interface(file, InterfaceId(i as u32), out);
             }
         }
+        // `checkClassLikeDeclaration`: 2500 is said when the tree is made.
+        for &(start, code) in hir.checker_errors.iter() {
+            if code == 2500 {
+                let end = self.end_of_heritage_expression(file, start);
+                self.note(start, end, 2500, Vec::new());
+            }
+        }
         self.check_super_call_placement(file, out);
         // The rest is about `this`.
         let index = self.exprs_by_kind(file);
@@ -749,6 +756,34 @@ impl Checker<'_> {
 
     // ───────────────────────────── what an interface extends ─────────────────────────────
 
+    /// `parseLeftHandSideExpressionOrHigher`: where the expression after `extends` or `implements` that starts at `start` ends. Of one
+    /// that is no `A.B` only the start is kept.
+    fn end_of_heritage_expression(&self, file: FileId, start: u32) -> u32 {
+        let text = &self.hir(file).text;
+        let mut end = match text.get(start as usize) {
+            Some(b'(' | b'[' | b'{') => self.end_of_bracket_at(file, start),
+            _ => self.end_of_token_at(file, start),
+        };
+        loop {
+            let next = self.skip_trivia_from(file, end);
+            end = match text.get(next as usize..) {
+                Some([b'(' | b'[', ..]) => self.end_of_bracket_at(file, next),
+                Some([b'?', b'.', ..]) => {
+                    let after = self.skip_trivia_from(file, next + 2);
+                    match text.get(after as usize) {
+                        Some(b'(' | b'[') => self.end_of_bracket_at(file, after),
+                        _ => self.end_of_token_at(file, after),
+                    }
+                }
+                Some([b'.', ..]) => {
+                    self.end_of_token_at(file, self.skip_trivia_from(file, next + 1))
+                }
+                Some([b'!', ..]) => next + 1,
+                _ => return end,
+            };
+        }
+    }
+
     /// `resolveBaseTypesOfInterface`: 2312. The end of `checkInterfaceDeclaration`: 2499.
     fn check_bases_of_interface(
         &mut self,
@@ -765,6 +800,8 @@ impl Checker<'_> {
                     start: hir[node].pos,
                     code: 2499,
                 });
+                let end = self.end_of_heritage_expression(file, hir[node].pos);
+                self.note(hir[node].pos, end, 2499, Vec::new());
                 continue;
             }
             let base = self.type_from_node(file, node);

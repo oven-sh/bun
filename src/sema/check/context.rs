@@ -338,7 +338,10 @@ impl<'p> Checker<'p> {
                     if self.p.files.options.target == crate::resolve::ScriptTarget::ES5 {
                         return Some(self.array_of(TypeId::ANY));
                     }
-                    // `createIterableType`
+                    // `createIterableType`, `getGlobalIterableTypeChecked`
+                    if self.global_type_symbol(known::Iterable).is_none() {
+                        self.report_global_error(2318, vec!["Iterable".to_owned()]);
+                    }
                     return Some(self.global_ref(
                         known::Iterable,
                         &[TypeId::ANY, TypeId::VOID, TypeId::UNDEFINED],

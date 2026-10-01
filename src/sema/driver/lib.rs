@@ -692,6 +692,11 @@ pub fn check_project(
     report.diagnostics.dedup_by(|a, b| {
         (&a.path, a.start, a.end, a.code, &a.text) == (&b.path, b.start, b.end, b.code, &b.text)
     });
+    // What the program says of no file is at -1 (`NewCompilerDiagnostic`), what the checker says of none at 0 (`NewDiagnosticForNode`).
+    let of_the_checker = program.global_errors();
+    let in_no_file = report.diagnostics.partition_point(|d| d.path.is_empty());
+    report.diagnostics[..in_no_file]
+        .sort_by_key(|d| of_the_checker.iter().any(|(code, _)| *code == d.code));
     report.check_time = checking.elapsed();
     if let Some(checked) = request.checked {
         checked(&program);

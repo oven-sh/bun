@@ -184,7 +184,7 @@ fn module_kind_name(module: ModuleKind) -> &'static str {
 }
 
 /// `GetRelativePathFromFile`, both being absolute.
-fn relative_from_file(from: &str, to: &str) -> String {
+pub(crate) fn relative_from_file(from: &str, to: &str) -> String {
     let from: Vec<&str> = crate::resolve::parent_dir(from)
         .split('/')
         .filter(|p| !p.is_empty())

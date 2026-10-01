@@ -1208,7 +1208,7 @@ impl Checker<'_> {
                     let start = hir[m].pos;
                     out.push(Diagnostic { start, code: 2374 });
                     let end = self.end_of_member(file, m);
-                    self.explain_to(start, end, 2374, |c| vec![c.type_to_string(key)]);
+                    self.explain_another(start, end, 2374, |c| vec![c.type_to_string(key)]);
                 }
             }
         }

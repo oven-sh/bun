@@ -132,9 +132,13 @@ pub struct Options {
     /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
     pub skip_lib_check: bool,
     pub skip_default_lib_check: bool,
+    /// `noCheck`: nothing but syntax is objected to.
+    pub no_check: bool,
     /// A file nothing refers to is only parsed when it is checked, and forgotten afterwards with all that was found out about it. Not an
     /// option of TypeScript's. Whoever wants to ask about such a file afterwards leaves it off.
     pub drops_what_nothing_refers_to: bool,
+    /// `GetSuggestionDiagnostics` are reported as well. Not an option of TypeScript's: its tests say `@captureSuggestions`.
+    pub captures_suggestions: bool,
     /// Where `lib.*.d.ts` are.
     pub lib_dir: String,
     /// The `N` of each `lib.N.d.ts` to start from: what `compilerOptions.lib` names, or what goes with the target.
@@ -186,6 +190,8 @@ pub struct Options {
     pub no_unused_parameters: bool,
     pub resolve_json_module: bool,
     pub no_unchecked_side_effect_imports: bool,
+    /// `deduplicatePackages: false`: a package that is installed twice is two packages.
+    pub keeps_duplicate_packages: bool,
     pub allow_js: bool,
     /// `maxNodeModuleJsDepth`: with `allowJs`, JavaScript is loaded up to this many imports deep into packages.
     pub max_node_module_js_depth: u32,
@@ -199,6 +205,23 @@ pub struct Options {
     pub has_config_file: bool,
     /// `suppressOutputPathCheck`: that output would be written over input is not looked into. Only tests say so.
     pub suppress_output_path_check: bool,
+    /// `outDir`, `rootDir`, `declarationDir`, as absolute paths. Empty if they are not said.
+    pub out_dir: String,
+    pub root_dir: String,
+    pub declaration_dir: String,
+    /// `ConfigFilePath`. Empty if there is none.
+    pub config_path: String,
+    /// `noEmit`, `emitDeclarationOnly`, `composite`
+    pub no_emit: bool,
+    pub emit_declaration_only: bool,
+    pub composite: bool,
+    /// `GetEmitDeclarations`: `declaration`, or `composite`.
+    pub writes_declarations: bool,
+    /// `sourceMap` without `inlineSourceMap`, and `GetAreDeclarationMapsEnabled`.
+    pub writes_source_maps: bool,
+    pub writes_declaration_maps: bool,
+    /// `sourceRoot` or `mapRoot` is said.
+    pub says_source_or_map_root: bool,
     /// What `target` says, `None` if it says nothing.
     pub target: ScriptTarget,
     /// What `module` comes to, said or not.
@@ -234,6 +257,8 @@ pub struct Options {
     pub rewrite_relative_import_extensions: bool,
     /// `allowUmdGlobalAccess`
     pub allow_umd_global_access: bool,
+    /// `noEmit`
+    pub no_emit_is_set: bool,
     /// `erasableSyntaxOnly`
     pub erasable_syntax_only: bool,
     /// `GetEmitDeclarations`: `declaration`, or `composite`.
@@ -250,10 +275,6 @@ pub struct Options {
     pub allow_arbitrary_extensions: bool,
     /// `noEmit`
     pub nothing_is_emitted: bool,
-    /// JavaScript is written next to its source: none of `noEmit`, `emitDeclarationOnly`, `outDir`.
-    pub writes_js_beside_source: bool,
-    /// Declaration files are written next to their source: `GetEmitDeclarations`, and none of `noEmit`, `declarationDir`, `outDir`.
-    pub writes_declarations_beside_source: bool,
     /// `jsxFactory`, `jsxFragmentFactory`, `reactNamespace`, as written. Empty if they are not.
     pub jsx_factory: String,
     pub jsx_fragment_factory: String,
@@ -457,6 +478,8 @@ impl Options {
             .get("noUncheckedSideEffectImports")
             .and_then(Json::as_bool)
             .unwrap_or(true);
+        options.keeps_duplicate_packages =
+            compiler.get("deduplicatePackages").and_then(Json::as_bool) == Some(false);
         options.allow_js = compiler
             .get("allowJs")
             .and_then(Json::as_bool)
@@ -591,14 +614,10 @@ impl Options {
         options.verbatim_module_syntax = flag("verbatimModuleSyntax");
         options.isolated_modules = options.isolated_modules_said || options.verbatim_module_syntax;
         options.preserve_const_enums = flag("preserveConstEnums");
+        options.no_emit_is_set = flag("noEmit");
         options.rewrite_relative_import_extensions = flag("rewriteRelativeImportExtensions");
         options.allow_importing_ts_extensions =
             flag("allowImportingTsExtensions") || options.rewrite_relative_import_extensions;
-        let writes_beside_source = !flag("noEmit") && text("outDir").is_empty();
-        options.writes_js_beside_source = writes_beside_source && !flag("emitDeclarationOnly");
-        options.writes_declarations_beside_source = writes_beside_source
-            && (flag("declaration") || flag("composite"))
-            && text("declarationDir").is_empty();
         options.jsx = match compiler
             .get("jsx")
             .and_then(Json::as_str)
@@ -631,7 +650,23 @@ impl Options {
         }
         options.skip_lib_check = flag("skipLibCheck");
         options.skip_default_lib_check = flag("skipDefaultLibCheck");
+        options.no_check = flag("noCheck");
         options.suppress_output_path_check = flag("suppressOutputPathCheck");
+        let absolute = |name: &str| match text(name) {
+            said if said.is_empty() => said,
+            said => join(base_dir, &said),
+        };
+        options.out_dir = absolute("outDir");
+        options.root_dir = absolute("rootDir");
+        options.declaration_dir = absolute("declarationDir");
+        options.no_emit = flag("noEmit");
+        options.emit_declaration_only = flag("emitDeclarationOnly");
+        options.composite = flag("composite");
+        options.writes_declarations = flag("declaration") || options.composite;
+        options.writes_source_maps = flag("sourceMap") && !flag("inlineSourceMap");
+        options.writes_declaration_maps = flag("declarationMap") && options.writes_declarations;
+        options.says_source_or_map_root =
+            !text("sourceRoot").is_empty() || !text("mapRoot").is_empty();
         options.verify(compiler, "");
         options
     }
@@ -639,6 +674,7 @@ impl Options {
     /// Finds out what is wrong with the options, which are made of `compiler`, in the configuration file at `config_path`, if there is one.
     pub fn verify(&mut self, compiler: &Json, config_path: &str) {
         self.has_config_file = !config_path.is_empty();
+        self.config_path = config_path.to_owned();
         self.problems = crate::verify::verify_compiler_options(compiler, self, config_path);
         self.errors = self.problems.iter().map(|problem| problem.code).collect();
         self.errors.sort_unstable();

@@ -625,8 +625,8 @@ fn unsupported_extension_problem(options: &Options, code: u32, path: &str) -> Pr
     if code == 6504 {
         return Problem::new(code, &[path], Place::Nowhere);
     }
-    // `GetSupportedExtensionsWithJsonIfResolveJsonModule`, flattened.
-    let mut extensions: Vec<&str> = if options.allow_js {
+    // `GetSupportedExtensions`, flattened.
+    let extensions: Vec<&str> = if options.allow_js {
         vec![
             ".ts", ".tsx", ".d.ts", ".js", ".jsx", ".cts", ".d.cts", ".cjs", ".mts", ".d.mts",
             ".mjs",
@@ -634,9 +634,6 @@ fn unsupported_extension_problem(options: &Options, code: u32, path: &str) -> Pr
     } else {
         vec![".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts"]
     };
-    if options.resolve_json_module {
-        extensions.push(".json");
-    }
     let quoted: Vec<String> = extensions.iter().map(|e| format!("'{e}'")).collect();
     Problem::new(code, &[path, &quoted.join(", ")], Place::Nowhere)
 }
@@ -728,17 +725,159 @@ fn automatic_type_directives(host: &dyn Host, options: &Options) -> Vec<String> 
     all
 }
 
-/// `verifyEmitFilePath` of `verifyCompilerOptions`: 5055 for an output file that is an input file, 5056 for one that two input files
-/// are written to. Only output that is written next to its source is looked at. A `.map` file collides only if what it maps does.
+/// `GetPathComponents` of an absolute path: the root, then the names. The root is empty, or a drive: `/c:/a` is `c:/a` to TypeScript.
+fn components_of_path(path: &str) -> Vec<&str> {
+    let mut parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    let starts_with_drive = parts.first().is_some_and(
+        |first| matches!(first.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic()),
+    );
+    if !starts_with_drive {
+        parts.insert(0, "");
+    }
+    parts
+}
+
+/// `GetCanonicalFileName` of both.
+fn is_same_name(a: &str, b: &str, is_case_sensitive: bool) -> bool {
+    if is_case_sensitive {
+        a == b
+    } else {
+        a.to_lowercase() == b.to_lowercase()
+    }
+}
+
+/// `ContainsPath`
+fn is_path_under(parent: &str, child: &str, is_case_sensitive: bool) -> bool {
+    let (parent, child) = (components_of_path(parent), components_of_path(child));
+    parent.len() <= child.len()
+        && parent
+            .iter()
+            .zip(&child)
+            .all(|(a, b)| is_same_name(a, b, is_case_sensitive))
+}
+
+/// `computeCommonSourceDirectoryOfFilenames`. `None`: the files have nothing in common, not even the drive.
+fn common_directory_of(files: &[&str], is_case_sensitive: bool) -> Option<String> {
+    fn directory(file: &str) -> Vec<&str> {
+        let mut parts = components_of_path(file);
+        parts.pop();
+        parts
+    }
+    let Some((first, rest)) = files.split_first() else {
+        return Some("/".to_owned());
+    };
+    let mut common = directory(first);
+    for file in rest {
+        let parts = directory(file);
+        let shared = common
+            .iter()
+            .zip(&parts)
+            .take_while(|(a, b)| is_same_name(a, b, is_case_sensitive))
+            .count();
+        if shared == 0 {
+            return None;
+        }
+        common.truncate(shared);
+    }
+    Some(join("/", &common.join("/")))
+}
+
+/// The parts of `verifyCompilerOptions` that go by where output is written. 6059 (`checkSourceFilesBelongToPath`) for a root file that
+/// is not under `rootDir`, 5009 and 5011 for what the sources have in common, and `verifyEmitFilePath`: 5055 for an output file that is
+/// an input file, 5056 for one that two input files are written to.
 fn output_path_errors(
+    host: &dyn Host,
     options: &Options,
     modules: &[ModuleCell],
     by_path: &FxHashMap<String, FileId>,
+    roots: &[String],
 ) -> Vec<Problem> {
     let mut errors = Vec::new();
-    if options.suppress_output_path_check
-        || !options.writes_js_beside_source && !options.writes_declarations_beside_source
+    let is_case_sensitive = host.is_case_sensitive();
+    let declaration_dir = if options.writes_declarations {
+        options.declaration_dir.as_str()
+    } else {
+        ""
+    };
+    // `sourceFileMayBeEmitted`: without `outDir` a JSON file is not.
+    let sources: Vec<&Module> = modules
+        .iter()
+        .map(|module| &**module)
+        .filter(|module| {
+            !module.is_lib
+                && module.hir.kind != FileKind::Declaration
+                && !module.path.contains("/node_modules/")
+                && (module.hir.kind != FileKind::Json || !options.out_dir.is_empty())
+        })
+        .collect();
+    let paths: Vec<&str> = sources.iter().map(|module| module.path.as_str()).collect();
+    // `CommonSourceDirectory`, where anything goes by it. `None`: there is none.
+    let mut common = None;
+    if !options.out_dir.is_empty()
+        || !options.root_dir.is_empty()
+        || options.says_source_or_map_root
+        || !declaration_dir.is_empty()
     {
+        let said = if !options.root_dir.is_empty() {
+            options.root_dir.as_str()
+        } else if !options.config_path.is_empty() {
+            parent_dir(&options.config_path)
+        } else {
+            ""
+        };
+        if said.is_empty() {
+            common = common_directory_of(&paths, is_case_sensitive);
+        } else {
+            // What an import brings in may belong to a project that is referred to, which is not kept track of.
+            let roots: FxHashSet<&str> = roots.iter().map(String::as_str).collect();
+            for &path in &paths {
+                if roots.contains(path) && !is_path_under(said, path, is_case_sensitive) {
+                    errors.push(
+                        Problem::new(6059, &[path, said], Place::Nowhere)
+                            .with(1, 1430, &[])
+                            .with(2, 1427, &[]),
+                    );
+                }
+            }
+            common = Some(said.to_owned());
+        }
+        if common.is_none() && !options.out_dir.is_empty() {
+            errors.push(Problem::new(5009, &[], Place::Key("outDir", "")));
+        }
+    }
+    if options.no_emit {
+        return errors;
+    }
+    // Before TypeScript 6 it was what the sources have in common, configuration file or not.
+    if !options.composite
+        && options.root_dir.is_empty()
+        && !options.config_path.is_empty()
+        && (!options.out_dir.is_empty() || !declaration_dir.is_empty())
+        && !paths.is_empty()
+        && let Some(computed) = common_directory_of(&paths, is_case_sensitive)
+        && !is_same_name(
+            &computed,
+            parent_dir(&options.config_path),
+            is_case_sensitive,
+        )
+    {
+        let (one, other) = if options.out_dir.is_empty() {
+            ("declarationDir", "")
+        } else {
+            ("outDir", "declarationDir")
+        };
+        let config_name =
+            &options.config_path[options.config_path.rfind('/').map_or(0, |i| i + 1)..];
+        let relative = crate::verify::relative_from_file(&options.config_path, &computed);
+        errors.push(
+            Problem::new(5011, &[config_name, &relative], Place::Key(one, other)).with(
+                1,
+                5111,
+                &[],
+            ),
+        );
+    }
+    if options.suppress_output_path_check {
         return errors;
     }
     let mut seen: FxHashSet<String> = FxHashSet::default();
@@ -751,27 +890,40 @@ fn output_path_errors(
                 problem.with(1, 5068, &[])
             });
         }
-        if seen.contains(&output) {
+        let key = if is_case_sensitive {
+            output.clone()
+        } else {
+            output.to_lowercase()
+        };
+        if seen.contains(&key) {
             errors.push(Problem::new(5056, &[&output], Place::Nowhere));
         } else {
-            seen.insert(output);
+            seen.insert(key);
         }
     };
-    for module in modules {
+    // `GetSourceFilePathInNewDir`: in `dir`, where it is in what the sources have in common. What is not in that stays where it is.
+    let moved_to = |dir: &str, path: &str| match &common {
+        _ if dir.is_empty() => path.to_owned(),
+        Some(common) if is_path_under(common, path, is_case_sensitive) => join(
+            dir,
+            path.get(common.len()..)
+                .unwrap_or("")
+                .trim_start_matches('/'),
+        ),
+        _ => path.to_owned(),
+    };
+    // `RemoveFileExtension`
+    let without_extension =
+        |path: String| path[..path.len() - known_extension(&path).len()].to_owned();
+    for module in sources {
         let path = module.path.as_str();
-        // `sourceFileMayBeEmitted`: without `outDir` a JSON file is not.
-        if module.is_lib
-            || matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
-            || path.contains("/node_modules/")
-        {
-            continue;
-        }
+        let is_json = module.hir.kind == FileKind::Json;
         let is_one_of = |extensions: [&str; 2]| extensions.iter().any(|e| path.ends_with(e));
-        // `RemoveFileExtension`
-        let stem = &path[..path.len() - known_extension(path).len()];
-        if options.writes_js_beside_source {
+        if !options.emit_declaration_only {
             // `GetOutputExtension`
-            let extension = if options.jsx == JsxEmit::Preserve && is_one_of([".jsx", ".tsx"]) {
+            let extension = if is_json {
+                ".json"
+            } else if options.jsx == JsxEmit::Preserve && is_one_of([".jsx", ".tsx"]) {
                 ".jsx"
             } else if is_one_of([".mts", ".mjs"]) {
                 ".mjs"
@@ -780,9 +932,24 @@ fn output_path_errors(
             } else {
                 ".js"
             };
-            verify(format!("{stem}{extension}"));
+            let stem = without_extension(moved_to(&options.out_dir, path));
+            let output = format!("{stem}{extension}");
+            // A JSON file that would be written where it is read from is not written.
+            if !is_json || output != path {
+                let map = format!("{output}.map");
+                verify(output);
+                if options.writes_source_maps && !is_json {
+                    verify(map);
+                }
+            }
         }
-        if options.writes_declarations_beside_source {
+        // `GetDeclarationEmitOutputFilePath`
+        let declarations_in = if declaration_dir.is_empty() {
+            options.out_dir.as_str()
+        } else {
+            declaration_dir
+        };
+        if options.writes_declarations && !is_json {
             // `GetDeclarationEmitExtensionForPath`
             let extension = if is_one_of([".mjs", ".mts"]) {
                 ".d.mts"
@@ -791,7 +958,13 @@ fn output_path_errors(
             } else {
                 ".d.ts"
             };
-            verify(format!("{stem}{extension}"));
+            let stem = without_extension(moved_to(declarations_in, path));
+            let output = format!("{stem}{extension}");
+            let map = format!("{output}.map");
+            verify(output);
+            if options.writes_declaration_maps {
+                verify(map);
+            }
         }
     }
     errors
@@ -915,7 +1088,9 @@ impl Files {
                 depths[id.idx()] = depths[id.idx()].min(depth);
                 return id;
             }
-            if let Some(package_id) = resolver.package_id(&path) {
+            if !options.keeps_duplicate_packages
+                && let Some(package_id) = resolver.package_id(&path)
+            {
                 match by_package_id.get(&package_id) {
                     Some(&id) => {
                         by_path.insert(path, id);
@@ -949,6 +1124,13 @@ impl Files {
         }
         let mut program_errors = Vec::new();
         for root in roots {
+            // `addRootFileTask`, `getSourceFileFromReference`: a name without an extension stands for the file that has one.
+            let with_extension = if has_extension(root) {
+                None
+            } else {
+                referenced_file(host, &options, root, "").ok()
+            };
+            let root = with_extension.as_ref().unwrap_or(root);
             // `parseTask.load`: a root file with an unsupported extension is reported and not loaded.
             match unsupported_extension_error(&options, root) {
                 Some(code) => program_errors.push(
@@ -1154,7 +1336,9 @@ impl Files {
                 }
             }
         }
-        program_errors.extend(output_path_errors(&options, &modules, &by_path));
+        program_errors.extend(output_path_errors(
+            host, &options, &modules, &by_path, roots,
+        ));
         let has_type_only_stars = modules
             .iter()
             .any(|m| m.bound.export_star_type_only.contains(&true));

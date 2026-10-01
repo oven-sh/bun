@@ -2074,7 +2074,11 @@ impl<'p> Checker<'p> {
                         return self.intern(TypeData::Intersection(Box::new([a, b])));
                     }
                 }
-                self.intersection(&members)
+                let ty = self.intersection(&members);
+                if members.len() == 2 && members.contains(&TypeId::EMPTY_OBJECT) {
+                    self.p.written_with_empty_object.insert(ty, ());
+                }
+                ty
             }
             TypeNodeKind::Fn(func) => {
                 let mapper = self.identity_mapper_for_node(file, scope, node);

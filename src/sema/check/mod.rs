@@ -32,6 +32,7 @@ mod errors_small;
 mod errors_unused;
 mod errors_x_aliases;
 mod errors_x_classes;
+mod errors_x_collisions;
 mod errors_x_enums_names;
 mod errors_x_identifiers;
 mod errors_x_modules;
@@ -56,6 +57,7 @@ mod order;
 mod print;
 mod relate;
 mod related;
+mod related_expected;
 mod shape;
 mod spans;
 mod symbols;
@@ -175,6 +177,8 @@ pub struct Program {
     declared_types: ByNode<Sym, TypeId>,
     /// The unions that a type alias, or an alias with type arguments, stands for.
     named_unions: IdSet<TypeId>,
+    /// What a type node spells out as `T & {}`. It has no alias, which what `NonNullable<T>` stands for has.
+    written_with_empty_object: IdSet<TypeId>,
     /// The unions that have been seen to have no intersection among their members.
     unions_without_intersections: IdSet<TypeId>,
     /// The generic references made from a deferred type reference node (`isDeferredTypeReferenceNode`), and their generic instantiations.
@@ -399,6 +403,7 @@ impl Program {
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
             named_unions: Default::default(),
+            written_with_empty_object: Default::default(),
             unions_without_intersections: Default::default(),
             deferred_references: Default::default(),
             union_origins: Default::default(),
@@ -569,6 +574,7 @@ impl Program {
             explains: false,
             only_syntax: false,
             notes: Default::default(),
+            suggestions: Default::default(),
             timed_out: false,
             ticks: 0,
             flow_depth: 0,
@@ -746,8 +752,8 @@ pub struct Checker<'p> {
     unreported_event: u64,
     /// `getAliasSymbolForTypeNode`: the type reference being resolved is the whole body of a type alias.
     aliased_reference: bool,
-    /// Where 2589 was reported (file, start). `check_excessive_depth` drains it.
-    excessive_at: Vec<(FileId, u32)>,
+    /// Where 2589 was reported (file, start, end). `check_excessive_depth` drains it.
+    excessive_at: Vec<(FileId, u32, u32)>,
     free_relaters: Vec<relate::Relater>,
     /// What the comparisons under way found out about how far the variance being measured can be trusted.
     reliability: u8,
@@ -816,6 +822,8 @@ pub struct Checker<'p> {
     /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.
     only_syntax: bool,
     notes: std::cell::RefCell<Vec<explain::Note>>,
+    /// The errors that are no more than suggestions: where they start, and the code.
+    suggestions: std::cell::RefCell<Vec<(u32, u32)>>,
     timed_out: bool,
     ticks: u32,
     flow_depth: u32,
@@ -1520,8 +1528,16 @@ impl<'p> Checker<'p> {
             && let Some(current) = self.current_node()
         {
             let at = match current {
-                CurrentNode::Expr(file, e) => (file, self.error_start_inside_parentheses(file, e)),
-                CurrentNode::TypeNode(file, node) => (file, self.hir(file)[node].pos),
+                CurrentNode::Expr(file, e) => (
+                    file,
+                    self.error_start_inside_parentheses(file, e),
+                    self.error_end_inside_parentheses(file, e),
+                ),
+                CurrentNode::TypeNode(file, node) => (
+                    file,
+                    self.hir(file)[node].pos,
+                    self.end_of_type_node(file, node),
+                ),
             };
             self.excessive_at.push(at);
             return true;

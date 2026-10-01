@@ -1273,9 +1273,10 @@ impl Checker<'_> {
         }
         self.reports_depth = false;
         // A limit reported at a node of another file is dropped.
-        for (reported_in, start) in std::mem::take(&mut self.excessive_at) {
+        for (reported_in, start, end) in std::mem::take(&mut self.excessive_at) {
             if reported_in == file {
                 out.push(Diagnostic { start, code: 2589 });
+                self.note(start, end, 2589, Vec::new());
             }
         }
     }

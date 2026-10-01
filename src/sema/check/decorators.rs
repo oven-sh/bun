@@ -104,9 +104,17 @@ impl<'p> Checker<'p> {
         })
     }
 
+    /// `getGlobalType` with `reportErrors`: that there is none is said, of no file.
     fn global_type(&mut self, name: &[u8], args: &[TypeId]) -> Option<TypeId> {
-        let name = self.files().atoms.lookup(name)?;
-        let sym = self.files().global(name, SymFlags::TYPE)?;
+        let found = self
+            .files()
+            .atoms
+            .lookup(name)
+            .and_then(|name| self.files().global(name, SymFlags::TYPE));
+        let Some(sym) = found else {
+            self.report_global_error(2318, vec![String::from_utf8_lossy(name).into_owned()]);
+            return None;
+        };
         Some(self.type_reference(sym, args))
     }
 

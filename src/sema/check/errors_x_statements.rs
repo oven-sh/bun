@@ -1461,7 +1461,34 @@ impl Checker<'_> {
         out: &mut Vec<Diagnostic>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `getGlobalDisposableType`, `getGlobalAsyncDisposableType`: without them nothing is asked.
+        // `getGlobalDisposableType`, `getGlobalAsyncDisposableType`: that there is none is said, of no file, and nothing is asked.
+        for d in 0..hir.var_decls.len() {
+            let decl = &hir.var_decls[d];
+            let stmt = bound.var_stmt[d];
+            if decl.init.is_none()
+                || stmt.is_none()
+                || !matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing)
+                || !matches!(hir[decl.pat].kind, PatKind::Ident(_))
+                || matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForIn { .. }))
+            {
+                continue;
+            }
+            let asked_for: &[&str] = if decl.kind == VarKind::AwaitUsing {
+                &["AsyncDisposable", "Disposable"]
+            } else {
+                &["Disposable"]
+            };
+            for &name in asked_for {
+                let is_there = self
+                    .files()
+                    .atoms
+                    .lookup(name.as_bytes())
+                    .is_some_and(|name| self.global_type_symbol(name).is_some());
+                if !is_there {
+                    self.report_global_error(2318, vec![name.to_owned()]);
+                }
+            }
+        }
         if self.global_type_symbol(known::Disposable).is_none() {
             return;
         }

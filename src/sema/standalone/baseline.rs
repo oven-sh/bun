@@ -821,12 +821,28 @@ fn without_what_emit_added(text: &str) -> String {
     if !text.contains("error TS-1: ") {
         return text.to_owned();
     }
-    let mut lines = Vec::new();
-    let mut is_in_it = false;
+    // All there was before is listed: nothing is the same before and after.
+    if let Some((before, after)) = counts_around_emit(text)
+        && before > after
+        && listed_under_the_mismatch(text).len() >= before
+    {
+        return String::new();
+    }
+    let mut lines: Vec<Cow<'_, str>> = Vec::new();
+    // With `pretty`, what is said of it on top goes on to the next line that is not indented.
+    let (mut is_pretty, mut is_in_it_on_top, mut is_in_it) = (false, false, false);
     for line in text.split('\n') {
         if line.starts_with("error TS-1: ") {
             continue;
         }
+        if line.starts_with("\u{1b}[91merror\u{1b}[0m\u{1b}[90m TS-1: ") {
+            (is_pretty, is_in_it_on_top) = (true, true);
+            continue;
+        }
+        if is_in_it_on_top && (line.is_empty() || line.starts_with(' ')) {
+            continue;
+        }
+        is_in_it_on_top = false;
         if line.starts_with("!!! error TS-1: ") {
             is_in_it = true;
             continue;
@@ -835,7 +851,24 @@ fn without_what_emit_added(text: &str) -> String {
             continue;
         }
         is_in_it = false;
-        lines.push(line);
+        // `WriteErrorSummaryText` counts it.
+        let counted = line
+            .strip_prefix("Found ")
+            .filter(|_| is_pretty)
+            .and_then(|rest| rest.split_once(" errors"))
+            .and_then(|(count, rest)| Some((count.parse::<usize>().ok()?, rest)));
+        lines.push(match counted {
+            Some((2, rest)) => Cow::Owned(
+                match rest.strip_prefix(" in the same file, starting at: ") {
+                    Some(place) => format!("Found 1 error in {place}"),
+                    None => "Found 1 error.".to_owned(),
+                },
+            ),
+            Some((count, rest)) if count > 2 => {
+                Cow::Owned(format!("Found {} errors{rest}", count - 1))
+            }
+            _ => Cow::Borrowed(line),
+        });
     }
     let left = lines.join("\n");
     if heads(top_of(&left)).is_empty() {
@@ -843,6 +876,50 @@ fn without_what_emit_added(text: &str) -> String {
     } else {
         left
     }
+}
+
+/// The numbers in `Pre-emit (8) and post-emit (6) diagnostic counts do not match!`
+fn counts_around_emit(text: &str) -> Option<(usize, usize)> {
+    let (_, rest) = text.split_once("Pre-emit (")?;
+    let (before, rest) = rest.split_once(") and post-emit (")?;
+    let (after, _) = rest.split_once(')')?;
+    Some((before.parse().ok()?, after.parse().ok()?))
+}
+
+/// What is listed under TS-1, each as it is written after `!!! related TS`.
+fn listed_under_the_mismatch(text: &str) -> Vec<&str> {
+    text.lines()
+        .skip_while(|line| !line.starts_with("!!! error TS-1: "))
+        .skip(1)
+        .map_while(|line| line.strip_prefix("!!! related TS"))
+        .filter(|listed| !listed.starts_with("-1:"))
+        .collect()
+}
+
+/// `compileFilesWithHost` goes by the shorter of its two lists. Where writing the output has taken errors away, that is what there is
+/// afterwards, and what there was before besides is listed under TS-1.
+fn what_emit_took_away(text: &str) -> Vec<&str> {
+    match counts_around_emit(text) {
+        Some((before, after)) if before > after => listed_under_the_mismatch(text),
+        _ => Vec::new(),
+    }
+}
+
+/// `d` as it would be listed there.
+fn as_listed(d: &Diagnostic, lib_dir: &str) -> String {
+    let location = if d.path.is_empty() {
+        String::new()
+    } else if is_default_library(&d.path) {
+        format!(" {}:--:--", d.path)
+    } else {
+        format!(" {}:{}:{}", d.path, d.line, d.column)
+    };
+    format!(
+        "{}{}: {}",
+        d.code,
+        without_prefixes(&location, lib_dir),
+        d.text.lines().next().unwrap_or("")
+    )
 }
 
 fn without_related(text: &str) -> String {
@@ -949,6 +1026,10 @@ fn run_one(
             continue;
         }
         match bun_sema::config_options::from_text(name, value) {
+            // `getOptionValue`: what is declared `IsFilePath` is taken from the current directory.
+            Some((name @ ("outDir" | "rootDir" | "declarationDir"), Json::String(path))) => {
+                said.push((name.to_owned(), Json::String(absolute(&path, &cwd))))
+            }
             Some((name, value)) => said.push((name.to_owned(), value)),
             None => match name.as_str() {
                 "suppressoutputpathcheck" => said.push((
@@ -989,7 +1070,8 @@ fn run_one(
             only_units.add_file(&absolute(&unit.name, &config_cwd), unit.content.clone());
         }
         let config_path = absolute(&units[at].name, &config_cwd);
-        named_by_config = Some(config::load(&only_units, &config_path).files);
+        named_by_config =
+            Some(config::load_as_typescript_does(&only_units, &config_path, Vec::new()).files);
         config_unit = Some(units.remove(at));
     }
 
@@ -1065,7 +1147,7 @@ fn run_one(
             host.add_file(&config_path, unit.content.clone());
             let mut over = said.clone();
             defaults(&mut over);
-            config::load_overriding(&host, &config_path, over)
+            config::load_as_typescript_does(&host, &config_path, over)
         }
         None => {
             let mut compiler = said.clone();
@@ -1078,6 +1160,9 @@ fn run_one(
     }
     project.files = files.clone();
     project.options.files = files;
+    project.options.captures_suggestions = settings
+        .get("capturesuggestions")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
 
     let request = Request {
         cwd: &cwd,
@@ -1200,7 +1285,19 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                 level: Level::Broken,
                                 note: "took too long".to_owned(),
                             },
-                            Ok(Some((report, inputs))) => {
+                            Ok(Some((mut report, inputs))) => {
+                                let expected = std::fs::read(format!(
+                                    "{}/{configured}.errors.txt",
+                                    suite.baselines
+                                ))
+                                .map(|bytes| String::from_utf8_lossy(&bytes).replace("\r\n", "\n"))
+                                .unwrap_or_default();
+                                let taken_away = what_emit_took_away(&expected);
+                                if !taken_away.is_empty() {
+                                    report.diagnostics.retain(|d| {
+                                        !taken_away.contains(&as_listed(d, setup.lib_dir).as_str())
+                                    });
+                                }
                                 let ours = if report.diagnostics.is_empty() {
                                     String::new()
                                 } else {
@@ -1214,12 +1311,6 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                     ))
                                     .into_owned()
                                 };
-                                let expected = std::fs::read(format!(
-                                    "{}/{configured}.errors.txt",
-                                    suite.baselines
-                                ))
-                                .map(|bytes| String::from_utf8_lossy(&bytes).replace("\r\n", "\n"))
-                                .unwrap_or_default();
                                 let expected = without_what_emit_added(&expected);
                                 let level = level_of(&ours, &expected);
                                 if let Some(out) = setup.out

@@ -1369,6 +1369,28 @@ impl Checker<'_> {
                     matches!(decl, Decl::ImportSpec(_)),
                 ),
             );
+            // The `@typedef` that exports it as it is.
+            if matches!(decl, Decl::ExportSpec(_)) {
+                self.relate(name_start, 18043, |c| {
+                    let declarations = files.decls_of(target);
+                    let exported = declarations
+                        .iter()
+                        .find_map(|&(of, declared)| match declared {
+                            Decl::Alias(a) if of == file && hir.is_in_jsdoc(hir[a].name_pos) => {
+                                Some(hir[a].name_pos)
+                            }
+                            _ => None,
+                        });
+                    exported
+                        .map(|at| super::explain::Related {
+                            at: Some(c.place_of_token(file, at)),
+                            code: 18044,
+                            args: vec![c.atom_text(files.symbol(target).name)],
+                        })
+                        .into_iter()
+                        .collect()
+                });
+            }
             // `checkAliasSymbol` returns before 2440 and 2484, which earlier passes report at the start of the declaration.
             out.retain(|d| d.start != start || !matches!(d.code, 2440 | 2484));
             return;

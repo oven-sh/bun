@@ -5,8 +5,7 @@
 //! `scanUnicodeEscape`, `scanIdentifier` and `scanIdentifierParts` of its scanner.go as far as regular expressions use them, and
 //! of `checkGrammarRegularExpressionLiteral` of grammarchecks.go, which decides what of all that is reported.
 //!
-//! tsgo always allows for Annex B, so that its `anyUnicodeModeOrNonAnnexB` is `anyUnicodeMode`. Its suggestions (`Did_you_mean_0`)
-//! only ever end up attached to the error before them: they are left out.
+//! tsgo always allows for Annex B, so that its `anyUnicodeModeOrNonAnnexB` is `anyUnicodeMode`.
 
 use super::errors::Diagnostic;
 use super::*;
@@ -36,8 +35,21 @@ impl Checker<'_> {
                 noted.as_mut(),
             );
         }
+        let mut said_last = 0;
         for (start, end, code, args) in noted.into_iter().flatten() {
-            self.note(start, end, code, args);
+            // `Did_you_mean_0` goes with the error before it, and is in no file.
+            if code == 1369 {
+                self.relate(start, said_last, |_| {
+                    vec![super::explain::Related {
+                        at: None,
+                        code,
+                        args,
+                    }]
+                });
+            } else {
+                said_last = code;
+                self.note(start, end, code, args);
+            }
         }
     }
 }
@@ -259,6 +271,26 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
+    /// `Did_you_mean_0`, which `checkGrammarRegularExpressionLiteral` adds to the error before it if that is about the same text:
+    /// which of `candidates` may have been meant by `name`.
+    fn suggest<'c>(
+        &mut self,
+        start: usize,
+        length: usize,
+        name: &[u8],
+        candidates: impl Iterator<Item = &'c [u8]>,
+    ) {
+        let (start, end) = (start as u32, (start + length) as u32);
+        if let Some(noted) = self.noted.as_mut()
+            && noted
+                .last()
+                .is_some_and(|last| (last.0, last.1) == (start, end))
+            && let Some(suggestion) = spelling_suggestion(name, candidates)
+        {
+            noted.push((start, end, 1369, vec![suggestion]));
+        }
+    }
+
     /// 1508, of the character `ch` at `start`.
     fn error_unexpected(&mut self, start: usize, ch: u8) {
         self.error_with(1508, start, 1, || vec![char::from(ch).to_string()]);
@@ -307,11 +339,14 @@ impl<'a> RegExpParser<'a> {
     /// `run`
     fn run(&mut self) {
         self.scan_disjunction(false);
+        let group_specifiers = std::mem::take(&mut self.group_specifiers);
         for (pos, end, name) in &std::mem::take(&mut self.group_name_references) {
-            if !self.group_specifiers.contains(name) {
+            if !group_specifiers.contains(name) {
                 self.error_with(1532, *pos, *end - *pos, || {
                     vec![String::from_utf8_lossy(name).into_owned()]
                 });
+                let names = group_specifiers.iter().map(|specifier| &specifier[..]);
+                self.suggest(*pos, *end - *pos, name, names);
             }
         }
         // With Annex B a number greater than that of the groups is an octal escape or the digits themselves. Most likely it is
@@ -1251,6 +1286,15 @@ impl<'a> RegExpParser<'a> {
                         property_name_or_value_start,
                         property_name_or_value.len(),
                     );
+                    // `getSpellingSuggestionForUnicodePropertyName`
+                    self.suggest(
+                        property_name_or_value_start,
+                        property_name_or_value.len(),
+                        property_name_or_value,
+                        NON_BINARY_UNICODE_PROPERTIES
+                            .iter()
+                            .map(|name| name.as_bytes()),
+                    );
                 }
                 self.pos += 1;
                 let property_value_start = self.pos;
@@ -1261,6 +1305,13 @@ impl<'a> RegExpParser<'a> {
                     && !has(values, property_value)
                 {
                     self.error(1526, property_value_start, property_value.len());
+                    // `getSpellingSuggestionForUnicodePropertyValue`
+                    self.suggest(
+                        property_value_start,
+                        property_value.len(),
+                        property_value,
+                        values.iter().map(|value| value.as_bytes()),
+                    );
                 }
             } else if self.pos == property_name_or_value_start {
                 self.error(1527, self.pos, 0);
@@ -1287,6 +1338,17 @@ impl<'a> RegExpParser<'a> {
                     1529,
                     property_name_or_value_start,
                     property_name_or_value.len(),
+                );
+                // `getSpellingSuggestionForUnicodePropertyNameOrValue`
+                self.suggest(
+                    property_name_or_value_start,
+                    property_name_or_value.len(),
+                    property_name_or_value,
+                    GENERAL_CATEGORY_VALUES
+                        .iter()
+                        .chain(BINARY_UNICODE_PROPERTIES)
+                        .chain(BINARY_UNICODE_PROPERTIES_OF_STRINGS)
+                        .map(|name| name.as_bytes()),
                 );
             }
             self.scan_expected_char(b'}');
@@ -1439,6 +1501,92 @@ fn is_in_ranges(ch: u32, ranges: &[(u32, u32)]) -> bool {
     after > 0 && ch <= ranges[after - 1].1
 }
 
+/// `GetSpellingSuggestionForStrings`: the closest of `candidates` to `name`, of those that are close. Of two that are as close, the one
+/// that sorts first.
+fn spelling_suggestion<'c>(
+    name: &[u8],
+    candidates: impl Iterator<Item = &'c [u8]>,
+) -> Option<String> {
+    let name_text = String::from_utf8_lossy(name);
+    let name_runes: Vec<char> = name_text.chars().collect();
+    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
+    // Anything worse than this is not worth saying.
+    let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
+    let mut best: Option<&[u8]> = None;
+    for candidate in candidates {
+        if candidate.is_empty()
+            || candidate.len().abs_diff(name_runes.len()) > maximum_length_difference
+            || candidate == name
+        {
+            continue;
+        }
+        let text = String::from_utf8_lossy(candidate);
+        // Two letters are told apart at a glance, unless it is by their case.
+        if candidate.len() < 3 && text.to_lowercase() != name_text.to_lowercase() {
+            continue;
+        }
+        let runes: Vec<char> = text.chars().collect();
+        let Some(distance) = levenshtein_with_max(&name_runes, &runes, best_distance) else {
+            continue;
+        };
+        if distance < best_distance {
+            best_distance = distance;
+            best = Some(candidate);
+        } else if best.is_none_or(|best| candidate < best) {
+            best = Some(candidate);
+        }
+    }
+    best.map(|best| String::from_utf8_lossy(best).into_owned())
+}
+
+/// `levenshteinWithMax`: changing a letter costs two, and changing its case next to nothing. `None` for its -1: more than `max_value`.
+fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
+    let mut previous: Vec<f64> = (0..=s2.len()).map(|j| j as f64).collect();
+    let mut current = vec![0.0; s2.len() + 1];
+    let big = max_value + 0.01;
+    for (i, &c1) in s1.iter().enumerate() {
+        let row = (i + 1) as f64;
+        let min_j = if row > max_value {
+            (row - max_value).ceil() as usize
+        } else {
+            1
+        };
+        let max_j = ((max_value + row).floor() as usize).min(s2.len());
+        let mut col_min = row;
+        current[0] = row;
+        for cell in &mut current[1..min_j.min(s2.len() + 1)] {
+            *cell = big;
+        }
+        for j in min_j..=max_j {
+            let c2 = s2[j - 1];
+            let distance = if c1 == c2 {
+                previous[j - 1]
+            } else {
+                let substitution = previous[j - 1]
+                    + if c1.to_lowercase().eq(c2.to_lowercase()) {
+                        0.1
+                    } else {
+                        2.0
+                    };
+                (previous[j] + 1.0)
+                    .min(current[j - 1] + 1.0)
+                    .min(substitution)
+            };
+            current[j] = distance;
+            col_min = col_min.min(distance);
+        }
+        for cell in &mut current[(max_j + 1).min(s2.len() + 1)..] {
+            *cell = big;
+        }
+        if col_min > max_value {
+            return None;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    let distance = previous[s2.len()];
+    (distance <= max_value).then_some(distance)
+}
+
 fn has(names: &[&str], name: &[u8]) -> bool {
     names.iter().any(|n| n.as_bytes() == name)
 }
@@ -1452,6 +1600,16 @@ fn values_of_non_binary_unicode_property(name: &[u8]) -> Option<&'static [&'stat
         _ => None,
     }
 }
+
+/// The keys of `nonBinaryUnicodeProperties`.
+static NON_BINARY_UNICODE_PROPERTIES: &[&str] = &[
+    "General_Category",
+    "gc",
+    "Script",
+    "sc",
+    "Script_Extensions",
+    "scx",
+];
 
 /// `binaryUnicodeProperties`: https://tc39.es/ecma262/#table-binary-unicode-properties
 #[rustfmt::skip]

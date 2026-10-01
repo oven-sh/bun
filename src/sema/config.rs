@@ -150,12 +150,72 @@ fn merge_compiler_options(target: &mut Vec<(String, Json)>, source: Vec<(String,
     }
 }
 
+/// `parseDelimitedList`: what is written after a member or an element with no comma in between, from where to where its first token goes.
+fn after_missing_commas(
+    text: &[u8],
+    value: &crate::json_places::Value,
+    found: &mut Vec<(u32, u32)>,
+) {
+    use crate::json_places::Written;
+    // Between two of them there is nothing but commas, blanks and comments.
+    let has_comma = |from: u32, to: u32| {
+        let mut at = from as usize;
+        while at < to as usize {
+            match text[at] {
+                b',' => return true,
+                b'/' if text.get(at + 1) == Some(&b'/') => {
+                    at += text[at..]
+                        .iter()
+                        .position(|&c| c == b'\n')
+                        .unwrap_or(text.len() - at);
+                }
+                b'/' if text.get(at + 1) == Some(&b'*') => {
+                    at += text[at + 2..]
+                        .windows(2)
+                        .position(|w| w == b"*/")
+                        .map_or(text.len() - at, |end| end + 4);
+                }
+                _ => at += 1,
+            }
+        }
+        false
+    };
+    match &value.what {
+        Written::Object(members) => {
+            for pair in members.windows(2) {
+                if !has_comma(pair[0].value.to, pair[1].name_from) {
+                    found.push((pair[1].name_from, pair[1].name_to));
+                }
+            }
+            for member in members {
+                after_missing_commas(text, &member.value, found);
+            }
+        }
+        Written::Array(elements) => {
+            for pair in elements.windows(2) {
+                if !has_comma(pair[0].to, pair[1].from) {
+                    let to = match pair[1].what {
+                        Written::Other => pair[1].to,
+                        _ => pair[1].from + 1,
+                    };
+                    found.push((pair[1].from, to));
+                }
+            }
+            for element in elements {
+                after_missing_commas(text, element, found);
+            }
+        }
+        Written::Other => {}
+    }
+}
+
 /// `parseConfig`
 fn parse_config(
     host: &dyn Host,
     path: &str,
     stack: &mut Vec<String>,
     errors: &mut Vec<ConfigError>,
+    as_typescript_does: bool,
 ) -> Option<Raw> {
     if stack.iter().any(|p| p == path) {
         let mut chain = stack.clone();
@@ -201,6 +261,15 @@ fn parse_config(
     };
     let base = parent_dir(path);
     let mut own = Raw::default();
+    // `SourceFile.Diagnostics`
+    if let Some(root) = crate::json_places::parse(&text) {
+        let mut found = Vec::new();
+        after_missing_commas(&text, &root, &mut found);
+        errors.extend(found.into_iter().map(|(from, to)| ConfigError {
+            at: Some((path.to_owned(), from, to)),
+            ..ConfigError::new(1005, &[","])
+        }));
+    }
     // `getDefaultCompilerOptions`
     if path.ends_with("/jsconfig.json") {
         for (key, value) in [
@@ -213,19 +282,25 @@ fn parse_config(
         }
     }
     if let Some(compiler) = json.get("compilerOptions").and_then(Json::as_object) {
-        errors.extend(
-            crate::config_options::problems(&text, compiler)
-                .into_iter()
-                .map(|problem| ConfigError {
-                    code: problem.code,
-                    args: problem.args,
-                    at: problem.span.map(|(from, to)| (path.to_owned(), from, to)),
-                    chain: Vec::new(),
-                    is_about_options: false,
-                }),
-        );
+        let problems = crate::config_options::problems(&text, compiler, as_typescript_does);
+        // `convertJsonOption`: what is wrong is as good as not said.
+        let left_out: Vec<String> = problems
+            .iter()
+            .filter(|_| as_typescript_does)
+            .map(|problem| problem.name.clone())
+            .collect();
+        errors.extend(problems.into_iter().map(|problem| ConfigError {
+            code: problem.code,
+            args: problem.args,
+            at: problem.span.map(|(from, to)| (path.to_owned(), from, to)),
+            chain: Vec::new(),
+            is_about_options: false,
+        }));
         let mut said = Vec::with_capacity(compiler.len());
         for (key, value) in compiler {
+            if left_out.contains(key) {
+                continue;
+            }
             let value = match value {
                 Json::String(s) if PATH_OPTIONS.contains(&key.as_str()) => {
                     Json::String(absolute_unless_template(s, base))
@@ -247,6 +322,21 @@ fn parse_config(
             said.push((key.clone(), value));
         }
         merge_compiler_options(&mut own.compiler, said);
+    }
+    // `convertJsonOption`, of what is said beside `compilerOptions`.
+    for name in ["files", "include", "exclude", "references"] {
+        if json
+            .get(name)
+            .is_some_and(|value| !matches!(value, Json::Array(_) | Json::Null))
+        {
+            errors.push(ConfigError {
+                at: crate::json_places::parse(&text).and_then(|root| {
+                    let value = &root.member(name, "")?.value;
+                    Some((path.to_owned(), value.from, value.to))
+                }),
+                ..ConfigError::new(5024, &[name, "Array"])
+            });
+        }
     }
     own.files = json.get("files").and_then(strings);
     own.include = json.get("include").and_then(strings);
@@ -275,7 +365,8 @@ fn parse_config(
         let Some(extended_path) = extends_config_path(host, name, base, errors) else {
             continue;
         };
-        let Some(extended) = parse_config(host, &extended_path, stack, errors) else {
+        let Some(extended) = parse_config(host, &extended_path, stack, errors, as_typescript_does)
+        else {
             continue;
         };
         // What the file that extends does not say itself is as the last of the extended files says it, from where that is.
@@ -524,14 +615,23 @@ fn validate_specs(
 /// Reads the configuration file at `path`, which is absolute.
 pub fn load(host: &dyn Host, path: &str) -> Project {
     let mut errors = Vec::new();
-    let raw = parse_config(host, path, &mut Vec::new(), &mut errors).unwrap_or_default();
+    let raw = parse_config(host, path, &mut Vec::new(), &mut errors, false).unwrap_or_default();
     project_from_raw(host, path, parent_dir(path), raw, errors)
 }
 
 /// The same, with `over` said after all the configuration file says: what a command line adds to it.
 pub fn load_overriding(host: &dyn Host, path: &str, over: Vec<(String, Json)>) -> Project {
     let mut errors = Vec::new();
-    let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors).unwrap_or_default();
+    let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors, false).unwrap_or_default();
+    merge_compiler_options(&mut raw.compiler, over);
+    project_from_raw(host, path, parent_dir(path), raw, errors)
+}
+
+/// The same, going by TypeScript 7 alone: what only older versions took is as wrong as what never meant anything, and what is wrong is as
+/// good as not said.
+pub fn load_as_typescript_does(host: &dyn Host, path: &str, over: Vec<(String, Json)>) -> Project {
+    let mut errors = Vec::new();
+    let mut raw = parse_config(host, path, &mut Vec::new(), &mut errors, true).unwrap_or_default();
     merge_compiler_options(&mut raw.compiler, over);
     project_from_raw(host, path, parent_dir(path), raw, errors)
 }

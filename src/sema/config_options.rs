@@ -196,9 +196,24 @@ const OPTIONS: &[(&str, Kind)] = &[
     ("version", Kind::Boolean),
 ];
 
+/// What older versions took and TypeScript 7 has no such option as.
+const REMOVED: &[&str] = &[
+    "charset",
+    "importsNotUsedAsValues",
+    "keyofStringsOnly",
+    "noImplicitUseStrict",
+    "noStrictGenericChecks",
+    "out",
+    "preserveValueImports",
+    "suppressExcessPropertyErrors",
+    "suppressImplicitAnyIndexErrors",
+];
+
 /// Something wrong with an option.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Problem {
+    /// The option, as it is written.
+    pub name: String,
     /// The code of TypeScript's message, and what goes into it.
     pub code: u32,
     pub args: Vec<String>,
@@ -390,8 +405,9 @@ impl EndsWithColon for [u8] {
     }
 }
 
-/// `convertJsonOption` for each of `options`, which is what `compilerOptions` says in the file that reads `text`.
-pub fn problems(text: &[u8], options: &[(String, Json)]) -> Vec<Problem> {
+/// `convertJsonOption` for each of `options`, which is what `compilerOptions` says in the file that reads `text`. `as_typescript_does`:
+/// going by TypeScript 7 alone, to which what only older versions took means nothing, and which suggests nothing but another case.
+pub fn problems(text: &[u8], options: &[(String, Json)], as_typescript_does: bool) -> Vec<Problem> {
     let spans = spans(text);
     let span_of = |name: &str, of_value: bool| {
         spans
@@ -401,12 +417,22 @@ pub fn problems(text: &[u8], options: &[(String, Json)]) -> Vec<Problem> {
     };
     let mut out = Vec::new();
     for (name, value) in options {
-        let Some(kind) = kind_of(name) else {
-            let (code, args) = match nearest(name) {
+        let is_removed = |name: &str| as_typescript_does && REMOVED.contains(&name);
+        let Some(kind) = kind_of(name).filter(|_| !is_removed(name)) else {
+            let meant = if as_typescript_does {
+                OPTIONS
+                    .iter()
+                    .map(|option| option.0)
+                    .find(|known| known.eq_ignore_ascii_case(name) && !is_removed(known))
+            } else {
+                nearest(name)
+            };
+            let (code, args) = match meant {
                 Some(meant) => (5025, vec![name.clone(), meant.to_owned()]),
                 None => (5023, vec![name.clone()]),
             };
             out.push(Problem {
+                name: name.clone(),
                 code,
                 args,
                 span: span_of(name, false),
@@ -419,6 +445,7 @@ pub fn problems(text: &[u8], options: &[(String, Json)]) -> Vec<Problem> {
         }
         let mut wrong = |takes: &str| {
             out.push(Problem {
+                name: name.clone(),
                 code: 5024,
                 args: vec![name.clone(), takes.to_owned()],
                 span: span_of(name, true),
@@ -445,8 +472,13 @@ pub fn problems(text: &[u8], options: &[(String, Json)]) -> Vec<Problem> {
                 None => wrong("string"),
                 Some(said) => {
                     let said = said.to_lowercase();
+                    // `es3` and `none` are not even among what is deprecated.
+                    let once = once
+                        .iter()
+                        .filter(|one| !(as_typescript_does && matches!(**one, "es3" | "none")));
                     if !now.iter().chain(once).any(|&one| one == said) {
                         out.push(Problem {
+                            name: name.clone(),
                             code: 6046,
                             args: vec![format!("--{name}"), format!("'{}'", now.join("', '"))],
                             span: span_of(name, true),
@@ -470,7 +502,7 @@ mod tests {
             .get("compilerOptions")
             .and_then(Json::as_object)
             .unwrap();
-        problems(text.as_bytes(), options)
+        problems(text.as_bytes(), options, false)
             .into_iter()
             .map(|p| {
                 (

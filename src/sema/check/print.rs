@@ -88,6 +88,56 @@ impl Checker<'_> {
         )
     }
 
+    /// Whether `node` is a reference to a type by a name nothing goes by (`getUnresolvedSymbolForEntityName`). From its static
+    /// members and from the expression it extends, the type parameters of a class go by nothing.
+    fn is_unresolved_type_reference(&mut self, file: FileId, node: TypeNodeId) -> bool {
+        let hir = self.hir(file);
+        if node.is_none() {
+            return false;
+        }
+        let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
+            return false;
+        };
+        if self.intended_type_of_jsdoc_reference(file, node).is_some() {
+            return false;
+        }
+        let scope = self.bound(file).type_scope[node.idx()];
+        let names: Vec<Atom> = hir.ids(name).collect();
+        match self
+            .files()
+            .resolve_entity(file, scope, &names, SymFlags::TYPE)
+        {
+            None => true,
+            Some(found) => {
+                names.len() == 1
+                    && (self.is_static_reference_to_class_type_param(file, node, scope, found)
+                        || self.is_base_expression_reference_to_class_type_param(
+                            file, node, scope, found,
+                        ))
+            }
+        }
+    }
+
+    /// `typeToString` of `constraint`, the base constraint of the type parameter `param`. The error type of a name nothing goes by
+    /// is written as the name.
+    pub(super) fn base_constraint_to_string(
+        &mut self,
+        param: TypeId,
+        constraint: TypeId,
+    ) -> String {
+        if constraint == TypeId::ANY
+            && let TypeData::TypeParam(file, tp, _) = *self.data(param)
+        {
+            let node = self.hir(file)[tp].constraint;
+            if self.is_unresolved_type_reference(file, node) {
+                return with_printer(self, 0, |printer| {
+                    printer.type_node_to_node(file, node).text
+                });
+            }
+        }
+        self.type_to_string(constraint)
+    }
+
     /// `symbolToString`
     pub fn symbol_to_string(&mut self, symbol: Sym) -> String {
         with_printer(self, 0, |printer| printer.symbol_to_text(symbol))
@@ -329,6 +379,22 @@ impl<'p> Checker<'p> {
             {
                 continue;
             }
+            // `intersectUnionsOfPrimitiveTypes`: what unions of primitives and nothing else come to is made without the alias.
+            if let TypeNodeKind::Intersection(list) = module.hir[alias.ty].kind {
+                let mut are_primitive_unions = list.len() > 1;
+                for member in module.hir.ids(list) {
+                    let member = self.type_from_node(file, member);
+                    let member = self.force(member);
+                    are_primitive_unions &= self.is_union(member)
+                        && self
+                            .parts(member)
+                            .iter()
+                            .all(|&part| self.is_primitive(part));
+                }
+                if are_primitive_unions {
+                    continue;
+                }
+            }
             let symbol = files.sym(file, symbol);
             let ty = self.declared_type(symbol);
             if fills_in
@@ -373,6 +439,11 @@ fn escape_string(text: &str, quote: char, escapes_non_ascii: bool, out: &mut Str
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
             '\u{85}' => out.push_str("\\u0085"),
+            // The line feed after it goes with it, in a template too.
+            '\r' if quote == '`' && chars.peek() == Some(&'\n') => {
+                chars.next();
+                out.push_str("\\r\\n");
+            }
             '\r' => out.push_str("\\r"),
             // A template keeps its line feeds.
             '\n' if quote == '`' => out.push('\n'),
@@ -399,6 +470,34 @@ fn quoted(text: &str, quote: char, escapes_non_ascii: bool) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push(quote);
     escape_string(text, quote, escapes_non_ascii, &mut out);
+    out.push(quote);
+    out
+}
+
+/// `quoted`, of text in which half a surrogate pair stands alone (three bytes that are no UTF-8): it is written as the escape it is.
+fn quoted_with_lone_surrogates(mut rest: &[u8], quote: char) -> String {
+    let mut out = String::with_capacity(rest.len() + 2);
+    out.push(quote);
+    while !rest.is_empty() {
+        let valid = match std::str::from_utf8(rest) {
+            Ok(_) => rest.len(),
+            Err(error) => error.valid_up_to(),
+        };
+        let (text, after) = rest.split_at(valid);
+        escape_string(&String::from_utf8_lossy(text), quote, false, &mut out);
+        rest = match *after {
+            [0xED, high @ 0xA0..=0xBF, low @ 0x80..=0xBF, ..] => {
+                let unit = 0xD000 | u32::from(high & 0x3F) << 6 | u32::from(low & 0x3F);
+                out.push_str(&format!("\\u{unit:04X}"));
+                &after[3..]
+            }
+            [_, ..] => {
+                out.push('\u{FFFD}');
+                &after[1..]
+            }
+            [] => after,
+        };
+    }
     out.push(quote);
     out
 }
@@ -567,6 +666,11 @@ impl<'p> Printer<'_, 'p> {
                 return self.symbol_to_type_node(symbol, false, Vec::new());
             }
             TypeData::StringLit { value, .. } => {
+                let bytes = self.c.files().atoms.bytes(*value);
+                if std::str::from_utf8(bytes).is_err() {
+                    self.approximate_length += bytes.len() + 2;
+                    return Node::simple(quoted_with_lone_surrogates(bytes, '"'));
+                }
                 let value = self.text(*value);
                 self.approximate_length += value.len() + 2;
                 return Node::simple(quoted(&value, '"', false));
@@ -587,12 +691,17 @@ impl<'p> Printer<'_, 'p> {
                 self.approximate_length += if *value { 4 } else { 5 };
                 return Node::simple(if *value { "true" } else { "false" });
             }
-            TypeData::UniqueSymbol { name, .. } => {
+            TypeData::UniqueSymbol { file, name, .. } => {
                 if self.flags & ALLOW_UNIQUE_ES_SYMBOL_TYPE != 0 {
                     self.approximate_length += 13;
                     return Node::new("unique symbol", TYPE_OPERATOR);
                 }
                 let name = self.text(*name);
+                // A property of the global `SymbolConstructor`.
+                if file.0 == u32::MAX {
+                    self.approximate_length += 6 + 2 * ("Symbol".len() + 1) + 2 * (name.len() + 1);
+                    return Node::new(format!("typeof Symbol.{name}"), TYPE_OPERATOR);
+                }
                 self.approximate_length += 6 + 2 * (name.len() + 1);
                 return Node::new(format!("typeof {name}"), TYPE_OPERATOR);
             }
@@ -1282,6 +1391,7 @@ impl<'p> Printer<'_, 'p> {
         if let TypeData::Intersection(members) = self.c.data(ty)
             && let [a, b] = members[..]
             && (a == TypeId::EMPTY_OBJECT || b == TypeId::EMPTY_OBJECT)
+            && self.c.p.written_with_empty_object.get(&ty).is_none()
             && let Some(alias) = self.c.global_type_symbol(known::NonNullable)
             && self.c.files().flags(alias).contains(SymFlags::TYPE_ALIAS)
         {
@@ -2860,7 +2970,9 @@ impl<'p> Printer<'_, 'p> {
             .as_ref()
             .is_some_and(|property| self.should_use_placeholder_for_property(property));
         let is_optional = prop.flags.contains(PropFlags::OPTIONAL);
-        let is_readonly = prop.flags.contains(PropFlags::READONLY);
+        // `isReadonlySymbol`
+        let is_readonly = prop.flags.contains(PropFlags::READONLY)
+            || self.c.has_readonly_assignment_declaration(prop);
         // `getNonMissingTypeOfSymbol`
         let property_type = if uses_placeholder {
             TypeId::ANY
@@ -3257,13 +3369,45 @@ impl<'p> Printer<'_, 'p> {
     fn parameter_text(&mut self, parameter: &Parameter) -> String {
         let node = self.type_to_node(parameter.ty);
         self.approximate_length += parameter.name_length + 3;
+        let text = self
+            .library_alias_of_parameter(parameter)
+            .unwrap_or(node.text);
         format!(
             "{}{}{}: {}",
             if parameter.rest { "..." } else { "" },
             parameter.name,
             if parameter.optional { "?" } else { "" },
-            node.text
+            text
         )
+    }
+
+    /// `Type.alias`: a union that is got at through an alias goes by its name. `plain_alias_of` leaves out the aliases of the default
+    /// library, whose unions are written out all over. Of a parameter declared there as such an alias and nothing else it is known.
+    fn library_alias_of_parameter(&mut self, parameter: &Parameter) -> Option<String> {
+        let (file, declaration) = parameter.declaration?;
+        let hir = self.c.hir(file);
+        let written = hir[declaration].ty;
+        if written.is_none()
+            || !self.c.files().modules[file.idx()].is_lib
+            || !self.c.is_union(parameter.ty)
+        {
+            return None;
+        }
+        let TypeNodeKind::Ref { name, args } = hir[written].kind else {
+            return None;
+        };
+        if name.len() != 1 || !args.is_empty() {
+            return None;
+        }
+        let name = hir.id_at(name, 0);
+        let alias = self.c.global_type_symbol(name)?;
+        let (declared_in, body) = self.body_of_alias(alias)?;
+        if !matches!(self.c.hir(declared_in)[body].kind, TypeNodeKind::Union(_))
+            || self.c.type_from_node(file, written) != parameter.ty
+        {
+            return None;
+        }
+        Some(self.text(name))
     }
 
     /// `serializeReturnTypeForSignature`. `parameters`: those the signature declares.
@@ -3289,6 +3433,107 @@ impl<'p> Printer<'_, 'p> {
             text.push_str(&self.type_to_node(ty).text);
         }
         text
+    }
+
+    /// `getUnresolvedSymbolForEntityName`: what is written at `node`, if that is a reference by a name no type goes by. The error type it
+    /// stands for has the name and the type arguments for an alias (`errorTypes`) and is written by them. A type does not keep that
+    /// here: it can be told where the annotation is at hand and the type is all of it.
+    fn unresolved_reference_to_node(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
+        if node.is_none() {
+            return None;
+        }
+        let (hir, files) = (self.c.hir(file), self.c.files());
+        let TypeNodeKind::Ref { name, args } = hir[node].kind else {
+            return None;
+        };
+        let scope = self.c.bound(file).type_scope[node.idx()];
+        if scope.is_none()
+            || self
+                .c
+                .intended_type_of_jsdoc_reference(file, node)
+                .is_some()
+        {
+            return None;
+        }
+        let names: Vec<Atom> = hir.ids(name).collect();
+        if names.is_empty() || names.contains(&known::empty) {
+            return None;
+        }
+        // As `type_from_node` looks for it.
+        let is_found = match files.resolve_entity(file, scope, &names, SymFlags::TYPE) {
+            None => false,
+            Some(found) if names.len() == 1 && self.is_out_of_reach(file, node, scope, found) => {
+                false
+            }
+            Some(found) => match files.resolve_alias_as(found, SymFlags::TYPE) {
+                Some(sym) => self.c.type_flags_of_symbol(sym).intersects(SymFlags::TYPE),
+                None => !self.c.is_alias_in_error(found),
+            },
+        };
+        if is_found {
+            return None;
+        }
+        let mut arguments = Vec::with_capacity(args.len());
+        for argument in hir.ids(args) {
+            arguments.push(match self.unresolved_reference_to_node(file, argument) {
+                Some(written) => written,
+                None => {
+                    let ty = self.c.type_from_node(file, argument);
+                    self.type_to_node(ty)
+                }
+            });
+        }
+        // `symbolToEntityNameNode`
+        let path: Vec<String> = names.iter().map(|&name| self.text(name)).collect();
+        Some(Node::simple(format!(
+            "{}{}",
+            path.join("."),
+            type_arguments_text(arguments)
+        )))
+    }
+
+    /// `Resolve`: `found` is a type parameter of a class, named at `node` where those are not seen.
+    fn is_out_of_reach(&self, file: FileId, node: TypeNodeId, scope: ScopeId, found: Sym) -> bool {
+        self.c
+            .is_static_reference_to_class_type_param(file, node, scope, found)
+            || self
+                .c
+                .is_base_expression_reference_to_class_type_param(file, node, scope, found)
+    }
+
+    /// `parameter_text`, of a parameter whose type is written by a name no type goes by.
+    fn unresolved_parameter_text(&mut self, parameter: &Parameter) -> Option<String> {
+        let (file, p) = parameter.declaration?;
+        let declared = &self.c.hir(file)[p];
+        // `getOptionalType` of an error type is the plain one, which has no name.
+        if parameter.ty != TypeId::ANY
+            || declared.default.is_some()
+            || parameter.optional && self.c.p.files.options.strict_null_checks
+        {
+            return None;
+        }
+        let written = self.unresolved_reference_to_node(file, declared.ty)?;
+        self.approximate_length += parameter.name_length + 3;
+        Some(format!(
+            "{}{}{}: {}",
+            if parameter.rest { "..." } else { "" },
+            parameter.name,
+            if parameter.optional { "?" } else { "" },
+            written.text
+        ))
+    }
+
+    /// `return_type_text`, of a signature whose return type is written by such a name.
+    fn unresolved_return_type_text(&mut self, signature: SigId) -> Option<String> {
+        let (file, func, _) = self.c.sig_decl(signature)?;
+        let annotation = self.c.hir(file)[func].ret;
+        if annotation.is_none()
+            || self.c.sig_predicate(signature).is_some()
+            || self.c.sig_return_for_inference(signature) != TypeId::ANY
+        {
+            return None;
+        }
+        Some(self.unresolved_reference_to_node(file, annotation)?.text)
     }
 
     /// `signatureToSignatureDeclarationHelper`, as the printer writes it, without the `;` of a member. `name`, `is_optional`: of a method.
@@ -3321,14 +3566,20 @@ impl<'p> Printer<'_, 'p> {
         }
         let mut parameters = Vec::with_capacity(expanded.len() + 1);
         for parameter in &expanded {
-            parameters.push(self.parameter_text(parameter));
+            parameters.push(match self.unresolved_parameter_text(parameter) {
+                Some(text) => text,
+                None => self.parameter_text(parameter),
+            });
         }
         if let Some(this) = self.c.sig_this_type(signature) {
             let node = self.type_to_node(this);
             self.approximate_length += "this".len() + 3;
             parameters.insert(0, format!("this: {}", node.text));
         }
-        let returned = self.return_type_text(signature, &declared);
+        let returned = match self.unresolved_return_type_text(signature) {
+            Some(text) => text,
+            None => self.return_type_text(signature, &declared),
+        };
         self.mapper = saved_mapper;
         let type_parameters = if type_parameters.is_empty() {
             String::new()

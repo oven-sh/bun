@@ -127,6 +127,23 @@ impl Checker<'_> {
             }
             let target = self.type_from_node(file, decl.ty);
             let source = self.type_of_expr(file, decl.init);
+            // `getESSymbolLikeTypeForNode`, `isValidESSymbolDeclaration`: of a `const` with a name, in a statement of its own.
+            let stmt = bound.var_stmt[d];
+            let source = match hir[decl.pat].kind {
+                PatKind::Ident(name)
+                    if decl.kind == VarKind::Const
+                        && matches!(hir[stmt].kind, StmtKind::Var(_))
+                        && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::For { init, .. } if init == stmt))
+                        && self.is_symbol_or_symbol_for_call(file, decl.init) =>
+                {
+                    self.intern(TypeData::UniqueSymbol {
+                        file,
+                        id: decl.init.0 | 1 << 31,
+                        name,
+                    })
+                }
+                _ => source,
+            };
             self.check_assignable_to(
                 file,
                 source,
@@ -540,13 +557,18 @@ impl Checker<'_> {
                     }
                 }
                 match self.iteration_types(declared, is_async) {
-                    Some(t) if is_async => self.awaited(t.returned),
+                    // Where awaiting it is an error, what is declared is what is wanted.
+                    Some(t) if is_async => {
+                        let returned =
+                            self.map_type(t.returned, |c, m| c.awaited_argument(m).unwrap_or(m));
+                        self.awaited_no_alias(returned).unwrap_or(declared)
+                    }
                     Some(t) => t.returned,
                     // In error, and anything goes into that.
                     None => continue,
                 }
             } else if is_async {
-                self.awaited(declared)
+                self.awaited_no_alias(declared).unwrap_or(TypeId::ANY)
             } else {
                 declared
             };
@@ -2115,7 +2137,12 @@ impl Checker<'_> {
         if self.is_uncertain(file, e) {
             return;
         }
-        let ty = if is_async { self.awaited(ty) } else { ty };
+        // `checkAwaitedType`, `withAlias` false
+        let ty = if is_async {
+            self.awaited_no_alias(ty).unwrap_or(TypeId::ANY)
+        } else {
+            ty
+        };
         // `getEffectiveCheckNode`
         let mut e = e;
         while let ExprKind::Satisfies { expr, .. } = self.hir(file)[e].kind {
@@ -2373,8 +2400,98 @@ impl Checker<'_> {
                 self.is_named_otherwise(given, source),
                 self.is_named_otherwise(written, target),
             );
+            let said = out.len();
             self.report_not_assignable_as(source, target, at, end, head, named_otherwise, out);
+            if self.explains
+                && let Some(&said) = out.get(said)
+            {
+                // The union a type alias stands for is no enum, though it has all the members of one (`TypeFlagsEnumLiteral`): as
+                // of any union, what is wrong with the first member that does not fit is said (`eachTypeRelatedToType`).
+                if named_otherwise.0 && self.is_whole_enum(source) {
+                    let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
+                    let unfit = self
+                        .parts_in_order(source)
+                        .into_iter()
+                        .find(|&member| !self.is_assignable(member, target));
+                    self.relation_gave_up = gave_up;
+                    self.relation_too_complex = too_complex;
+                    if let Some(unfit) = unfit {
+                        self.explain_chain(said.start, said.code, |c| {
+                            c.assignability_lines(unfit, target, 1)
+                        });
+                    }
+                }
+                let sides = [
+                    (named_otherwise.0, given, source),
+                    (named_otherwise.1, written, target),
+                ];
+                for (is_named_otherwise, node, ty) in sides {
+                    if is_named_otherwise
+                        && let Some((of, node)) = node
+                        && let Some(alias) = self.alias_written_at(of, node)
+                    {
+                        let (from, to) = (self.type_to_string(ty), self.type_to_string(alias));
+                        self.explain_first_line_renamed(said.start, said.code, &from, &to);
+                    }
+                }
+            }
         }
+    }
+
+    /// `Type.alias` of what is written at `node`, a reference to a type alias that `is_named_otherwise` holds for, as a type that
+    /// goes by it.
+    fn alias_written_at(&mut self, mut file: FileId, mut node: TypeNodeId) -> Option<TypeId> {
+        use crate::bind::Decl;
+        let resolve = |c: &Self, file: FileId, node: TypeNodeId| {
+            let TypeNodeKind::Ref { name, .. } = c.hir(file)[node].kind else {
+                return None;
+            };
+            let names: Vec<Atom> = c.hir(file).ids(name).collect();
+            c.files()
+                .resolve_entity(
+                    file,
+                    c.bound(file).type_scope[node.idx()],
+                    &names,
+                    SymFlags::TYPE,
+                )
+                .and_then(|s| c.files().resolve_alias_if_needed(s))
+        };
+        for _ in 0..16 {
+            let sym = resolve(self, file, node)?;
+            let mut decls = self.files().decls(sym).into_iter();
+            let (of, alias) = decls.find_map(|(of, decl)| match decl {
+                Decl::Alias(alias) => Some((of, alias)),
+                _ => None,
+            })?;
+            // All it says is the name of an alias without type parameters: it is what that alias is.
+            let body = self.hir(of)[alias].ty;
+            if body.is_some()
+                && let Some(inner) = resolve(self, of, body)
+                && self.files().flags(inner).contains(SymFlags::TYPE_ALIAS)
+                && !self
+                    .files()
+                    .flags(inner)
+                    .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+                && self.type_params_of_symbol(inner).is_empty()
+            {
+                (file, node) = (of, body);
+                continue;
+            }
+            let TypeNodeKind::Ref { args, .. } = self.hir(file)[node].kind else {
+                return None;
+            };
+            let params = self.type_params_of_symbol(sym);
+            let args = self.types_from_nodes(file, args);
+            if args.len() > params.len() {
+                return None;
+            }
+            let args = self.fill_type_args(&params, &args);
+            return Some(self.intern(TypeData::LazyAlias {
+                sym,
+                args: args.into(),
+            }));
+        }
+        None
     }
 
     fn written_at(&self, file: FileId, written: Written) -> Option<(FileId, TypeNodeId)> {
@@ -2838,7 +2955,10 @@ impl Checker<'_> {
                             hir[e].rest && array_element_type_node(hir, hir[e].ty).is_none()
                         });
                 }
-                TypeNodeKind::Union(_) => return self.is_union(ty),
+                // `getIndexedAccessTypeOrUndefined` makes the union of what the keys give with the alias.
+                TypeNodeKind::Union(_) | TypeNodeKind::IndexedAccess { .. } => {
+                    return self.is_union(ty);
+                }
                 TypeNodeKind::Ref { name, .. } => {
                     let names: Vec<Atom> = hir.ids(name).collect();
                     let next = self
@@ -3149,8 +3269,13 @@ impl Checker<'_> {
                     let ty = self.type_of_expr(file, item);
                     elems.push(if is_spread {
                         self.widen_literal_for_context(ty, None)
-                    } else {
+                    } else if self.in_const_context(file, item) {
+                        self.regular(ty)
+                    } else if matches!(hir[item].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
                         ty
+                    } else {
+                        let expected = self.contextual_type(file, item);
+                        self.widen_literal_for_context(ty, expected)
                     });
                     flags.push(ElemFlags::REQUIRED);
                 }
@@ -3237,6 +3362,37 @@ impl Checker<'_> {
         {
             return true;
         }
+        // `checkExpressionForMutableLocationWithContextualType`: what is written there, as it is where `given` is expected.
+        let given = if next.is_some() {
+            let written = match self.hir(file)[next].kind {
+                // `checkSpreadExpression`
+                ExprKind::Spread(inner) => {
+                    let spread = self.type_of_expr(file, inner);
+                    self.iterated_type(spread, false)
+                }
+                _ => self.type_of_expr(file, next),
+            };
+            let specific = if self.in_const_context(file, next) {
+                self.regular(written)
+            } else if matches!(
+                self.hir(file)[next].kind,
+                ExprKind::As { .. } | ExprKind::AsConst(_)
+            ) {
+                written
+            } else {
+                self.widen_literal_for_context(written, Some(given))
+            };
+            if !self.is_known(specific)
+                || self.is_uncertain(file, next)
+                || self.is_assignable(specific, wanted)
+            {
+                given
+            } else {
+                specific
+            }
+        } else {
+            given
+        };
         let apparent = self.apparent_type(target);
         let target_is_optional = self
             .prop_of(apparent, name)
@@ -3249,6 +3405,11 @@ impl Checker<'_> {
             self.explain_to(at, end, 2412, |c| {
                 vec![c.type_to_string(given), c.type_to_string(wanted)]
             });
+            let said = Diagnostic {
+                start: at,
+                code: 2412,
+            };
+            self.relate_expected_property(Some(said), target, name);
             return true;
         }
         // What may be left out is not held to be `undefined`.
@@ -3257,7 +3418,9 @@ impl Checker<'_> {
         } else {
             wanted
         };
+        let said = out.len();
         self.report_not_assignable_with_end(given, wanted, at, end, head, out);
+        self.relate_expected_property(out.get(said).copied(), target, name);
         true
     }
 
@@ -3407,9 +3570,57 @@ impl Checker<'_> {
         }
         if !self.elaborate(file, body, given, all, 2322, out) {
             let (at, end) = (self.start_of(file, body), self.error_end_of(file, body));
+            let said = out.len();
             self.report_not_assignable_with_end(given, all, at, end, 2322, out);
+            if let Some(&said) = out.get(said) {
+                self.relate(said.start, said.code, |c| {
+                    c.where_expected_return_type_comes_from(file, func, given, target, all)
+                });
+            }
         }
         true
+    }
+
+    /// The end of `elaborateArrowFunction`. `given`: what the arrow function `func` returns. `wanted`: what the signatures of
+    /// `target` return.
+    fn where_expected_return_type_comes_from(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        given: TypeId,
+        target: TypeId,
+        wanted: TypeId,
+    ) -> Vec<super::explain::Related> {
+        let mut related = Vec::new();
+        if let Some(signature) = self.first_declaration_of_type_symbol(target) {
+            related.push(super::explain::Related {
+                at: Some(signature),
+                code: 6502,
+                args: Vec::new(),
+            });
+        }
+        if !self.hir(file)[func].flags.contains(Flags::ASYNC)
+            && self.type_of_property(given, known::then).is_none()
+        {
+            // What is compared here says nothing about the comparison that is being reported.
+            let (gave_up, too_complex) = (self.relation_gave_up, self.relation_too_complex);
+            // `createPromiseType`
+            let unwrapped = self.map_type(given, |c, m| c.awaited_argument(m).unwrap_or(m));
+            let awaited = self.awaited_no_alias(unwrapped).unwrap_or(TypeId::UNKNOWN);
+            let promise = self.promise_of(awaited);
+            let is_meant_to_be_async = self.is_assignable(promise, wanted);
+            self.relation_gave_up = gave_up;
+            self.relation_too_complex = too_complex;
+            if is_meant_to_be_async {
+                let (start, end) = self.error_range_of_fn(file, func);
+                related.push(super::explain::Related {
+                    at: Some((file, start, end)),
+                    code: 1356,
+                    args: Vec::new(),
+                });
+            }
+        }
+        related
     }
 
     // ───────────────────────────── what is said ─────────────────────────────

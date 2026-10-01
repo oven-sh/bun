@@ -465,6 +465,26 @@ pub(super) fn this_parameter(hir: &hir::File, f: FnId) -> Option<u32> {
     (word_at(text, at) == b"this").then_some(at as u32)
 }
 
+/// Where the parameter written at `start` ends: before the `,` or the `)` that is in no bracket opened since.
+fn end_of_written_parameter(c: &Checker<'_>, file: FileId, start: u32) -> u32 {
+    let text = &c.hir(file).text[..];
+    let (mut at, mut end, mut depth) = (start, start, 0u32);
+    while (at as usize) < text.len() {
+        let next = c.end_of_token_at(file, at).max(at + 1);
+        match &text[at as usize..(next as usize).min(text.len())] {
+            b"(" | b"[" | b"{" | b"<" => depth += 1,
+            b")" | b"]" | b"}" | b"," if depth == 0 => break,
+            b")" | b"]" | b"}" | b">" => depth = depth.saturating_sub(1),
+            b">>" => depth = depth.saturating_sub(2),
+            b">>>" => depth = depth.saturating_sub(3),
+            _ => {}
+        }
+        end = next;
+        at = c.skip_trivia_from(file, next);
+    }
+    end
+}
+
 /// The `?` after the name or the pattern `pat` of a parameter.
 fn question_token(hir: &hir::File, pat: PatId) -> Option<u32> {
     let text = &hir.text[..];
@@ -2203,6 +2223,15 @@ impl Checker<'_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `shouldCheckErasableSyntax`
         let is_erasable_only = self.p.files.options.erasable_syntax_only && !hir.is_js;
+        // 2730 is the parser's to say, and the `this` parameter of an arrow function is not kept. It is said of all of the parameter.
+        if self.explains {
+            for &(start, code) in hir.checker_errors.iter() {
+                if code == 2730 && !hir.is_in_jsdoc(start) {
+                    let end = end_of_written_parameter(self, file, start);
+                    self.note(start, end, code, Vec::new());
+                }
+            }
+        }
         for i in 0..hir.fns.len() {
             let func = &hir.fns[i];
             if matches!(bound.fns[i].owner, FnOwner::None) {
@@ -2904,6 +2933,8 @@ impl Checker<'_> {
                 });
                 let end = self.end_inside_parentheses(file, id);
                 self.explain_to(e.pos, end, 2712, |_| vec![]);
+                // `getGlobalPromiseConstructorSymbol`
+                self.report_global_error(2468, vec!["Promise".to_owned()]);
             }
         }
         // `getReturnTypeFromBody` only gets there for a function that returns nothing, calls of itself aside.
@@ -2947,6 +2978,7 @@ impl Checker<'_> {
                 out.push(Diagnostic { start, code: 2705 });
                 let end = end_of_function_error(self, file, f);
                 self.explain_to(start, end, 2705, |_| vec![]);
+                self.report_global_error(2468, vec!["Promise".to_owned()]);
             }
         }
     }

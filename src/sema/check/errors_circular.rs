@@ -142,6 +142,10 @@ impl Checker<'_> {
                 out.push(Diagnostic { start, code: 2313 });
                 let end = self.end_of_type_node_from(file, param.constraint, start);
                 self.note(start, end, 2313, vec![self.atom_text(param.name)]);
+                let mapped = TypeNodeId(n as u32);
+                self.relate(start, 2313, |c| {
+                    c.interface_that_extends_mapped_type(file, mapped)
+                });
             }
         }
         self.check_circular_mapped_properties(file, out);
@@ -170,8 +174,64 @@ impl Checker<'_> {
                 let end = self.end_of_type_node_from(file, constraint, start);
                 let name = self.atom_text(hir.type_params[p].name);
                 self.note(start, end, 2313, vec![name]);
+                self.relate(start, 2313, |c| {
+                    c.origin_of_circular_constraint(file, own, start, end)
+                });
             }
         }
+    }
+
+    /// `getResolvedBaseConstraint`: `c.currentNode` when the keys of the mapped type at `mapped` are asked for to tell whether it can be
+    /// extended: the first interface of `file` that extends it, which is being checked then. Nothing if the mapped type is written in
+    /// that interface.
+    fn interface_that_extends_mapped_type(
+        &mut self,
+        file: FileId,
+        mapped: TypeNodeId,
+    ) -> Vec<super::explain::Related> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for (i, interface) in hir.interfaces.iter().enumerate() {
+            if bound.interface_symbol[i].is_none() {
+                continue;
+            }
+            for base in hir.ids(interface.extends) {
+                if matches!(hir[base].kind, TypeNodeKind::Error) {
+                    continue;
+                }
+                let ty = self.type_from_node(file, base);
+                let ty = self.force(ty);
+                let parts: &[TypeId] = match self.data(ty) {
+                    TypeData::Intersection(parts) => &parts[..],
+                    _ => std::slice::from_ref(&ty),
+                };
+                let extends_it = parts.iter().any(|&part| {
+                    matches!(
+                        *self.data(part),
+                        TypeData::Anon { origin: Origin::Mapped(of, node), .. } if (of, node) == (file, mapped)
+                    )
+                });
+                if !extends_it {
+                    continue;
+                }
+                let is_written_in_it = hir
+                    .stmts
+                    .iter()
+                    .position(|s| matches!(s.kind, StmtKind::Interface(x) if x.idx() == i))
+                    .is_some_and(|s| {
+                        let end = self.end_of_stmt(file, StmtId(s as u32));
+                        (hir.stmts[s].pos..end).contains(&hir[mapped].pos)
+                    });
+                if is_written_in_it {
+                    return Vec::new();
+                }
+                return vec![super::explain::Related {
+                    at: Some(self.place_of_token(file, interface.name_pos)),
+                    code: 2751,
+                    args: Vec::new(),
+                }];
+            }
+        }
+        Vec::new()
     }
 
     /// 2502 2577 7022 7023 7024: `reportCircularityError`, `getReturnTypeOfSignature`, `getTypeOfAccessors`. The circles themselves are
@@ -515,14 +575,22 @@ impl Checker<'_> {
                 .get(&(file, TypeNodeId(n as u32)))
                 .is_some()
             {
-                out.push(Diagnostic {
-                    start: node.pos,
-                    code: 2615,
-                });
-                let end = self.end_of_type_node(file, TypeNodeId(n as u32));
+                // A variable of that type that is read while the file is emitted makes the type first.
+                let made = self.type_from_node(file, TypeNodeId(n as u32));
+                let made = self.force(made);
+                let variable = if matches!(self.data(made), TypeData::Anon { .. }) {
+                    self.first_variable_read_by_emit(file, |c, ty| c.force(ty) == made)
+                } else {
+                    None
+                };
+                let (start, end) = match variable {
+                    Some(at) => (at, self.end_of_token_at(file, at)),
+                    None => (node.pos, self.end_of_type_node(file, TypeNodeId(n as u32))),
+                };
+                out.push(Diagnostic { start, code: 2615 });
                 let names = &self.p.circular_mapped_prop_names;
                 let named = names.get(&(file, TypeNodeId(n as u32)));
-                self.explain_to(node.pos, end, 2615, |c| match named {
+                self.explain_to(start, end, 2615, |c| match named {
                     Some((mapped, name)) => vec![
                         match c.prop_of(mapped, name) {
                             Some((prop, _)) => c.prop_to_string(&prop),
@@ -742,6 +810,214 @@ impl Checker<'_> {
             }
         }
         bases
+    }
+
+    /// A file is emitted before it is checked: `markPropertyAliasReferenced` takes the type of the `a` of every `a.b`, then
+    /// `GetConstantValue` that of every `a.b` and `a[b]`. Where the first `a`, in that order, is that is a name and `is_it` holds for
+    /// the type of.
+    fn first_variable_read_by_emit(
+        &mut self,
+        file: FileId,
+        mut is_it: impl FnMut(&mut Self, TypeId) -> bool,
+    ) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let options = &self.p.files.options;
+        if options.no_emit_is_set || options.isolated_modules || hir.kind == FileKind::Declaration {
+            return None;
+        }
+        let index = self.exprs_by_kind(file);
+        // Whether it is only looked at the second time round, and where it is.
+        let mut first: Option<(bool, u32)> = None;
+        for (tag, is_second) in [(ExprTag::Dot, hir.is_js), (ExprTag::Index, true)] {
+            for &e in index.of(tag) {
+                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
+                    continue;
+                };
+                let at = (is_second, hir[obj].pos);
+                if !matches!(hir[obj].kind, ExprKind::Ident(_))
+                    || matches!(bound.expr_parent[e.idx()], Parent::None)
+                    || bound.is_in_type_query(e)
+                    || first.is_some_and(|first| first <= at)
+                {
+                    continue;
+                }
+                let ty = self.type_of_expr(file, obj);
+                if is_it(self, ty) {
+                    first = Some(at);
+                }
+            }
+        }
+        first.map(|first| first.1)
+    }
+
+    /// `getResolvedBaseConstraint`: `c.currentNode` when the circle the type parameter `own` is in is first come upon, unless that is in
+    /// what `own` extends, which is written from `start` to `end`, or around it.
+    fn origin_of_circular_constraint(
+        &mut self,
+        file: FileId,
+        own: TypeParamId,
+        start: u32,
+        end: u32,
+    ) -> Vec<super::explain::Related> {
+        // `getNarrowableTypeForReference` asks what the type of a variable extends.
+        let variable = self.first_variable_read_by_emit(file, |c, ty| {
+            matches!(
+                *c.data(ty),
+                TypeData::TypeParam(of, declared, around)
+                    if of == file
+                        && around == MapperId::IDENTITY
+                        && c.constraint_leads_to(file, declared, own)
+            )
+        });
+        let at = match variable {
+            Some(at) => Some(self.place_of_token(file, at)),
+            None => self
+                .first_reference_that_makes_mapped_key(file, own)
+                .map(|node| {
+                    let from = self.hir(file)[node].pos;
+                    (file, from, self.end_of_type_node(file, node))
+                })
+                .filter(|&(_, from, to)| {
+                    !(start..end).contains(&from) && !(from..to).contains(&start)
+                }),
+        };
+        at.map(|at| super::explain::Related {
+            at: Some(at),
+            code: 2751,
+            args: Vec::new(),
+        })
+        .into_iter()
+        .collect()
+    }
+
+    /// Whether `from` is `to`, or what it extends leads there, going by what is written as `is_constraint_circular` does.
+    fn constraint_leads_to(&self, file: FileId, from: TypeParamId, to: TypeParamId) -> bool {
+        let hir = self.hir(file);
+        let (mut seen, mut todo) = (TypeParams::new(), TypeParams::new());
+        todo.push(from);
+        while let Some(next) = todo.pop() {
+            if next == to {
+                return true;
+            }
+            if !seen.contains(&next) {
+                seen.push(next);
+                if hir[next].constraint.is_some() {
+                    self.type_parameters_written(file, hir[next].constraint, &mut todo);
+                }
+            }
+        }
+        false
+    }
+
+    /// `getTypeFromMappedTypeNode` resolves the constraint of its key as soon as the type is made. For `own`, the key of a mapped type
+    /// that is written in a type alias, that is when the first type reference that leads to the alias is checked. Children have lower
+    /// ids and are checked first.
+    fn first_reference_that_makes_mapped_key(
+        &self,
+        file: FileId,
+        own: TypeParamId,
+    ) -> Option<TypeNodeId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.mapped.iter().any(|m| m.param == own) {
+            return None;
+        }
+        let written = hir[hir[own].constraint].pos;
+        let around = hir.aliases.iter().position(|alias| {
+            alias.ty.is_some()
+                && (hir[alias.ty].pos..self.end_of_type_node(file, alias.ty)).contains(&written)
+        })?;
+        if bound.alias_symbol[around].is_none() {
+            return None;
+        }
+        let alias = self.files().sym(file, bound.alias_symbol[around]);
+        (0..hir.types.len() as u32).map(TypeNodeId).find(|&node| {
+            self.alias_referred_to(file, node)
+                .is_some_and(|named| self.alias_leads_to(named, alias, &mut Vec::new()))
+        })
+    }
+
+    /// The type alias the type reference `node` names.
+    fn alias_referred_to(&self, file: FileId, node: TypeNodeId) -> Option<Sym> {
+        let (hir, files) = (self.hir(file), self.files());
+        let scope = self.bound(file).type_scope[node.idx()];
+        let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
+            return None;
+        };
+        if scope.is_none() {
+            return None;
+        }
+        let names: SmallVec<[Atom; 4]> = hir.ids(name).collect();
+        let named = files
+            .resolve_entity(file, scope, &names, SymFlags::TYPE)
+            .and_then(|s| files.resolve_alias_if_needed(s))?;
+        files
+            .flags(named)
+            .contains(SymFlags::TYPE_ALIAS)
+            .then_some(named)
+    }
+
+    /// Whether making what the type alias `from` stands for makes what `to` stands for.
+    fn alias_leads_to(&self, from: Sym, to: Sym, seen: &mut Vec<Sym>) -> bool {
+        if from == to {
+            return true;
+        }
+        if seen.contains(&from) {
+            return false;
+        }
+        seen.push(from);
+        let mut named = Vec::new();
+        for &(file, decl) in self.files().decls_of(from).iter() {
+            if let Decl::Alias(a) = decl {
+                self.aliases_made_at_once(file, self.hir(file)[a].ty, &mut named);
+            }
+        }
+        named
+            .into_iter()
+            .any(|next| self.alias_leads_to(next, to, seen))
+    }
+
+    /// The type aliases referred to in what is resolved as soon as the type at `node` is made, as in `mapped_keys_made_at_once`: of a
+    /// mapped type what its key extends.
+    fn aliases_made_at_once(&self, file: FileId, node: TypeNodeId, into: &mut Vec<Sym>) {
+        if node.is_none() {
+            return;
+        }
+        let hir = self.hir(file);
+        match hir[node].kind {
+            TypeNodeKind::Mapped(m) => {
+                self.aliases_made_at_once(file, hir[hir[m].param].constraint, into)
+            }
+            TypeNodeKind::Array(t) | TypeNodeKind::Keyof(t) | TypeNodeKind::Readonly(t) => {
+                self.aliases_made_at_once(file, t, into)
+            }
+            TypeNodeKind::Tuple(elems) => {
+                for e in elems.iter() {
+                    self.aliases_made_at_once(file, hir[e].ty, into);
+                }
+            }
+            TypeNodeKind::Ref { args, .. } => {
+                into.extend(self.alias_referred_to(file, node));
+                for t in hir.ids(args) {
+                    self.aliases_made_at_once(file, t, into);
+                }
+            }
+            TypeNodeKind::Union(list)
+            | TypeNodeKind::Intersection(list)
+            | TypeNodeKind::Template { types: list, .. } => {
+                for t in hir.ids(list) {
+                    self.aliases_made_at_once(file, t, into);
+                }
+            }
+            TypeNodeKind::IndexedAccess { obj, index } => {
+                self.aliases_made_at_once(file, obj, into);
+                self.aliases_made_at_once(file, index, into);
+            }
+            TypeNodeKind::Cond { check, extends, .. } => {
+                self.aliases_made_at_once(file, check, into);
+                self.aliases_made_at_once(file, extends, into);
+            }
+            _ => {}
+        }
     }
 
     /// `hasNonCircularBaseConstraint`, the other way round and going by what is written: whether what the type parameter `own`

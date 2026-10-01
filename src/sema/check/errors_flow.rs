@@ -180,7 +180,8 @@ impl Checker<'_> {
         let hir = self.hir(file);
         let flow = self.bound(file).stmt_flow[s.idx()];
         // `ShouldPreserveConstEnums`
-        let preserves_const_enums = self.p.files.options.isolated_modules;
+        let preserves_const_enums =
+            self.p.files.options.preserve_const_enums || self.p.files.options.isolated_modules;
         match hir[s].kind {
             // The binder gives a class, an enum or a namespace no flow node: only what it finds out by itself counts for them.
             StmtKind::Class(_) => self.is_flagged_unreachable(file, flow),

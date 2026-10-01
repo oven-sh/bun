@@ -3741,7 +3741,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `isSymbolOrSymbolForCall`: `Symbol()` or `Symbol.for()`, of the global value of that name.
-    fn is_symbol_or_symbol_for_call(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_symbol_or_symbol_for_call(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else {
             return false;

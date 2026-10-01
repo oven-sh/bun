@@ -184,6 +184,7 @@ impl Checker<'_> {
         // It takes back what has been said of specifiers that are never resolved.
         pass!(check_x_modules);
         pass!(check_x_classes);
+        pass!(check_x_collisions);
         pass!(check_x_identifiers);
         pass!(check_x_properties_jsx);
         // `checkGrammarRegularExpressionLiteral`
@@ -824,6 +825,13 @@ impl Checker<'_> {
                     hir[s].imported_pos,
                     out,
                 );
+                self.relate_name_kept_by_module(
+                    file,
+                    module,
+                    hir[s].imported,
+                    hir[s].imported_pos,
+                    out,
+                );
             }
         }
         for (x, export) in hir.exports.iter().enumerate() {
@@ -852,6 +860,7 @@ impl Checker<'_> {
                     hir[s].local_pos,
                     out,
                 );
+                self.relate_name_kept_by_module(file, module, hir[s].local, hir[s].local_pos, out);
             }
         }
     }
@@ -1090,7 +1099,80 @@ impl Checker<'_> {
                     _ => vec![module_name, name],
                 }
             });
+            // `errorNoModuleMemberSymbol`
+            if code == 2724
+                && let Some(meant) = other
+            {
+                self.relate(start, code, |c| {
+                    let Some(place) = c.place_where_value_is_declared(meant) else {
+                        return Vec::new();
+                    };
+                    let name = c.symbol_to_string(meant);
+                    vec![c.declared_here(place, name)]
+                });
+            }
         }
+    }
+
+    /// `reportNonExportedMember`: where `module` declares the `name` it does not export, if 2459 or 2460 has just been said of it at
+    /// `start` in `from`.
+    fn relate_name_kept_by_module(
+        &mut self,
+        from: FileId,
+        module: Sym,
+        name: Atom,
+        start: u32,
+        out: &[Diagnostic],
+    ) {
+        let Some(&Diagnostic { start: at, code }) = out.last() else {
+            return;
+        };
+        if at != start || !matches!(code, 2459 | 2460) {
+            return;
+        }
+        self.relate(start, code, |c| {
+            let files = c.files();
+            // As in `why_no_module_member`.
+            let local = files.decls_of(module).first().and_then(|&(of, decl)| {
+                let bound = files.bound(of);
+                let scope = match decl {
+                    Decl::File => 0,
+                    Decl::Module(m) => bound
+                        .scopes
+                        .iter()
+                        .position(|s| s.kind == ScopeKind::Module(m))?,
+                    _ => return None,
+                };
+                bound
+                    .lookup(bound.scopes[scope].locals, name)
+                    .map(|id| files.sym(of, id))
+            });
+            let Some(local) = local else {
+                return Vec::new();
+            };
+            // `DeclarationNameToString`: a string is written with its quotes.
+            let written = match c.hir(from).text.get(start as usize) {
+                Some(b'"' | b'\'') => word_at(c, from, start),
+                _ => c.atom_text(name),
+            };
+            files
+                .decls_of(local)
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &(of, decl))| {
+                    let at = c.place_of_declaration(of, decl)?;
+                    Some(if i == 0 {
+                        c.declared_here(at, written.clone())
+                    } else {
+                        super::explain::Related {
+                            at: Some(at),
+                            code: 6204,
+                            args: Vec::new(),
+                        }
+                    })
+                })
+                .collect()
+        });
     }
 
     /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`, `reportInvalidImportEqualsExportMember`. The arguments are those of
@@ -1407,7 +1489,8 @@ impl Checker<'_> {
                 name,
                 start,
                 out,
-            )
+            );
+            self.relate_name_kept_by_module(file, module, name, start, out);
         };
         match pattern {
             PatKind::Object(props) => {
@@ -1696,6 +1779,10 @@ impl Checker<'_> {
                     start: hir.exprs[i].pos,
                     code: 2454,
                 });
+                // `symbolToString`: the name as the declaration writes it.
+                self.explain(hir.exprs[i].pos, 2454, |c| {
+                    vec![c.declaration_name_at(file, hir[pat].pos)]
+                });
             }
         }
     }
@@ -1783,7 +1870,7 @@ impl Checker<'_> {
                         start: member.pos,
                         code: 2564,
                     });
-                    if matches!(member.key, PropKey::Computed(_)) {
+                    if hir.text.get(member.pos as usize) == Some(&b'[') {
                         let (start, end) = (member.pos, self.end_of_member_name(file, m));
                         self.explain_to(start, end, 2564, |c| {
                             vec![c.source_text(file, start, end)]
@@ -3003,6 +3090,9 @@ impl Checker<'_> {
                 let meant = name_meant(c, file, scope, name, meaning);
                 vec![c.atom_text(name), meant]
             });
+            // Who asks for a value and nothing else is `getResolvedSymbol`.
+            let is_expression = meaning == SymFlags::VALUE;
+            relate_name_meant(self, file, scope, name, meaning, is_expression, start);
             return 2552;
         }
         // `getCannotFindNameDiagnosticForName`. `UsesWildcardTypes`: there is nothing to add to `types` then.
@@ -3730,10 +3820,22 @@ fn closest<'a>(
 fn what_is_similar_in_scope(
     c: &Checker<'_>,
     file: FileId,
-    mut scope: ScopeId,
+    scope: ScopeId,
     name: Atom,
     meaning: SymFlags,
 ) -> Option<Meant> {
+    similar_in_scope_and_where(c, file, scope, name, meaning).map(|found| found.0)
+}
+
+/// The same, and whether it is come upon among the locals of the block of a module or namespace that exports it. `declareModuleMember`:
+/// what is there is a symbol that only leads to what is exported.
+fn similar_in_scope_and_where(
+    c: &Checker<'_>,
+    file: FileId,
+    mut scope: ScopeId,
+    name: Atom,
+    meaning: SymFlags,
+) -> Option<(Meant, bool)> {
     let (files, bound) = (c.files(), c.bound(file));
     let text = files.atoms.bytes(name);
     let fits = |candidate: Atom, sym: Sym| {
@@ -3744,6 +3846,10 @@ fn what_is_similar_in_scope(
     };
     while scope.is_some() {
         let s = &bound.scopes[scope.idx()];
+        // `Resolve`: the locals of a script are not in scope. They are among the globals.
+        if s.kind == ScopeKind::File && s.symbol.is_none() {
+            break;
+        }
         let exports = if s.symbol.is_some() {
             bound.symbols[s.symbol.idx()].exports
         } else {
@@ -3757,7 +3863,12 @@ fn what_is_similar_in_scope(
                 .filter(|&(candidate, sym)| fits(candidate, sym))
                 .map(|(candidate, sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym)));
             if let Some(meant) = closest(c, text, candidates) {
-                return Some(meant);
+                let leads_to_export = table == s.locals
+                    && matches!(s.kind, ScopeKind::File | ScopeKind::Module(_))
+                    && matches!(meant, Meant::Symbol(sym)
+                        if sym.file == file && bound.refused_exports.contains(&sym.id)
+                            || bound.table(exports).iter().any(|&(_, id)| files.sym(file, id) == sym));
+                return Some((meant, leads_to_export));
             }
         }
         scope = s.parent;
@@ -3789,7 +3900,7 @@ fn what_is_similar_in_scope(
         .iter()
         .filter(|&(&candidate, &sym)| fits(candidate, sym))
         .map(|(&candidate, &sym)| (files.atoms.bytes(candidate), Meant::Symbol(sym)));
-    closest(c, text, globals.chain(words))
+    closest(c, text, globals.chain(words)).map(|meant| (meant, false))
 }
 
 /// `symbolToString` of `getSuggestedSymbolForNonexistentSymbol`: the name that may have been meant by `name`, which nothing that is a
@@ -3806,6 +3917,35 @@ pub(super) fn name_meant(
         Some(Meant::Word(word)) => word.to_owned(),
         None => String::new(),
     }
+}
+
+/// `onFailedToResolveSymbol`: with the 2552 at `start` comes where what `name_meant` names is declared, if it has a `ValueDeclaration`.
+/// `is_expression`: `SymbolFlagsExportValue` is asked for too, so that what only leads to an export is taken for the suggestion. It
+/// has no such declaration.
+pub(super) fn relate_name_meant(
+    c: &mut Checker<'_>,
+    file: FileId,
+    scope: ScopeId,
+    name: Atom,
+    meaning: SymFlags,
+    is_expression: bool,
+    start: u32,
+) {
+    c.relate(start, 2552, |c| {
+        let Some((Meant::Symbol(sym), leads_to_export)) =
+            similar_in_scope_and_where(c, file, scope, name, meaning)
+        else {
+            return Vec::new();
+        };
+        if is_expression && leads_to_export {
+            return Vec::new();
+        }
+        let Some(place) = c.place_where_value_is_declared(sym) else {
+            return Vec::new();
+        };
+        let meant = c.symbol_to_string(sym);
+        vec![c.declared_here(place, meant)]
+    });
 }
 
 /// `getSuggestedLibForNonExistentName`: the library of the first entry of `getFeatureMap`, for the names 2583 is said of.
@@ -4401,6 +4541,19 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             };
             c.note(start, end, code, Vec::new());
         }
+        // `checkGrammarImportClause`: said of the clause, which ends before the `from`.
+        1363 | 18058 | 18059 => {
+            let specifier = hir
+                .specifier_uses
+                .iter()
+                .map(|used| used.pos)
+                .filter(|&pos| pos > start)
+                .min();
+            if let Some(specifier) = specifier {
+                let end = super::errors_x_modules::import_clause_end(text, specifier);
+                c.note(start, end, code, Vec::new());
+            }
+        }
         // `scanNumber`: after a `-` the error starts one character before the literal.
         1121 => {
             let with_minus = text.get(at) != Some(&b'0');
@@ -4428,6 +4581,27 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
         1017 => c.note(start, start + 3, code, Vec::new()),
         // `scanConflictMarkerTrivia`: the seven characters of the marker.
         1185 => c.note(start, start + 7, code, Vec::new()),
+        // `parseFunctionOrConstructorTypeToError`: said of the type and the blanks before it. A constructor type is kept where its
+        // `new` ends.
+        1385..=1388 => {
+            let mut head = skip_trivia(text, at);
+            if matches!(code, 1386 | 1388) {
+                let words: [&[u8]; 2] = [b"abstract", b"new"];
+                for word in words {
+                    if text.get(head..).is_some_and(|rest| rest.starts_with(word)) {
+                        head = skip_trivia(text, head + word.len());
+                    }
+                }
+            }
+            let written = hir
+                .types
+                .iter()
+                .position(|t| t.pos as usize == head && matches!(t.kind, TypeNodeKind::Fn(_)));
+            if let Some(node) = written {
+                let end = c.end_of_type_node(file, TypeNodeId(node as u32));
+                c.note(start, end, code, Vec::new());
+            }
+        }
         // `checkGrammarVariableDeclaration`
         1155 | 1492 => {
             let Some(decl) = hir.var_decls.iter().find(|d| hir[d.pat].pos == start) else {
@@ -4440,6 +4614,27 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             };
             let end = c.end_of_pat(file, decl.pat);
             c.note(start, end, code, vec![keyword.to_owned()]);
+        }
+        // `parseParameterEx`: said of the first decorator or modifier and the blanks before it.
+        1433 => {
+            let first = skip_trivia(text, at);
+            let end = if text.get(first) == Some(&b'@') {
+                let written = skip_trivia(text, first + 1) as u32;
+                // Those of a first parameter are statements of their own.
+                let statements = hir.stmts.iter().filter_map(|s| match s.kind {
+                    StmtKind::Expr(e) if e.is_some() => Some(e),
+                    _ => None,
+                });
+                hir.decorators
+                    .iter()
+                    .map(|decorator| decorator.1)
+                    .chain(statements)
+                    .find(|&e| c.start_of(file, e) == written)
+                    .map_or(0, |e| c.end_of_expr(file, e))
+            } else {
+                c.end_of_name_at(file, first as u32)
+            };
+            c.note(start, end, code, Vec::new());
         }
         // `parseErrorForMissingSemicolonAfter`
         1435 => {
@@ -4618,6 +4813,45 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             };
             c.note(start, end, code, vec![word(tag + 1), name, extended]);
         }
+        // `parseIdentifierNameErrorOnUnicodeEscapeSequence`: said of the token, which `ScanJsxIdentifier` carries on through every `-`.
+        17021 => {
+            let hex_digits = |from: usize| {
+                text[from.min(text.len())..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_hexdigit())
+                    .count()
+            };
+            let mut end = at;
+            loop {
+                end += match text.get(end) {
+                    Some(&b)
+                        if b.is_ascii_alphanumeric()
+                            || matches!(b, b'_' | b'$' | b'-')
+                            || b >= 0x80 =>
+                    {
+                        1
+                    }
+                    Some(b'\\') if text.get(end + 1) == Some(&b'u') => {
+                        if text.get(end + 2) == Some(&b'{') {
+                            match hex_digits(end + 3) {
+                                digits
+                                    if digits > 0 && text.get(end + 3 + digits) == Some(&b'}') =>
+                                {
+                                    digits + 4
+                                }
+                                _ => break,
+                            }
+                        } else if hex_digits(end + 2) >= 4 {
+                            6
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                };
+            }
+            c.note(start, end as u32, code, Vec::new());
+        }
         // `parseUnaryExpressionOrHigher`: said of all that is on the left of the `**`.
         17006 | 17007 => {
             let end = hir.exprs.iter().find_map(|x| match x.kind {
@@ -4690,6 +4924,10 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
             code,
             Vec::new(),
         ),
+        // `checkGrammarModifiers`: a modifier that is made from a tag of a JSDoc comment is as long as the tag.
+        18010 if hir.is_in_jsdoc(start) => {
+            c.note(start, c.end_of_jsdoc_tag(file, start), code, Vec::new());
+        }
         // `checkGrammarMetaProperty`
         17012 => {
             let Some(dot) = start_of_token_before(text, start, b".") else {

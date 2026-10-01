@@ -1417,6 +1417,120 @@ impl Checker<'_> {
         best.map(|found| found.2)
     }
 
+    /// `GetErrorRangeForNode(suggestion.ValueDeclaration)`, of the property `meant` of `object`. `createUnionOrIntersectionProperty`:
+    /// what the members of a union declare in several places has no such declaration.
+    fn place_of_property_meant(
+        &mut self,
+        object: TypeId,
+        meant: Atom,
+    ) -> Option<(FileId, u32, u32)> {
+        let mut declared = None;
+        for &member in self.parts(object) {
+            let member = self.apparent_type(member);
+            let Some((prop, _)) = self.prop_ref(member, meant) else {
+                continue;
+            };
+            let Some(source) = Self::value_declaration(prop) else {
+                continue;
+            };
+            if *declared.get_or_insert(source) != source {
+                return None;
+            }
+        }
+        match *declared? {
+            PropSource::Members(ref members) => {
+                let &(file, member) = members.first()?;
+                Some(self.place_of_token(file, self.hir(file)[member].pos))
+            }
+            // All of the parameter, with its modifiers.
+            PropSource::Parameter(file, param) => Some((
+                file,
+                self.hir(file)[param].pos,
+                self.end_of_param(file, param),
+            )),
+            PropSource::Literal(file, prop) => {
+                Some(self.place_of_token(file, self.hir(file)[prop].pos))
+            }
+            PropSource::Symbol(sym) => self.place_where_value_is_declared(sym),
+            // All of the assignment.
+            PropSource::Assigned(file, ref assignments) => {
+                let &first = assignments.first()?;
+                Some((
+                    file,
+                    self.start_of(file, first),
+                    self.end_of_expr(file, first),
+                ))
+            }
+            PropSource::Type(_) | PropSource::Intersected(..) | PropSource::Mapped(..) => None,
+        }
+    }
+
+    /// `GetErrorRangeForNode(symbol.ValueDeclaration)`. `None`: nothing declares `sym` as a value.
+    pub(super) fn place_where_value_is_declared(&self, sym: Sym) -> Option<(FileId, u32, u32)> {
+        use crate::bind::Decl;
+        let sym = self.files().canonical(sym);
+        let flags = self.files().flags(sym);
+        let is_assignment = |decl: Decl| matches!(decl, Decl::ExportsProperty(_));
+        // `SetValueDeclaration`: the first that declares a value. An assignment gives way to any other declaration, and a namespace
+        // to what is no namespace.
+        let mut found: Option<(FileId, Decl)> = None;
+        for &(file, decl) in self.files().decls_of(sym).iter() {
+            let declares = match decl {
+                Decl::Var(_)
+                | Decl::Param(_)
+                | Decl::ExportsProperty(_)
+                | Decl::CommonJsVariable => SymFlags::VARIABLE,
+                Decl::Fn(_) => SymFlags::FUNCTION,
+                Decl::Class(_) => SymFlags::CLASS,
+                Decl::Enum(_) => SymFlags::ENUM,
+                Decl::EnumMember(_) => SymFlags::ENUM_MEMBER,
+                Decl::Module(m) if self.bound(file).module_instantiated[m.idx()] => {
+                    SymFlags::VALUE_MODULE
+                }
+                _ => continue,
+            };
+            // What the name refuses is listed among its declarations, and adds nothing to its flags.
+            if !flags.intersects(declares) {
+                continue;
+            }
+            let takes_over = found.is_none_or(|(_, first)| {
+                is_assignment(first) && !is_assignment(decl)
+                    || matches!(first, Decl::Module(_)) && !matches!(decl, Decl::Module(_))
+            });
+            if takes_over {
+                found = Some((file, decl));
+            }
+        }
+        let (file, decl) = found?;
+        let hir = self.hir(file);
+        let start = match decl {
+            Decl::Var(pat) => hir[pat].pos,
+            Decl::Param(pat) => match self.bound(file).pat_parent[pat.idx()] {
+                // All of the parameter, with what is written before its name.
+                PatParent::Param(param) => {
+                    return Some((file, hir[param].pos, self.end_of_param(file, param)));
+                }
+                _ => hir[pat].pos,
+            },
+            Decl::Fn(f) => hir[f].name_pos,
+            Decl::Class(c) => hir[c].name_pos,
+            Decl::Enum(e) => hir[e].name_pos,
+            Decl::EnumMember(m) => hir[m].pos,
+            Decl::Module(m) => hir[m].name_pos,
+            // All of the assignment, or of the call.
+            Decl::ExportsProperty(e) => {
+                return Some((file, self.start_of(file, e), self.end_of_expr(file, e)));
+            }
+            // `declareCommonJSVariable`: the file, which goes by its first token.
+            Decl::CommonJsVariable => {
+                let start = self.skip_trivia_from(file, 0);
+                return Some((file, start, self.end_of_token_at(file, start)));
+            }
+            _ => return None,
+        };
+        Some(self.place_of_token(file, start))
+    }
+
     /// Where `prop` is first declared, as `compareSymbols` orders symbols: what has no declaration comes last.
     pub(super) fn order_of_property(&self, prop: &Prop) -> (u8, FileId, u32) {
         let declared = match &prop.source {
@@ -1982,11 +2096,34 @@ impl Checker<'_> {
             };
             vec![missing, container, last]
         });
+        if code == 2551 {
+            self.relate(start, code, |c| {
+                let is_access = matches!(c.hir(file)[e].kind, ExprKind::Dot { .. })
+                    && !c.bound(file).is_in_type_query(e);
+                let apparent = c.apparent_type(containing);
+                let looked_into = c.reduced(apparent);
+                let access = is_access.then_some((file, e));
+                let Some(meant) = c.property_meant(looked_into, name, access, true) else {
+                    return Vec::new();
+                };
+                match c.place_of_property_meant(looked_into, meant) {
+                    Some(place) => vec![c.declared_here(place, c.name_of_unread_property(meant))],
+                    None => Vec::new(),
+                }
+            });
+        }
         self.explain_chain(start, code, |c| {
             // The first member of a union that lacks it.
             let is_private = c.files().atoms.bytes(name).first() == Some(&b'#');
-            if !is_private && containing != TypeId::BOOLEAN && c.is_union(containing) {
-                for &member in c.parts(containing) {
+            // `TypeFlagsPrimitive`: `boolean`, and an enum, which is the union of its members.
+            let is_enum = match c.parts(containing).first().map(|&first| c.data(first)) {
+                Some(
+                    &TypeData::EnumLit { member, .. } | &TypeData::Enum { symbol: member, .. },
+                ) => c.enum_type_of_member(member) == containing,
+                _ => false,
+            };
+            if !is_private && containing != TypeId::BOOLEAN && !is_enum && c.is_union(containing) {
+                for member in c.parts_in_order(containing) {
                     let apparent = c.apparent_type(member);
                     if c.type_of_property(apparent, name).is_none() {
                         return vec![Line {

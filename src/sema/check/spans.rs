@@ -1611,13 +1611,46 @@ impl<'a> Spans<'a> {
         }
     }
 
+    /// Where the tag of a JSDoc comment that starts at `at` ends: where the next one starts, or else before the `*/`.
+    /// `parseTagComments`: an `@` in braces or inside a word starts none.
+    fn jsdoc_tag(self, at: usize) -> usize {
+        let comments = &self.hir.jsdoc_comments;
+        let Some(&(_, comment_end)) = comments
+            .partition_point(|comment| comment.0 as usize <= at)
+            .checked_sub(1)
+            .and_then(|index| comments.get(index))
+        else {
+            return at;
+        };
+        let last = (comment_end as usize)
+            .saturating_sub(2)
+            .min(self.text.len());
+        let mut depth = 0usize;
+        for next in at + 1..last {
+            match self.text[next] {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                b'@' if depth == 0 && !self.text[next - 1].is_ascii_alphanumeric() => return next,
+                _ => {}
+            }
+        }
+        last.max(at)
+    }
+
     fn param(self, param: ParamId) -> usize {
         let Some(param) = self.hir.params.get(param.idx()) else {
             return 0;
         };
+        let pos = param.pos as usize;
+        // `reparseJSDocSignature`: one that is made from a `@param` tag is as long as the tag.
+        if self.byte(pos) == b'@' && self.hir.is_in_jsdoc(param.pos) {
+            return self.jsdoc_tag(pos);
+        }
+        // The type a JSDoc comment gives it is written before it, and is no part of it.
+        let is_typed = param.ty.is_some() && self.type_pos(param.ty) >= pos;
         if param.default.is_some() {
             self.expr(param.default)
-        } else if param.ty.is_some() {
+        } else if is_typed {
             self.ty_in(param.ty, 0)
         } else if param.flags.contains(Flags::OPTIONAL) {
             self.eat(self.pat(param.pat), b"?")
@@ -2323,6 +2356,11 @@ impl Checker<'_> {
             }
             _ => 0,
         }
+    }
+
+    /// `node.End()` of the tag of a JSDoc comment that starts at `pos`, and of what is made from it.
+    pub(super) fn end_of_jsdoc_tag(&self, file: FileId, pos: u32) -> u32 {
+        self.spans(file).jsdoc_tag(pos as usize) as u32
     }
 
     /// `node.End()` of a parameter.

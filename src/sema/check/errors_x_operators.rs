@@ -771,14 +771,18 @@ fn check_binary_like(c: &mut Checker<'_>, file: FileId, e: ExprId, out: &mut Vec
             if is_assignment {
                 check_assignment_operator(c, file, left, ExprId::NONE, out);
             }
-            // A suggestion anywhere else, it is an error in the initializer of a member of an enum.
+            // `errorOrSuggestion`: a suggestion anywhere else, it is an error in the initializer of a member of an enum.
+            let is_error = matches!(c.bound(file).expr_parent[e.idx()], Parent::EnumInit(_));
             if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr)
-                && matches!(c.bound(file).expr_parent[e.idx()], Parent::EnumInit(_))
+                && (is_error || c.captures_suggestions())
                 && let Some(EnumValue::Number(bits)) = c.constant_value(file, right)
                 && f64::from_bits(bits).abs() >= 32.0
             {
                 let start = c.start_inside_parentheses(file, e);
                 out.push(Diagnostic { start, code: 6807 });
+                if !is_error {
+                    c.note_suggestion(start, 6807);
+                }
                 let end = c.end_inside_parentheses(file, e);
                 c.explain_to(start, end, 6807, |c| {
                     let operator = match (op, is_assignment) {

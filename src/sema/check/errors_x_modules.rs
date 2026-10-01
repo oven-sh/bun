@@ -706,6 +706,8 @@ impl Checker<'_> {
                 start: name_pos,
                 code: 1540,
             });
+            let end = self.end_of_token_at(cx.file, name_pos);
+            self.note(name_pos, end, 1540, Vec::new());
         }
         // Both are about options that keep `const enum`s, so that a namespace of nothing else counts as well.
         if !is_ambient

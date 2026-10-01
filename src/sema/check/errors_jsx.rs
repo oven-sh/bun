@@ -212,6 +212,10 @@ impl Checker<'_> {
             }
             arguments
         });
+        if code == 2552 {
+            let meaning = SymFlags::VALUE;
+            super::errors::relate_name_meant(self, file, scope, name, meaning, false, at.0);
+        }
     }
 
     /// Notes the name of the tag of `e` as it is written, which is what the error `code` at that name is about.
@@ -846,6 +850,11 @@ impl Checker<'_> {
                         code: 2747,
                     });
                     self.explain_jsx_text_child(file, e, at, (name, wanted));
+                    let said = Diagnostic {
+                        start: at,
+                        code: 2747,
+                    };
+                    self.relate_expected_property(Some(said), target, name);
                     reported = true;
                 }
             } else {
@@ -908,7 +917,14 @@ impl Checker<'_> {
         let arrays = self.filter(target, |c, m| c.is_array_like(m) || c.is_tuple_like(m));
         let iterables = self.filter(target, |c, m| !(c.is_array_like(m) || c.is_tuple_like(m)));
         let yielded = if iterables != TypeId::NEVER {
-            Some(self.iterated_type(iterables, false))
+            // A reference to an alias that was under way where it is written is what the alias stands for.
+            let yielded = self.iterated_type(iterables, false);
+            let members: Vec<TypeId> = self
+                .parts(yielded)
+                .iter()
+                .map(|&member| self.force(member))
+                .collect();
+            Some(self.union(&members))
         } else {
             None
         };
@@ -998,7 +1014,11 @@ impl Checker<'_> {
         loop {
             let before = hir.text.get(..end as usize)?;
             let start = before.iter().rposition(|&c| c == b'>' || c == b'}')? + 1;
-            if !before[start..].trim_ascii().is_empty() {
+            // White space is text too, unless a line ends in it (`JsxTextAllWhiteSpaces`).
+            let text = &before[start..];
+            let is_trivia = text.trim_ascii().is_empty()
+                && (text.is_empty() || text.contains(&b'\n') || text.contains(&b'\r'));
+            if !is_trivia {
                 return Some(start as u32);
             }
             // `{}` is not kept: the text is before it.

@@ -176,12 +176,14 @@ impl Checker<'_> {
                             runs_in_place,
                         ),
                     2448,
+                    hir[pat].pos,
                 ))
             }
             Decl::Class(c) => Some((
                 hir[c].flags.contains(Flags::AMBIENT)
                     || self.is_class_declared_before_use(file, e, c, usage),
                 2449,
+                hir[c].name_pos,
             )),
             Decl::Enum(en) => {
                 if hir[en].flags.contains(Flags::AMBIENT)
@@ -189,15 +191,27 @@ impl Checker<'_> {
                     || hir[en].flags.contains(Flags::CONST)
                         && !self.p.files.options.isolated_modules
                 {
-                    return Some((true, 2450));
+                    return Some((true, 2450, hir[en].name_pos));
                 }
                 let s = self.stmt_of_enum(file, en)?;
-                Some((self.is_use_deferred_in(file, e, Parent::Stmt(s)), 2450))
+                Some((
+                    self.is_use_deferred_in(file, e, Parent::Stmt(s)),
+                    2450,
+                    hir[en].name_pos,
+                ))
             }
             _ => None,
         });
-        if let Some((false, code)) = found {
+        if let Some((false, code, declared_at)) = found {
             out.push(Diagnostic { start: usage, code });
+            // The name as the declaration writes it.
+            self.explain(usage, code, |c| {
+                vec![c.declaration_name_at(file, declared_at)]
+            });
+            self.relate(usage, code, |c| {
+                let name = c.declaration_name_at(file, declared_at);
+                vec![c.declared_here(c.place_of_token(file, declared_at), name)]
+            });
         }
     }
 
@@ -1014,6 +1028,8 @@ impl Checker<'_> {
         let emit = self.p.files.options.emit_standard_class_fields;
         // The class `prop.Parent` is, and the class declaration `prop.ValueDeclaration` is.
         let (mut declaring_class, mut class_declaration) = (None, None);
+        // Where `GetErrorRangeForNode(prop.ValueDeclaration)` starts.
+        let declared_at;
         // `isBlockScopedNameDeclaredBeforeUse(prop.ValueDeclaration, right)`
         let is_declared = match prop.source {
             PropSource::Members(ref members) => {
@@ -1024,6 +1040,7 @@ impl Checker<'_> {
                     return;
                 }
                 let decl = &hir[md];
+                declared_at = decl.pos;
                 match class_of(md) {
                     // Of an interface or a type literal.
                     None => {
@@ -1154,6 +1171,7 @@ impl Checker<'_> {
                 if !is_in_place || declared_in != file {
                     return;
                 }
+                declared_at = hir[p].pos;
                 let constructor = bound.param_fn[p.idx()];
                 let FnOwner::Member(member) = bound.fns[constructor.idx()].owner else {
                     return;
@@ -1204,6 +1222,15 @@ impl Checker<'_> {
                 if declared_in != file || !is_in_place && !matches!(decl, Decl::Class(_)) {
                     return;
                 }
+                declared_at = match decl {
+                    Decl::Class(c) => hir[c].name_pos,
+                    Decl::Var(pat) => hir[pat].pos,
+                    Decl::Fn(f) => hir[f].name_pos,
+                    Decl::Enum(en) => hir[en].name_pos,
+                    Decl::EnumMember(m) => hir[m].pos,
+                    Decl::Module(m) => hir[m].name_pos,
+                    _ => return,
+                };
                 match decl {
                     Decl::Class(c) => {
                         class_declaration = Some(c);
@@ -1253,6 +1280,7 @@ impl Checker<'_> {
                 if hir[p].pos <= name_pos {
                     return;
                 }
+                declared_at = hir[p].pos;
                 let Some(container) = self.block_scope_around(file, Parent::Prop(p)) else {
                     return;
                 };
@@ -1272,7 +1300,8 @@ impl Checker<'_> {
                 if !is_in_place || declared_in != file {
                     return;
                 }
-                self.start_of(file, first) <= name_pos
+                declared_at = self.start_of(file, first);
+                declared_at <= name_pos
                     || self.is_use_deferred_in(file, e, bound.expr_parent[first.idx()])
             }
             _ => return,
@@ -1299,6 +1328,7 @@ impl Checker<'_> {
                     start: name_pos,
                     code: 2729,
                 });
+                self.explain_property_used_early(file, name_pos, 2729, prop, declared_at);
                 return;
             }
         }
@@ -1309,6 +1339,35 @@ impl Checker<'_> {
                 start: name_pos,
                 code: 2449,
             });
+            self.explain_property_used_early(file, name_pos, 2449, prop, declared_at);
         }
+    }
+
+    /// What `checkPropertyNotUsedBeforeDeclaration` says of the name written at `start`: the name, and where `prop.ValueDeclaration` is,
+    /// which is in `file` and starts at `declared_at`.
+    fn explain_property_used_early(
+        &mut self,
+        file: FileId,
+        start: u32,
+        code: u32,
+        prop: &Prop,
+        declared_at: u32,
+    ) {
+        self.explain(start, code, |c| vec![c.declaration_name_at(file, start)]);
+        self.relate(start, code, |c| {
+            // `GetErrorRangeForNode`: all of a parameter, of `a: 1` and of `this.a = 1`. Of anything else its name.
+            let declared_to = match prop.source {
+                PropSource::Parameter(_, p) => c.end_of_param(file, p),
+                PropSource::Literal(_, p)
+                    if matches!(c.hir(file)[p].kind, PropKind::Init | PropKind::Shorthand) =>
+                {
+                    c.end_of_prop(file, p)
+                }
+                PropSource::Assigned(_, ref assignments) => c.end_of_expr(file, assignments[0]),
+                _ => c.end_of_name_at(file, declared_at),
+            };
+            let name = c.declaration_name_at(file, start);
+            vec![c.declared_here((file, declared_at, declared_to), name)]
+        });
     }
 }

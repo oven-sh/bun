@@ -2805,10 +2805,8 @@ impl ThreadSafeFunction {
     pub(crate) fn dispatch_one(&mut self, is_first: bool) -> Result<bool, bun_jsc::Stopped> {
         // A checkpoint can stop the worker. Keep every payload in the queue
         // (and the C callback intact) until it succeeds, so teardown owns them.
-        if !is_first
-            && !self.is_closing()
-            && let Some(loop_) = self.loop_mut()
-        {
+        // The previous callback's microtasks still run after it aborts the TSFN.
+        if !is_first && let Some(loop_) = self.loop_mut() {
             loop_.drain_microtasks()?;
         }
 
@@ -2875,13 +2873,11 @@ impl ThreadSafeFunction {
     /// One queued call from the drain, which is its landing frame: what it
     /// left pending is folded here. `Err`: the VM is stopping.
     fn call(&mut self, task: *mut c_void) -> Result<(), bun_jsc::Stopped> {
-        // Teardown closes the function before dropping its env; dispatch_one
-        // cannot dequeue from a closed function.
-        let env = self
-            .env
-            .as_ref()
-            .expect("dispatch requires a live env")
-            .get();
+        let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
+            // A dequeued payload still belongs to the native consumer when JS is gone.
+            self.hand_back([task]);
+            return Ok(());
+        };
         // SAFETY: env is valid while the TSF is live.
         let env = unsafe { &*env };
         match self.deliver(env, task) {
@@ -2941,7 +2937,7 @@ impl ThreadSafeFunction {
     /// the signal napi_threadsafe_function_call_js documents for "free this,
     /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
     /// function created without a call_js_cb has nothing to give back.
-    fn hand_back(&self, items: Vec<*mut c_void>) {
+    fn hand_back(&self, items: impl IntoIterator<Item = *mut c_void>) {
         let TsfnCallback::C {
             napi_threadsafe_function_call_js,
             ..

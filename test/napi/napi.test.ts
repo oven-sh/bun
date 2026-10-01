@@ -725,6 +725,34 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_threadsafe_function", () => {
+    it.each([0, 4])(
+      "drains callback microtasks after abort before handing back payloads (capacity=%d)",
+      async capacity => {
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            join(__dirname, "napi-app/tsfn-payload-ownership.js"),
+            JSON.stringify(["abort-callback", capacity, 8, 1]),
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(JSON.parse(stdout.trim())).toMatchObject({
+          delivered: 1,
+          returned: (capacity || 8) - 1,
+          returned_after_checkpoint: (capacity || 8) - 1,
+          checkpoint_at_finalize: 1,
+        });
+        expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+    );
+
     describe.each(["natural", "exit", "terminate"])("payload ownership at worker %s", how => {
       it.each([
         [0, 2, 0],

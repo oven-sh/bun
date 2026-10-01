@@ -1991,14 +1991,23 @@ impl<'p> Checker<'p> {
         candidate: SigId,
         params: &[SigParam],
         args: &[Arg],
+        settled_before: usize,
     ) -> (bool, MapperId, MapperId) {
         let type_params = self.sig_type_params(candidate);
         let plain: Vec<(usize, TypeId)> = args
             .iter()
             .enumerate()
-            .filter(|&(_, &a)| match a {
+            .filter(|&(i, &a)| match a {
                 Arg::Expr(e) => {
-                    !self.is_context_sensitive(file, e) && !self.depends_on_context(file, e)
+                    // A call among the first `settled_before` arguments has been told what it is expected to be, and stays what it
+                    // comes to.
+                    !self.is_context_sensitive(file, e)
+                        && (!self.depends_on_context(file, e)
+                            || i < settled_before
+                                && matches!(
+                                    self.hir(file)[e].kind,
+                                    ExprKind::Call(_) | ExprKind::New(_)
+                                ))
                 }
                 Arg::Type(_) => true,
                 Arg::Spread(..) => false,
@@ -2227,10 +2236,14 @@ impl<'p> Checker<'p> {
             let mut wanted = Vec::new();
             // A literal is in the end held against the candidate that is chosen, which is none that the plain arguments rule out.
             let is_literal = self.is_literal_that_depends_on_context(file, e);
+            let has_call_before = args[..i].iter().any(|a| {
+                matches!(a, Arg::Expr(x) if matches!(self.hir(file)[*x].kind, ExprKind::Call(_) | ExprKind::New(_)))
+            });
             if is_literal && type_args.is_empty() {
                 for (k, list) in lists.iter().enumerate() {
-                    if plain[k].is_none() {
-                        plain[k] = Some(self.plain_arguments_say(file, candidates[k], list, args));
+                    if plain[k].is_none() || has_call_before {
+                        plain[k] =
+                            Some(self.plain_arguments_say(file, candidates[k], list, args, i));
                     }
                 }
             }
@@ -2246,7 +2259,7 @@ impl<'p> Checker<'p> {
             if is_settled_once && type_args.is_empty() && i > 0 {
                 for (k, list) in lists.iter().enumerate() {
                     reaches[k] = self
-                        .plain_arguments_say(file, candidates[k], list, &args[..i])
+                        .plain_arguments_say(file, candidates[k], list, &args[..i], 0)
                         .0;
                 }
                 if !reaches.contains(&true) {
@@ -3463,7 +3476,7 @@ impl<'p> Checker<'p> {
                                 Some(said) => said,
                                 None => {
                                     let (_, known, lesser) =
-                                        self.plain_arguments_say(file, sig, &params, args);
+                                        self.plain_arguments_say(file, sig, &params, args, 0);
                                     (known, lesser)
                                 }
                             };

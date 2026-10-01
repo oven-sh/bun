@@ -2622,6 +2622,24 @@ impl<'p> Checker<'p> {
     /// (`getReturnTypeFromBody`). A function that is called where it is written is expected to have none.
     fn return_type_of_contextual_signature(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
         let sig = self.contextual_signature(file, func)?;
+        // `getReturnTypeOfSignature` of a composite signature asks every member, and here nothing holds it back while the return type
+        // of one of them is being resolved: that is a circle.
+        if let SigData::Synth {
+            ret: TypeId::UNRESOLVED,
+            of,
+            ..
+        } = self.p.types.sig(sig)
+            && !of.is_empty()
+        {
+            let of = of.to_vec();
+            let returns: Vec<TypeId> = of.iter().map(|&s| self.sig_return(s)).collect();
+            // `createUnionSignature` clones the first member, so the circle of the composite signature is reported where that one is
+            // declared.
+            if let Some((first_file, first, _)) = self.sig_decl(of[0]) {
+                self.p.circular_returns.insert((first_file, first), ());
+            }
+            return Some(self.union_reduced(&returns));
+        }
         if self.is_resolving_return_type(sig) {
             return None;
         }

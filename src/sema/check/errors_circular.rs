@@ -260,6 +260,13 @@ impl Checker<'_> {
                 });
             }
         }
+        // The circle of a composite signature is reported at its first member, which may come before the function that closes it.
+        for i in 0..hir.fns.len() {
+            let func = FnId(i as u32);
+            if !matches!(hir[func].body, FnBody::None) && hir[func].ret.is_none() {
+                self.return_type_of_fn(file, func);
+            }
+        }
         for i in 0..hir.fns.len() {
             let func = FnId(i as u32);
             // The accessors of classes, interfaces and type literals were seen to above, with the property they make.

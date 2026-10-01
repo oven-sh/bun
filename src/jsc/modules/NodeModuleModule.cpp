@@ -837,7 +837,7 @@ extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::Glob
     JSValue overrideHandler = global->m_moduleRunMainFunction.get(global);
     auto callData = JSC::getCallData(overrideHandler);
     if (callData.type == JSC::CallData::Type::None) {
-        throwTypeError(global, scope, "Module.runMain is not a function"_s);
+        throwException(global, scope, createNotAFunctionError(global, overrideHandler));
         return {};
     }
     MarkedArgumentBuffer args;
